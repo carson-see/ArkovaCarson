@@ -17,6 +17,13 @@ const subsList = vi.fn();
 const eventsAggregate = vi.fn();
 const eventsByIdList = vi.fn();
 const executionsAggregate = vi.fn();
+// P0-2 (2026-09-14 hardening audit): the two new live signals — an enabled
+// WORKSPACE_FILE_MODIFIED rule bound to Drive (gates cursor-staleness so a
+// zero-rule org's never-advancing cursor is not a false positive), and
+// recent google_drive.file_changed job_queue failures/dead-letters.
+const driveRulesList = vi.fn();
+const driveRulesPages = vi.fn();
+const driveFetchJobFailuresList = vi.fn();
 
 vi.mock('../config.js', () => ({ config: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -28,7 +35,13 @@ vi.mock('../utils/db.js', () => {
     select: () => ({ eq: () => ({ maybeSingle: () => profilesMaybeSingle() }) }),
   };
   const orgIntegrationsChain = {
-    select: () => ({ eq: () => integrationsList() }),
+    select: () => ({ eq: () => {
+      const chain = {
+        order: () => chain,
+        range: (from: number, to: number) => ({ abortSignal: (signal: AbortSignal) => integrationsList(from, to, signal) }),
+      };
+      return chain;
+    } }),
   };
   const subscriptionsChain = {
     select: () => ({ eq: () => subsList() }),
@@ -53,6 +66,30 @@ vi.mock('../utils/db.js', () => {
       }),
     }),
   };
+  // organization_rules: .select('id').eq('org_id').eq('trigger_type').eq('enabled').limit(1)
+  const rulesChain = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          eq: () => ({
+            order: () => ({ range: (from: number, to: number) => ({
+              abortSignal: (signal: AbortSignal) => driveRulesPages(from, to, signal),
+            }) }),
+          }),
+        }),
+      }),
+    }),
+  };
+  // job_queue: .select('status').eq('type').eq("payload->>org_id").in('status', [...]).limit(50)
+  const jobQueueChain = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          in: () => ({ limit: () => driveFetchJobFailuresList() }),
+        }),
+      }),
+    }),
+  };
   return {
     db: {
       from: (table: string) => {
@@ -61,6 +98,8 @@ vi.mock('../utils/db.js', () => {
         if (table === 'connector_subscriptions') return subscriptionsChain;
         if (table === 'organization_rule_events') return eventsChain;
         if (table === 'organization_rule_executions') return executionsChain;
+        if (table === 'organization_rules') return rulesChain;
+        if (table === 'job_queue') return jobQueueChain;
         throw new Error(`unexpected table: ${table}`);
       },
     },
@@ -94,6 +133,10 @@ beforeEach(() => {
   eventsAggregate.mockResolvedValue({ data: [], error: null });
   eventsByIdList.mockResolvedValue({ data: [], error: null });
   executionsAggregate.mockResolvedValue({ data: [], error: null });
+  driveRulesList.mockResolvedValue({ data: [], error: null });
+  driveRulesPages.mockImplementation((offset: number) => offset === 0
+    ? driveRulesList() : Promise.resolve({ data: [], error: null }));
+  driveFetchJobFailuresList.mockResolvedValue({ data: [], error: null });
 });
 
 describe('connector-health (SCRUM-1146)', () => {
@@ -475,6 +518,299 @@ describe('connector-health (SCRUM-1146)', () => {
       const docusign = body.connectors.find((c) => c.id === 'docusign');
       expect(docusign?.last_event_at).toBe('2026-04-24T22:00:00Z');
     });
+  });
+
+  // P0-2 (2026-09-14 hardening audit): the dashboard previously derived
+  // google_drive's state from EXACTLY three signals (revoked_at, subscription
+  // degraded, lastFailedExec) — none of which observe a stuck/410 changes
+  // cursor or a dead google_drive.file_changed job_queue row. Rule dispatch
+  // (organization_rule_executions, already watched) and document fetch
+  // (job_queue, NOT watched) are two independent enqueues with independent
+  // failure modes — a rule can read "success" while the fetch job dies
+  // silently. These tests cover the two new live signals that close that gap.
+  describe('Drive cursor-staleness + fetch-job-failure signals (P0-2)', () => {
+    const FAR_PAST = '2020-01-01T00:00:00Z';
+    const RECENT = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+    function driveIntegrationRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: RECENT,
+        ...overrides,
+      };
+    }
+
+    it('flags cursor_stale when the cursor has not advanced in hours AND the org has an enabled Drive rule AND the channel is otherwise healthy', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [driveIntegrationRow({ last_token_advanced_at: FAR_PAST })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('cursor_stale');
+      expect(drive?.last_error).toBeTruthy();
+    });
+
+    it('does NOT flag cursor_stale for an org with zero enabled Drive rules (false-positive guard — no rule means the cursor is expected to never advance)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [driveIntegrationRow({ last_token_advanced_at: FAR_PAST })],
+        error: null,
+      });
+      // driveRulesList stays at the default empty-array mock (beforeEach).
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.health_reason).not.toBe('cursor_stale');
+    });
+
+    it('does NOT flag cursor_stale for a recently-advanced cursor', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [driveIntegrationRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('does NOT flag cursor_stale for a never-bootstrapped cursor (last_token_advanced_at null — that is P0-1 territory, out of scope here)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [driveIntegrationRow({ last_token_advanced_at: null })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('cursor_stale');
+    });
+
+    it('subscription_expiry still outranks cursor_stale (channel itself is broken — a stale cursor is the expected side effect, not new information)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [driveIntegrationRow({ last_token_advanced_at: FAR_PAST, last_renewal_error: 'invalid_grant' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('subscription_expiry');
+    });
+
+    it('flags fetch_job_failures when google_drive.file_changed has failed/dead job_queue rows for this org', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [driveIntegrationRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'dead' }, { status: 'failed' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('fetch_job_failures');
+      expect(drive?.last_error).toContain('2');
+    });
+
+    it('a healthy Drive connector with zero fetch-job failures and an advancing cursor stays connected/none', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [driveIntegrationRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; state: string; health_reason: string | null }> };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('connected');
+      expect(drive?.health_reason).toBe('none');
+    });
+
+    it('fetch-job failures for google_drive never leak onto an unrelated connector (per-org scoping, not global queue depth)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [
+          driveIntegrationRow(),
+          { provider: 'docusign', account_label: 'Acme', connected_at: '2026-04-20T00:00:00Z', revoked_at: null },
+        ],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({ data: [{ status: 'dead' }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+      expect(body.connectors.find((c) => c.id === 'docusign')?.health_reason).toBe('none');
+    });
+  });
+});
+
+describe('Drive health across multiple accounts', () => {
+  const connection = (id: string, changes: Record<string, unknown> = {}) => ({
+    id, provider: 'google_drive', account_label: id,
+    connected_at: '2026-09-14T16:13:26Z', revoked_at: null,
+    subscription_expires_at: '2026-10-14T16:13:26Z',
+    last_renewal_error: null, last_renewal_at: null,
+    last_token_advanced_at: new Date().toISOString(), ...changes,
+  });
+  const healthy = connection('00000000-0000-4000-8000-000000000001');
+  const renewalFailure = connection('00000000-0000-4000-8000-000000000002', {
+    connected_at: '2026-09-13T00:00:00Z',
+    subscription_expires_at: '2026-01-01T00:00:00Z',
+    last_renewal_error: 'renewal failed for this account',
+  });
+  async function readDrive(rows: ReturnType<typeof connection>[]) {
+    integrationsList.mockResolvedValueOnce({ data: rows, error: null });
+    const result = buildRes();
+    await handleConnectorHealth(USER_ID, buildReq(), result.res);
+    const body = result.body as { connectors: Array<Record<string, unknown>> };
+    return body.connectors.find((row) => row.id === 'google_drive');
+  }
+
+  it.each([false, true])('keeps an older active renewal failure visible regardless of result order (%s)', async (reverse) => {
+    const rows = [healthy, renewalFailure];
+    if (reverse) rows.reverse();
+    expect(await readDrive(rows)).toMatchObject({
+      state: 'degraded', health_reason: 'subscription_expiry',
+      account_label: renewalFailure.account_label,
+      next_expires_at: renewalFailure.subscription_expires_at,
+      last_error: 'renewal failed for this account',
+    });
+  });
+
+  it('reports a stalled active account even when the newest account has a fresh cursor', async () => {
+    driveRulesList.mockResolvedValue({ data: [{ id: 'rule', trigger_config: { folder_id: 'watched' } }], error: null });
+    const stalled = connection('00000000-0000-4000-8000-000000000003', {
+      connected_at: '2026-09-13T00:00:00Z', last_token_advanced_at: '2026-01-01T00:00:00Z',
+    });
+    expect(await readDrive([stalled, healthy])).toMatchObject({
+      state: 'degraded', health_reason: 'cursor_stale', account_label: stalled.account_label,
+    });
+  });
+
+  it('uses renewal before cursor and fetch failures across different active accounts', async () => {
+    driveRulesList.mockResolvedValue({ data: [{ id: 'rule', trigger_config: { folder_id: 'watched' } }], error: null });
+    driveFetchJobFailuresList.mockResolvedValue({ data: [{ status: 'failed' }], error: null });
+    const stalled = connection('00000000-0000-4000-8000-000000000003', {
+      last_token_advanced_at: '2026-01-01T00:00:00Z',
+    });
+    expect(await readDrive([renewalFailure, stalled])).toMatchObject({
+      health_reason: 'subscription_expiry', account_label: renewalFailure.account_label,
+    });
+  });
+
+  it('keeps fetch failures visible when all active channels and cursors are healthy', async () => {
+    driveFetchJobFailuresList.mockResolvedValue({ data: [{ status: 'failed' }], error: null });
+    expect(await readDrive([healthy, connection('00000000-0000-4000-8000-000000000003')])).toMatchObject({
+      state: 'degraded', health_reason: 'fetch_job_failures',
+    });
+  });
+
+  it('ignores an old revoked account while an active healthy account remains', async () => {
+    expect(await readDrive([healthy, connection('00000000-0000-4000-8000-000000000003', {
+      revoked_at: '2026-09-14T00:00:00Z', last_renewal_error: 'retired account',
+    })])).toMatchObject({ state: 'connected', health_reason: 'none', account_label: healthy.account_label });
+  });
+
+  it('reports disconnected when all accounts are revoked and picks the newest explanation', async () => {
+    const recent = connection('00000000-0000-4000-8000-000000000003', { revoked_at: '2026-09-14T00:00:00Z' });
+    const old = connection('00000000-0000-4000-8000-000000000004', {
+      connected_at: '2026-01-01T00:00:00Z', revoked_at: '2026-01-02T00:00:00Z',
+    });
+    expect(await readDrive([recent, old])).toMatchObject({
+      state: 'disconnected', health_reason: 'vendor_auth_revoked', account_label: recent.account_label,
+    });
+  });
+
+  it('breaks equal-severity ties by newest connection, then stable row ID in either order', async () => {
+    const sameTime = connection('00000000-0000-4000-8000-000000000001', { ...renewalFailure, id: healthy.id, account_label: 'tie winner' });
+    for (const rows of [[renewalFailure, sameTime], [sameTime, renewalFailure]]) {
+      expect(await readDrive(rows)).toMatchObject({ health_reason: 'subscription_expiry', account_label: 'tie winner' });
+    }
+    const newer = connection('00000000-0000-4000-8000-000000000005', { last_renewal_error: 'newer failure' });
+    expect(await readDrive([newer, renewalFailure])).toMatchObject({ last_error: 'newer failure' });
+  });
+
+  it('places missing or invalid timestamps behind a valid timestamp without suppressing failure', async () => {
+    const missing = connection('00000000-0000-4000-8000-000000000003', { connected_at: null, last_renewal_error: 'missing timestamp failure' });
+    const invalid = connection('00000000-0000-4000-8000-000000000004', { connected_at: 'invalid', last_renewal_error: 'invalid timestamp failure' });
+    expect(await readDrive([renewalFailure, invalid, missing])).toMatchObject({ last_error: 'renewal failed for this account' });
+    expect(await readDrive([missing, healthy])).toMatchObject({ health_reason: 'subscription_expiry', last_error: 'missing timestamp failure' });
+  });
+
+  it('reads beyond a short PostgREST page so a later failing account remains visible', async () => {
+    integrationsList
+      .mockResolvedValueOnce({ data: [healthy], error: null })
+      .mockResolvedValueOnce({ data: [renewalFailure], error: null });
+    const result = buildRes();
+    await handleConnectorHealth(USER_ID, buildReq(), result.res);
+    const body = result.body as { connectors: Array<Record<string, unknown>> };
+    expect(body.connectors.find((row) => row.id === 'google_drive')).toMatchObject({
+      health_reason: 'subscription_expiry', last_error: renewalFailure.last_renewal_error,
+    });
+    expect(integrationsList.mock.calls.map((call) => call[0])).toEqual([0, 1, 2]);
+    expect(integrationsList.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+  });
+
+  it('refuses partial health when a later page fails', async () => {
+    integrationsList
+      .mockResolvedValueOnce({ data: [healthy], error: null })
+      .mockResolvedValueOnce({ data: null, error: { code: '57014', message: 'private database detail' } });
+    const result = buildRes();
+    await handleConnectorHealth(USER_ID, buildReq(), result.res);
+    expect(result.statusCode).toBe(503);
+    expect(result.body).not.toHaveProperty('connectors');
+    expect(JSON.stringify(result.body)).not.toContain('private database detail');
+  });
+
+  it('fails closed when the bounded scan cannot reach an empty page', async () => {
+    let page = 0;
+    integrationsList.mockImplementation(() => Promise.resolve({
+      data: [connection(`00000000-0000-4000-8000-${String(++page).padStart(12, '0')}`)], error: null,
+    }));
+    const result = buildRes();
+    await handleConnectorHealth(USER_ID, buildReq(), result.res);
+    expect(result.statusCode).toBe(503);
+    expect(result.body).not.toHaveProperty('connectors');
+    expect(integrationsList.mock.calls.length).toBeLessThanOrEqual(20);
+  });
+
+  it('does not flag stale cursors for enabled rules with no actual folder binding', async () => {
+    driveRulesList.mockResolvedValue({ data: [{ id: 'empty-rule', trigger_config: {} }], error: null });
+    const stale = connection('00000000-0000-4000-8000-000000000007', { last_token_advanced_at: '2026-01-01T00:00:00Z' });
+    expect(await readDrive([stale])).toMatchObject({ state: 'connected', health_reason: 'none' });
+  });
+
+  it('finds a real folder binding after an empty rule on a later short page', async () => {
+    driveRulesPages
+      .mockResolvedValueOnce({ data: [{ trigger_config: {} }], error: null })
+      .mockResolvedValueOnce({ data: [{ trigger_config: { drive_folders: [{ folder_id: 'watched' }] } }], error: null });
+    const stale = connection('00000000-0000-4000-8000-000000000007', { last_token_advanced_at: '2026-01-01T00:00:00Z' });
+    expect(await readDrive([stale])).toMatchObject({ state: 'degraded', health_reason: 'cursor_stale' });
+    expect(driveRulesPages.mock.calls.map((call) => call[0])).toEqual([0, 1, 2]);
+  });
+
+  it('refuses healthy output when the watched-folder scan fails', async () => {
+    driveRulesPages.mockResolvedValueOnce({ data: null, error: { code: '57014' } });
+    integrationsList.mockResolvedValueOnce({ data: [healthy], error: null });
+    const result = buildRes();
+    await handleConnectorHealth(USER_ID, buildReq(), result.res);
+    expect(result.statusCode).toBe(503);
+    expect(result.body).not.toHaveProperty('connectors');
   });
 });
 
