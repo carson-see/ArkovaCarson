@@ -1679,6 +1679,7 @@ export const ORG_PAGE_LABELS = {
 // =============================================================================
 
 export const PENDING_INVITATIONS_LABELS = {
+  LOAD_FAILED: 'Could not load invitations. Please try again.',
   SECTION_TITLE: 'Pending Invitations',
   STATUS_PENDING: 'Pending',
   STATUS_EXPIRED: 'Expired',

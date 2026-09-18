@@ -94,7 +94,7 @@
     "upng-js": "2.1.0",
     "utif2": "4.1.0",
     "xlsx": "0.18.5",
-    "zod": "4.5.4"
+    "zod": "4.6.2"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
@@ -119,7 +119,7 @@
     "@types/react-dom": "19.2.7",
     "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "6.1.1",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "5.0.0",
     "dotenv": "17.4.2",
     "esbuild": "0.28.2",
     "eslint": "10.10.0",
@@ -143,7 +143,7 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.69.0",
     "vite": "8.2.2",
-    "vitest": "4.1.11",
+    "vitest": "5.0.0",
     "wrangler": "4.129.0",
     "ws": "8.21.3"
   },

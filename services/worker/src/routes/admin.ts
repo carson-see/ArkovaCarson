@@ -19,8 +19,9 @@ import { handlePlatformStats } from '../api/admin-stats.js';
 import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleOpsSloStats } from '../api/admin-ops-slo.js';
-import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
+import { handleAdminOrganizationDetail, handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
+import { handleAdminCreateInvitation, handleAdminListInvitations } from '../api/admin-invitations.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit, handleCreateOrganization, handleCreateUserAccount } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
@@ -251,6 +252,17 @@ adminRouter.use('/admin', async (req: Request, res: Response, next: NextFunction
 
 // ─── Admin Actions (POST) ───
 
+adminRouter.get('/admin/organizations/:id', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminOrganizationDetail(userId, req.params.id, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin organization detail request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── SCRUM-3873: provision a net-new org / account (platform admin only) ───
 // NOTE: these are collection-level POSTs; they do not collide with the
 // '/admin/users/:id/...' item-level actions below.
@@ -272,6 +284,28 @@ adminRouter.post('/admin/users', async (req, res) => {
     await handleCreateUserAccount(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Create user account request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.get('/admin/organizations/:id/invitations', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminListInvitations(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin invitation list request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/organizations/:id/invitations', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminCreateInvitation(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin create invitation request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

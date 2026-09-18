@@ -3,7 +3,9 @@
  *
  * Fetches an organization's non-accepted invitations (pending / expired /
  * revoked) so the org page can show what happened after "Invite Member" was
- * clicked. Read-side of the founder-reported "I invited someone and nothing
+ * clicked. Platform admins use the authenticated worker list endpoint for
+ * selected organizations; tenant admins retain the existing RLS query. Read-side
+ * of the founder-reported "I invited someone and nothing
  * happened, and I can't tell why" gap: previously nothing in the UI
  * distinguished "sent, waiting" from "sent, expired, invitee never saw it"
  * from "never actually sent" — all three looked identical (nothing changes
@@ -30,6 +32,8 @@ import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryClient';
+import { workerFetch } from '@/lib/workerClient';
+import { PENDING_INVITATIONS_LABELS } from '@/lib/copy';
 
 export type InvitationDisplayStatus = 'pending' | 'expired' | 'revoked';
 
@@ -68,7 +72,14 @@ function toDisplayStatus(row: InvitationRow): InvitationDisplayStatus {
   return 'pending';
 }
 
-async function fetchInvitationsData(orgId: string): Promise<OrgInvitation[]> {
+async function fetchInvitationRows(orgId: string, platformAdmin: boolean): Promise<InvitationRow[]> {
+  if (platformAdmin) {
+    const response = await workerFetch(`/api/admin/organizations/${orgId}/invitations`, { method: 'GET' });
+    if (!response.ok) throw new Error(PENDING_INVITATIONS_LABELS.LOAD_FAILED);
+    const body = await response.json() as { invitations?: InvitationRow[] };
+    if (!Array.isArray(body.invitations)) throw new Error(PENDING_INVITATIONS_LABELS.LOAD_FAILED);
+    return body.invitations;
+  }
   const { data, error } = await supabase
     .from('invitations')
     .select('id, email, role, status, created_at, expires_at, accepted_at')
@@ -79,7 +90,12 @@ async function fetchInvitationsData(orgId: string): Promise<OrgInvitation[]> {
 
   if (error) throw error;
 
-  return ((data ?? []) as InvitationRow[]).map((row) => ({
+  return (data ?? []) as InvitationRow[];
+}
+
+async function fetchInvitationsData(orgId: string, platformAdmin: boolean): Promise<OrgInvitation[]> {
+  const rows = await fetchInvitationRows(orgId, platformAdmin);
+  return rows.map((row) => ({
     id: row.id,
     email: row.email,
     role: row.role as OrgInvitation['role'],
@@ -89,7 +105,7 @@ async function fetchInvitationsData(orgId: string): Promise<OrgInvitation[]> {
   }));
 }
 
-export function useOrgInvitations(orgId: string | null | undefined): UseOrgInvitationsReturn {
+export function useOrgInvitations(orgId: string | null | undefined, platformAdmin = false): UseOrgInvitationsReturn {
   const qc = useQueryClient();
 
   const {
@@ -97,8 +113,8 @@ export function useOrgInvitations(orgId: string | null | undefined): UseOrgInvit
     isLoading: loading,
     error: queryError,
   } = useQuery({
-    queryKey: queryKeys.orgInvitations(orgId ?? ''),
-    queryFn: () => fetchInvitationsData(orgId!),
+    queryKey: [...queryKeys.orgInvitations(orgId ?? ''), platformAdmin ? 'platform-admin' : 'tenant'],
+    queryFn: () => fetchInvitationsData(orgId!, platformAdmin),
     enabled: !!orgId,
     staleTime: 30_000,
   });
