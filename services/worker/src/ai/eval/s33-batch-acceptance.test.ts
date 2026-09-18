@@ -59,18 +59,21 @@ type _ForbiddenOrchestratorAppend = S33AcceptanceOrchestrator['append'];
 
 const tempRoots: string[] = [];
 afterEach(() => {
-  // `maxRetries` is load-bearing, not defensive padding. Several fixtures below
-  // shell out to `git init` / `git commit` inside these temp roots, and git can
-  // leave a short-lived background process (auto-gc, index/lock churn) writing
-  // into `.git` after `execFileSync` returns. A recursive remove that races it
-  // fails with ENOTEMPTY — which surfaced as an intermittent RED `Tests` job on
-  // unrelated PRs in the merge queue (e.g. run 30713006527 on PR #1779:
-  // "ENOTEMPTY: directory not empty, rmdir '/tmp/arkova-s33-r10-git-…'").
-  // `force` does not cover this: it suppresses ENOENT, not ENOTEMPTY.
+  // Preserve bounded retries for filesystem contention. Fixture repositories
+  // disable automatic maintenance before fetching or committing, so detached
+  // Git housekeeping cannot recreate .git paths during cleanup.
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
+
+function initializeGitFixture(root: string): void {
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  // These repositories are disposable. Configure them before the first fetch
+  // or commit; retrying rm alone still raced detached maintenance in CI.
+  execFileSync('git', ['config', '--local', 'maintenance.auto', 'false'], { cwd: root });
+  execFileSync('git', ['config', '--local', 'gc.auto', '0'], { cwd: root });
+}
 
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
 
@@ -798,7 +801,7 @@ function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutatio
   const root = mkdtempSync(join(tmpdir(), 'arkova-s33-git-'));
   tempRoots.push(root);
   const manifestPath = WAVE1_MANIFEST_PATH;
-  execFileSync('git', ['init', '-q'], { cwd: root });
+  initializeGitFixture(root);
   execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
 
@@ -872,7 +875,7 @@ function revision10GitRepo(
 } {
   const root = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-git-'));
   tempRoots.push(root);
-  execFileSync('git', ['init', '-q'], { cwd: root });
+  initializeGitFixture(root);
   execFileSync('git', [
     'fetch', '-q', '--no-tags', supportObjectRepository, WAVE1_INITIAL_LANE3_SUPPORT_COMMIT,
   ], { cwd: root });
@@ -989,7 +992,7 @@ function revision10GitRepo(
 function outerCheckoutWithPacketPaths(): string {
   const root = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-outer-'));
   tempRoots.push(root);
-  execFileSync('git', ['init', '-q'], { cwd: root });
+  initializeGitFixture(root);
   execFileSync('git', [
     'fetch', '-q', '--no-tags', repositoryRoot(), WAVE1_INITIAL_LANE3_SUPPORT_COMMIT,
   ], { cwd: root });

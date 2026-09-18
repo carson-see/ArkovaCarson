@@ -98,6 +98,26 @@ describe('ApiKeySettings', () => {
     });
   });
 
+  /**
+   * SCRUM-3971 (review U11). `orgs:manage` gates six live routes and passes the
+   * `api_keys_scopes_known_values` CHECK, but this picker is the ONLY way a
+   * customer mints a key — a scope absent from it is a feature with no
+   * reachable credential.
+   */
+  it('offers the sub-organization management scope so an orgs:manage key can be minted', async () => {
+    const onCreate = vi.fn().mockResolvedValue({ key: 'ak_live_test' } as ApiKeyCreated);
+    render(<ApiKeySettings {...defaultProps} onCreate={onCreate} />);
+
+    fireEvent.click(screen.getByText('Create API Key'));
+    fireEvent.change(await screen.findByLabelText('Key Name'), { target: { value: 'Affiliates Key' } });
+    fireEvent.click(screen.getByLabelText('Affiliated organisations'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API Key' }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith('Affiliates Key', ['read:search', 'orgs:manage'], undefined);
+    });
+  });
+
   it('shows scope badges on key cards', () => {
     render(<ApiKeySettings {...defaultProps} />);
     expect(screen.getAllByText('Verify').length).toBeGreaterThan(0);

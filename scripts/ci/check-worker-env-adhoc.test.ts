@@ -16,7 +16,12 @@ const SCRIPT = resolve(import.meta.dirname, 'check-worker-env-adhoc.ts');
 
 function run(repoRoot: string, env: NodeJS.ProcessEnv = {}) {
   return spawnSync('npx', ['tsx', SCRIPT], {
-    env: { ...process.env, WORKER_ENV_ADHOC_REPO_ROOT: repoRoot, PR_LABELS: '', ...env },
+    env: {
+      ...process.env,
+      // This child owns a local fixture, not the surrounding Actions PR.
+      GITHUB_HEAD_REF: '', GITHUB_REF: '', GITHUB_REPOSITORY: '', PR_NUMBER: '',
+      WORKER_ENV_ADHOC_REPO_ROOT: repoRoot, PR_LABELS: '', ...env,
+    },
     encoding: 'utf8',
   });
 }
@@ -86,6 +91,20 @@ describe('check-worker-env-adhoc (SCRUM-1258)', () => {
     const r = run(tmp, { PR_LABELS: 'worker-env-adhoc-baseline-update' });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('PR labeled');
+  });
+
+  it('rejects a forged queue branch carrying an override label', () => {
+    seedTree(tmp, {
+      'services/worker/src/foo.ts': 'const x = process.env.FORGED_ONLY;',
+      'scripts/ci/snapshots/worker-env-adhoc-baseline.json': JSON.stringify({ identifiers: [], dynamic: [] }),
+    });
+    gitCommit(tmp, 'forged override fixture');
+    const r = run(tmp, {
+      GITHUB_HEAD_REF: 'mergify/merge-queue/untrusted-fixture',
+      PR_LABELS: 'worker-env-adhoc-baseline-update',
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('FORGED_ONLY');
   });
 
   it('skips config.ts (allowlisted as the canonical absorber)', () => {

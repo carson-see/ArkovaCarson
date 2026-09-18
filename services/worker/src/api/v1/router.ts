@@ -95,6 +95,7 @@ import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
 import { oracleRouter } from './oracle.js';
 import { agentsRouter } from './agents.js';
 import { agentsComputeIdRouter } from './agents-computeid.js';
+import { orgSubOrgsApiRouter } from './orgSubOrgsApiKey.js';
 import { computeidGate } from '../../middleware/computeidGate.js';
 import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
@@ -527,6 +528,39 @@ router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webho
 // would 401 an API-key caller before this route is ever reached.
 router.use('/agents/computeid', computeidGate, batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
 router.use('/agents', requireAuth, agentsRouter);
+
+// ─── Sub-organization management over an API key (SCRUM-3971) ───
+// MOUNTED HERE, NOT AT `/org/sub-orgs`. `index.ts:532` mounts the same feature
+// for the dashboard behind `requireAuthMw`, which resolves a Supabase user and
+// 401s an API-key caller before any nested route runs — so `/api/v1/org/...`
+// cannot serve a key, and that mount is deliberately left byte-identical.
+// `/organizations/...` is a fresh prefix with no existing v1 mount, so there is
+// no shadowing to reason about.
+//
+// `read:orgs` router-wide; the four mutating routes additionally require
+// `orgs:manage` inside `orgSubOrgsApiKey.ts`. `scopeSatisfies` makes
+// `orgs:manage` satisfy `read:orgs`, so a key granted only the write scope can
+// still list what it may act on.
+//
+// The POSTs take the §1.10 batch tier (10/min), the same bucket `/webhooks`
+// CRUD uses: two of them move credits and the other two change a tenancy
+// relationship. The GETs stay on the router-wide anon/keyed limiter above.
+// `batchRateLimiter` is a single instance mounted in several places and
+// `COUNTED_LIMITERS` (utils/rateLimit.ts) charges it once per request, so this
+// mount cannot double-count a caller that also hits another batch-tier route.
+const subOrgWriteRateLimiter = (req: Request, res: Response, next: NextFunction) => {
+  if (req.method === 'POST') {
+    batchRateLimiter(req, res, next);
+    return;
+  }
+  next();
+};
+router.use(
+  '/organizations/sub-orgs',
+  requireScopeAnyAuth('read:orgs'),
+  subOrgWriteRateLimiter,
+  orgSubOrgsApiRouter,
+);
 
 // ─── Record Authenticity Oracle — Phase II Agentic Layer (PH2-AGENT-04) ───
 // API key required — tracks agent identity for audit trail

@@ -23,12 +23,12 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'view-security-definer-intentional';
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.VIEWS_LINT_REPO_ROOT ?? resolve(MODULE_DIR, '..', '..');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'views-security-invoker-baseline.json');
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 function loadBaseline(): Set<string> {
   if (!existsSync(BASELINE_PATH)) return new Set();
@@ -264,7 +264,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${novel.length} bare view(s).`);
     for (const f of novel) console.log(`  ${f.file}:${f.line} → CREATE VIEW ${f.view}`);
     return;

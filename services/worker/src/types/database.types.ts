@@ -4991,7 +4991,7 @@ export type Database = {
           payment_grace_expires_at: string | null
           payment_state: string | null
           payment_state_updated_at: string | null
-          public_id: string | null
+          public_id: string
           session_timeout_minutes: number
           suspended: boolean
           suspended_at: string | null
@@ -5041,7 +5041,7 @@ export type Database = {
           payment_grace_expires_at?: string | null
           payment_state?: string | null
           payment_state_updated_at?: string | null
-          public_id?: string | null
+          public_id?: string
           session_timeout_minutes?: number
           suspended?: boolean
           suspended_at?: string | null
@@ -5091,7 +5091,7 @@ export type Database = {
           payment_grace_expires_at?: string | null
           payment_state?: string | null
           payment_state_updated_at?: string | null
-          public_id?: string | null
+          public_id?: string
           session_timeout_minutes?: number
           suspended?: boolean
           suspended_at?: string | null
@@ -7196,6 +7196,10 @@ export type Database = {
       }
     }
     Functions: {
+      _suborg_api_key_authorized: {
+        Args: { p_api_key_id: string; p_org_id: string }
+        Returns: boolean
+      }
       activate_user: {
         Args: { p_password: string; p_token: string }
         Returns: Json
@@ -7281,6 +7285,16 @@ export type Database = {
           p_amount: number
           p_child_org_id: string
           p_note?: string
+          p_parent_org_id: string
+        }
+        Returns: Json
+      }
+      allocate_credits_to_sub_org_as_api_key: {
+        Args: {
+          p_amount: number
+          p_caller_api_key_id: string
+          p_child_org_id: string
+          p_note: string
           p_parent_org_id: string
         }
         Returns: Json
@@ -7693,6 +7707,10 @@ export type Database = {
             Args: { p_caller_user_id: string; p_parent_org_id: string }
             Returns: Json
           }
+      get_parent_credit_rollup_as_api_key: {
+        Args: { p_caller_api_key_id: string; p_parent_org_id: string }
+        Returns: Json
+      }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
@@ -8227,6 +8245,33 @@ export type Database = {
         Args: {
           p_parent_org_id: string
           p_reason?: string
+          p_sub_org_id: string
+        }
+        Returns: Json
+      }
+      offboard_suborg: {
+        Args: {
+          p_caller_user_id: string
+          p_parent_org_id: string
+          p_reason: string
+          p_sub_org_id: string
+        }
+        Returns: Json
+      }
+      offboard_suborg_as_api_key: {
+        Args: {
+          p_caller_api_key_id: string
+          p_parent_org_id: string
+          p_reason: string
+          p_sub_org_id: string
+        }
+        Returns: Json
+      }
+      suspend_suborg_as_api_key: {
+        Args: {
+          p_caller_api_key_id: string
+          p_parent_org_id: string
+          p_reason: string
           p_sub_org_id: string
         }
         Returns: Json
