@@ -96,3 +96,31 @@ burned the tag), and `sdks/mcp-server` has no CI publish workflow at all.
 - Live isolated-rig provisioning must fail before mutation unless the operator supplies a digest-pinned image whose digest also resolves from the declared full-SHA Artifact Registry tag, an explicit source HEAD matching local `git HEAD`/`GITHUB_SHA`, tracked provisioner + driver bytes matching that commit, a freshly fetched `origin/main` base, and an exclusive soak ID. Dry-runs may emit labeled placeholders only.
 - Scheduler-backed isolated rigs create jobs on a non-firing hold schedule, immediately pause and verify them, keep them paused through fixture seed plus `clean_mirror`, then restore the existing configured cadence and resume only after the timestamped preflight artifact is recorded. Stubbed apply tests must put admission artifacts under their temporary directory; they must never leak `docs/staging/**` files into the worktree.
 - CI scripts exit 0 = pass, exit 1 = fail with actionable message.
+
+
+## verify-suborg-offboard.py — SCRUM-3971 concurrency regression
+
+Run `python3 scripts/verify-suborg-offboard.py /absolute/new-evidence-directory`
+with PostgreSQL server/client binaries on PATH. The script creates a fresh
+loopback-only cluster on an OS-assigned port, keeps bounded actual concurrent
+psql sessions and stops the server in finally. It cannot accept a remote or
+shared database URL. The output directory must not already exist.
+
+It first reproduces the immutable 0444/0453 two-transaction defect, then applies
+0460 and tests both serialization orders across JWT/key actor pairs, rollback
+on suspension-audit failure, existing authority denials and service-only ACLs.
+Queries, server/stop logs, source hashes and results remain in the output directory.
+This is a scoped actual-SQL fixture, not full Arkova replay, live RLS or soak.
+
+The offboard harness also reproduces the old two-call protocol after 0460 is
+applied: migration-only deployment still races. That negative release control
+requires draining old handlers before claiming the new runtime is qualified.
+The exact documented revoke/re-enable containment SQL is rehearsed locally.
+
+
+### Atomic offboard balance proof — 2026-09-14
+
+`verify-suborg-offboard.py` now asserts the final parent/child balances in both
+RPC return values across both concurrent serialization orders, an idempotent
+retry and an initial zero-credit offboard. This regression failed on the prior
+0460 result shape before the SQL correction. No remote database is used.

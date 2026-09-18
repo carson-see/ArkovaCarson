@@ -92,8 +92,9 @@ export async function getCallerProfile(userId: string): Promise<CallerProfile | 
  */
 export async function getCallerProfileResult(
   userId: string,
+  client: Pick<typeof db, 'from'> = db,
 ): Promise<OrgAuthResult<CallerProfile | null>> {
-  const { profile, error } = await loadCallerProfile(userId);
+  const { profile, error } = await loadCallerProfile(userId, client);
   return { value: profile, error };
 }
 

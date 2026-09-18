@@ -53,11 +53,10 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { GIT_BIN } from './lib/ciContext.js';
+import { GIT_BIN, hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'null-identity-guard-intentional';
 const REPO = process.env.NULL_IDENTITY_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 // `<something> IS DISTINCT FROM auth.uid() | (SELECT auth.uid()) | get_user_org_id()`
 const GUARD_REGEX =
@@ -140,7 +139,7 @@ function main(): void {
     return;
   }
 
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${findings.length} occurrence(s).`);
     for (const f of findings) console.log(`  ${f.file}:${f.line} → ${f.context}`);
     return;

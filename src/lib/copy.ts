@@ -734,6 +734,7 @@ export const API_KEY_LABELS = {
   SCOPE_READ_SEARCH: 'Search',
   SCOPE_READ_RECORDS: 'Records',
   SCOPE_READ_ORGS: 'Organisations',
+  SCOPE_ORGS_MANAGE: 'Affiliated organisations',
   SCOPE_WRITE_ANCHORS: 'Anchor writes',
   SCOPE_ADMIN_RULES: 'Rules admin',
   SCOPE_KEYS_MANAGE: 'Key management',
@@ -1656,6 +1657,7 @@ export const ORG_PAGE_LABELS = {
 // =============================================================================
 
 export const PENDING_INVITATIONS_LABELS = {
+  LOAD_FAILED: 'Could not load invitations. Please try again.',
   SECTION_TITLE: 'Pending Invitations',
   STATUS_PENDING: 'Pending',
   STATUS_EXPIRED: 'Expired',

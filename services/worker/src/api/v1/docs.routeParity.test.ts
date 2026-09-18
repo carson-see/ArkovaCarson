@@ -52,6 +52,7 @@ import { aiReviewRouter } from './ai-review.js';
 import { aiIntegrityRouter } from './ai-integrity.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiFeedbackRouter } from './ai-feedback.js';
+import { orgSubOrgsApiRouter } from './orgSubOrgsApiKey.js';
 import { aiVerifySearchRouter } from './ai-verify-search.js';
 
 type ExpressMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
@@ -130,6 +131,10 @@ const MOUNTS: MountEntry[] = [
   { varName: 'aiIntegrityRouter', router: aiIntegrityRouter, prefix: '/ai/integrity' },
   { varName: 'aiEmbedRouter', router: aiEmbedRouter, prefix: '/ai/embed' },
   { varName: 'aiFeedbackRouter', router: aiFeedbackRouter, prefix: '/ai/feedback' },
+  // SCRUM-3971 — the API-key sub-organization surface is published and frozen
+  // on publication (§1.8), so a route that exists but is undocumented is the
+  // exact failure this harness exists to catch.
+  { varName: 'orgSubOrgsApiRouter', router: orgSubOrgsApiRouter, prefix: '/organizations/sub-orgs' },
   // SCRUM-3906: added when the aiSemanticSearchGate() mount-time gate was
   // removed from '/verify/search' — this MOUNTS table is the only thing
   // that would have caught a served-spec / mounted-route drift on that
