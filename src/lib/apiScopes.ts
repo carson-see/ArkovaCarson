@@ -43,10 +43,18 @@ export const COMPLIANCE_API_SCOPES = [
   'keys:read',
 ] as const;
 
+// Sub-organization management (SCRUM-3971). Mirrors `ORG_API_SCOPES` in
+// services/worker/src/api/apiScopes.ts BY NAME — the vocabulary gate resolves
+// the spread below and throws if this array is missing here.
+export const ORG_API_SCOPES = [
+  'orgs:manage',
+] as const;
+
 export const API_KEY_SCOPES = [
   ...API_V2_SCOPES,
   ...LEGACY_API_SCOPES,
   ...COMPLIANCE_API_SCOPES,
+  ...ORG_API_SCOPES,
 ] as const;
 
 // Historical short-form values may appear on old keys or local fixtures. They
@@ -56,6 +64,7 @@ export const DISPLAY_ONLY_SCOPE_ALIASES = ['batch', 'usage'] as const;
 export type ApiV2Scope = (typeof API_V2_SCOPES)[number];
 export type LegacyApiScope = (typeof LEGACY_API_SCOPES)[number];
 export type ComplianceApiScope = (typeof COMPLIANCE_API_SCOPES)[number];
+export type OrgApiScope = (typeof ORG_API_SCOPES)[number];
 export type ApiScope = (typeof API_KEY_SCOPES)[number];
 export type DisplayOnlyScopeAlias = (typeof DISPLAY_ONLY_SCOPE_ALIASES)[number];
 export type DisplayApiScope = ApiScope | DisplayOnlyScopeAlias;
@@ -89,6 +98,7 @@ export const API_SCOPE_LABELS: Record<DisplayApiScope, string> = {
   'webhooks:manage': API_KEY_LABELS.SCOPE_WEBHOOKS_MANAGE,
   'agents:manage': API_KEY_LABELS.SCOPE_AGENTS_MANAGE,
   'keys:read': API_KEY_LABELS.SCOPE_KEYS_READ,
+  'orgs:manage': API_KEY_LABELS.SCOPE_ORGS_MANAGE,
   batch: API_KEY_LABELS.SCOPE_BATCH,
   usage: API_KEY_LABELS.SCOPE_USAGE,
 };
@@ -115,13 +125,24 @@ export const API_SCOPE_BADGE_CLASSES: Record<DisplayApiScope, string> = {
   'webhooks:manage': 'bg-lime-50 text-lime-700 border-lime-200',
   'agents:manage': 'bg-cyan-50 text-cyan-700 border-cyan-200',
   'keys:read': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'orgs:manage': 'bg-cyan-50 text-cyan-700 border-cyan-200',
   batch: 'bg-violet-50 text-violet-700 border-violet-200',
   usage: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
 // Scopes shown in the "create API key" picker. Legacy scopes are accepted on
 // the wire but not surfaced as choices for new keys.
-export const SELECTABLE_API_SCOPES: ScopeDescriptor[] = API_V2_SCOPES.map((id) => ({
+//
+// `ORG_API_SCOPES` is here, not only in the vocabulary (review U11/SCRUM-3971):
+// the picker is the ONLY way a customer mints a key, so a scope that exists in
+// `API_KEY_SCOPES`, passes the CHECK constraint and gates six live routes but
+// is absent from this array is a feature with no reachable key — the shipped
+// hook with no UI. `LEGACY_API_SCOPES` and `COMPLIANCE_API_SCOPES` stay out
+// deliberately: those are issued by other flows, not chosen here.
+export const SELECTABLE_API_SCOPES: ScopeDescriptor[] = [
+  ...API_V2_SCOPES,
+  ...ORG_API_SCOPES,
+].map((id) => ({
   id,
   label: API_SCOPE_LABELS[id],
   className: API_SCOPE_BADGE_CLASSES[id],

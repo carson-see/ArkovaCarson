@@ -88,6 +88,27 @@ describe('scopeSatisfies', () => {
     expect(scopeSatisfies(['anchor:write'], 'write:anchors')).toBe(true);
   });
 
+  /**
+   * SCRUM-3971. `orgs:manage` is the write grant on the sub-organization
+   * surface and strictly contains the read grant that surface uses, so a
+   * parent key granted only the write scope can still LIST what it may act on.
+   * The implication is ONE-WAY — a read grant must never become a write grant,
+   * which is the direction that would matter.
+   */
+  it('treats orgs:manage as a superset of read:orgs, and never the reverse', () => {
+    expect(scopeSatisfies(['orgs:manage'], 'read:orgs')).toBe(true);
+    expect(scopeSatisfies(['orgs:manage'], 'orgs:manage')).toBe(true);
+    expect(scopeSatisfies(['read:orgs'], 'orgs:manage')).toBe(false);
+    expect(scopeSatisfies(['read:records', 'read:search'], 'read:orgs')).toBe(false);
+    expect(scopeSatisfies([], 'read:orgs')).toBe(false);
+  });
+
+  it('does not let orgs:manage leak into unrelated scopes', () => {
+    for (const unrelated of ['anchor:write', 'keys:manage', 'webhooks:manage', 'compliance:read']) {
+      expect(scopeSatisfies(['orgs:manage'], unrelated), unrelated).toBe(false);
+    }
+  });
+
   // SCRUM-3981 — `/api/v1/webhooks` now requires `webhooks:manage`. The
   // default scope set for a new key is `['read:search']`
   // (DEFAULT_API_KEY_SCOPES), which is exactly the key that could manage an

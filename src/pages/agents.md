@@ -1,4 +1,10 @@
 # agents.md — pages
+
+## UAT-22 invitation read mode (2026-09-14)
+
+OrgProfilePage forwards its verified `platformAdmin` mode to the invitation-list hook, matching organization metadata and the existing create-invitation path. The page regression checks that selected-org invitation reads receive that mode. Failed list reads show a visible invitation-section alert using curated copy; raw worker or database errors are never rendered.
+
+_Last updated: 2026-09-12_
 _Last updated: 2026-09-13_
 
 ## 2026-09-13 — "Cancel Request" failed in total silence (pre-existing, fixed on top of PR #2907)
@@ -238,6 +244,15 @@ The page test carries the ratchet: it asserts no anchor on the page links to
 come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
 copy-level half of the same guard.
 _Last updated: 2026-08-30_
+
+## 2026-09-11 — UAT-22 selected-org invitations
+
+`OrgProfilePage` passes the authenticated profile's platform-admin status to
+`useInviteMember`. This lets the existing Invite Member dialog act on the org in the URL while
+ordinary ORG_ADMIN users retain the tenant-scoped RPC path. The selected organization ID remains
+the route parameter; no client-supplied org or actor display field is authoritative.
+The same status selects the worker-backed organization metadata read, so a foreign selected org
+renders its real name instead of the previous generic `Organization` fallback.
 
 ## 2026-09-05 — `DevelopersPage.tsx` advertised two unregistered MCP tools
 

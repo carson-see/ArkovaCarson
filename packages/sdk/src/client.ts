@@ -115,6 +115,38 @@ export class Arkova {
   }
 
   /**
+   * Call an Arkova API path with the client's authentication, retry policy,
+   * and typed error handling. Paths must be root-relative so credentials can
+   * never be redirected to another origin.
+   */
+  async request<T = unknown>(
+    path: string,
+    init?: RequestInit,
+    options?: { idempotent?: boolean },
+  ): Promise<T> {
+    let decodedPath = '';
+    try {
+      decodedPath = decodeURIComponent(path);
+    } catch {
+      throw new ArkovaError('API request path must be root-relative', 400, 'invalid_request_path');
+    }
+    if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(decodedPath)) {
+      throw new ArkovaError('API request path must be root-relative', 400, 'invalid_request_path');
+    }
+    try {
+      const configured = new URL(this.baseUrl);
+      if (!['http:', 'https:'].includes(configured.protocol) || configured.username || configured.password) {
+        throw new Error();
+      }
+      if (new URL(path, `${this.baseUrl}/`).origin !== configured.origin) throw new Error();
+    } catch {
+      throw new ArkovaError('API request path must stay on the configured origin', 400, 'invalid_request_path');
+    }
+    const response = await this.fetch(path, { ...init, redirect: 'error' }, options);
+    return jsonOrThrow<T>(response, 'API request failed');
+  }
+
+  /**
    * Anchor data — compute fingerprint and submit for network anchoring.
    * Returns a receipt that can be used later for verification.
    */
@@ -781,7 +813,7 @@ export class Arkova {
       headers['X-API-Key'] = this.#apiKey;
     }
 
-    const requestInit = { ...init, headers };
+    const requestInit = { ...init, redirect: 'error' as const, headers };
     const method = (requestInit.method ?? 'GET').toUpperCase();
     const retryable = isSafeRetryMethod(method) || options?.idempotent === true;
     let attempt = 0;

@@ -117,3 +117,12 @@ unreachable today, so no delivery of it has occurred — see
 ## 2026-09-14 — SCRUM-5142 folders
 
 `ArkovaClient.folders` mirrors the canonical worker REST surface: list/create/update/bindConnector/delete/moveRecords. Keep bulk moves capped by the server contract and preserve per-row failures.
+## SCRUM-5211 — authenticated redirects fail closed
+
+The private fetch wrapper forces `redirect: 'error'` after caller options are
+spread. This protects every SDK method, including `getAnchor()` and `verify()`,
+and prevents a caller override. Keep redirect policy in the shared transport;
+applying it only in `request()` leaves typed methods able to forward
+`X-API-Key` when Fetch follows a cross-origin redirect. SDK unit tests and the
+API CLI's two-origin integration suite cover direct and `probe`
+health/read/verify/folder paths.
