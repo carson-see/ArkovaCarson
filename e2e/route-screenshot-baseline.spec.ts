@@ -350,6 +350,9 @@ const ORG_ADMIN_ROUTES: RouteCase[] = [
   { key: 'compliance-scorecard', path: ROUTES.COMPLIANCE_SCORECARD, auth: 'orgAdmin', ready: authedAppReady },
   { key: 'rules', path: ROUTES.RULES, auth: 'orgAdmin', ready: authedAppReady },
   { key: 'rule-builder', path: ROUTES.RULE_BUILDER, auth: 'orgAdmin', ready: authedAppReady },
+  // SPEC-CONNECTORS PM-9: the Rules routes above stay routed and baselined —
+  // do NOT remove them. Connectors replaces only the org header nav entry.
+  { key: 'connectors', path: ROUTES.CONNECTORS, auth: 'orgAdmin', ready: authedAppReady },
   { key: 'anchor-queue', path: ROUTES.ANCHOR_QUEUE, auth: 'orgAdmin', ready: authedAppReady },
   { key: 'admin-onboarding', path: ROUTES.ADMIN_ONBOARDING, auth: 'orgAdmin', ready: authedAppReady },
   { key: 'signature-compliance', path: ROUTES.SIGNATURE_COMPLIANCE, auth: 'orgAdmin', ready: authedAppReady },

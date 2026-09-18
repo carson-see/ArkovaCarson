@@ -36,6 +36,16 @@ adding a reference to a Secret Manager id that does not exist fails the SCRUM-44
 every subsequent worker deploy, not just this rollout. See `.github/workflows/agents.md`'s
 2026-09-13 entry for what the release session must do together to provision it.
 
+## 2026-09-13 — `index.ts` mounts `drive-folders.ts` on the existing `/google_drive` path scope
+
+`GET /api/v1/integrations/google_drive/folders` (Connectors page folder picker) is mounted as a
+SECOND `app.use('/api/v1/integrations', ...)` block, immediately after the existing
+`driveOAuthRouter` mount, reusing the identical `pathScopedKillSwitch('/google_drive',
+'ENABLE_DRIVE_OAUTH')`, `pathScopedMiddleware('/google_drive', rateLimiters.api)`, and
+`pathScopedMiddleware('/google_drive', integrationsAuthGate)` chain — no new feature flag, the
+picker dies with the connector. See `api/v1/integrations/agents.md` and
+`integrations/oauth/agents.md` for the endpoint and the `listChildFolders()`/scope details.
+
 ## 2026-09-07 — ComputeID AgentPassport integration (SCRUM-4492 / SCRUM-4493 / SCRUM-4494)
 
 `config.ts` gains `enableComputeidIntegration` (`boolFlag(false)`), `computeidWebhookSecret` (comma-separated list allowed) and `computeidCaCertPem`. The superRefine refuses to boot when the flag is on without ≥1 non-empty secret (parsed by the SAME `integrations/computeid/secrets.ts::parseSecretList` the handler uses — a `","` value must fail at boot, not 503 every delivery) or without a parseable CA pin, and in production refuses a bare SPKI public-key pin. **New import edge:** `config.ts` → `integrations/computeid/{ca-cert,secrets}.ts`; that folder must stay logger- and config-free or the boot import cycles. `middleware/flagRegistry.ts` registers the getter; both drift snapshots + `flag-inventory.json` pin it `false`.
