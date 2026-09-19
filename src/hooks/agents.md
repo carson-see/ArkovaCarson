@@ -1,3 +1,25 @@
+## 2026-09-12 — SCRUM-5023: `useApiKeys.extendKey` sends a DURATION
+
+`extendKey(keyId, expiresInDays | null, allowShorten?)` PATCHes `{ expires_in_days: n }`, or
+`{ expires_in_days: null }` to clear. **Never a timestamp.** The worker refuses a non-null
+`expires_at` on purpose: the server holds the clock, and an accepted client timestamp would let a
+caller write an already-past expiry. That mistake is not visible from a component test that only
+asserts the callback fired, so `useApiKeys.extend.test.tsx` pins the request body.
+
+`allowShorten` maps to `allow_shorten`. `expires_in_days` REPLACES the expiry rather than adding to
+it, so the worker 409s `api_key_expiry_would_shorten` on any value earlier than the current expiry
+(and on any value at all for a key that has none). A hook that never sent the flag would make the
+confirmed "yes, shorten it" path fail every time.
+
+`ApiKeyMasked.status` / `.days_until_expiry` are OPTIONAL for a reason: a deployed frontend can be
+talking to an older worker mid-rollout. Prefer `status` over `is_active` — `is_active` is `true` on
+expired keys that authentication already refuses. The response field is `days_until_expiry`, NOT
+`expires_in_days`: the latter is the REQUEST field and means the opposite thing (a duration to set,
+not a countdown to read).
+
+`extendKey` THROWS on a non-OK response, like `revokeKey`/`deleteKey`, so the caller can keep its
+dialog open instead of implying a change that did not happen.
+
 # agents.md — hooks
 
 ## 2026-09-19 — UAT-12 capability and tag suggestions

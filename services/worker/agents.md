@@ -181,6 +181,7 @@ vi.mock('../config.js', () => ({
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
 
+## PR #2951 — Zod package parity (2026-09-14)
 ## PR #2948 — Zod package parity (2026-09-14)
 
 Root and worker manifests and lockfiles pin Zod 4.6.2 together. The seed UUID guard imports the root validator and requires it to match the worker; preserve that invariant when updating either dependency group.
