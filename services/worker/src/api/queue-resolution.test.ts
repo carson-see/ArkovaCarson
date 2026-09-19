@@ -283,6 +283,46 @@ describe('handleResolveQueue', () => {
     }));
   });
 
+  it('waits for notification dispatch before committing the HTTP response', async () => {
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    const is = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn().mockReturnValue({ is });
+    fromMock.mockReturnValue({ select: vi.fn().mockReturnValue({ eq }) });
+    let releaseNotification!: () => void;
+    emitOrgAdminNotificationsMock.mockReturnValue(new Promise<void>((resolve) => { releaseNotification = resolve; }));
+    const { res, json } = mockRes();
+
+    const pending = handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1',
+    } }), res, 'user-1');
+    await vi.waitFor(() => expect(emitOrgAdminNotificationsMock).toHaveBeenCalledTimes(1));
+    expect(json).not.toHaveBeenCalled();
+
+    releaseNotification();
+    await pending;
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
+  });
+
+  it('keeps the successful receipt when notification dispatch rejects', async () => {
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    const is = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn().mockReturnValue({ is });
+    fromMock.mockReturnValue({ select: vi.fn().mockReturnValue({ eq }) });
+    emitOrgAdminNotificationsMock.mockRejectedValue(new Error('notification unavailable'));
+    const { res, status, json } = mockRes();
+
+    await handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1',
+    } }), res, 'user-1');
+
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
+    expect(status).not.toHaveBeenCalled();
+  });
+
   it('keeps the successful receipt when the best-effort notification lookup throws', async () => {
     rpcMock.mockResolvedValue({ data: 'res-1', error: null });
     fromMock.mockImplementation(() => { throw new Error('lookup unavailable'); });
