@@ -34,7 +34,7 @@ npm install arkova
 
 Or with pnpm: `pnpm add arkova`. Or with yarn: `yarn add arkova`.
 
-**Requirements:** Node.js ≥18 (uses native `fetch` and `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
+**Requirements:** Node.js ≥20 (uses native `fetch` and global `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
 
 **Bundle size:** Under 10KB minified, zero runtime dependencies.
 
@@ -70,7 +70,7 @@ That's it. No UI, no SDK calls to learn beyond `anchor`, `verify`, `verifyBatch`
 
 ### 20-line document anchor example
 
-See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complete Node 18+ script that anchors a local document and prints the public ID.
+See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complete Node 20+ script that anchors a local document and prints the public ID.
 
 ---
 
