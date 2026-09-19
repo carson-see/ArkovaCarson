@@ -1,5 +1,15 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-19 — Python SDK installs are lock-bound in CI and publication
+
+The Python SDK test and PyPI workflows use the same exact `setup-uv` commit,
+uv version, Python 3.12 interpreter, and committed `packages/arkova-py/uv.lock`.
+`uv sync --locked --all-extras --no-install-project --no-build` installs only
+locked third-party wheels. The local project is then installed editable with
+`--no-deps --no-build-isolation`, using the locked Hatchling already present.
+Commands run with `--no-sync` so uv cannot silently resolve again. Keep the two
+workflows in parity; `ci-workflow-contract.test.ts` fails if either drifts.
+
 ## 2026-09-19 — SCRUM-5253 People mobile layout regression
 
 The E2E job runs `npm run test:e2e:people-layout` after the shared Chromium suite whenever the existing app-affecting change detector enables E2E. The standalone config owns a local Vite server and synthetic HTTP boundaries, so it is intentionally ignored by the shared Playwright config; this explicit CI step is its durable invocation.

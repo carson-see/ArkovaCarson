@@ -37,6 +37,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "build>=1.2,<2",
+  # Installed from uv.lock so release builds can use --no-isolation instead of
+  # resolving the hatchling build-system range again at publish time.
+  "hatchling>=1.26,<2",
+  # Hatchling imports this helper only for editable builds. Keep it explicit so
+  # the local project can install without an isolated, freshly resolved env.
+  "editables>=0.3,<1",
   "pytest>=8,<9",
   # EXACT pin, on purpose. ruff has no stable-default guarantee below 1.0:
   # 0.16.0 widened its implicit default rule set (adding I / UP / SIM / PYI /
