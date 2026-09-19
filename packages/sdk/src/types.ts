@@ -152,7 +152,8 @@ export interface AnchorReceipt {
   /** SHA-256 fingerprint of the anchored data */
   fingerprint: string;
   /** Current status */
-  status: 'PENDING' | 'SUBMITTED' | 'SECURED';
+  /** Current persisted lifecycle state. Idempotent submissions return the existing state, including terminal/error states. */
+  status: AnchorLifecycleStatus;
   /** Anchor creation timestamp (ISO 8601) */
   createdAt: string;
   /** Network receipt ID (set after anchoring) */

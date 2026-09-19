@@ -192,10 +192,14 @@ export class Arkova {
       idempotent?: boolean;
     }>(response, 'Anchor request failed');
 
+    if (!isAnchorLifecycleStatus(result.status)) {
+      throw new ArkovaError('Anchor response was malformed', 502, 'invalid_response');
+    }
+
     return {
       publicId: result.public_id,
       fingerprint: result.fingerprint,
-      status: result.status as AnchorReceipt['status'],
+      status: result.status,
       createdAt: result.created_at,
       networkReceiptId: result.chain_tx_id,
       action: result.action,

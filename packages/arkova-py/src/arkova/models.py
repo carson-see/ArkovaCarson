@@ -413,17 +413,16 @@ class AnchorReceipt(ArkovaModel):
     ``get_anchor_submission_status()`` for strict current durable state.
 
     Removed in 2.3.0: ``chain_tx_id``. The endpoint has never emitted it, and
-    structurally cannot: the receipt is issued at creation with
-    ``status='PENDING'``, before any batch drain has anchored the fingerprint,
-    so there is no transaction id in existence yet. Read it from
+    structurally cannot: even though an idempotent replay can return an existing
+    terminal lifecycle status, this endpoint never emits a transaction id. Read it from
     ``verify()``'s ``network_receipt_id`` once the anchor settles.
     """
 
     public_id: str
     fingerprint: str
-    # Plain `str`, not `Literal["PENDING"]`: the endpoint only sends PENDING
-    # today, but pinning an API snapshot as a hard constraint is the defect
-    # BUG-2026-08-12-007 records. A new status must surface, not raise.
+    # Plain `str`, not a Literal: creation returns PENDING, while an idempotent
+    # replay returns the existing lifecycle state (including terminal/error
+    # states). A future server value must surface rather than crash parsing.
     status: str
     created_at: str
     # The caller's link to the verification page. Always emitted — both sites

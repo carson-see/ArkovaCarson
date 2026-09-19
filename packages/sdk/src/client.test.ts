@@ -198,6 +198,32 @@ describe('anchor', () => {
     expect(result.idempotent).toBe(true);
   });
 
+  it.each([
+    'PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED',
+    'REVOKED', 'EXPIRED', 'SUPERSEDED', 'PENDING_RESOLUTION',
+  ] as const)('represents an idempotent receipt in lifecycle state %s', async (status) => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      public_id: 'ARK-1', fingerprint: 'a'.repeat(64), status,
+      created_at: '2026-01-01T00:00:00Z', idempotent: true,
+    }) });
+
+    await expect(client.anchor('same data')).resolves.toMatchObject({ status, idempotent: true });
+  });
+
+  it('rejects an unknown anchor receipt lifecycle state', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      public_id: 'ARK-1', fingerprint: 'a'.repeat(64), status: 'CORRUPT',
+      created_at: '2026-01-01T00:00:00Z',
+    }) });
+
+    await expect(client.anchor('same data')).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'invalid_response',
+    });
+  });
+
   it('reads and maps caller-scoped durable submission status', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({

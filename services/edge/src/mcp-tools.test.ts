@@ -73,6 +73,8 @@ describe('handleAnchorDocument submission action parity', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://worker.test/api/v1/anchor');
+    expect(init.redirect).toBe('error');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
       fingerprint: 'c'.repeat(64),
       action: 'queue',
@@ -104,6 +106,21 @@ describe('handleAnchorDocument submission action parity', () => {
         source_url: 'https://example.com/evidence',
       },
     }));
+  });
+
+  it('passes through a terminal idempotent submission status without relabeling it', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ public_id: 'ark_revoked', status: 'REVOKED', idempotent: true }),
+    });
+
+    const result = await handleAnchorDocument({ content_hash: 'e'.repeat(64) }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'REVOKED', idempotent: true });
   });
 
   it('omits provider slugs and URLs the worker public-metadata validator rejects', async () => {
@@ -172,6 +189,33 @@ describe('handleAnchorDocument submission action parity', () => {
     expect(result.content[0]?.text).toContain('require API-key authentication');
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it('keeps the timeout armed while reading the worker response body', async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    mockFetch.mockImplementationOnce((_url, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal;
+      return Promise.resolve({
+        ok: true,
+        json: () => new Promise((_resolve, reject) => {
+          requestSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        }),
+      });
+    });
+
+    const pending = handleAnchorDocument({ content_hash: 'd'.repeat(64) }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(pending).resolves.toMatchObject({
+      isError: true,
+      content: [{ text: 'Anchor submission timed out' }],
+    });
+    vi.useRealTimers();
+  });
 });
 
 describe('handleGetSubmissionStatus caller-scoped proxy', () => {
@@ -198,7 +242,11 @@ describe('handleGetSubmissionStatus caller-scoped proxy', () => {
     expect(result.isError).not.toBe(true);
     expect(mockFetch).toHaveBeenCalledWith(
       'https://worker.test/api/v1/anchor/ark_test/submission-status',
-      { headers: { Accept: 'application/json', 'X-API-Key': 'ak_test_secret' } },
+      expect.objectContaining({
+        redirect: 'error',
+        signal: expect.any(AbortSignal),
+        headers: { Accept: 'application/json', 'X-API-Key': 'ak_test_secret' },
+      }),
     );
     expect(JSON.parse(result.content[0].text)).toMatchObject({
       public_id: 'ark_test',

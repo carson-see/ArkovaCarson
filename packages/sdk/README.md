@@ -124,13 +124,16 @@ console.log(r1);
 // {
 //   publicId: "ARK-2026-001",
 //   fingerprint: "abc123...",  // SHA-256 hex
-//   status: "PENDING",          // PENDING → SUBMITTED → SECURED
+//   status: "PENDING",          // May be any lifecycle state on an idempotent replay
 //   createdAt: "2026-04-11T10:30:00.000Z",
 //   networkReceiptId: undefined  // populated once SECURED
 // }
 ```
 
 **Idempotency:** the same fingerprint returns the same `publicId`. Anchoring identical content twice is a no-op.
+The replay receipt reports the existing record's current lifecycle state, including
+`REVOKED`, `EXPIRED`, `SUPERSEDED`, or `PENDING_RESOLUTION`; it does not reset the
+status to `PENDING`.
 
 ### `arkova.getAnchorSubmissionStatus(publicId)`
 
