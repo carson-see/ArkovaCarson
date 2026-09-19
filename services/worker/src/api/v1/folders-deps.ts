@@ -2,6 +2,7 @@
 import { db as defaultDb } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 import type { Database } from '../../types/database.types.js';
 import {
   createFoldersRouter,
@@ -120,6 +121,44 @@ export function createDefaultFolderApiDeps(db: DbLike = defaultDb): FolderApiDep
         .eq('user_id', userId).eq('org_id', input.orgId).maybeSingle();
       if (error) throw new Error('folder_authority_lookup_failed');
       return !!data;
+    },
+    async getMemberContext(input) {
+      const { data: membership, error: membershipError } = await db.from('org_members')
+        .select('role').eq('user_id', input.ownerUserId).eq('org_id', input.orgId).maybeSingle();
+      if (membershipError) throw new Error('folder_authority_lookup_failed');
+      const membershipRole = (membership as { role?: 'owner' | 'admin' | 'member' } | null)?.role;
+      const { data: profile, error: profileError } = await db.from('profiles')
+        .select('id, email, full_name, avatar_url, role, created_at, org_id')
+        .eq('id', input.ownerUserId).maybeSingle();
+      if (profileError) throw new Error('folder_authority_lookup_failed');
+      const row = profile as { id: string; email: string; full_name: string | null; avatar_url: string | null; role: 'ORG_ADMIN' | 'INDIVIDUAL'; created_at: string; org_id: string | null } | null;
+      if (!row || !membershipRole) return null;
+      return {
+        id: row.id, email: row.email, full_name: row.full_name, avatar_url: row.avatar_url,
+        role: membershipRole === 'owner' || membershipRole === 'admin' ? 'ORG_ADMIN' : 'INDIVIDUAL',
+        created_at: row.created_at, org_id: input.orgId, membership_role: membershipRole,
+      };
+    },
+    async listMemberContexts(input) {
+      const { data: memberships, error: membershipError } = await db.from('org_members')
+        .select('user_id, role').eq('org_id', input.orgId).order('user_id', { ascending: true }).limit(500);
+      if (membershipError) throw new Error('folder_authority_lookup_failed');
+      const rows = (memberships ?? []) as Array<{ user_id: string; role: 'owner' | 'admin' | 'member' }>;
+      if (rows.length === 0) return [];
+      type Profile = { id: string; email: string; full_name: string | null; avatar_url: string | null; created_at: string };
+      const profiles: Profile[] = [];
+      for (const { values: userIds } of chunkForInFilter(rows.map((row) => row.user_id))) {
+        const { data, error } = await db.from('profiles').select('id, email, full_name, avatar_url, created_at')
+          .in('id', userIds);
+        if (error) throw new Error('folder_authority_lookup_failed');
+        profiles.push(...((data ?? []) as Profile[]));
+      }
+      const byId = new Map(profiles.map((row) => [row.id, row]));
+      return rows.flatMap((membership) => {
+        const profile = byId.get(membership.user_id);
+        return profile ? [{ ...profile, role: membership.role === 'member' ? 'INDIVIDUAL' as const : 'ORG_ADMIN' as const,
+          org_id: input.orgId, membership_role: membership.role }] : [];
+      });
     },
     async listFolders(input) {
       const { data, error } = await db.rpc('folder_api_list', nullableFolderRpcArgs<'folder_api_list'>({

@@ -61,6 +61,13 @@ except PackageNotFoundError:  # running from a source tree without an install
 T = TypeVar("T")
 
 
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
+
+
 def _headers(api_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
@@ -457,12 +464,20 @@ class Arkova:
     ) -> Folder:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders")
         response = self._request("POST", path, json={"name": name, "owner_scope": owner_scope,
-            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id})
+            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id},
+            retryable=False)
         return _parse_json(response, FolderEnvelope).folder
 
-    def update_folder(self, folder_id: str, *, name: str | None = None, parent_folder_id: str | None = None) -> Folder:
+    def update_folder(
+        self, folder_id: str, *, name: str | None = None,
+        parent_folder_id: str | None | _Unset = _UNSET,
+    ) -> Folder:
         path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
-        response = self._request("PATCH", path, json={"name": name, "parent_folder_id": parent_folder_id})
+        body: dict[str, Any] = {}
+        if name is not None: body["name"] = name
+        if not isinstance(parent_folder_id, _Unset): body["parent_folder_id"] = parent_folder_id
+        if not body: raise ArkovaError("Folder update requires name or parent_folder_id", code="invalid_request")
+        response = self._request("PATCH", path, json=body, retryable=False)
         return _parse_json(response, FolderEnvelope).folder
 
     def bind_folder_connector(
@@ -471,12 +486,12 @@ class Arkova:
     ) -> Folder:
         path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}/connector")
         response = self._request("PUT", path, json={"provider": provider, "source_id": source_id,
-            "connection_id": connection_id})
+            "connection_id": connection_id}, retryable=False)
         return _parse_json(response, FolderEnvelope).folder
 
     def delete_folder(self, folder_id: str) -> None:
         path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
-        self._request("DELETE", path)
+        self._request("DELETE", path, retryable=False)
 
     def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
@@ -691,12 +706,20 @@ class AsyncArkova:
     ) -> Folder:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders")
         response = await self._request("POST", path, json={"name": name, "owner_scope": owner_scope,
-            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id})
+            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id},
+            retryable=False)
         return _parse_json(response, FolderEnvelope).folder
 
-    async def update_folder(self, folder_id: str, *, name: str | None = None, parent_folder_id: str | None = None) -> Folder:
+    async def update_folder(
+        self, folder_id: str, *, name: str | None = None,
+        parent_folder_id: str | None | _Unset = _UNSET,
+    ) -> Folder:
         path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
-        response = await self._request("PATCH", path, json={"name": name, "parent_folder_id": parent_folder_id})
+        body: dict[str, Any] = {}
+        if name is not None: body["name"] = name
+        if not isinstance(parent_folder_id, _Unset): body["parent_folder_id"] = parent_folder_id
+        if not body: raise ArkovaError("Folder update requires name or parent_folder_id", code="invalid_request")
+        response = await self._request("PATCH", path, json=body, retryable=False)
         return _parse_json(response, FolderEnvelope).folder
 
     async def bind_folder_connector(
@@ -705,12 +728,12 @@ class AsyncArkova:
     ) -> Folder:
         path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}/connector")
         response = await self._request("PUT", path, json={"provider": provider, "source_id": source_id,
-            "connection_id": connection_id})
+            "connection_id": connection_id}, retryable=False)
         return _parse_json(response, FolderEnvelope).folder
 
     async def delete_folder(self, folder_id: str) -> None:
         path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
-        await self._request("DELETE", path)
+        await self._request("DELETE", path, retryable=False)
 
     async def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")

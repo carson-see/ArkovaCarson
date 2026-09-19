@@ -24,6 +24,8 @@ vi.mock('@/hooks/useAuth', () => ({
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: () => ({ profile: { role: 'INDIVIDUAL', org_id: null }, loading: false }),
 }));
+vi.mock('@/hooks/useActiveOrg', () => ({ useActiveOrg: () => ({ orgId: null, loading: false }) }));
+vi.mock('@/hooks/useUserOrgs', () => ({ useUserOrgs: () => ({ orgs: [], loading: false }) }));
 vi.mock('@/hooks/useAnchors', () => ({ useAnchors: mockUseAnchors }));
 vi.mock('@/hooks/useFolders', () => ({ useFolders: mockUseFolders }));
 vi.mock('@/hooks/useRevokeAnchor', () => ({
@@ -36,7 +38,7 @@ vi.mock('@/components/layout', () => ({
 vi.mock('@/components/anchor', () => ({
   SecureDocumentDialog: () => null,
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
@@ -78,6 +80,7 @@ describe('MyRecordsPage — Folders UI', () => {
   let renameFolder: ReturnType<typeof vi.fn>;
   let deleteFolder: ReturnType<typeof vi.fn>;
   let assignRecord: ReturnType<typeof vi.fn>;
+  let assignRecords: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -85,6 +88,7 @@ describe('MyRecordsPage — Folders UI', () => {
     renameFolder = vi.fn().mockResolvedValue(undefined);
     deleteFolder = vi.fn().mockResolvedValue(undefined);
     assignRecord = vi.fn().mockResolvedValue(undefined);
+    assignRecords = vi.fn().mockResolvedValue({ moved: [], failed: [] });
 
     mockUseAnchors.mockReturnValue({
       records,
@@ -99,6 +103,7 @@ describe('MyRecordsPage — Folders UI', () => {
       renameFolder,
       deleteFolder,
       assignRecord,
+      assignRecords,
     });
   });
 
@@ -129,6 +134,22 @@ describe('MyRecordsPage — Folders UI', () => {
     expect(screen.queryByText('loose-record.pdf')).not.toBeInTheDocument();
   });
 
+  it('includes records in nested descendants when a parent folder is selected', async () => {
+    const user = userEvent.setup();
+    mockUseFolders.mockReturnValue({
+      folders: [...folders, { id: 'child', name: '2026', ownerScope: 'USER', parentFolderId: 'folder-1', createdAt: '2026-01-03T00:00:00Z' }],
+      loading: false, error: null, createFolder, renameFolder, deleteFolder, assignRecord, assignRecords,
+    });
+    mockUseAnchors.mockReturnValue({
+      records: [...records, { ...records[0], id: 'anchor-child', filename: 'nested.pdf', folderId: 'child' }],
+      loading: false, refreshAnchors: vi.fn(),
+    });
+    await renderPage();
+    await user.click(screen.getByRole('button', { name: 'Invoices' }));
+    expect(screen.getByText('invoice.pdf')).toBeInTheDocument();
+    expect(screen.getByText('nested.pdf')).toBeInTheDocument();
+  });
+
   it('filters to Unfiled records', async () => {
     const user = userEvent.setup();
     await renderPage();
@@ -144,10 +165,33 @@ describe('MyRecordsPage — Folders UI', () => {
     await renderPage();
 
     await user.click(screen.getByRole('button', { name: 'New Folder' }));
+    expect(screen.getByText('Only you can access this global personal folder.')).toBeVisible();
     await user.type(await screen.findByLabelText('Folder name'), 'Diplomas');
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
-    expect(createFolder).toHaveBeenCalledWith('Diplomas');
+    expect(createFolder).toHaveBeenCalledWith('Diplomas', {
+      contextOrgId: null, ownerScope: 'USER', parentFolderId: null,
+    });
+  });
+
+  it.each([
+    [{ id: 'context-parent', name: 'Context', ownerScope: 'USER' as const, contextOrgId: 'org-1', createdAt: '2026-01-01' }, 'You and authorized organization or platform administrators can access this folder.'],
+    [{ id: 'global-parent', name: 'Global', ownerScope: 'USER' as const, contextOrgId: null, createdAt: '2026-01-01' }, 'Only you can access this global personal folder.'],
+    [{ id: 'org-parent', name: 'Organization', ownerScope: 'ORG' as const, contextOrgId: 'org-1', createdAt: '2026-01-01' }, 'Organization members can access this organization folder according to their role.'],
+  ])('discloses the inherited privacy of a child under $name', async (parent, disclosure) => {
+    const user = userEvent.setup();
+    mockUseFolders.mockReturnValue({
+      folders: [parent], loading: false, error: null, createFolder, renameFolder, deleteFolder, assignRecord, assignRecords,
+    });
+    await renderPage();
+    await user.click(screen.getByRole('button', { name: `${parent.name} actions` }));
+    await user.click(await screen.findByText('New subfolder'));
+    expect(await screen.findByText(disclosure)).toBeVisible();
+    await user.type(screen.getByLabelText('Folder name'), 'Child');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    expect(createFolder).toHaveBeenCalledWith('Child', {
+      ownerScope: parent.ownerScope, parentFolderId: parent.id, contextOrgId: parent.contextOrgId,
+    });
   });
 
   it('renames a folder via the sidebar actions menu', async () => {
@@ -194,7 +238,24 @@ describe('MyRecordsPage — Folders UI', () => {
     await user.click(await screen.findByText('Move to folder'));
     await user.click(await screen.findByRole('button', { name: /Invoices/ }));
 
-    expect(assignRecord).toHaveBeenCalledWith('anchor-2', 'folder-1');
+    expect(assignRecords).toHaveBeenCalledWith(['anchor-2'], 'folder-1');
+  });
+
+  it('keeps only failed records selected and the dialog open for an actionable retry', async () => {
+    const user = userEvent.setup();
+    assignRecords.mockResolvedValueOnce({
+      moved: ['anchor-1'], failed: [{ anchor_id: 'anchor-2', code: 'move_failed' }],
+    }).mockResolvedValueOnce({ moved: ['anchor-2'], failed: [] });
+    await renderPage();
+    await user.click(screen.getByRole('checkbox', { name: 'Select invoice.pdf' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select loose-record.pdf' }));
+    await user.click(screen.getByRole('button', { name: 'Move 2' }));
+    await user.click(await screen.findByRole('button', { name: /Invoices/ }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Certificates/ }));
+    expect(assignRecords).toHaveBeenLastCalledWith(['anchor-2'], 'folder-2');
+    expect(screen.getByRole('checkbox', { name: 'Select invoice.pdf' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select loose-record.pdf' })).not.toBeChecked();
   });
 
   it('removes a filed record from its folder directly from the action menu', async () => {

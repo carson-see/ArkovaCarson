@@ -4,6 +4,13 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 
 ## Files
 
+- **`uat24-completion-20260919/PLAN.md`** — proposed, not-started T3 full-scope
+  folder completion plan, including direct-RLS privacy, selected-org UI,
+  partial-move recovery, client parity and independent premortem. New follow-up
+  evidence cannot borrow PR2968's historical head or release exception.
+
+- **`uat24-2026-09-14/`** — UAT-24 local/native folder evidence. The runner now applies additive privacy correction 0480 after 0464 and exercises the effective forced-RLS policy as owner, platform administrator, approved ancestor administrator, ordinary peer, and identity-less authenticated session. This remains local evidence, not hosted qualification or soak evidence. The unpublished privacy correction was renumbered from0475 because the release-owned parent independently published contractual-cap0475.
+
 - **`uat12-completion-20260919/PLAN.md`** — proposed, not-started T3 plan and premortem for the UAT-12 completion follow-up. Keeps draft preparation distinct from release and prior PR2966 evidence; requires native quota/accounting contention, exact-scope privacy and desktop/mobile recovery checks.
 - **`uat12-completion-20260919/screenshots/`** — mocked-boundary desktop/mobile HELD and initial unavailable-status screenshots from the final local UAT-12 browser run; not hosted or network-completion evidence. Included in reused Draft PR2966, with its merge hold retained.
 

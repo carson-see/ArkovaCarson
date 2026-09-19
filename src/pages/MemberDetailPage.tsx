@@ -9,13 +9,15 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Mail, Calendar, User, FileText, Folder as FolderIcon, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrganization } from '@/hooks/useOrganization';
+import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
+import { z } from 'zod';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -47,8 +49,14 @@ interface MemberProfile {
   avatar_url: string | null;
   role: 'ORG_ADMIN' | 'INDIVIDUAL';
   created_at: string;
-  org_id: string | null;
+  org_id: string;
 }
+
+const MemberContextResponse = z.object({ member: z.object({
+  id: z.string().uuid(), email: z.string().email(), full_name: z.string().nullable(),
+  avatar_url: z.string().nullable(), role: z.enum(['ORG_ADMIN', 'INDIVIDUAL']),
+  created_at: z.string(), org_id: z.string().uuid(), membership_role: z.enum(['owner', 'admin', 'member']),
+}) }).strict();
 
 interface MemberFolder {
   id: string;
@@ -82,10 +90,13 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = 
 
 export function MemberDetailPage() {
   const { memberId } = useParams<{ memberId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { organization } = useOrganization(profile?.org_id);
+  const { orgId: activeOrgId, loading: activeOrgLoading } = useActiveOrg();
+  const contextOrgId = searchParams.get('org_id') ?? activeOrgId;
+  const { organization } = useOrganization(contextOrgId);
 
   const [member, setMember] = useState<MemberProfile | null>(null);
   const [anchors, setAnchors] = useState<AnchorRow[]>([]);
@@ -96,9 +107,16 @@ export function MemberDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!memberId || !profile?.org_id) return;
+    if (!memberId || !contextOrgId || activeOrgLoading) {
+      // A scope transition must synchronously hide the prior tenant's data.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMember(null); setAnchors([]); setFolders([]); setSelectedFolderId(null);
+      setLoading(activeOrgLoading); setError(!activeOrgLoading ? MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND : null);
+      return;
+    }
 
     const currentMemberId = memberId;
+    const currentContextOrgId = contextOrgId;
     let cancelled = false;
 
     async function fetchMemberData() {
@@ -106,28 +124,22 @@ export function MemberDetailPage() {
       setError(null);
       setFolderError(null);
       setSelectedFolderId(null);
+      setMember(null);
+      setAnchors([]);
+      setFolders([]);
 
-      // Profile RLS establishes exact-org or approved parent-admin visibility.
-      const { data: memberData, error: memberError } = await supabase
-        .from('profiles')
-        .select('id, email, full_name, avatar_url, role, created_at, org_id')
-        .eq('id', currentMemberId)
-        .single();
+      try {
+        const memberResponse = await workerFetch(`/api/v1/folders/member-context?owner_user_id=${encodeURIComponent(currentMemberId)}&context_org_id=${encodeURIComponent(currentContextOrgId)}`);
+        const memberBody = memberResponse.ok ? MemberContextResponse.safeParse(await memberResponse.json().catch(() => null)) : null;
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (memberError || !memberData) {
-        setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
-        setLoading(false);
-        return;
-      }
+        if (!memberBody?.success || memberBody.data.member.id !== currentMemberId || memberBody.data.member.org_id !== currentContextOrgId) {
+          setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
+          return;
+        }
 
-      const visibleMember = memberData as MemberProfile;
-      if (!visibleMember.org_id) {
-        setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
-        setLoading(false);
-        return;
-      }
+      const visibleMember = memberBody.data.member as MemberProfile;
       setMember(visibleMember);
 
       // The folder endpoint applies the same exact context and approved
@@ -153,13 +165,17 @@ export function MemberDetailPage() {
       } else {
         setFolderError('Folders could not be loaded for this member.');
       }
-      setLoading(false);
+      } catch {
+        if (!cancelled) setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
 
     fetchMemberData();
 
     return () => { cancelled = true; };
-  }, [memberId, profile?.org_id]);
+  }, [memberId, contextOrgId, activeOrgLoading]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -246,7 +262,7 @@ export function MemberDetailPage() {
         </div>
       )}
 
-      {member && !loading && (
+      {member && !loading && !error && member.id === memberId && member.org_id === contextOrgId && (
         <div className="space-y-6 animate-in-view">
           {/* Profile card */}
           <Card className="shadow-card-rest hover:shadow-card-hover transition-shadow">

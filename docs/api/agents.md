@@ -249,6 +249,7 @@ the same shape as `credential.verified`.
 ## 2026-09-14 — SCRUM-5142 MCP folder parity
 
 `mcp-tools.md` documents `arkova_manage_folders` with the same action set as hosted MCP, npm MCP, REST, and both SDKs. Tool and server-card registries must remain exact mirrors.
+`openapi.yaml` mirrors all canonical folder routes and documents that bulk outcomes carry UUIDs for legacy anchor-id input or `ARK-*` values for public-id input.
 The intro now describes the resulting default catalog precisely: sixteen tools,
 with fifteen read-oriented tools and one separately scoped folder-management
 tool. Do not call the whole catalog read-only while folder mutations are live.

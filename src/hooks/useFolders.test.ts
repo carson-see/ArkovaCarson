@@ -10,6 +10,7 @@ const mockProfile = vi.hoisted(() => ({ current: { role: 'INDIVIDUAL', org_id: n
 vi.mock('@/lib/workerClient', () => ({ workerFetch }));
 vi.mock('./useAuth', () => ({ useAuth: () => ({ user: { id: 'user-1' }, loading: false }) }));
 vi.mock('./useProfile', () => ({ useProfile: () => ({ profile: mockProfile.current, loading: false }) }));
+vi.mock('./useActiveOrg', () => ({ useActiveOrg: () => ({ orgId: mockProfile.current.org_id, loading: false }) }));
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -62,13 +63,29 @@ describe('useFolders', () => {
     expect(JSON.parse(init.body)).toEqual({ anchor_ids: ['anchor-1'], folder_id: 'folder-1' });
   });
 
-  it('throws when every item in a bulk move is denied', async () => {
+  it('returns every denied item so a bulk caller can keep it selected', async () => {
     workerFetch.mockImplementation(async (path: string) => path.endsWith('/bulk-move')
       ? response({ moved: [], failed: [{ anchor_id: 'anchor-1', code: 'not_authorized_or_not_found' }] }, 207)
       : response({ folders: [] }));
     const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.assignRecords(['anchor-1'], null)).resolves.toEqual({
+      moved: [], failed: [{ anchor_id: 'anchor-1', code: 'not_authorized_or_not_found' }],
+    });
     await expect(result.current.assignRecord('anchor-1', null)).rejects.toThrow();
+  });
+
+  it('keeps top-level personal folders global and inherits an explicit parent context', async () => {
+    mockProfile.current = { role: 'ORG_ADMIN', org_id: 'org-1' };
+    const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await result.current.createFolder('Global');
+    await result.current.createFolder('Child', { ownerScope: 'USER', parentFolderId: 'parent', contextOrgId: 'org-1' });
+    const bodies = workerFetch.mock.calls.filter(([, init]) => init?.method === 'POST').map(([, init]) => JSON.parse(init.body));
+    expect(bodies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Global', context_org_id: null }),
+      expect.objectContaining({ name: 'Child', context_org_id: 'org-1', parent_folder_id: 'parent' }),
+    ]));
   });
 
   it('surfaces a stable API error', async () => {

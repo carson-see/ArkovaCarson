@@ -1637,3 +1637,14 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+
+## 2026-09-19 — UAT-24 global-personal folder privacy (0480)
+
+`0480_uat24_global_personal_folder_privacy.sql` is an additive correction to
+0462/0464. It narrows only `folders_select_user`: platform administrators and
+approved ancestor administrators can read another user's personal folder only
+when `context_org_id IS NOT NULL`; a globally personal row remains visible only
+to its owner. No insert/update/delete policy or worker RPC changes. The native
+UAT-24 harness executes the effective 0462 + 0464 + 0480 stack under forced RLS
+and proves owner, platform-context, ancestor-context, peer-denial, global
+privacy, and NULL-identity behavior. File-only, not applied to any hosted DB.

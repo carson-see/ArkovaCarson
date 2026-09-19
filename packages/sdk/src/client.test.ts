@@ -1499,6 +1499,43 @@ describe('WebhookEventType', () => {
 });
 
 describe('folders namespace', () => {
+  it('covers list, rename, reparent, connector binding/clear, and delete contracts', async () => {
+    const folder = {
+      id: 'folder-id', public_id: 'FLD-0011223344556677', name: 'Child', owner_scope: 'ORG',
+      user_id: null, org_id: 'org-id', context_org_id: null, parent_folder_id: null,
+      connector_provider: null, connector_source_id: null, connector_connection_id: null,
+      created_at: '2026-09-14T00:00:00Z', updated_at: '2026-09-14T00:00:00Z',
+    };
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folders: [folder] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, status: 204 });
+    const client = new Arkova({ apiKey: 'ak_test' });
+
+    await client.folders.list({ ownerScope: 'ORG', orgId: 'org-id' });
+    await client.folders.update('folder-id', { name: 'Renamed' });
+    await client.folders.update('folder-id', { parentFolderId: null });
+    await client.folders.bindConnector('folder-id', {
+      provider: 'google_drive', sourceId: 'drive-folder', connectionId: 'connection-id',
+    });
+    await client.folders.bindConnector('folder-id', { provider: null, sourceId: null, connectionId: null });
+    await client.folders.delete('folder-id');
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/folders/folder-id'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: 'Renamed' }) }));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/folders/folder-id'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ parent_folder_id: null }) }));
+    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/folders/folder-id/connector'),
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({
+        provider: 'google_drive', source_id: 'drive-folder', connection_id: 'connection-id',
+      }) }));
+    expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/folders/folder-id'),
+      expect.objectContaining({ method: 'DELETE' }));
+  });
+
   it('creates nested folders and maps the public-safe response', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ folder: {
       id: 'folder-id', public_id: 'FLD-0011223344556677', name: 'Child', owner_scope: 'ORG',
