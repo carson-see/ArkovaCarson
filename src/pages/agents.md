@@ -854,6 +854,9 @@ only fails when a user clicks.
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
 
+## PR #2951 — installed JSZip attribution guard (2026-09-14)
+
+The notices page test derives JSZip’s version from the lockfile and verifies the matching rendered row, MIT election text, and exact upstream source link. It must continue failing when a shipped version lacks attribution.
 ## 2026-09-12 SCRUM-5024 — `ReferralSettingsPage.tsx` (new), `/settings/referrals`
 
 Wraps `ReferralPanel` in the AppShell. The organization comes from
