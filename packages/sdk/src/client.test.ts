@@ -1379,6 +1379,8 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   // the payloads skipped schema validation entirely.
   'attestation.created': true,
   'attestation.revoked': true,
+  'anchor.revocation_anchored': true,
+  'attestation.active': true,
 };
 
 describe('WebhookEventType', () => {
@@ -1402,6 +1404,8 @@ describe('WebhookEventType', () => {
         'credential.verified',
         'attestation.created',
         'attestation.revoked',
+        'anchor.revocation_anchored',
+        'attestation.active',
       ].sort(),
     );
   });
