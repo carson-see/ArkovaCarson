@@ -384,7 +384,8 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
     expect(job).toMatch(/version:\s*["']0\.10\.3["']/u);
     expect(job).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
     expect(job).toMatch(/uv run --locked --no-sync --no-build python -m build --wheel --no-isolation/u);
-    expect(job).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build dist\/\*\.whl/u);
+    expect(job).toMatch(/printf '%s --hash=sha256:%s\\n'/u);
+    expect(job).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build --require-hashes --requirement/u);
     expect(job).not.toMatch(/python -m pip/u);
   });
 
@@ -398,7 +399,8 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
       expect(workflow).toMatch(/version:\s*["']0\.10\.3["']/u);
       expect(workflow).toMatch(/cache-dependency-glob:\s*packages\/arkova-py\/uv\.lock/u);
       expect(workflow).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
-      expect(workflow).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build dist\/\*\.whl/u);
+      expect(workflow).toMatch(/printf '%s --hash=sha256:%s\\n'/u);
+      expect(workflow).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build --require-hashes --requirement/u);
       expect(workflow).toMatch(/ARKOVA_TEST_INSTALLED_WHEEL:\s*["']1["']/u);
       expect(workflow).toMatch(/uv run --locked --no-sync --no-build pytest/u);
       expect(workflow).toMatch(/uv run --locked --no-sync --no-build ruff check src tests/u);

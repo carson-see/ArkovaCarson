@@ -37,7 +37,11 @@ jobs:
         run: |
           rm -rf dist
           uv run --locked --no-sync --no-build python -m build --no-isolation
-          uv pip install --python .venv/bin/python --no-deps --no-build dist/*.whl
+          wheels=(dist/*.whl)
+          [[ ${#wheels[@]} -eq 1 && -f ${wheels[0]} ]]
+          wheel_hash=$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)
+          printf '%s --hash=sha256:%s\n' "${wheels[0]}" "$wheel_hash" > "$RUNNER_TEMP/arkova-wheel-requirements.txt"
+          uv pip install --python .venv/bin/python --no-deps --no-build --require-hashes --requirement "$RUNNER_TEMP/arkova-wheel-requirements.txt"
 
       - name: Test installed wheel
         env:
