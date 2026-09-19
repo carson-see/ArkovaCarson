@@ -441,23 +441,22 @@ class DocumentDetail(RecordDetail):
 class AnchorReceipt(ArkovaModel):
     """Response of ``POST /api/v1/anchor``.
 
-    Five keys, all unconditional: the endpoint's two emit sites — the
-    idempotent duplicate hit (200) and the fresh insert (201) — build the same
-    object literal, and `interface AnchorReceipt` in ``anchor-submit.ts``
-    declares every member non-optional.
+    The five original keys and four UAT-12 state keys are unconditional on the
+    current endpoint. The four newer fields remain optional here so callers
+    can parse receipts retained from older deployments. Use
+    ``get_anchor_submission_status()`` for strict current durable state.
 
     Removed in 2.3.0: ``chain_tx_id``. The endpoint has never emitted it, and
-    structurally cannot: the receipt is issued at creation with
-    ``status='PENDING'``, before any batch drain has anchored the fingerprint,
-    so there is no transaction id in existence yet. Read it from
+    structurally cannot: even though an idempotent replay can return an existing
+    terminal lifecycle status, this endpoint never emits a transaction id. Read it from
     ``verify()``'s ``network_receipt_id`` once the anchor settles.
     """
 
     public_id: str
     fingerprint: str
-    # Plain `str`, not `Literal["PENDING"]`: the endpoint only sends PENDING
-    # today, but pinning an API snapshot as a hard constraint is the defect
-    # BUG-2026-08-12-007 records. A new status must surface, not raise.
+    # Plain `str`, not a Literal: creation returns PENDING, while an idempotent
+    # replay returns the existing lifecycle state (including terminal/error
+    # states). A future server value must surface rather than crash parsing.
     status: str
     created_at: str
     # The caller's link to the verification page. Always emitted — both sites
@@ -467,6 +466,36 @@ class AnchorReceipt(ArkovaModel):
     credit_state: Literal["pending", "spent", "refunded"] | None = None
     instant_status: str | None = None
     idempotent: bool | None = None
+
+
+class AnchorSubmissionStatus(ArkovaModel):
+    public_id: str
+    action: Literal["queue", "instant"]
+    anchor_status: Literal[
+        "PENDING",
+        "BROADCASTING",
+        "SUBMITTED",
+        "SECURED",
+        "REVOKED",
+        "EXPIRED",
+        "SUPERSEDED",
+        "PENDING_RESOLUTION",
+    ]
+    credit_state: Literal["pending", "spent", "refunded"] | None = None
+    instant_status: (
+        Literal[
+            "QUEUED",
+            "PROCESSING",
+            "NEEDS_CREDIT",
+            "RETRYABLE",
+            "HELD",
+            "SUBMITTED",
+            "FAILED",
+        ]
+        | None
+    ) = None
+    retryable: bool
+    updated_at: str
 
 
 @dataclass

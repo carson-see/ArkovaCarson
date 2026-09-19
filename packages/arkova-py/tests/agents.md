@@ -71,3 +71,8 @@ Tests for the Arkova Python SDK.
 All four Python timestamp model families already accept omitted and explicit-null observations. `test_all_readers_preserve_nullable_observed_timestamp` runs the six actual reader methods through both sync and async HTTP clients with omitted, null and observed timestamps (36 cases), checking route and authorization headers. No Python runtime/model or package version change was necessary.
 
 Folder client tests cover matching sync/async route, auth header, request body, and response parsing contracts for SCRUM-5142.
+## 2026-09-19 — UAT-12 status coverage
+
+Client tests pin the version-aware status path and typed NEEDS_CREDIT/retryable response; keep sync and async method parity when extending it.
+Both clients are exercised directly. Unknown lifecycle/instant enum values must surface the existing
+bounded `ArkovaError("unexpected response shape")`, not enter the typed model.

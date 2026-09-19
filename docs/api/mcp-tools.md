@@ -2,9 +2,11 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen launch tools: fifteen read-oriented tools and one scoped folder-management tool. They let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, query verified public records, and organize records through the same authorization checks as the REST API. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen default launch tools plus two conditionally registered submission-lifecycle tools. They let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, query verified public records, organize records, submit client-computed fingerprints, and inspect caller-scoped submission state through the same authorization checks as the REST API. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
-`arkova_anchor_document` is intentionally outside the default MCP launch surface. It is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Folder mutations remain separately available through `arkova_manage_folders` only to callers with `anchor:write` and the exact folder/record authority checked by the REST API.
+`arkova_anchor_document` and `arkova_get_submission_status` are intentionally outside the default MCP launch surface. Both are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Folder mutations remain separately available through `arkova_manage_folders` only to callers with `anchor:write` and the exact folder/record authority checked by the REST API. When the hosted feature flag is off, callers that still hold `anchor:write` or its `write:anchors` alias can read historical submission status through the authenticated REST API, TypeScript/Python SDK status method, or API CLI; read-only callers cannot use another transport to bypass that authorization requirement.
+
+The hosted tool name is `arkova_anchor_document`; the separately maintained npm stdio server exposes the equivalent submission operation as `arkova_submit_anchor`. Registration documents capability, not production enablement: both hosted submission tools remain absent from default discovery unless the flag and scope checks pass. The npm stdio server registers its submit and status tools independently of the hosted edge gate.
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
 
@@ -56,6 +58,8 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 14 | `arkova_oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
 | 15 | `arkova_list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
 | 16 | **`arkova_manage_folders`** | **List and manage nested personal or organization record folders** | **SCRUM-5142** |
+| 17 | **`arkova_get_submission_status`** | **Read caller-scoped durable queue/instant state; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-12** |
+| 18 | `arkova_anchor_document` | Submit a client-computed fingerprint; hosted edge registration is conditional on `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus `write:anchors` or `anchor:write` | UAT-12 |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `arkova`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 
@@ -282,7 +286,7 @@ reachable.
 
 ## 4. `arkova_anchor_document` — gated write tool
 
-`arkova_anchor_document` is not exposed by the default public MCP launch manifest. It is a gated write tool for controlled deployments only. To expose it, operators must set `MCP_ENABLE_ANCHOR_DOCUMENT=true` and authenticate with a caller whose auth result includes `write:anchors` or `anchor:write`.
+`arkova_anchor_document` and `arkova_get_submission_status` are not exposed by the default public MCP launch manifest. They are gated tools for controlled write-capable deployments only. To expose either hosted tool, operators must set `MCP_ENABLE_ANCHOR_DOCUMENT=true` and authenticate with a caller whose auth result includes `write:anchors` or `anchor:write`.
 
 When enabled, it submits a document's SHA-256 fingerprint to the public ledger. The document itself is never sent — only its fingerprint.
 

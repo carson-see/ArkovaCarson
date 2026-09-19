@@ -82,14 +82,16 @@ The server speaks JSON-RPC over stdio. A handshake plus a `tools/list` confirms 
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | npx -y arkova-mcp-server
 ```
 
-A healthy server replies with its `serverInfo` and all 7 tool definitions. The `ARKOVA_API_KEY is not set` line on stderr is expected here and is not a failure.
+A healthy server replies with its `serverInfo` and all 9 tool definitions. The `ARKOVA_API_KEY is not set` line on stderr is expected here and is not a failure.
 
 ## Tools
 
-7 tools total, all reading the same `ARKOVA_API_KEY`. **Every tool is a remote HTTPS call to the Arkova API.** None of them read local files, environment variables, or stored secrets.
+9 tools total, all reading the same `ARKOVA_API_KEY`. **Every tool is a remote HTTPS call to the Arkova API.** None of them read local files, environment variables, or stored secrets.
 
 | Tool | Description |
 |------|-------------|
+| `arkova_submit_anchor` | Submit a client-computed fingerprint to the free queue or instant path; descriptions are public and user/organization tags are private |
+| `arkova_get_submission_status` | Read caller-scoped durable queue/instant state by submitted public ID |
 | `arkova_verify_anchor` | Verify an anchored record's authenticity and network anchor status by public ID |
 | `arkova_anchor_status` | Get anchor status and proof details for an anchored record |
 | `arkova_search_anchors` | Search the Arkova public registry by subject name, issuing institution, or record type |

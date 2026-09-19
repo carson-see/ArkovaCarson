@@ -849,3 +849,25 @@ RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash`
 ## 2026-09-14 — SCRUM-5142 folder UI
 
 `MyRecordsPage` supports nested personal/org folders and bounded multi-record moves. `MemberDetailPage` loads only the selected member's explicit org-context folders through the worker API and filters the member's records by the selected subtree; global personal folders are never requested. `RuleBuilderPage` configures the same destination ids for connector actions.
+## 2026-09-12 SCRUM-5024 — `ReferralSettingsPage.tsx` (new), `/settings/referrals`
+
+Wraps `ReferralPanel` in the AppShell. The organization comes from
+`useActiveOrg()` rather than `profile.org_id`, so a user who administers both a
+parent and a sub-organization sees the one they actually selected (ORG-HIER-01)
+instead of whatever the legacy primary column names.
+
+ORG_ADMIN gates MINTING only — a member still sees the code and the table,
+because the code is a shareable string and hiding it from the people asked to
+share it helps nobody. Authority is re-checked in SQL regardless:
+`ensure_org_referral_code` requires `is_org_admin_of`.
+
+While `useActiveOrg` is loading, the page renders a spinner rather than passing
+`orgId = null` through — the panel's null branch says "join or create an
+organization", which would flash at a user who has one.
+
+`SettingsPage.tsx` gained the fourth link in the organization card.
+## 2026-09-19 — Developer integration claims
+
+`DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Keep install commands version-neutral and link to package registries for live release status so coordinated publications do not immediately stale the page. Never describe a release candidate as published. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.
+
+The public gateway serves the machine-readable reference at `/api/docs/spec.json`; `/api/docs` returns 404 and must not be used for documentation buttons. Sandbox verification search uses `GET /api/v1/verify/search` and must describe the returned `search_mode` (`semantic_vector` or `lexical_substring`) rather than promise semantic execution.

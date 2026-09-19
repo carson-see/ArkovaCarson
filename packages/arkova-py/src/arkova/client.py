@@ -17,6 +17,7 @@ from .errors import ArkovaError
 from .models import (
     Anchor,
     AnchorReceipt,
+    AnchorSubmissionStatus,
     BulkAnchorDuplicateStrategy,
     BulkAnchorInput,
     BulkAnchorResponse,
@@ -328,6 +329,15 @@ class Arkova:
             AnchorReceipt,
         )
 
+    def get_anchor_submission_status(self, public_id: str) -> AnchorSubmissionStatus:
+        """Read this API key actor's durable queue/instant submission state."""
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/anchor/{quote(public_id, safe='')}/submission-status",
+        )
+        return _parse_json(self._request("GET", path), AnchorSubmissionStatus)
+
     def anchor_bulk(
         self,
         inputs: Sequence[BulkAnchorInput],
@@ -563,6 +573,15 @@ class AsyncArkova:
             await self._request("POST", path, json=body),
             AnchorReceipt,
         )
+
+    async def get_anchor_submission_status(self, public_id: str) -> AnchorSubmissionStatus:
+        """Read this API key actor's durable queue/instant submission state."""
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/anchor/{quote(public_id, safe='')}/submission-status",
+        )
+        return _parse_json(await self._request("GET", path), AnchorSubmissionStatus)
 
     async def anchor_bulk(
         self,

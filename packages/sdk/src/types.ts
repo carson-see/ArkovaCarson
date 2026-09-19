@@ -23,6 +23,11 @@ export type WebhookEventType =
   // Advance warning: a SECURED record is inside its 7-day expiry window and has
   // NOT expired yet. Distinct from `anchor.expired`, which fires after the fact.
   | 'compliance.document_expiring'
+  | 'job.completed'
+  | 'compliance.certificate_expiring'
+  | 'compliance.anchor_delayed'
+  | 'compliance.signature_revoked'
+  | 'compliance.timestamp_coverage_low'
   // Attestation lifecycle, public ids only — no fingerprint, no internal UUID.
   // SCRUM-3982 registered both. `attestation.revoked` is subscribable and
   // contract-locked, but its producer is not yet reachable, so no delivery of
@@ -35,8 +40,20 @@ export type WebhookEventType =
   | 'folder.created'
   | 'folder.updated'
   | 'folder.deleted'
-  | 'record.folder_changed';
-
+  | 'record.folder_changed'
+  | 'anchor.revocation_anchored'
+  | 'attestation.active'
+  // SCRUM-3972 — affiliated-organization lifecycle, emitted on the PARENT
+  // organization's id (and, for the four that change an affiliate's budget or
+  // tenancy, on the affiliate's id too). Public slugs only: `public_id` is the
+  // affiliate, `parent_public_id` the parent.
+  | 'suborg.created'
+  | 'suborg.approved'
+  | 'suborg.revoked'
+  | 'suborg.credits_allocated'
+  | 'suborg.credits_reclaimed'
+  | 'suborg.suspended'
+  | 'suborg.offboarded';
 export interface Folder {
   id: string;
   publicId: string;
@@ -65,6 +82,7 @@ export interface BulkFolderMoveResult {
   moved: string[];
   failed: Array<{ anchorId: string; code: string }>;
 }
+
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {
@@ -166,16 +184,38 @@ export interface AnchorReceipt {
   publicId: string;
   /** SHA-256 fingerprint of the anchored data */
   fingerprint: string;
-  /** Current status */
-  status: 'PENDING' | 'SUBMITTED' | 'SECURED';
+  /** Current persisted lifecycle state. Idempotent submissions return the existing state, including terminal/error states. */
+  status: AnchorLifecycleStatus;
   /** Anchor creation timestamp (ISO 8601) */
   createdAt: string;
   /** Network receipt ID (set after anchoring) */
   networkReceiptId?: string;
-  /** Submission path requested by the caller. */
+  /** Submission path requested by the caller. Optional for receipts retained from older deployments. */
   action?: 'queue' | 'instant';
-  /** Durable instant intent state when action is instant. */
+  /** Durable instant intent state when action is instant. Optional/plain string for legacy receipt compatibility; use getAnchorSubmissionStatus() for strict current state. */
   instantStatus?: string | null;
+  /** Credit lifecycle reported by the submission API. */
+  creditState?: 'pending' | 'spent' | 'refunded' | null;
+  /** True when the server resolved this request to an existing submission. */
+  idempotent?: boolean;
+}
+
+export type AnchorInstantStatus =
+  | 'QUEUED' | 'PROCESSING' | 'NEEDS_CREDIT' | 'RETRYABLE'
+  | 'HELD' | 'SUBMITTED' | 'FAILED';
+
+export type AnchorLifecycleStatus =
+  | 'PENDING' | 'BROADCASTING' | 'SUBMITTED' | 'SECURED'
+  | 'REVOKED' | 'EXPIRED' | 'SUPERSEDED' | 'PENDING_RESOLUTION';
+
+export interface AnchorSubmissionStatus {
+  publicId: string;
+  action: 'queue' | 'instant';
+  anchorStatus: AnchorLifecycleStatus;
+  creditState: 'pending' | 'spent' | 'refunded' | null;
+  instantStatus: AnchorInstantStatus | null;
+  retryable: boolean;
+  updatedAt: string;
 }
 
 export interface AnchorSubmitOptions {

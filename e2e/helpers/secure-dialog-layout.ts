@@ -48,12 +48,14 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
     '/src/hooks/useSecuringCapability.ts': `const child=['selected-child','child-instant','member-zero'].includes(window.__layout.scenario);
       const scope=child?'org_id=${CHILD_ORG_ID}':'scope=user';
       const capability=await fetch('http://localhost:3001/api/v1/anchor-credits/status?'+scope,{headers:{Authorization:'Bearer ${AAL2_TOKEN}'}}).then(r=>r.json());
-      export const useSecuringCapability=()=>({capability,loading:false,error:null});`,
+      export const useSecuringCapability=()=>({capability,loading:false,error:null,refresh:async()=>({data:capability})});`,
+    '/src/hooks/usePrivateTagSuggestions.ts': `export const parsePrivateTags=value=>{const tags=[...new Map(value.split(',').map(t=>t.trim()).filter(Boolean).map(t=>[t.toLowerCase(),t])).values()];if(tags.some(t=>t.length>64))return {ok:false,reason:'too_long'};if(tags.length>10)return {ok:false,reason:'too_many'};return {ok:true,tags}};export const commaAwareTagOptions=(value,suggestions)=>{const parts=value.split(',');const completed=parts.slice(0,-1).map(t=>t.trim()).filter(Boolean);const prefix=completed.length?completed.join(', ')+', ':'';const needle=(parts[parts.length-1]??'').trim().toLowerCase();const chosen=new Set(completed.map(t=>t.toLowerCase()));return suggestions.filter(t=>!chosen.has(t.toLowerCase())&&t.toLowerCase().startsWith(needle)).map(t=>prefix+t)};export const usePrivateTagSuggestions=()=>({suggestions:{user:['legal','quarterly'],organization:['audit']},loading:false,error:null});`,
+    '/src/hooks/useAnchorSubmissionStatus.ts': `export const useAnchorSubmissionStatus=publicId=>({status:!publicId?null:window.__layout.scenario==='status-held'?{action:'instant',instantStatus:'HELD',retryable:false}:window.__layout.scenario==='status-failed'?{action:'instant',instantStatus:'FAILED',retryable:false}:window.__layout.scenario==='status-no-intent'?{action:'instant',instantStatus:null,retryable:false}:window.__layout.scenario==='needs-credit'?{action:'instant',instantStatus:'NEEDS_CREDIT',retryable:true}:null,loading:false,error:null,refresh:async()=>({})});`,
     '/src/hooks/useBulkAnchors.ts': `export const useBulkAnchors = () => ({isProcessing:false,progress:35,processedCount:3,totalCount:10,error:null,createBulkAnchors:async records => {
       window.__layout.requests.push({kind:'bulk',records});
       return await new Promise(resolve => {window.__layout.finishBulk=()=>resolve({total:records.length,created:records.length,skipped:0,failed:0});});
     }});`,
-    '/src/lib/switchboard.ts': 'export const isAIExtractionEnabled = async () => !["ai-off","child-instant","personal-zero","member-zero"].includes(window.__layout.scenario); export const getFlag = async () => false;',
+    '/src/lib/switchboard.ts': 'export const isAIExtractionEnabled = async () => !["ai-off","child-instant","personal-zero","member-zero","status-held","status-failed","status-no-intent","status-loading","needs-credit"].includes(window.__layout.scenario); export const getFlag = async () => false;',
     '/src/lib/auditLog.ts': 'export const logAuditEvent = async () => {};',
     '/src/lib/fraudDetection.ts': 'export const detectFraudForDocument = async () => null; export const fraudResultToMetadata = () => ({});',
     '/src/lib/templateMapper.ts': 'export const applyTemplate = async fields => ({mappedFields:fields,unmappedFields:[]});',
@@ -73,7 +75,7 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         q.limit=async()=>({data:table==='credential_templates'?[template]:table==='anchor_private_tags'?[{tag:'legal'},{tag:'quarterly'}]:[],error:null});
         q.single=async()=>{if(window.__layout.scenario==='processing')await new Promise(resolve=>{window.__layout.finishInsert=resolve;});
           return window.__layout.scenario==='error'?{data:null,error:{message:'Unable to save. Please try again.'}}:{data:{id:'${ANCHOR_ID}',public_id:'ARK-'+'A'.repeat(40)},error:null};};
-        q.maybeSingle=async()=>{window.__layout.requests.push({kind:'anchor-id-resolution',payload:{id:'${ANCHOR_ID}'}});return {data:{id:'${ANCHOR_ID}'},error:null};};return q;}
+        q.maybeSingle=async()=>{if(window.__layout.scenario==='id-resolution-failed')return {data:null,error:{message:'read unavailable'}};window.__layout.requests.push({kind:'anchor-id-resolution',payload:{id:'${ANCHOR_ID}'}});return {data:{id:'${ANCHOR_ID}'},error:null};};return q;}
       export const supabase={from:query,auth:{getSession:async()=>({data:{session:{access_token:'${AAL2_TOKEN}',aal:'aal2',user:{id:'${USER_ID}',aud:'authenticated'}}},error:null})}};`,
   };
   if (scenario === 'mixed-fingerprinting') {
@@ -84,7 +86,7 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
     if (!['localhost', '127.0.0.1'].includes(url.hostname)) return route.abort();
     if (modules[url.pathname]) return route.fulfill({ contentType: 'application/javascript', body: modules[url.pathname] });
     if (url.pathname.startsWith('/api/')) {
-      if (scenario === 'attestation-submitting') return; // Hold the boundary while asserting the in-flight state.
+      if (scenario === 'attestation-submitting' && url.pathname === '/api/v1/attestations') return; // Hold the boundary while asserting the in-flight state.
       const rawBody = route.request().postData();
       const payload = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : null;
       httpRequests.push({
@@ -96,7 +98,7 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         const zero = scenario === 'personal-zero' || scenario === 'member-zero';
         const organization = url.searchParams.has('org_id');
         return route.fulfill({ json: {
-          canSecureInstantly: instant || ['child-instant', 'personal-zero', 'member-zero'].includes(scenario),
+          canSecureInstantly: instant || ['child-instant', 'personal-zero', 'member-zero', 'status-held', 'status-failed', 'status-no-intent', 'status-loading', 'needs-credit'].includes(scenario),
           creditBalance: zero ? 0 : 5,
           instantSecureCost: 1,
           scope: organization ? 'organization' : 'user',
@@ -105,10 +107,15 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         } });
       }
       if (url.pathname === '/api/v1/anchor-self-service') {
+        if (scenario === 'error') return route.fulfill({ status: 503, json: { error: 'submission_unavailable' } });
+        if (scenario === 'processing') return; // Hold only the submission, not capability reads.
         return route.fulfill({ status: 201, json: { public_id: 'ARK-FIXTURE', fingerprint: payload?.fingerprint, status: 'PENDING', action: payload?.action } });
       }
       if (url.pathname === '/api/v1/anchor-credits/purchase') {
-        return route.fulfill({ json: { url: 'http://127.0.0.1:5200/e2e/fixtures/secure-dialog-layout.html?checkout=1' } });
+        // Prove checkout survives an async session creation rather than relying
+        // on transient user activation after the network response.
+        if (scenario === 'personal-zero') await new Promise(resolve => setTimeout(resolve, 750));
+        return route.fulfill({ json: { url: new URL('/e2e/fixtures/secure-dialog-layout.html?checkout=1', page.url()).toString() } });
       }
       if (url.pathname.includes('extract-batch')) {
         if (scenario === 'bulk-extracting') {
@@ -116,10 +123,8 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         }
         return route.fulfill({ status: 503, json: { message: 'Analysis unavailable. Try again.' } });
       }
-      if (url.pathname.includes('anchor-bulk')) {
-        if (scenario === 'mixed-submitting') {
-          await page.evaluate(() => new Promise<void>(resolve => { window.__layout.finishBulk = resolve; }));
-        }
+      if (url.pathname === '/api/v1/anchor/bulk/self-service') {
+        if (scenario === 'mixed-submitting') return; // Hold this request without a dangling browser evaluation.
         if (scenario === 'mixed-error') return route.fulfill({ status: 500, json: { error: 'Unable to submit these documents. Please retry.' } });
         if (scenario === 'mixed-blocked') return route.fulfill({ status: 403, json: {} });
         const rows = (payload?.anchors ?? []) as Array<{ fingerprint: string }>;

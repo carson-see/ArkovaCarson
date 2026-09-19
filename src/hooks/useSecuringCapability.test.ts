@@ -29,4 +29,28 @@ describe('useSecuringCapability', () => {
     expect(result.current.capability.canSecureInstantly).toBe(false);
     expect(result.current.capability.instantSecureCost).toBe(1);
   });
+
+  it.each([
+    {},
+    { canSecureInstantly: true, creditBalance: -1, instantSecureCost: 1, scope: 'user', canPurchase: true, purchaseGuidance: null },
+    { canSecureInstantly: true, creditBalance: 2, instantSecureCost: 0, scope: 'user', canPurchase: true, purchaseGuidance: null },
+    { canSecureInstantly: true, creditBalance: 2, instantSecureCost: 1, scope: 'parent', canPurchase: true, purchaseGuidance: null },
+  ])('fails closed when a successful response is malformed (%j)', async (payload) => {
+    mockWorkerFetch.mockResolvedValue({ ok: true, json: async () => payload });
+    const { result } = renderHook(() => useSecuringCapability(), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.capability.canSecureInstantly).toBe(false);
+    expect(result.current.capability.canPurchase).toBe(false);
+    expect(result.current.error).toBe('Could not load instant secure availability');
+  });
+
+  it('fails closed and exposes a recoverable error when the endpoint is unavailable', async () => {
+    mockWorkerFetch.mockResolvedValue({ ok: false });
+    const { result } = renderHook(() => useSecuringCapability(), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.capability.canSecureInstantly).toBe(false);
+    expect(result.current.error).toBe('Could not load instant secure availability');
+  });
 });

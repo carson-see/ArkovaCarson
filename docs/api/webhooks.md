@@ -12,6 +12,7 @@ Arkova webhooks let your system react to anchor lifecycle events the moment they
 1. [Overview](#overview)
 2. [Authentication](#authentication)
 3. [Event Types](#event-types)
+   - [Receiving affiliated-organization events](#receiving-affiliated-organization-events)
 4. [Endpoints](#endpoints)
    - [Register a webhook](#post-webhooks)
    - [List webhook endpoints](#get-webhooks)
@@ -66,12 +67,13 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 
 | Event | Fired When | Status |
 |---|---|---|
-| `anchor.submitted` | Anchor transitions from `PENDING` → `SUBMITTED` (transaction broadcast to chain). Subscribable since SCRUM-1794. | Stable |
-| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Stable |
+| `anchor.submitted` | Legacy direct-anchor processing transitions from `PENDING` → `SUBMITTED` (transaction broadcast to chain). Canonical queue and instant submissions use batch processing and do **not** emit this event. | Stable on the legacy direct path only |
+| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation. This is the supported webhook event for canonical queue and instant submissions. | Stable |
 | `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
 | `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
 | `anchor.superseded` | A `SECURED` anchor is atomically replaced by a re-issued child (`SECURED` → `SUPERSEDED`), via `POST /api/anchor/:id/supersede`. Offered as a listed subscription option since SCRUM-3538; the CRUD allowlist has accepted it since SCRUM-2937. | Stable |
 | `anchor.batch_secured` | Aggregate event for the merkle-batch path, intended to fire once per merkle transaction. | Contract defined; subscriptions are accepted and the payload contract has been locked since SCRUM-1794, but **no producer dispatches this event** — no delivery has ever occurred. Records secured through the merkle-batch path are reported by the per-anchor `anchor.secured` fan-out, which is live; subscribe to that |
+| `anchor.revocation_anchored` | The revocation transaction is submitted and its network receipt is recorded. | Stable |
 
 `anchor.superseded` payload `data`: `public_id`, `status` (always `SUPERSEDED`), `chain_tx_id`, `chain_block_height`, `superseded_at`, plus optional `superseded_by_public_id` (the replacement record's public id — `null` when it is not resolvable at dispatch time), `supersession_reason` (free text, max 500 chars), and `org_public_id`. Follow `superseded_by_public_id` to walk the version chain without polling.
 
@@ -88,8 +90,22 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | Event | Fired When | Status |
 |---|---|---|
 | `compliance.document_expiring` | A `SECURED` record is inside its 7-day expiry window and has **not** expired yet. Advance warning — `anchor.expired` fires after the fact, once the sweep has already transitioned the record to `EXPIRED`. Emitted by the daily `check-credential-expiry` job, gated on `ENABLE_EXPIRY_ALERTS`. | Stable |
+| `compliance.certificate_expiring` | A signing certificate enters its 30-, 7-, or 1-day expiration window. | Stable |
+| `compliance.anchor_delayed` | An organization has pending records older than one hour. | Stable |
+| `compliance.signature_revoked` | A signature is revoked. | Contract defined; subscriptions are accepted, but no lifecycle route calls the emitter yet |
+| `compliance.timestamp_coverage_low` | An organization's 30-day timestamp coverage falls below 80 percent. | Stable |
 
 `compliance.document_expiring` payload `data`: `public_id`, `status` (always `SECURED`), `expires_at`, `days_remaining` (positive integer), `warning_level` (`7_day`), plus optional `credential_type`, `label`, `org_public_id`.
+
+Certificate and job references are deterministic, domain-separated opaque values derived from internal records; internal UUIDs are never sent. Compliance aggregate events contain bounded counts, percentages, thresholds, and timestamps only.
+
+### Batch Verification Jobs
+
+| Event | Fired When | Status |
+|---|---|---|
+| `job.completed` | An asynchronous batch verification request finishes successfully or fails. | Stable |
+
+`job.completed` payload `data`: `job_ref`, `status` (`complete` or `failed`), `total`, `result_count`, and nullable `error_code` (`processing_failed` for failures). Raw exception text is never sent.
 
 ### Attestation Lifecycle (SCRUM-3982)
 
@@ -97,6 +113,7 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 |---|---|---|
 | `attestation.created` | An attester creates a **single** attestation via `POST /api/v1/attestations`. Fires at creation, before the attestation is secured. Bulk creation via `POST /api/v1/attestations/batch-create` does **not** emit this event. | Stable for the single-create route |
 | `attestation.revoked` | An attester withdraws an attestation via `PATCH /api/v1/attestations/{public_id}/revoke`. | Contract defined; subscriptions are accepted and the payload contract is locked, but the emit point is **not yet reachable in production** — no delivery of this event has occurred |
+| `attestation.active` | The attestation anchoring job records the transaction and promotes the attestation to `ACTIVE`. | Stable |
 
 `attestation.created` payload `data`: `public_id`, `attestation_type`, `status` (`DRAFT` or `PENDING` — a creation event never carries a terminal status), `created_at`, plus optional `org_public_id`.
 
@@ -116,18 +133,68 @@ Folder lifecycle payload `data`: `folder_public_id`, `owner_scope`, plus optiona
 `moved_count`, and `failed_count`. These events expose no internal folder,
 record, user, or organization UUIDs.
 
-**There is no subscribable attestation-finality event yet.** An earlier version
-of this page suggested pairing `attestation.created` with `anchor.secured` for
-on-chain finality; that is wrong — an attestation reaches finality through its
-own anchoring job, which emits `attestation.active`, and that event is not
-registered and therefore cannot be subscribed to. Poll
-`GET /api/v1/attestations/{public_id}` for `status: ACTIVE` until it is.
+Subscribe to `attestation.active` for the attestation anchoring signal. Its
+payload contains the attestation public id, type, `ACTIVE` status, transaction
+id, and network-observed chain timestamp. It carries no fingerprint or internal
+attestation UUID.
 
 Both obey the same allowlist as every other family: public ids only, no internal UUIDs, no document fingerprint, RFC 3339 timestamps with an explicit timezone. Until SCRUM-3982 these two events were dispatched without being registered, so no endpoint could subscribe to them and their payloads were not schema-checked; registering them is what makes the field ban enforceable, not merely documented.
 
 **Credential-event delivery status:** `credential.issued` and `credential.status_changed` are live — subscribed endpoints receive them today. `credential.verified` is the one exception: its payload schema, dispatch validation, HMAC signing, and CRUD acceptance are all live, and you can register a subscription for it now via `POST /webhooks` (or update an existing subscription), but emission is behind a production feature gate that has not been enabled — deliveries begin when that gate opens, with no re-registration needed. All three schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
+
+For submissions created through `POST /api/v1/anchor` (including `action: queue` and
+`action: instant`), use authenticated submission-status reads for pre-confirmation state and
+subscribe to `anchor.secured` for confirmed finality. `QUEUED`, `PROCESSING`, `NEEDS_CREDIT`,
+`RETRYABLE`, and `HELD` are polling-only intent states; Arkova does not invent webhook events for
+them. Credit purchase completion arrives through Arkova's signed, idempotent Stripe webhook path,
+but the caller must explicitly re-submit the same fingerprint with `action: instant` to rearm a
+never-debited `NEEDS_CREDIT` intent.
+
+### Affiliated Organizations (SCRUM-3972)
+
+Emitted when a parent organization changes one of its affiliated organizations. Public slugs only: `public_id` names the **affiliated** organization, `parent_public_id` the **parent**. No internal identifiers, no administrator email address and no domain appear in any of these payloads.
+
+| Event | Fired When | Status |
+|---|---|---|
+| `suborg.created` | A parent organization creates an affiliated organization (`POST /org/sub-orgs/create`). | Stable |
+| `suborg.approved` | A parent organization approves a pending affiliation (`POST /org/sub-orgs/approve`). | Stable |
+| `suborg.revoked` | A parent organization revokes an affiliation (`POST /org/sub-orgs/revoke`). The affiliated organization keeps its records; only the affiliation ends. | Stable |
+| `suborg.credits_allocated` | A parent organization moves credits **to** an affiliated organization (`POST /org/sub-orgs/credits` with a positive amount). `amount` is always positive. | Stable |
+| `suborg.credits_reclaimed` | A parent organization moves credits **back** from an affiliated organization — either `POST /org/sub-orgs/credits` with a negative amount, or the reclaim step of `POST /org/sub-orgs/offboard`. `amount` is always negative. | Stable |
+| `suborg.suspended` | An affiliated organization is suspended by its parent. Not emitted when the organization was already suspended — that transition did not happen. | Stable |
+| `suborg.offboarded` | The full offboarding operation completed: credits reclaimed (`reclaimed`, which is `0` when the affiliate held none) and the affiliated organization suspended. | Stable |
+
+Shared `data` fields on every event above: `public_id`, `display_name`, `parent_public_id`, `parent_approval_status` (`PENDING` / `APPROVED` / `REVOKED` / `null`), `occurred_at` (RFC 3339, UTC).
+
+- `suborg.credits_allocated` / `suborg.credits_reclaimed` add `amount` (signed delta applied to the affiliate), `parent_balance`, `child_balance` (both post-transaction) and optional `note`.
+- `suborg.suspended` adds optional `reason`.
+- `suborg.offboarded` adds `reclaimed` and optional `reason`.
+
+**Which endpoint receives them.** All seven are delivered to the **parent** organization's endpoints, because they describe the parent's own actions — a `scope: "self"` endpoint (the default) receives them with no change. Four of them — `suborg.credits_allocated`, `suborg.credits_reclaimed`, `suborg.suspended`, `suborg.offboarded` — are **additionally** delivered to the **affiliated organization's** own endpoints, because that organization needs to learn its budget or its tenancy changed and it cannot see its parent's feed. `suborg.created` / `suborg.approved` / `suborg.revoked` go to the parent only.
+
+Two affiliation transitions have **no** event today: `POST /org/sub-orgs/request` and `POST /org/sub-orgs/cancel`. That gap is tracked separately; do not build a reconciliation that assumes a pending request announces itself.
+
+### Receiving affiliated-organization events
+
+An endpoint's `scope` decides whether it also receives events **owned by** the organizations affiliated to it:
+
+| `scope` | Endpoint receives |
+|---|---|
+| `self` (default) | Only events owned by the endpoint's own organization. This is the behaviour every endpoint had before this field existed, and it is what an unset `scope` means. |
+| `self_and_descendants` | Additionally, events owned by organizations whose parent is this organization, whose affiliation is `APPROVED`, and which are not suspended. |
+
+Rules that hold regardless of `scope`:
+
+- **One hop.** Only direct affiliates. An affiliate of an affiliate is **not** included. Deeper chains are possible in principle, so do not assume the feed covers a whole tree — subscribe at each level you need.
+- **One direction.** An affiliated organization's endpoint never receives its parent's events. `scope` on a child endpoint widens toward *that* child's own affiliates, never upward.
+- **Approval is live, not remembered — within 60 seconds.** Revoking an affiliation stops the feed; it does not require the endpoint to be edited. Affiliation state is cached for up to 60 seconds per organization, so the last cross-organization event may arrive up to a minute after the revocation. Build reconciliation that tolerates that window rather than treating the revocation timestamp as a hard cut-off.
+- **Suspension stops it too.** Suspending or offboarding an affiliated organization stops its events reaching the parent, on the same 60-second bound, even though the affiliation record itself still reads `APPROVED`.
+- **Cross-organization payloads name their owner.** An event delivered to a parent because of `self_and_descendants` carries `org_public_id` identifying the organization the event belongs to. An event that cannot carry that field is not delivered across the boundary at all.
+- The seven `suborg.*` events above are **not** affected by `scope` — they are the parent's own events on the parent's own organization.
+
+> **Availability.** `scope` can be set and read today. The cross-organization delivery it enables is behind a server-side gate (`ENABLE_SUBORG_WEBHOOK_FANOUT`) that is **off**; until it is enabled, an endpoint set to `self_and_descendants` behaves exactly like `self`. Setting it now is safe and takes effect when the gate opens, with no re-registration.
 
 ### Backfill Behavior
 
@@ -149,6 +216,7 @@ Register a new webhook endpoint.
 | `events` | string[] | ❌ | `["anchor.secured", "anchor.revoked"]` | Subset of supported events. |
 | `description` | string | ❌ | — | Free-text label, max 500 chars. Useful for distinguishing prod/staging. |
 | `verify` | boolean | ❌ | `false` | If `true`, Arkova sends a synchronous verification ping to your URL with a challenge token. Your endpoint must respond `2xx` and echo the challenge in the body for the registration to succeed. |
+| `scope` | string | ❌ | `"self"` | `"self"` or `"self_and_descendants"`. See [Receiving affiliated-organization events](#receiving-affiliated-organization-events). |
 
 **Example request:**
 

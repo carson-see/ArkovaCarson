@@ -3,6 +3,7 @@ from .errors import ArkovaError
 from .models import (
     Anchor,
     AnchorReceipt,
+    AnchorSubmissionStatus,
     BulkAnchorCredentialType,
     BulkAnchorDuplicate,
     BulkAnchorDuplicateStrategy,
@@ -37,6 +38,7 @@ __all__ = [
     "REASON_CODES",
     "Anchor",
     "AnchorReceipt",
+    "AnchorSubmissionStatus",
     "Arkova",
     "ArkovaError",
     "AsyncArkova",

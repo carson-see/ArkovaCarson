@@ -757,6 +757,56 @@ def test_anchor_sends_description_tags_and_instant_action() -> None:
     assert receipt.instant_status == "QUEUED"
 
 
+def test_get_anchor_submission_status_is_typed_and_caller_scoped() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return json_response(
+            {
+                "public_id": "ARK-1",
+                "action": "instant",
+                "anchor_status": "PENDING",
+                "credit_state": "pending",
+                "instant_status": "NEEDS_CREDIT",
+                "retryable": True,
+                "updated_at": "2026-09-19T00:00:00Z",
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        status = client.get_anchor_submission_status("ARK-1")
+    assert seen == ["/v1/anchor/ARK-1/submission-status"]
+    assert status.instant_status == "NEEDS_CREDIT"
+    assert status.retryable is True
+
+
+def test_async_get_anchor_submission_status_is_typed_and_fails_closed_on_unknown_state() -> None:
+    payload = {
+        "public_id": "ARK-ASYNC",
+        "action": "instant",
+        "anchor_status": "PENDING",
+        "credit_state": "pending",
+        "instant_status": "NEEDS_CREDIT",
+        "retryable": True,
+        "updated_at": "2026-09-19T00:00:00Z",
+    }
+
+    async def run(response_payload: dict[str, object]):
+        async with AsyncArkova(
+            api_key="ak_test",
+            transport=httpx.MockTransport(lambda _request: json_response(response_payload)),
+        ) as client:
+            return await client.get_anchor_submission_status("ARK-ASYNC")
+
+    status = asyncio.run(run(payload))
+    assert status.public_id == "ARK-ASYNC"
+    assert status.instant_status == "NEEDS_CREDIT"
+
+    with pytest.raises(ArkovaError, match="unexpected response shape"):
+        asyncio.run(run({**payload, "instant_status": "SURPRISE"}))
+
+
 def test_anchor_rejects_neither_fingerprint_nor_data_without_network_call() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("no network call expected")
@@ -1550,7 +1600,7 @@ def test_anchor_receipt_exposes_the_record_uri_every_response_carries() -> None:
 
 
 def test_anchor_receipt_status_is_not_narrowed_to_a_literal() -> None:
-    """`status` stays `str` even though the endpoint only ever sends `PENDING`.
+    """`status` stays `str` because idempotent replay returns existing state.
 
     Same reasoning as `fingerprint_source` / `proof_availability` in 2.2.1:
     a `Literal["PENDING"]` would be an API snapshot promoted to a hard
@@ -1568,6 +1618,23 @@ def test_anchor_receipt_status_is_not_narrowed_to_a_literal() -> None:
     )
 
     assert receipt.status == "SOME_FUTURE_STATUS"
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "EXPIRED", "SUPERSEDED", "PENDING_RESOLUTION"],
+)
+def test_anchor_receipt_represents_every_current_lifecycle_status(status: str) -> None:
+    receipt = AnchorReceipt.model_validate(
+        {
+            "public_id": "ARK-2026-C3A718D0",
+            "fingerprint": "a" * 64,
+            "status": status,
+            "created_at": "2026-01-06T12:00:00Z",
+            "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
+        }
+    )
+    assert receipt.status == status
 
 
 @pytest.mark.parametrize(

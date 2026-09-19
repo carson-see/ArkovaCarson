@@ -1,5 +1,11 @@
 # agents.md — e2e/
 
+Canonical submission fixtures intercept the real worker routes, including `/api/v1/anchor-self-service` and `/api/v1/anchor/bulk/self-service`. Failure scenarios must fail those routes. Hold only the operation under test, never capability reads; pending route fixtures must not leave a `page.evaluate` promise alive at test teardown. Provenance is derived by the worker, so browser requests must not assert `fingerprint_source`.
+
+## API key/webhook dashboard targeted UAT (2026-09-19)
+
+`uat-api-webhook-dashboard.spec.ts` and its standalone config exercise the real settings routes/components at 1280px and 375px with auth, Supabase, and worker I/O stubbed only at the browser network boundary. It proves scope/event controls, scrubbed retryable endpoint-read failure, and responsive geometry. It is targeted frontend evidence, not backend/RLS integration proof; the ordinary CI E2E project retains that responsibility. The spec self-skips under every named shared project and runs only with its dedicated config.
+
 ## UAT-22 invitation list browser probe (2026-09-14)
 
 The opt-in `uat22-platform-invite.spec.ts` distinguishes mocked GET list responses from POST create responses and checks that the sent invite appears after refresh at 1280px and 375px. This is browser transport/rendering coverage with real fixture auth, not live worker/DB proof. The real mounted-router counterpart is `services/worker/src/api/admin-invitations.local.test.ts`; both remain explicit local runs with fixture prerequisites. No skip was removed.
@@ -232,6 +238,14 @@ soak harness ships one outside this repo.
 ## SCRUM-4448 — isolated securing layout regression
 
 `secure-dialog-layout.spec.ts` mounts the real securing dialog, children and CSS through a development-only HTML fixture. Run `npx playwright test -c e2e/secure-dialog-layout.config.ts` for isolated headless Chromium on port 5200 (or set `E2E_BASE_URL` to another loopback Vite server). No seeded account or remote service is needed. The spec deliberately imports the base Playwright test rather than the authenticated fixture barrel: that barrel requires live credential environment variables at module load, while this layout suite uses deterministic boundary mocks and blocks non-loopback requests. This is a presentation/interaction proof, not production anchoring or auth evidence. Geometry, intact attestation labels, extracted-field editing, enabled actions, field focus, keyboard navigation and screenshots cover four viewport sizes; keep the real components and transition logic in this fixture.
+
+## 2026-09-12 SCRUM-5024 — `signup-entry.spec.ts`: partner `?ref` capture
+
+Two cases added at 1280 px and 375 px: a valid `?ref` is stripped from the URL
+(while an unrelated `utm_source` survives) and parked upper-cased under the
+canonical `localStorage` key `arkova.referral`; a malformed `?ref` is stripped
+AND discarded, because parking it would only ever produce `unknown_code` at
+`record_org_referral`.
 
 ## UAT-01 / SCRUM-4031 — public signup entry (2026-09-05)
 
@@ -587,3 +601,12 @@ positive access checks must pass before a negative isolation result is meaningfu
 The sign-out test uses its own real UI login and MFA enrollment, so signing out
 cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
 and `loginViaUi` retain their original authentication level.
+
+## 2026-09-19 — UAT-12 secure-dialog acceptance
+
+`secure-dialog-layout.spec.ts` verifies canonical self-service submission for
+untagged and tagged child-organization documents, exact private-tag partitions,
+instant/queue keyboard actionability, purchase/admin guidance, and durable
+NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
+only account and network boundaries; submissions are captured at the worker HTTP
+boundary and rearm must reuse the original fingerprint.

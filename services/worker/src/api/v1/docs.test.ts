@@ -217,6 +217,57 @@ describe('OpenAPI spec', () => {
     expect(submitBody).toEqual(anchorBody);
   });
 
+  it('documents the truthful UAT-12 receipt, privacy, and durable status contracts', () => {
+    const submit = openApiSpec.paths['/anchor'].post;
+    const requestProperties = submit.requestBody.content['application/json'].schema.properties;
+    expect(requestProperties.description.description).toContain('Public');
+    expect(requestProperties.private_tags.description).toContain('Private');
+    expect(requestProperties.credential_type.enum).toContain('DEGREE');
+    expect(requestProperties.credential_type.enum).not.toContain('DIPLOMA');
+    for (const code of ['200', '201'] as const) {
+      const receipt = submit.responses[code].content['application/json'].schema;
+      expect(receipt.required).toEqual(expect.arrayContaining([
+        'fingerprint', 'record_uri', 'action', 'credit_state', 'instant_status', 'idempotent',
+      ]));
+      expect(receipt.properties).not.toHaveProperty('already_exists');
+    }
+    expect(submit.responses['403']).toBeDefined();
+    expect(submit.responses['409'].content['application/json'].schema.properties.error.enum)
+      .toEqual(expect.arrayContaining([
+        'submission_metadata_conflict', 'fingerprint_conflict', 'anchor_creation_conflict',
+      ]));
+    const quota = submit.responses['429'];
+    expect(quota.headers).toEqual(expect.objectContaining({
+      'Retry-After': expect.any(Object),
+      'X-RateLimit-Limit': expect.any(Object),
+      'X-RateLimit-Remaining': expect.any(Object),
+      'X-RateLimit-Reset': expect.any(Object),
+      'X-Org-Quota-Anchors-Limit': expect.any(Object),
+      'X-Org-Quota-Anchors-Remaining': expect.any(Object),
+      'X-Org-Quota-Anchors-Reset': expect.any(Object),
+    }));
+    const [rateLimitBody, quotaBody] = quota.content['application/json'].schema.oneOf;
+    expect(rateLimitBody.required).toEqual(expect.arrayContaining(['error', 'retry_after']));
+    const quotaError = quotaBody.properties.error;
+    expect(quotaError.required).toEqual(expect.arrayContaining([
+      'code', 'message', 'quota_type', 'current', 'limit', 'reset_at',
+    ]));
+    expect(quotaError.properties.code.enum).toContain('ORG_QUOTA_EXCEEDED');
+    expect(quota.headers['X-RateLimit-Reset'].schema.type).toBe('integer');
+    expect(quota.headers['X-Org-Quota-Anchors-Reset'].schema.format).toBe('date-time');
+    const unavailable = submit.responses['503'].content['application/json'].schema;
+    expect(unavailable.oneOf).toHaveLength(2);
+    expect(unavailable.oneOf[1].properties.error.properties.code.enum).toContain('quota_check_failed');
+    expect(submit.responses['500'].content['application/json'].schema.properties.error.enum)
+      .toEqual(expect.arrayContaining(['anchor_creation_failed', 'Internal server error']));
+    const status = openApiSpec.paths['/anchor/{publicId}/submission-status'].get;
+    expect(status.responses['200'].content['application/json'].schema.properties.anchor_status.enum)
+      .toEqual(expect.arrayContaining(['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED']));
+    expect(status.responses['200'].content['application/json'].schema.properties.instant_status.enum)
+      .toContain('NEEDS_CREDIT');
+    expect(openApiSpec.paths['/anchor-self-service/{publicId}/submission-status']).toBeDefined();
+  });
+
   it('has all four tags', () => {
     const tagNames = openApiSpec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('Verification');

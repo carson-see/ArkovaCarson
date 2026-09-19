@@ -5,6 +5,10 @@ import { logger } from '../utils/logger.js';
 import { z } from 'zod';
 
 const RequestedContextSchema = z.object({ org_id: z.string().uuid().nullable().optional() }).passthrough();
+const StatusContextSchema = z.union([
+  z.object({ org_id: z.string().uuid(), scope: z.undefined().optional() }),
+  z.object({ scope: z.literal('user'), org_id: z.undefined().optional() }),
+]);
 
 /** JWT bridge into the canonical submit handler; scope is always re-derived. */
 export const anchorSelfServiceRouter = Router();
@@ -13,7 +17,9 @@ anchorSelfServiceRouter.use(async (req, res, next) => {
     res.status(401).json({ error: 'authentication_required' });
     return;
   }
-  const parsed = RequestedContextSchema.safeParse(req.body);
+  const parsed = req.method === 'GET'
+    ? StatusContextSchema.safeParse(req.query)
+    : RequestedContextSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'invalid_organization_context' });
     return;
@@ -24,7 +30,9 @@ anchorSelfServiceRouter.use(async (req, res, next) => {
     res.status(error ? 500 : 403).json({ error: error ? 'profile_lookup_failed' : 'profile_required' });
     return;
   }
-  const requestedOrgId = parsed.data.org_id === undefined ? profile.org_id : parsed.data.org_id;
+  const requestedOrgId = req.method === 'GET'
+    ? ('scope' in parsed.data ? null : parsed.data.org_id)
+    : parsed.data.org_id === undefined ? profile.org_id : parsed.data.org_id;
   if (requestedOrgId && requestedOrgId !== profile.org_id) {
     const { data: membership, error: membershipError } = await db.from('org_members').select('id')
       .eq('user_id', req.userId).eq('org_id', requestedOrgId).maybeSingle();
@@ -33,9 +41,11 @@ anchorSelfServiceRouter.use(async (req, res, next) => {
       return;
     }
   }
-  const body = { ...(req.body as Record<string, unknown>) };
-  delete body.org_id;
-  req.body = body;
+  if (req.method !== 'GET') {
+    const body = { ...(req.body as Record<string, unknown>) };
+    delete body.org_id;
+    req.body = body;
+  }
   req.apiKey = {
     keyId: req.userId,
     keyPrefix: 'jwt-session',

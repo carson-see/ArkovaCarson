@@ -24,7 +24,6 @@ import { logger } from '../../utils/logger.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
-import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 import {
@@ -33,6 +32,7 @@ import {
 } from '../../utils/professionalEducationSchemaGate.js';
 import { config } from '../../config.js';
 import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
+import { denyOverQuota, setQuotaHeaders, type OrgTier } from '../../middleware/perOrgRateLimit.js';
 
 const router = Router();
 
@@ -75,15 +75,154 @@ interface AnchorReceipt {
   idempotent?: boolean;
 }
 
+const INSTANT_STATUSES = [
+  'QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED',
+] as const;
+type InstantStatus = typeof INSTANT_STATUSES[number];
+type CreditState = 'pending' | 'spent' | 'refunded' | null;
+
+interface SubmissionStatus {
+  public_id: string;
+  action: 'queue' | 'instant';
+  anchor_status: string;
+  credit_state: CreditState;
+  instant_status: InstantStatus | null;
+  retryable: boolean;
+  updated_at: string;
+}
+
 interface AtomicSubmissionResult {
   success?: boolean; error?: string; id?: string; public_id?: string | null;
   fingerprint?: string; status?: string; created_at?: string;
   credential_type?: string | null; metadata?: unknown;
   intent_id?: string | null;
+  limit?: number; current?: number;
+  quota_limit?: number | null; quota_current?: number | null;
 }
 function unwrapRpcResult(data: unknown): AtomicSubmissionResult {
   const value = Array.isArray(data) ? data[0] : data;
   return value && typeof value === 'object' ? value as AtomicSubmissionResult : {};
+}
+
+function creditStateForIntent(intent: { status: InstantStatus; debit_reason: string | null }): CreditState {
+  if (intent.status === 'FAILED') return intent.debit_reason ? 'refunded' : 'pending';
+  if (intent.status === 'PROCESSING' || intent.status === 'HELD' || intent.status === 'SUBMITTED') return 'spent';
+  return 'pending';
+}
+
+function quotaTierForLimit(limit: number): OrgTier | null {
+  if (limit === 100) return 'FREE';
+  if (limit === 10_000) return 'PAID';
+  if (limit === 1_000_000) return 'ENTERPRISE';
+  return null;
+}
+
+function nextUtcQuotaReset(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+}
+
+async function findCallerAnchor(
+  fingerprint: string,
+  userId: string,
+  orgId: string | null,
+) {
+  let query = db.from('anchors')
+    .select('id, public_id, fingerprint, status, created_at, updated_at, metadata')
+    .eq('fingerprint', fingerprint)
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+  query = orgId ? query.eq('org_id', orgId) : query.is('org_id', null);
+  return query.maybeSingle();
+}
+
+async function sendIdempotentReceipt(
+  existing: { id: string; public_id: string | null; fingerprint: string; status: string; created_at: string; metadata?: unknown },
+  body: AnchorSubmitRequest,
+  userId: string,
+  orgId: string | null,
+  res: Response,
+): Promise<void> {
+  if (body.private_tags) {
+    const { data: storedTags, error: storedTagsError } = await db.from('anchor_private_tags')
+      .select('scope, normalized_tag')
+      .eq('anchor_id', existing.id)
+      .eq('owner_user_id', userId);
+    if (storedTagsError) {
+      res.status(503).json({ error: 'submission_metadata_unavailable' });
+      return;
+    }
+    const requested = {
+      user: [...new Set(body.private_tags.user.map((tag) => tag.trim().toLocaleLowerCase()))].sort(),
+      organization: [...new Set(body.private_tags.organization.map((tag) => tag.trim().toLocaleLowerCase()))].sort(),
+    };
+    const stored = {
+      user: (storedTags ?? []).filter((tag) => tag.scope === 'user').map((tag) => tag.normalized_tag).sort(),
+      organization: (storedTags ?? []).filter((tag) => tag.scope === 'organization').map((tag) => tag.normalized_tag).sort(),
+    };
+    if (requested.user.join('\0') !== stored.user.join('\0')
+      || requested.organization.join('\0') !== stored.organization.join('\0')) {
+      res.status(409).json({
+        error: 'submission_metadata_conflict',
+        message: 'Private tags differ from the existing submission.',
+      });
+      return;
+    }
+  }
+  let instantStatus: InstantStatus | null = null;
+  if (body.action === 'instant' && existing.status === 'PENDING') {
+    if (process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true' && orgId) {
+      const suspensionGuard = await ensureOrgNotSuspended(orgId);
+      if (!suspensionGuard.ok) {
+        res.status(suspensionGuard.code === 'org_suspended' ? 403 : 503)
+          .json({ error: suspensionGuard.code, message: suspensionGuard.message });
+        return;
+      }
+    }
+    const retryResult = await db.rpc('retry_anchor_instant_intent' as never, {
+      p_anchor_id: existing.id, p_user_id: userId, p_org_id: orgId,
+    } as never);
+    let intent = unwrapRpcResult(retryResult.data);
+    if (retryResult.error) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+    if (!intent.success && intent.error === 'intent_not_found') {
+      const initialResult = await db.rpc('enqueue_existing_anchor_instant_intent' as never, {
+        p_anchor_id: existing.id, p_user_id: userId, p_org_id: orgId,
+        p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
+      } as never);
+      intent = unwrapRpcResult(initialResult.data);
+      if (initialResult.error) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+    }
+    if (!intent.success) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
+    instantStatus = INSTANT_STATUSES.includes(intent.status as InstantStatus)
+      ? intent.status as InstantStatus
+      : 'QUEUED';
+  }
+  const { data: storedIntent, error: storedIntentError } = await db.from('anchor_instant_intents')
+    .select('status, debit_reason')
+    .eq('anchor_id', existing.id)
+    .maybeSingle();
+  if (storedIntentError) {
+    res.status(503).json({ error: 'submission_status_unavailable' });
+    return;
+  }
+  const authoritativeIntent = storedIntent && INSTANT_STATUSES.includes(storedIntent.status as InstantStatus)
+    ? storedIntent as { status: InstantStatus; debit_reason: string | null }
+    : null;
+  instantStatus = authoritativeIntent?.status ?? instantStatus;
+  const storedPath = (existing.metadata as Record<string, unknown> | null)?.securing_path;
+  const action = authoritativeIntent || instantStatus || storedPath === 'instant' ? 'instant' as const : 'queue' as const;
+  const publicId = existing.public_id ?? '';
+  res.status(200).json({
+    public_id: publicId,
+    fingerprint: existing.fingerprint,
+    status: existing.status as AnchorReceipt['status'],
+    created_at: existing.created_at,
+    record_uri: buildVerifyUrl(publicId),
+    action,
+    credit_state: authoritativeIntent ? creditStateForIntent(authoritativeIntent) : instantStatus ? 'pending' : null,
+    instant_status: instantStatus,
+    idempotent: true,
+  } satisfies AnchorReceipt);
 }
 
 const DASHBOARD_PRIVATE_METADATA_KEYS = new Set([
@@ -101,24 +240,6 @@ function dashboardMetadata(metadata: Record<string, unknown> | undefined): Recor
     && !DASHBOARD_PRIVATE_METADATA_KEYS.has(key.toLowerCase())
     && !PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS.has(key)
   ));
-}
-
-async function consumeAnchorCreateQuota(
-  req: Request,
-  res: Response,
-  delta: number,
-): Promise<boolean> {
-  const quota = requireOrgQuota({
-    kind: 'anchors_created',
-    mode: 'daily',
-    getOrgId: (quotaReq) => quotaReq.apiKey?.orgId ?? null,
-    getDelta: () => delta,
-  });
-  let allowed = false;
-  await quota(req, res, () => {
-    allowed = true;
-  });
-  return allowed;
 }
 
 async function handleAnchorSubmit(req: Request, res: Response) {
@@ -229,53 +350,10 @@ async function handleAnchorSubmit(req: Request, res: Response) {
 
   try {
     // Check for duplicate fingerprint (idempotent — return existing if already anchored)
-    let existingQuery = db.from('anchors')
-      .select('id, public_id, fingerprint, status, created_at')
-      .eq('fingerprint', fingerprint)
-      .eq('user_id', req.apiKey.userId)
-      .is('deleted_at', null);
-    existingQuery = scopedOrgId ? existingQuery.eq('org_id', scopedOrgId) : existingQuery.is('org_id', null);
-    const { data: existing } = await existingQuery.maybeSingle();
+    const { data: existing } = await findCallerAnchor(fingerprint, req.apiKey.userId, scopedOrgId);
 
     if (existing) {
-      let instantStatus: string | null = null;
-      if (body.action === 'instant' && existing.status === 'PENDING') {
-        if (process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true' && scopedOrgId) {
-          const suspensionGuard = await ensureOrgNotSuspended(scopedOrgId);
-          if (!suspensionGuard.ok) {
-            const status = suspensionGuard.code === 'org_suspended' ? 403 : 503;
-            res.status(status).json({ error: suspensionGuard.code, message: suspensionGuard.message });
-            return;
-          }
-        }
-        const retryResult = await db.rpc('retry_anchor_instant_intent' as never, {
-          p_anchor_id: existing.id, p_user_id: req.apiKey.userId, p_org_id: scopedOrgId,
-        } as never);
-        let intent = unwrapRpcResult(retryResult.data);
-        if (retryResult.error) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
-        if (!intent.success && intent.error === 'intent_not_found') {
-          const initialResult = await db.rpc('enqueue_existing_anchor_instant_intent' as never, {
-            p_anchor_id: existing.id, p_user_id: req.apiKey.userId, p_org_id: scopedOrgId,
-            p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
-          } as never);
-          intent = unwrapRpcResult(initialResult.data);
-          if (initialResult.error) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
-        }
-        if (!intent.success) { res.status(503).json({ error: 'instant_intent_unavailable' }); return; }
-        instantStatus = intent.status ?? 'QUEUED';
-      }
-      const existingPublicId = existing.public_id ?? '';
-      const receipt: AnchorReceipt = {
-        public_id: existingPublicId, fingerprint: existing.fingerprint,
-        status: existing.status as AnchorReceipt['status'], created_at: existing.created_at,
-        record_uri: buildVerifyUrl(existingPublicId), action: body.action, credit_state: null,
-        instant_status: instantStatus, idempotent: true,
-      };
-      res.status(200).json(receipt);
-      return;
-    }
-
-    if (!(await consumeAnchorCreateQuota(req, res, 1))) {
+      await sendIdempotentReceipt(existing, body, req.apiKey.userId, scopedOrgId, res);
       return;
     }
 
@@ -322,32 +400,54 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       ...(publicSafeCredentialEvidenceMetadata ?? {}),
       securing_path: body.action,
     };
-    let anchor: AtomicSubmissionResult;
-    let insertError: unknown = null;
-    if (body.action === 'queue' && !body.private_tags) {
-      const inserted = await db.from('anchors').insert({
-        fingerprint, public_id: publicId, status: 'PENDING' as const, org_id: orgId,
-        user_id: req.apiKey.userId, filename: body.filename ?? `api-${truncateUtf16Safe(fingerprint, 12)}`,
-        file_size: body.file_size ?? null, file_mime: body.file_mime ?? null,
-        credential_type: credentialType, description: body.description ?? null, metadata,
-        fingerprint_source: req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
-      }).select('id, public_id, fingerprint, status, created_at, credential_type, metadata').single();
-      insertError = inserted.error;
-      anchor = inserted.data ? { ...inserted.data, success: true } : {};
-    } else {
-      const inserted = await db.rpc('create_anchor_submission' as never, {
-        p_fingerprint: fingerprint, p_public_id: publicId, p_user_id: req.apiKey.userId, p_org_id: orgId,
-        p_filename: body.filename ?? `api-${truncateUtf16Safe(fingerprint, 12)}`,
-        p_file_size: body.file_size ?? null, p_file_mime: body.file_mime ?? null,
-        p_credential_type: credentialType, p_description: body.description ?? null, p_metadata: metadata,
-        p_fingerprint_source: req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
-        p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
-        p_action: body.action,
-      } as never);
-      insertError = inserted.error;
-      anchor = unwrapRpcResult(inserted.data);
-    }
+    const inserted = await db.rpc('create_anchor_submission' as never, {
+      p_fingerprint: fingerprint, p_public_id: publicId, p_user_id: req.apiKey.userId, p_org_id: orgId,
+      p_filename: body.filename ?? `api-${truncateUtf16Safe(fingerprint, 12)}`,
+      p_file_size: body.file_size ?? null, p_file_mime: body.file_mime ?? null,
+      p_credential_type: credentialType, p_description: body.description ?? null, p_metadata: metadata,
+      p_fingerprint_source: req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
+      p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
+      p_action: body.action,
+    } as never);
+    const insertError = inserted.error;
+    const anchor = unwrapRpcResult(inserted.data);
     if (insertError || !anchor.success) {
+      // Another identical request can win between the read above and this
+      // insert. Resolve that race to the same idempotent receipt rather than
+      // making a safe retry look like a conflict.
+      const { data: racedExisting } = await findCallerAnchor(fingerprint, req.apiKey.userId, scopedOrgId);
+      if (racedExisting) {
+        await sendIdempotentReceipt(racedExisting, body, req.apiKey.userId, scopedOrgId, res);
+        return;
+      }
+      if (!insertError && anchor.error === 'quota_exceeded') {
+        const tier = typeof anchor.limit === 'number' ? quotaTierForLimit(anchor.limit) : null;
+        if (!tier || typeof anchor.limit !== 'number' || typeof anchor.current !== 'number') {
+          res.status(503).json({ error: { code: 'quota_check_failed', message: 'Quota service unavailable' } });
+          return;
+        }
+        const resetAt = nextUtcQuotaReset();
+        const retryAfter = Math.max(1, Math.ceil((resetAt.getTime() - Date.now()) / 1000));
+        denyOverQuota({
+          res, tier, kind: 'anchors_created', mode: 'daily',
+          decision: { limit: anchor.limit, remaining: 0 },
+          currentCount: anchor.current + 1,
+          resetValue: resetAt.toISOString(), retryAfter,
+          resetEpochSeconds: Math.floor(resetAt.getTime() / 1000),
+        });
+        return;
+      }
+      if (!insertError && anchor.error === 'organization_unavailable') {
+        res.status(503).json({ error: 'organization_unavailable' });
+        return;
+      }
+      if (!insertError && anchor.error === 'duplicate') {
+        res.status(409).json({
+          error: 'fingerprint_conflict',
+          message: 'This fingerprint already exists in another scope for this API-key actor.',
+        });
+        return;
+      }
       handleInsertError(insertError ?? { code: anchor.error === 'duplicate' ? '23505' : undefined }, orgId, res);
       return;
     }
@@ -361,7 +461,15 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       action: body.action,
       credit_state: body.action === 'instant' ? 'pending' : null,
       instant_status: body.action === 'instant' ? 'QUEUED' : null,
+      idempotent: false,
     };
+
+    if (typeof anchor.quota_limit === 'number' && typeof anchor.quota_current === 'number') {
+      setQuotaHeaders(res, 'anchors_created', {
+        limit: anchor.quota_limit,
+        remaining: Math.max(anchor.quota_limit - anchor.quota_current, 0),
+      }, nextUtcQuotaReset().toISOString());
+    }
 
     logger.info({ publicId }, 'Anchor submitted via API');
     enqueueProfessionalEducationExtraction({
@@ -388,6 +496,65 @@ async function handleAnchorSubmit(req: Request, res: Response) {
  */
 router.post('/', handleAnchorSubmit);
 router.post('/submit', handleAnchorSubmit);
+
+router.get('/:publicId/submission-status', async (req: Request, res: Response) => {
+  if (!req.apiKey) {
+    res.status(401).json({ error: 'authentication_required' });
+    return;
+  }
+  const publicId = z.string().trim().min(1).max(128).safeParse(req.params.publicId);
+  if (!publicId.success) {
+    res.status(400).json({ error: 'invalid_public_id' });
+    return;
+  }
+  const orgId = req.apiKey.orgId?.trim() || null;
+  try {
+    let anchorQuery = db.from('anchors')
+      .select('id, public_id, status, updated_at, metadata')
+      .eq('public_id', publicId.data)
+      .eq('user_id', req.apiKey.userId)
+      .is('deleted_at', null);
+    anchorQuery = orgId ? anchorQuery.eq('org_id', orgId) : anchorQuery.is('org_id', null);
+    const { data: anchor, error: anchorError } = await anchorQuery.maybeSingle();
+    if (anchorError) {
+      res.status(503).json({ error: 'submission_status_unavailable' });
+      return;
+    }
+    if (!anchor) {
+      res.status(404).json({ error: 'submission_not_found' });
+      return;
+    }
+    const { data: rawIntent, error: intentError } = await db.from('anchor_instant_intents')
+      .select('status, debit_reason, updated_at')
+      .eq('anchor_id', anchor.id)
+      .maybeSingle();
+    if (intentError) {
+      res.status(503).json({ error: 'submission_status_unavailable' });
+      return;
+    }
+    if (rawIntent && !INSTANT_STATUSES.includes(rawIntent.status as InstantStatus)) {
+      res.status(503).json({ error: 'submission_status_unavailable' });
+      return;
+    }
+    const intent = rawIntent as { status: InstantStatus; debit_reason: string | null; updated_at: string } | null;
+    const action = intent || (anchor.metadata as Record<string, unknown> | null)?.securing_path === 'instant'
+      ? 'instant' as const
+      : 'queue' as const;
+    const response: SubmissionStatus = {
+      public_id: anchor.public_id ?? publicId.data,
+      action,
+      anchor_status: anchor.status,
+      credit_state: intent ? creditStateForIntent(intent) : null,
+      instant_status: intent?.status ?? null,
+      retryable: intent?.status === 'NEEDS_CREDIT' && intent.debit_reason === null && anchor.status === 'PENDING',
+      updated_at: intent?.updated_at ?? anchor.updated_at,
+    };
+    res.json(response);
+  } catch (error) {
+    logger.error({ error, publicId: publicId.data }, 'Submission status lookup failed');
+    res.status(503).json({ error: 'submission_status_unavailable' });
+  }
+});
 
 /**
  * Handle Supabase insert errors for anchor creation.

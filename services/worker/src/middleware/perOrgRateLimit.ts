@@ -168,7 +168,7 @@ export interface PerOrgRateLimitOptions {
   getDelta?: (req: Request) => Promise<number> | number;
 }
 
-function setQuotaHeaders(
+export function setQuotaHeaders(
   res: Response,
   kind: QuotaKind,
   decision: { limit: number; remaining: number },
@@ -440,7 +440,7 @@ export function requireOrgQuota(options: PerOrgRateLimitOptions) {
  *
  * The JSON body is unchanged (CLAUDE.md §1.8): same code, same fields.
  */
-function denyOverQuota(args: {
+export function denyOverQuota(args: {
   res: Response;
   tier: OrgTier;
   kind: QuotaKind;

@@ -17,6 +17,10 @@ import {
   EXTRACTION_FAILURE_REASON_COPY,
   SECURING_CHOICE_LABELS,
   SECURE_QUEUE_LABELS,
+  DESCRIPTION_LABELS,
+  ANCHORING_STATUS_LABELS,
+  CONFIRMATION_PROGRESS_LABELS,
+  TOAST,
 } from '@/lib/copy';
 import { detectFraudForDocument } from '@/lib/fraudDetection';
 import { supabase } from '@/lib/supabase';
@@ -24,6 +28,7 @@ import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { runExtraction, fetchTemplateReconstruction } from '@/lib/aiExtraction';
 import type { ExtractionFailureReason } from '@/lib/aiExtraction';
 import { applyTemplate } from '@/lib/templateMapper';
+import { workerPostForUrl } from '@/lib/workerClient';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -48,8 +53,20 @@ const mockProfileOrgId = vi.hoisted(() => ({ current: null as string | null }));
 // QUEUE-01 / SCRUM-2894 (L2-A1) — controllable securing-capability + navigate
 // mocks so tests can exercise both capability states without a QueryClient.
 const mockCapability = vi.hoisted(() => ({
-  current: { canSecureInstantly: false, creditBalance: 5, instantSecureCost: 1 },
+  current: { canSecureInstantly: false, creditBalance: 5, instantSecureCost: 1 } as {
+    canSecureInstantly: boolean;
+    creditBalance: number;
+    instantSecureCost: number;
+    canPurchase?: boolean;
+    purchaseGuidance?: string | null;
+  },
 }));
+const mockCapabilityRefresh = vi.hoisted(() => vi.fn(async () => ({ data: mockCapability.current })));
+const mockSubmissionState = vi.hoisted(() => ({ current: null as null | {
+  action: 'instant'; instantStatus: 'QUEUED' | 'PROCESSING' | 'NEEDS_CREDIT' | 'RETRYABLE' | 'HELD' | 'SUBMITTED' | 'FAILED' | null; retryable: boolean;
+} }));
+const mockSubmissionRefresh = vi.hoisted(() => vi.fn(async () => ({})));
+const mockSubmissionError = vi.hoisted(() => ({ current: null as string | null }));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const DEFAULT_CAPABILITY = { canSecureInstantly: false, creditBalance: 5, instantSecureCost: 1 };
 
@@ -101,8 +118,20 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('@/hooks/useSecuringCapability', () => ({
-  useSecuringCapability: () => ({ capability: mockCapability.current, loading: false }),
+  useSecuringCapability: () => ({ capability: mockCapability.current, loading: false, error: null, refresh: mockCapabilityRefresh }),
 }));
+
+vi.mock('@/hooks/useAnchorSubmissionStatus', () => ({
+  useAnchorSubmissionStatus: () => ({ status: mockSubmissionState.current, loading: false, error: mockSubmissionError.current, refresh: mockSubmissionRefresh }),
+}));
+
+vi.mock('@/hooks/usePrivateTagSuggestions', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/hooks/usePrivateTagSuggestions')>();
+  return {
+    ...original,
+    usePrivateTagSuggestions: () => ({ suggestions: { user: ['personal'], organization: ['audit'] }, loading: false, error: null }),
+  };
+});
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -159,6 +188,7 @@ vi.mock('@/lib/validators', () => ({
 
 vi.mock('@/lib/workerClient', () => ({
   WORKER_URL: 'http://localhost:8787',
+  workerPostForUrl: vi.fn(),
 }));
 
 vi.mock('sonner', () => ({
@@ -171,6 +201,10 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
     mockCapability.current = { ...DEFAULT_CAPABILITY };
+    mockSubmissionState.current = null;
+    mockSubmissionError.current = null;
+    mockCapabilityRefresh.mockImplementation(async () => ({ data: mockCapability.current }));
+    mockSubmissionState.current = null;
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: null },
@@ -257,18 +291,15 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
   });
 
   it('stores only structured fraud findings in anchor metadata when detection is enabled', async () => {
-    const insert = vi.fn((_payload: unknown) => ({
-      select: vi.fn(() => ({
-        single: vi.fn(async () => ({
-          data: { id: 'anchor-id', public_id: 'public-id' },
-          error: null,
-        })),
-      })),
-    }));
-    vi.mocked(supabase.from).mockReturnValue({
-      insert,
-      select: createTemplateSelectMock(),
-    } as unknown as ReturnType<typeof supabase.from>);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'public-id' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'anchor-id' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: { access_token: 'token' } },
       error: null,
@@ -306,8 +337,9 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
       credentialType: 'OTHER',
       metadataHints: {},
     });
-    expect(insert).toHaveBeenCalledTimes(1);
-    const payload = insert.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> };
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>)[0]?.[1];
+    const payload = JSON.parse(String(request?.body)) as { metadata?: Record<string, unknown> };
     expect(payload.metadata).toMatchObject({
       fraud_risk_level: 'low',
       fraud_score: 0.02,
@@ -330,6 +362,7 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
     mockCapability.current = { ...DEFAULT_CAPABILITY };
+    mockSubmissionState.current = null;
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: { access_token: 'token' } },
@@ -574,6 +607,9 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
     mockCapability.current = { ...DEFAULT_CAPABILITY };
+    mockSubmissionState.current = null;
+    mockSubmissionError.current = null;
+    mockCapabilityRefresh.mockImplementation(async () => ({ data: mockCapability.current }));
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: { access_token: 'token' } },
@@ -804,6 +840,9 @@ describe('SecureDocumentDialog — Add to Queue / Secure Instantly selector (QUE
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
     mockCapability.current = { ...DEFAULT_CAPABILITY };
+    mockSubmissionState.current = null;
+    mockSubmissionError.current = null;
+    mockCapabilityRefresh.mockImplementation(async () => ({ data: mockCapability.current }));
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(isAIExtractionEnabled).mockResolvedValue(false);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
@@ -838,25 +877,244 @@ describe('SecureDocumentDialog — Add to Queue / Secure Instantly selector (QUE
     expect(screen.getByTestId('securing-path-instant')).toHaveTextContent(SECURING_CHOICE_LABELS.instant);
   });
 
-  it('"Add to Queue" tags the insert with securing_path=queue and shows QUEUED_TOAST', async () => {
-    const insert = vi.fn((_payload: unknown) => ({
-      select: vi.fn(() => ({
-        single: vi.fn(async () => ({ data: { id: 'a1', public_id: 'p1' }, error: null })),
-      })),
-    }));
-    vi.mocked(supabase.from).mockReturnValue({
-      insert,
-      select: createTemplateSelectMock(),
-    } as unknown as ReturnType<typeof supabase.from>);
+  it('disables checkout while its request is pending so double clicks cannot create two sessions', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 0, instantSecureCost: 1, canPurchase: true };
+    let finishPurchase!: (url: string) => void;
+    vi.mocked(workerPostForUrl).mockImplementation(() => new Promise(resolve => { finishPurchase = resolve; }));
+    const checkout = { opener: window, location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(checkout as unknown as Window);
+    await reachConfirmStep();
+    const purchase = screen.getByRole('button', { name: SECURE_QUEUE_LABELS.BUY_ONE_CREDIT });
+    await act(async () => { purchase.click(); });
+    expect(purchase).toBeDisabled();
+    purchase.click();
+    expect(workerPostForUrl).toHaveBeenCalledTimes(1);
+    await act(async () => { finishPurchase('https://checkout.example/session'); });
+    expect(checkout.opener).toBeNull();
+    expect(checkout.location.href).toBe('https://checkout.example/session');
+  });
+
+  it('labels the description as public verification-page content', async () => {
+    await reachConfirmStep();
+    expect(screen.getByText(DESCRIPTION_LABELS.FIELD_HELP)).toHaveTextContent('public verification page');
+    expect(screen.getByLabelText(DESCRIPTION_LABELS.FIELD_LABEL)).toHaveAttribute('maxlength', '1000');
+  });
+
+  it('keeps user and exact-organization suggestion lists separate', async () => {
+    mockProfileOrgId.current = 'child-org';
+    await reachConfirmStep();
+    expect(document.querySelector('#anchor-user-tag-suggestions option')).toHaveAttribute('value', 'personal');
+    expect(document.querySelector('#anchor-org-tag-suggestions option')).toHaveAttribute('value', 'audit');
+  });
+
+  it('rejects an overlong private tag before calling the canonical submit endpoint', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await reachConfirmStep();
+    fireEvent.change(screen.getByLabelText(SECURE_QUEUE_LABELS.USER_TAGS), { target: { value: 'x'.repeat(65) } });
+    await act(async () => { screen.getByTestId('securing-path-queue').click(); });
+    expect(screen.getByText(SECURE_QUEUE_LABELS.TAG_TOO_LONG)).toHaveAttribute('role', 'alert');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('"Add to Queue" uses the canonical worker path even without tags', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ public_id: 'p1' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = {
+          eq: vi.fn(() => query),
+          maybeSingle: vi.fn(async () => ({ data: { id: 'a1' }, error: null })),
+        };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
 
     await reachConfirmStep();
     await act(async () => {
       screen.getByTestId('securing-path-queue').click();
     });
 
-    const payload = insert.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> };
-    expect(payload.metadata).toMatchObject({ securing_path: 'queue' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>)[0]?.[1];
+    const payload = JSON.parse(String(request?.body)) as { action?: string; metadata?: Record<string, unknown>; private_tags?: unknown };
+    expect(payload).toMatchObject({ action: 'queue', metadata: { securing_path: 'queue' }, private_tags: { user: [], organization: [] } });
     expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.QUEUED_TOAST);
+  });
+
+  it('treats the canonical worker receipt as success when the optional record lookup is unavailable', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ public_id: 'p-created' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = {
+          eq: vi.fn(() => query),
+          maybeSingle: vi.fn(async () => ({ data: null, error: { message: 'read unavailable' } })),
+        };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-queue').click(); });
+
+    expect(screen.queryByRole('button', { name: ANCHORING_STATUS_LABELS.VIEW_RECORD })).not.toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.QUEUED_TOAST);
+    expect(toast.error).not.toHaveBeenCalledWith(TOAST.ANCHOR_FAILED);
+  });
+
+  it('clears private classifications when retrying with a different document', async () => {
+    mockProfileOrgId.current = 'org-id';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'failed' }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await reachConfirmStep();
+    fireEvent.change(screen.getByLabelText(SECURE_QUEUE_LABELS.USER_TAGS), { target: { value: 'personal' } });
+    fireEvent.change(screen.getByLabelText(SECURE_QUEUE_LABELS.ORG_TAGS), { target: { value: 'audit' } });
+    await act(async () => { screen.getByTestId('securing-path-queue').click(); });
+    await act(async () => { screen.getByRole('button', { name: SECURE_DIALOG_LABELS.TRY_AGAIN }).click(); });
+
+    act(() => { lastFileUploadProps?.onFileSelect?.(new File(['new'], 'new.pdf'), 'new-fp'); });
+    await act(async () => { screen.getByTestId('secure-document-continue').click(); });
+    expect(screen.getByLabelText(SECURE_QUEUE_LABELS.USER_TAGS)).toHaveValue('');
+    expect(screen.getByLabelText(SECURE_QUEUE_LABELS.ORG_TAGS)).toHaveValue('');
+  });
+
+  it('routes an untagged selected child organization through the same canonical worker path', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'p-child' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'a-child' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} orgId="child-org-id" />);
+    act(() => { lastFileUploadProps?.onFileSelect?.(new File(['doc'], 'child.pdf'), 'fp-child'); });
+    await act(async () => { screen.getByTestId('secure-document-continue').click(); });
+    await act(async () => { screen.getByTestId('securing-path-queue').click(); });
+
+    const request = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>)[0]?.[1];
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      org_id: 'child-org-id', action: 'queue', private_tags: { user: [], organization: [] },
+    });
+  });
+
+  it('shows a truthful held status without a retry action', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1, canPurchase: true, purchaseGuidance: null };
+    mockSubmissionState.current = { action: 'instant', instantStatus: 'HELD', retryable: false };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'p-held' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'a-held' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-instant').click(); });
+    expect(screen.getByTestId('instant-submission-status')).toHaveTextContent(SECURE_QUEUE_LABELS.INSTANT_STATUS.HELD);
+    expect(screen.getByRole('heading', { name: SECURE_QUEUE_LABELS.INSTANT_SAVED_TITLE })).toBeInTheDocument();
+    expect(screen.getByText(SECURE_QUEUE_LABELS.INSTANT_HELD_BODY)).toBeInTheDocument();
+    expect(screen.queryByText(ANCHORING_STATUS_LABELS.SUCCESS_PROCESSING)).not.toBeInTheDocument();
+    expect(screen.queryByText(CONFIRMATION_PROGRESS_LABELS.IN_PROGRESS)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: SECURE_QUEUE_LABELS.REARM_INSTANT })).not.toBeInTheDocument();
+  });
+
+  it('does not fabricate QUEUED when an instant submission has no durable intent status', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1, canPurchase: true, purchaseGuidance: null };
+    mockSubmissionState.current = { action: 'instant', instantStatus: null, retryable: false };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'p-no-intent' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'a-no-intent' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-instant').click(); });
+    expect(screen.getByTestId('instant-submission-status')).toHaveTextContent(SECURE_QUEUE_LABELS.STATUS_ERROR);
+    expect(screen.getByText(SECURE_QUEUE_LABELS.INSTANT_STATUS_UNKNOWN_BODY)).toBeInTheDocument();
+    expect(screen.getByTestId('instant-submission-status')).not.toHaveTextContent(SECURE_QUEUE_LABELS.INSTANT_STATUS.QUEUED);
+    await act(async () => { screen.getByRole('button', { name: SECURE_DIALOG_LABELS.TRY_AGAIN }).click(); });
+    expect(mockSubmissionRefresh).toHaveBeenCalled();
+  });
+
+  it('keeps instant copy fail-closed while the first status read is unavailable', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1, canPurchase: true, purchaseGuidance: null };
+    mockSubmissionState.current = null;
+    mockSubmissionError.current = 'Could not load securing status';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'p-status-error' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'a-status-error' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-instant').click(); });
+    expect(screen.getByRole('heading', { name: SECURE_QUEUE_LABELS.INSTANT_SAVED_TITLE })).toBeInTheDocument();
+    expect(screen.getByText(SECURE_QUEUE_LABELS.INSTANT_STATUS_UNKNOWN_BODY)).toBeInTheDocument();
+    expect(screen.queryByText(ANCHORING_STATUS_LABELS.SUCCESS_PROCESSING)).not.toBeInTheDocument();
+    expect(screen.queryByText(CONFIRMATION_PROGRESS_LABELS.IN_PROGRESS)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: SECURE_DIALOG_LABELS.TRY_AGAIN })).toHaveLength(1);
+  });
+
+  it('rearms a NEEDS_CREDIT intent explicitly with the same fingerprint and prevents implicit retry', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1, canPurchase: true, purchaseGuidance: null };
+    mockSubmissionState.current = { action: 'instant', instantStatus: 'NEEDS_CREDIT', retryable: true };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'p-rearm' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'a-rearm' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-instant').click(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => { screen.getByRole('button', { name: SECURE_QUEUE_LABELS.REARM_INSTANT }).click(); });
+    expect(mockCapabilityRefresh).toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String((call as unknown as [unknown, RequestInit])[1].body)));
+    expect(bodies[1]).toMatchObject({ fingerprint: 'fp', action: 'instant' });
+  });
+
+  it('does not rearm a NEEDS_CREDIT intent when the fresh capability remains unfunded', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1, canPurchase: true, purchaseGuidance: null };
+    mockCapabilityRefresh.mockResolvedValueOnce({ data: { ...mockCapability.current, creditBalance: 0 } });
+    mockSubmissionState.current = { action: 'instant', instantStatus: 'NEEDS_CREDIT', retryable: true };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ public_id: 'p-unfunded' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = { eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { id: 'a-unfunded' }, error: null })) };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-instant').click(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => { screen.getByRole('button', { name: SECURE_QUEUE_LABELS.REARM_INSTANT }).click(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
   });
 
   it('"Secure Instantly" shows the dedicated credit guidance and does not submit when credits are insufficient', async () => {

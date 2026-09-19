@@ -33,6 +33,7 @@ const HELP = {
     'arkova health',
     'arkova read <public-id>',
     'arkova verify <public-id>',
+    'arkova status <public-id>',
     'arkova probe <public-id> [--org-id id]',
     'arkova anchor <local-file> [--action queue|instant] [--description text] [--tag value] [--org-tag value]',
     'arkova folder list [--scope USER|ORG] [--org-id id] [--owner-user-id id] [--context-org-id id]',
@@ -119,6 +120,15 @@ async function runCommand(args: string[], client: CliClient, readLocalFile: (pat
     noExtra(args);
     const result = await client.verify(publicId);
     return { value: result, exitCode: result.verified ? 0 : 1 };
+  }
+  if (command === 'status') {
+    const publicId = required(args.shift(), 'public-id');
+    noExtra(args);
+    return {
+      value: await client.request(
+        `/api/v1/anchor/${encodeURIComponent(publicId)}/submission-status`,
+      ),
+    };
   }
   if (command === 'probe') {
     const publicId = required(args.shift(), 'public-id');

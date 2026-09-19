@@ -47,6 +47,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { isMcpAnchorDocumentAllowed } from './mcp-server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER_SOURCE = readFileSync(join(__dirname, 'mcp-server.ts'), 'utf-8');
@@ -109,5 +110,29 @@ describe('mcp-server.ts tool registrations source descriptions from TOOL_DESC (S
     expect(MCP_SERVER_SOURCE).toContain(
       "const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));",
     );
+  });
+});
+
+describe('UAT-12 hosted submission tool registration gate', () => {
+  it.each([
+    [undefined, ['anchor:write'], false],
+    ['false', ['anchor:write'], false],
+    ['true', ['read:anchors'], false],
+    ['true', [], false],
+    ['true', ['anchor:write'], true],
+    ['true', ['write:anchors'], true],
+  ] as const)('flag=%s scopes=%j allows=%s', (flag, scopes, expected) => {
+    expect(isMcpAnchorDocumentAllowed(
+      { scopes: [...scopes] },
+      { MCP_ENABLE_ANCHOR_DOCUMENT: flag },
+    )).toBe(expected);
+  });
+
+  it('registers status beside anchor_document inside the same enabled branch', () => {
+    const gatedBlock = MCP_SERVER_SOURCE.match(
+      /if \(telemetry\.anchorDocumentEnabled\) \{([\s\S]*?)\n  \}\n\n  tool\(\n    'arkova_verify_document'/,
+    )?.[1];
+    expect(gatedBlock).toContain("'arkova_anchor_document'");
+    expect(gatedBlock).toContain("'arkova_get_submission_status'");
   });
 });

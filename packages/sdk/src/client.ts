@@ -30,6 +30,8 @@ import type {
   BulkAnchorDuplicate,
   BulkAnchorRowError,
   BulkAnchorResultRow,
+  AnchorInstantStatus,
+  AnchorLifecycleStatus,
   OrganizationSummary,
   OrganizationDetails,
   RecordDetails,
@@ -46,6 +48,22 @@ import type {
   CreateFolderInput,
   BulkFolderMoveResult,
 } from './types';
+
+const ANCHOR_LIFECYCLE_STATUSES = new Set<AnchorLifecycleStatus>([
+  'PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED',
+  'SUPERSEDED', 'PENDING_RESOLUTION',
+]);
+const ANCHOR_INSTANT_STATUSES = new Set<AnchorInstantStatus>([
+  'QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED',
+]);
+
+function isAnchorLifecycleStatus(value: unknown): value is AnchorLifecycleStatus {
+  return typeof value === 'string' && ANCHOR_LIFECYCLE_STATUSES.has(value as AnchorLifecycleStatus);
+}
+
+function isAnchorInstantStatus(value: unknown): value is AnchorInstantStatus {
+  return typeof value === 'string' && ANCHOR_INSTANT_STATUSES.has(value as AnchorInstantStatus);
+}
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
 
@@ -172,17 +190,52 @@ export class Arkova {
       created_at: string;
       chain_tx_id?: string;
       action?: 'queue' | 'instant';
+      credit_state?: 'pending' | 'spent' | 'refunded' | null;
       instant_status?: string | null;
+      idempotent?: boolean;
     }>(response, 'Anchor request failed');
+
+    if (!isAnchorLifecycleStatus(result.status)) {
+      throw new ArkovaError('Anchor response was malformed', 502, 'invalid_response');
+    }
 
     return {
       publicId: result.public_id,
       fingerprint: result.fingerprint,
-      status: result.status as AnchorReceipt['status'],
+      status: result.status,
       createdAt: result.created_at,
       networkReceiptId: result.chain_tx_id,
       action: result.action,
+      creditState: result.credit_state,
       instantStatus: result.instant_status,
+      idempotent: result.idempotent,
+    };
+  }
+
+  /** Read the caller-scoped durable queue/instant submission state. */
+  async getAnchorSubmissionStatus(publicId: string): Promise<import('./types').AnchorSubmissionStatus> {
+    const response = await this.fetch(`/api/v1/anchor/${encodeURIComponent(publicId)}/submission-status`);
+    const result = await jsonOrThrow<{
+      public_id: string;
+      action: 'queue' | 'instant';
+      anchor_status: unknown;
+      credit_state: 'pending' | 'spent' | 'refunded' | null;
+      instant_status: unknown;
+      retryable: boolean;
+      updated_at: string;
+    }>(response, 'Submission status request failed');
+    if (!isAnchorLifecycleStatus(result.anchor_status)
+      || (result.instant_status !== null && !isAnchorInstantStatus(result.instant_status))) {
+      throw new ArkovaError('Submission status response was malformed', 502, 'invalid_response');
+    }
+    return {
+      publicId: result.public_id,
+      action: result.action,
+      anchorStatus: result.anchor_status,
+      creditState: result.credit_state,
+      instantStatus: result.instant_status,
+      retryable: result.retryable,
+      updatedAt: result.updated_at,
     };
   }
 

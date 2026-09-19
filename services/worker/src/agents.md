@@ -1,4 +1,6 @@
 # services/worker/src/
+PR #2904 review: `memory-leaks.test.ts` explicitly supplies the disabled fanout config while importing actual delivery/lifecycle cleanup. The suite remains independent of configured-worker credentials.
+
 _Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_
 
 ## 2026-09-13 SCRUM-3888 — origin guard for the public Cloud Run origin
@@ -290,3 +292,7 @@ Two new typed config entries, both read through `config` and never `process.env`
 registry. Adding an MCP tool must update this list and the canonical
 `docs/api/mcp-tools.md` inventory together; keep the gated
 `arkova_anchor_document` exclusion distinct from the default catalog count.
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+The fan-out flag uses the validated config singleton. Config tests load each environment shape and compare the real fan-out reader to that singleton; changing Cloud Run configuration replaces its revision.

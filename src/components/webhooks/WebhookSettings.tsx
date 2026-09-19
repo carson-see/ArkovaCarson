@@ -42,12 +42,17 @@ import {
 } from '@/components/ui/alert-dialog';
 import { WEBHOOK_LABELS } from '@/lib/copy';
 
+/** SCRUM-3972 — mirrors the DB CHECK webhook_endpoints_scope_known_values. */
+export type WebhookScope = 'self' | 'self_and_descendants';
+
 interface WebhookEndpoint {
   id: string;
   url: string;
   events: string[];
   is_active: boolean;
   created_at: string;
+  /** Absent on rows read before migration 0454 landed; treated as 'self'. */
+  scope?: WebhookScope | string;
 }
 
 /** Result of a signed test ping (WH-02) as returned by the worker. */
@@ -59,7 +64,12 @@ export interface WebhookTestPingResult {
 
 interface WebhookSettingsProps {
   endpoints: WebhookEndpoint[];
-  onAdd: (url: string, events: string[]) => Promise<string>;
+  /**
+   * SCRUM-3972: `scope` is the third argument. Optional in the callback's own
+   * signature so an embedding surface that predates the column keeps compiling;
+   * the component always passes it.
+   */
+  onAdd: (url: string, events: string[], scope?: WebhookScope) => Promise<string>;
   onDelete: (id: string) => Promise<void>;
   onToggle: (id: string, active: boolean) => Promise<void>;
   /**
@@ -68,6 +78,8 @@ interface WebhookSettingsProps {
    */
   onTestPing?: (id: string) => Promise<WebhookTestPingResult>;
   loading?: boolean;
+  fetchError?: string | null;
+  onRetry?: () => void;
 }
 
 // SCRUM-1743: source of truth is `services/worker/src/api/v1/webhooks-schemas.ts`
@@ -105,6 +117,11 @@ export const AVAILABLE_EVENTS = [
   // never registered in the worker allowlist, so this option could not be
   // offered and every dispatch matched zero endpoints.
   { id: 'compliance.document_expiring', label: 'Document Expiring Soon' },
+  { id: 'job.completed', label: 'Batch Verification Completed' },
+  { id: 'compliance.certificate_expiring', label: 'Signing Certificate Expiring' },
+  { id: 'compliance.anchor_delayed', label: 'Securing Delayed' },
+  { id: 'compliance.signature_revoked', label: 'Signature Revoked' },
+  { id: 'compliance.timestamp_coverage_low', label: 'Timestamp Coverage Low' },
   // SCRUM-3982: both were dispatched from services/worker/src/api/v1/attestations.ts
   // while unregistered, so no endpoint could subscribe and the payload skipped
   // schema validation entirely (attestation.created was shipping the document
@@ -118,6 +135,43 @@ export const AVAILABLE_EVENTS = [
   { id: 'folder.updated', label: 'Folder Updated' },
   { id: 'folder.deleted', label: 'Folder Deleted' },
   { id: 'record.folder_changed', label: 'Records Moved Between Folders' },
+  { id: 'anchor.revocation_anchored', label: 'Anchor Revocation Confirmed' },
+  { id: 'attestation.active', label: 'Attestation Active' },
+  // SCRUM-3972 — affiliated-organization lifecycle. These fire on the PARENT
+  // organization's own endpoints (they describe the parent's own actions), so
+  // a default-scope endpoint receives them; four of them also fire on the
+  // affiliated organization's endpoints so it learns its budget or tenancy
+  // changed. CLAUDE.md §1.3: user-visible copy says "affiliated organization",
+  // never "sub-org".
+  { id: 'suborg.created', label: 'Affiliated Organization Created' },
+  { id: 'suborg.approved', label: 'Affiliated Organization Approved' },
+  { id: 'suborg.revoked', label: 'Affiliation Revoked' },
+  { id: 'suborg.credits_allocated', label: 'Affiliate Credits Allocated' },
+  { id: 'suborg.credits_reclaimed', label: 'Affiliate Credits Reclaimed' },
+  { id: 'suborg.suspended', label: 'Affiliated Organization Suspended' },
+  { id: 'suborg.offboarded', label: 'Affiliated Organization Offboarded' },
+];
+
+/**
+ * SCRUM-3972 — the two-option delivery scope. Values mirror the DB CHECK
+ * `webhook_endpoints_scope_known_values` exactly, so the picker cannot offer a
+ * value the database would reject.
+ */
+export const SCOPE_OPTIONS: ReadonlyArray<{
+  value: WebhookScope;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'self',
+    label: WEBHOOK_LABELS.SCOPE_SELF,
+    description: WEBHOOK_LABELS.SCOPE_SELF_DESC,
+  },
+  {
+    value: 'self_and_descendants',
+    label: WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS,
+    description: WEBHOOK_LABELS.SCOPE_SELF_AND_DESCENDANTS_DESC,
+  },
 ];
 
 export function WebhookSettings({
@@ -127,10 +181,13 @@ export function WebhookSettings({
   onToggle,
   onTestPing,
   loading = false,
+  fetchError = null,
+  onRetry,
 }: Readonly<WebhookSettingsProps>) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newUrl, setNewUrl] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(['anchor.secured', 'anchor.revoked']);
+  const [selectedScope, setSelectedScope] = useState<WebhookScope>('self');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -206,9 +263,10 @@ export function WebhookSettings({
 
     setSaving(true);
     try {
-      const secret = await onAdd(newUrl, selectedEvents);
+      const secret = await onAdd(newUrl, selectedEvents, selectedScope);
       setNewUrl('');
       setSelectedEvents(['anchor.secured', 'anchor.revoked']);
+      setSelectedScope('self');
       // Show the generated secret (one-time display)
       setGeneratedSecret(secret);
     } catch (err) {
@@ -242,12 +300,20 @@ export function WebhookSettings({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle>Webhook Endpoints</CardTitle>
             <CardDescription>
               Receive notifications when events occur in your organization
             </CardDescription>
+            <a
+              href="https://api.arkova.ai/api/docs/spec.json"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-primary underline-offset-4 hover:underline"
+            >
+              Update endpoint URLs and event subscriptions with the webhook API
+            </a>
           </div>
           <Dialog open={isDialogOpen} onOpenChange={(open) => {
             if (!open) {
@@ -345,10 +411,16 @@ export function WebhookSettings({
                       <Label>Events</Label>
                       <div className="space-y-2">
                         {AVAILABLE_EVENTS.map((event) => (
-                          <label key={event.id} className="flex items-center gap-2">
+                          <label
+                            key={event.id}
+                            className={`flex items-center gap-2 ${
+                              CATALOG_DATA[event.id]?.live ? '' : 'cursor-not-allowed opacity-60'
+                            }`}
+                          >
                             <input
                               type="checkbox"
                               checked={selectedEvents.includes(event.id)}
+                              disabled={!CATALOG_DATA[event.id]?.live}
                               onChange={(e) => {
                                 if (e.target.checked) {
                                   setSelectedEvents([...selectedEvents, event.id]);
@@ -366,6 +438,33 @@ export function WebhookSettings({
                           </label>
                         ))}
                       </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{WEBHOOK_LABELS.SCOPE_LABEL}</Label>
+                      <div className="space-y-2">
+                        {SCOPE_OPTIONS.map((option) => (
+                          <label key={option.value} className="flex items-start gap-2">
+                            <input
+                              type="radio"
+                              name="webhook-scope"
+                              value={option.value}
+                              checked={selectedScope === option.value}
+                              onChange={() => setSelectedScope(option.value)}
+                              className="mt-1"
+                            />
+                            <span className="text-sm">
+                              <span className="block font-medium">{option.label}</span>
+                              <span className="block text-muted-foreground">{option.description}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      {selectedScope === 'self_and_descendants' && (
+                        <p className="text-xs text-muted-foreground" data-testid="webhook-scope-pending-note">
+                          {WEBHOOK_LABELS.SCOPE_PENDING_NOTE}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -386,11 +485,24 @@ export function WebhookSettings({
       </CardHeader>
 
       <CardContent>
+        {fetchError && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <span>Unable to load webhook endpoints. {fetchError}</span>
+              {onRetry && (
+                <Button type="button" variant="outline" size="sm" className="ml-3" onClick={onRetry}>
+                  Try again
+                </Button>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
         {loading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
-        ) : (endpoints.length === 0 ? (
+        ) : fetchError ? null : (endpoints.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>No webhook endpoints configured</p>
             <p className="text-sm">Add an endpoint to receive event notifications</p>

@@ -117,6 +117,10 @@ unreachable today, so no delivery of it has occurred — see
 ## 2026-09-14 — SCRUM-5142 folders
 
 `ArkovaClient.folders` mirrors the canonical worker REST surface: list/create/update/bindConnector/delete/moveRecords. Keep bulk moves capped by the server contract and preserve per-row failures.
+## 2026-09-19 — remaining webhook types mirrored
+
+`WebhookEventType` includes `job.completed` plus the four registered compliance contracts. The exhaustive client-test pin and repository drift gate keep the SDK union aligned with the worker allowlist; this is a source change for the next artifact freeze and does not claim a package release.
+
 ## SCRUM-5211 — authenticated redirects fail closed
 
 The private fetch wrapper forces `redirect: 'error'` after caller options are
@@ -126,3 +130,9 @@ applying it only in `request()` leaves typed methods able to forward
 `X-API-Key` when Fetch follows a cross-origin redirect. SDK unit tests and the
 API CLI's two-origin integration suite cover direct and `probe`
 health/read/verify/folder paths.
+## 2026-09-19 — UAT-12 receipt/status parity
+
+`AnchorReceipt` maps wire `credit_state` and `idempotent`; `getAnchorSubmissionStatus(publicId)` maps the bounded durable status response. Preserve every enum value and camelCase mapping when the worker contract changes.
+The client validates both lifecycle and instant status enums at the JSON boundary before returning
+the typed result; unknown persisted values fail closed as `ArkovaError(502, invalid_response)` rather
+than being asserted into the public union or rendered as a known state.

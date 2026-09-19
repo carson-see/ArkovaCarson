@@ -1,5 +1,13 @@
 # agents.md — hooks
 
+## 2026-09-19 — UAT-12 capability and tag suggestions
+
+`useSecuringCapability` validates the worker response with Zod and fails closed on
+malformed or unavailable data. `usePrivateTagSuggestions` relies on RLS for the
+tenant boundary, then partitions user tags from organization tags and filters the
+latter to the exact selected org. Its React Query key includes both user and org,
+preventing a prior scope's response from becoming the next scope's suggestions.
+
 ## UAT-22 platform invitation list (2026-09-14)
 
 `useOrgInvitations(orgId, platformAdmin)` uses the authenticated admin worker list for platform administrators and the existing tenant RLS query otherwise. Cache keys include actor mode, preventing reuse of privileged foreign-org results in tenant mode. Expiry and revoked-status display semantics remain shared.
@@ -174,6 +182,38 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 - `@/types/database.types` — auto-generated from `supabase gen types`
 - `useAuth` — most hooks depend on the authenticated user
 
+## 2026-09-12 SCRUM-5024 — `useReferrals.ts` (new) + `useOnboarding.ts` attribution
+
+`useReferrals(orgId)` reads the org's ACTIVE `referral_codes` row and
+`get_org_referrals` directly from Supabase. Two rules it exists to keep:
+
+- **No auto-mint.** `mint()` is called only from the button in `ReferralPanel`.
+  Minting as a side effect of opening a settings page creates durable, shareable
+  partner codes for organizations that never asked for one.
+- **No `?? []`.** A failed read sets `error` and leaves `referred` empty *with*
+  that error set, so the panel can distinguish "you referred nobody" from "we
+  could not find out". Reporting an empty list as an answer is the hollow-200
+  failure mode this repo has shipped before.
+
+`useOnboarding.ts` gained `applyCapturedReferral(orgId)`, called after ALL THREE
+org-creating branches (`update_profile_onboarding` success; the RPC-rejected
+direct insert; the `already_set`-with-no-org fallback). The ordinary branch is
+an `else if` so the fallback cannot attribute the same organization twice.
+
+- It is never threaded INTO `update_profile_onboarding`: an optional org-creating
+  parameter would make the referral vanish down whichever fallback the caller
+  happened to take.
+- It NEVER changes the signup result. A mistyped code must not fail an
+  organization that already exists. Every non-applied outcome is logged at error
+  level with its reason and returned as a typed `ReferralAttributionOutcome` the
+  caller can count — nothing is swallowed.
+- `rpc_failed` leaves the parked code in place (the database never ruled, so a
+  retry is still live); every database verdict clears it (retrying a refused
+  code cannot start succeeding).
+- **Deliberate non-attribution:** `joinOrgByDomain` and invitation-accept create
+  no organization, so nothing is attributed. A partner refers organizations, not
+  seats.
+
 ## 2026-09-05 — SCRUM-4035 pending OAuth profile access
 
 `useProfile` suppresses product-data queries while the session carries `arkova_email_pending`, including its loading indicator, so confirmation remains reachable. A confirmed token re-enables the existing profile query and onboarding destination calculation; covered by hook and real-app browser positive controls.
@@ -187,3 +227,11 @@ the query; account switches and AAL downgrades mask cached data immediately.
 ## 2026-09-14 — SCRUM-5142 folder client
 
 `useFolders` uses the worker folder API for global personal, org-context personal, and org folders. Moves always use the bounded bulk endpoint, including one-record moves, so partial failures and service-role authorization have one contract.
+## 2026-09-19 — UAT-12 submission authority
+
+`useSecuringCapability` and `useAnchorSubmissionStatus` parse worker payloads
+strictly and fail closed. Status reads use the selected exact organization or an
+explicit personal scope, poll only active instant intents, and refresh on focus.
+`usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
+its query key includes both user and selected organization to prevent stale scope
+reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.

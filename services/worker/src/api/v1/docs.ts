@@ -18,6 +18,7 @@ import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 // each materialising its own — see the constant's own header for why the
 // order is stated and the array is frozen.
 import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
+import { ANCHOR_CREDENTIAL_TYPES } from '../../lib/credential-evidence.js';
 
 const router = Router();
 
@@ -36,8 +37,8 @@ const ANCHOR_SUBMIT_REQUEST_BODY = {
         required: ['fingerprint'],
         properties: {
           fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
-          description: { type: 'string', maxLength: 1000, description: 'Private document description' },
-          credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
+          description: { type: 'string', maxLength: 1000, description: 'Public document description included in verification responses' },
+          credential_type: { type: 'string', enum: [...ANCHOR_CREDENTIAL_TYPES] },
           action: { type: 'string', enum: ['queue', 'instant'], default: 'queue', description: 'Queue for batch anchoring or reserve one anchor credit to start now' },
           private_tags: {
             type: 'object',
@@ -54,12 +55,137 @@ const ANCHOR_SUBMIT_REQUEST_BODY = {
   },
 } as const;
 
+const ANCHOR_RECEIPT_SCHEMA = {
+  type: 'object',
+  required: ['public_id', 'fingerprint', 'status', 'created_at', 'record_uri', 'action', 'credit_state', 'instant_status', 'idempotent'],
+  properties: {
+    public_id: { type: 'string' },
+    fingerprint: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+    status: { type: 'string' },
+    created_at: { type: 'string', format: 'date-time' },
+    record_uri: { type: 'string', format: 'uri' },
+    action: { type: 'string', enum: ['queue', 'instant'] },
+    credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true },
+    instant_status: { type: 'string', enum: ['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED'], nullable: true },
+    idempotent: { type: 'boolean' },
+  },
+} as const;
+
 const ANCHOR_SUBMIT_RESPONSES = {
-  '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
-  '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] }, action: { type: 'string', enum: ['queue', 'instant'] }, credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true }, instant_status: { type: 'string', nullable: true } } } } } },
+  '200': { description: 'Existing caller-owned submission (idempotent)', content: { 'application/json': { schema: ANCHOR_RECEIPT_SCHEMA } } },
+  '201': { description: 'Anchor created', content: { 'application/json': { schema: ANCHOR_RECEIPT_SCHEMA } } },
   '400': { $ref: '#/components/responses/BadRequest' },
   '401': { $ref: '#/components/responses/Unauthorized' },
   '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+  '403': {
+    description: 'The authenticated caller lacks anchor write scope, cannot act for the selected organization, or the selected organization is suspended.',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+  },
+  '409': {
+    description: 'The fingerprint already belongs to another scope for this actor, supplied private tags differ from the immutable tags on an idempotent submission, or anchor creation encountered a generic uniqueness conflict.',
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['error'],
+          properties: {
+            error: { type: 'string', enum: ['submission_metadata_conflict', 'fingerprint_conflict', 'anchor_creation_conflict'] },
+            message: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
+  '429': {
+    description: 'The route-wide request-rate limit was exceeded, or the exact organization exhausted its daily anchor-creation quota. X-Org-Quota-* headers are present only for the organization-quota variant.',
+    headers: {
+      'Retry-After': { schema: { type: 'integer', minimum: 1 }, description: 'Seconds until the active limit permits another request' },
+      'X-RateLimit-Limit': { schema: { type: 'integer' }, description: 'Active request or quota limit' },
+      'X-RateLimit-Remaining': { schema: { type: 'integer', enum: [0] }, description: 'Remaining capacity in the active limit window' },
+      'X-RateLimit-Reset': { schema: { type: 'integer' }, description: 'Active limit-window reset as Unix epoch seconds' },
+      'X-Org-Quota-Anchors-Limit': { schema: { type: 'integer' }, description: 'Daily anchor quota limit' },
+      'X-Org-Quota-Anchors-Remaining': { schema: { type: 'integer' }, description: 'Daily anchor quota remaining' },
+      'X-Org-Quota-Anchors-Reset': { schema: { type: 'string', format: 'date-time' }, description: 'Daily quota reset time' },
+      'X-Org-Quota-Anchors-Created-Limit': { schema: { type: 'integer' }, description: 'Compatibility alias for the daily anchor quota limit' },
+      'X-Org-Quota-Anchors-Created-Remaining': { schema: { type: 'integer' }, description: 'Compatibility alias for daily anchor quota remaining' },
+      'X-Org-Quota-Anchors-Created-Reset': { schema: { type: 'string', format: 'date-time' }, description: 'Compatibility alias for the daily quota reset time' },
+    },
+    content: {
+      'application/json': {
+        schema: {
+          oneOf: [
+            {
+              type: 'object',
+              required: ['error', 'retry_after'],
+              properties: {
+                error: { type: 'string', enum: ['Too many requests'] },
+                retry_after: { type: 'integer', minimum: 1 },
+              },
+            },
+            {
+              type: 'object',
+              required: ['error'],
+              properties: {
+                error: {
+                  type: 'object',
+                  required: ['code', 'message', 'quota_type', 'current', 'limit', 'reset_at'],
+                  properties: {
+                    code: { type: 'string', enum: ['ORG_QUOTA_EXCEEDED'] },
+                    message: { type: 'string' },
+                    quota_type: { type: 'string', enum: ['anchors_created'] },
+                    current: { type: 'integer', minimum: 0 },
+                    limit: { type: 'integer', minimum: 0 },
+                    reset_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+  '500': {
+    description: 'Anchor creation failed without exposing database or provider details.',
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['error'],
+          properties: {
+            error: { type: 'string', enum: ['anchor_creation_failed', 'Internal server error'] },
+            message: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
+  '503': {
+    description: 'Submission, organization, quota, metadata, or instant-processing state is temporarily unavailable.',
+    content: {
+      'application/json': {
+        schema: {
+          oneOf: [
+            { $ref: '#/components/schemas/ApiError' },
+            {
+              type: 'object',
+              required: ['error'],
+              properties: {
+                error: {
+                  type: 'object',
+                  required: ['code', 'message'],
+                  properties: {
+                    code: { type: 'string', enum: ['quota_check_failed'] },
+                    message: { type: 'string' },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
 } as const;
 
 /**
@@ -939,6 +1065,54 @@ export const openApiSpec: Record<string, any> = {
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: ANCHOR_SUBMIT_REQUEST_BODY,
         responses: ANCHOR_SUBMIT_RESPONSES,
+      },
+    },
+    '/anchor/{publicId}/submission-status': {
+      get: {
+        summary: 'Get the caller-scoped durable submission status',
+        description: 'Returns queue or instant processing and credit state for an anchor owned by this exact API-key actor and organization scope. Missing and cross-tenant records both return 404. Private tags, internal identifiers, debit reasons, and metadata are never returned.',
+        operationId: 'getAnchorSubmissionStatus',
+        tags: ['Anchoring'],
+        'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'publicId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Current durable submission status', content: { 'application/json': { schema: { type: 'object', required: ['public_id', 'action', 'anchor_status', 'credit_state', 'instant_status', 'retryable', 'updated_at'], properties: {
+            public_id: { type: 'string' },
+            action: { type: 'string', enum: ['queue', 'instant'] },
+            anchor_status: { type: 'string', enum: ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED', 'SUPERSEDED', 'PENDING_RESOLUTION'] },
+            credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true },
+            instant_status: { type: 'string', enum: ['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED'], nullable: true },
+            retryable: { type: 'boolean', description: 'True only when explicit instant resubmission is eligible to re-arm a never-debited NEEDS_CREDIT intent.' },
+            updated_at: { type: 'string', format: 'date-time' },
+          } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { description: 'Submission absent or outside the caller tenant' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/anchor-self-service/{publicId}/submission-status': {
+      get: {
+        summary: 'Get dashboard submission status for an explicit personal or organization scope',
+        description: 'JWT bridge to the canonical caller-scoped status lookup. Supply exactly one of org_id or scope=user. Organization membership is re-derived server-side; absent and cross-tenant submissions are not exposed.',
+        operationId: 'getAnchorSelfServiceSubmissionStatus',
+        tags: ['Anchoring'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'publicId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'org_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'scope', in: 'query', schema: { type: 'string', enum: ['user'] } },
+        ],
+        responses: {
+          '200': { description: 'Same bounded shape as the API-key submission-status route' },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { description: 'Submission absent or outside the selected scope' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
       },
     },
     '/anchor-credits/status': {
@@ -1864,6 +2038,12 @@ export const openApiSpec: Record<string, any> = {
                   },
                   description: { type: 'string', maxLength: 500, example: 'Production HR system' },
                   verify: { type: 'boolean', description: 'Send a verification ping before persisting' },
+                  scope: {
+                    type: 'string',
+                    enum: ['self', 'self_and_descendants'],
+                    default: 'self',
+                    description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+                  },
                 },
               },
             },
@@ -1938,7 +2118,7 @@ export const openApiSpec: Record<string, any> = {
       },
       patch: {
         summary: 'Update a webhook endpoint',
-        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active}. Updating the URL re-validates SSRF protection. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
+        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active, scope}. Updating the URL re-validates SSRF protection. An omitted field is left unchanged — in particular an omitted `scope` preserves the stored value. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
         operationId: 'updateWebhookEndpoint',
         tags: ['Webhooks'],
         'x-arkova-required-scopes': ['webhooks:manage'],
@@ -1958,6 +2138,11 @@ export const openApiSpec: Record<string, any> = {
                   },
                   description: { type: 'string', maxLength: 500, nullable: true },
                   is_active: { type: 'boolean' },
+                  scope: {
+                    type: 'string',
+                    enum: ['self', 'self_and_descendants'],
+                    description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+                  },
                 },
               },
             },
@@ -2194,6 +2379,54 @@ export const openApiSpec: Record<string, any> = {
           '402': { description: 'No AI credits remaining for the semantic path (flag on, RPC not yet attempted). Retry to get a lexical result instead is NOT automatic on this status — insufficient credits is a distinct condition from a semantic RPC failure.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
           '503': { description: 'ENABLE_VERIFICATION_API is off (worker-wide gate, applies to all of /api/v1/*). No longer returned for ENABLE_SEMANTIC_SEARCH off — see the operation description.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/referrals': {
+      get: {
+        summary: 'Partner referral code and attributed organizations',
+        description:
+          'Returns the calling organization\'s active referral code, the link to share, and the organizations that code introduced. '
+          + 'The organization is derived from the API key — there is no organization parameter. '
+          + 'Identifiers are public ids only. `organization_public_id` is omitted for an organization that has no public id. '
+          + 'MEASURED: which organizations presented this code at creation, and when. '
+          + 'NOT ASSERTED: any commission, payout, discount or revenue share. No field here feeds billing.',
+        operationId: 'listReferrals',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        responses: {
+          '200': {
+            description: 'Referral code and attributed organizations. An organization with no minted code returns `referral_code: null` and an empty list, not a 404.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['referral_code', 'share_url', 'referred', 'total'],
+                  properties: {
+                    referral_code: { type: 'string', nullable: true, description: '8 characters from ABCDEFGHJKMNPQRSTUVWXYZ23456789, or null when none has been minted.' },
+                    share_url: { type: 'string', nullable: true, description: 'Null exactly when referral_code is null.' },
+                    referred: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['display_name', 'referred_at', 'verification_status'],
+                        properties: {
+                          organization_public_id: { type: 'string', description: 'Omitted when the referred organization has no public id.' },
+                          display_name: { type: 'string' },
+                          referred_at: { type: 'string', format: 'date-time' },
+                          verification_status: { type: 'string' },
+                        },
+                      },
+                    },
+                    total: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'API key lacks the read:orgs scope', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
     },
@@ -2756,6 +2989,11 @@ export const openApiSpec: Record<string, any> = {
           },
           is_active: { type: 'boolean' },
           description: { type: 'string', nullable: true },
+          scope: {
+            type: 'string',
+            enum: ['self', 'self_and_descendants'],
+            description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+          },
           created_at: { type: 'string', format: 'date-time' },
           updated_at: { type: 'string', format: 'date-time' },
         },

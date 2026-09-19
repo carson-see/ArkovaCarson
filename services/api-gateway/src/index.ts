@@ -10,16 +10,19 @@ import { resolveRoute, WORKER_ORIGIN } from './router';
  * PROOF_SIGNING_* is configured on the production worker; publish the key
  * here in the same change that enables signing.
  */
-const KEYS_JSON = {
-  keys: [] as Array<{ kid: string; alg: 'Ed25519'; pem: string }>,
-  updated: '2026-07-13',
+export const KEYS_JSON = {
+  keys: [
+    {
+      kid: 'arkova-proof-2026-q2',
+      alg: 'Ed25519' as const,
+      pem: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE95nHQxUy2VbBqdFSiVmmbz5Y1ChmF5LLekUikHtX2I=\n-----END PUBLIC KEY-----\n',
+    },
+  ],
+  updated: '2026-09-19',
   notice:
-    'Verification keys for signed proof envelopes are published in the ' +
-    '`keys` array as {kid, alg, pem}; a signed bundle\'s signing_key_id ' +
-    'resolves against keys[].kid. No signing keys are currently published; ' +
-    'signed proof envelopes (?format=signed) are not yet enabled in ' +
-    'production. Unsigned proof bundles remain independently verifiable ' +
-    'without any key.',
+    'Public verification keys for Arkova signed proof envelopes. Match the ' +
+    'bundle signing_key_id to keys[].kid and verify the Ed25519 signature. ' +
+    'Unsigned proof bundles remain independently verifiable on chain.',
 };
 
 const API_INDEX = {

@@ -118,3 +118,6 @@ into the TS SDK (`packages/sdk`), but nothing called them from Python.
 ## 2026-09-14 — SCRUM-5142 folders
 
 Sync and async clients expose folder list/create/update/bind/delete/bulk move against `/api/v1/folders`. Models preserve nested parent, owner context, connector metadata, and partial move failures.
+## 2026-09-19 — UAT-12 durable status
+
+Sync and async clients expose `get_anchor_submission_status(public_id)` returning `AnchorSubmissionStatus`. This is caller-scoped API state, not public verification, and includes no private tags or internal ids.

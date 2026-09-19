@@ -194,3 +194,8 @@ or an instruction to exempt SDK tests from CI.
 not). They are not covered by root CI — the root `vitest.config.ts` `include` is `tests/**`, `src/**`,
 `scripts/**`, so nothing under `sdks/` runs there. Run `npx vitest run` in this directory. Do not
 "fix" the count assertion by trimming tools; the stale number is the bug.
+## 2026-09-19 — UAT-12 status tool
+
+The stdio MCP exposes `arkova_get_submission_status` and keeps `arkova_submit_anchor.action` optional for backward-compatible queue defaulting. Descriptions are public; only user/org tags are private.
+Status-handler tests retain safe string error codes but collapse structured upstream bodies to
+`HTTP <status>` and never echo internal provider messages.
