@@ -12,6 +12,7 @@ Arkova webhooks let your system react to anchor lifecycle events the moment they
 1. [Overview](#overview)
 2. [Authentication](#authentication)
 3. [Event Types](#event-types)
+   - [Receiving affiliated-organization events](#receiving-affiliated-organization-events)
 4. [Endpoints](#endpoints)
    - [Register a webhook](#post-webhooks)
    - [List webhook endpoints](#get-webhooks)
@@ -129,6 +130,50 @@ Both obey the same allowlist as every other family: public ids only, no internal
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
 
+### Affiliated Organizations (SCRUM-3972)
+
+Emitted when a parent organization changes one of its affiliated organizations. Public slugs only: `public_id` names the **affiliated** organization, `parent_public_id` the **parent**. No internal identifiers, no administrator email address and no domain appear in any of these payloads.
+
+| Event | Fired When | Status |
+|---|---|---|
+| `suborg.created` | A parent organization creates an affiliated organization (`POST /org/sub-orgs/create`). | Stable |
+| `suborg.approved` | A parent organization approves a pending affiliation (`POST /org/sub-orgs/approve`). | Stable |
+| `suborg.revoked` | A parent organization revokes an affiliation (`POST /org/sub-orgs/revoke`). The affiliated organization keeps its records; only the affiliation ends. | Stable |
+| `suborg.credits_allocated` | A parent organization moves credits **to** an affiliated organization (`POST /org/sub-orgs/credits` with a positive amount). `amount` is always positive. | Stable |
+| `suborg.credits_reclaimed` | A parent organization moves credits **back** from an affiliated organization — either `POST /org/sub-orgs/credits` with a negative amount, or the reclaim step of `POST /org/sub-orgs/offboard`. `amount` is always negative. | Stable |
+| `suborg.suspended` | An affiliated organization is suspended by its parent. Not emitted when the organization was already suspended — that transition did not happen. | Stable |
+| `suborg.offboarded` | The full offboarding operation completed: credits reclaimed (`reclaimed`, which is `0` when the affiliate held none) and the affiliated organization suspended. | Stable |
+
+Shared `data` fields on every event above: `public_id`, `display_name`, `parent_public_id`, `parent_approval_status` (`PENDING` / `APPROVED` / `REVOKED` / `null`), `occurred_at` (RFC 3339, UTC).
+
+- `suborg.credits_allocated` / `suborg.credits_reclaimed` add `amount` (signed delta applied to the affiliate), `parent_balance`, `child_balance` (both post-transaction) and optional `note`.
+- `suborg.suspended` adds optional `reason`.
+- `suborg.offboarded` adds `reclaimed` and optional `reason`.
+
+**Which endpoint receives them.** All seven are delivered to the **parent** organization's endpoints, because they describe the parent's own actions — a `scope: "self"` endpoint (the default) receives them with no change. Four of them — `suborg.credits_allocated`, `suborg.credits_reclaimed`, `suborg.suspended`, `suborg.offboarded` — are **additionally** delivered to the **affiliated organization's** own endpoints, because that organization needs to learn its budget or its tenancy changed and it cannot see its parent's feed. `suborg.created` / `suborg.approved` / `suborg.revoked` go to the parent only.
+
+Two affiliation transitions have **no** event today: `POST /org/sub-orgs/request` and `POST /org/sub-orgs/cancel`. That gap is tracked separately; do not build a reconciliation that assumes a pending request announces itself.
+
+### Receiving affiliated-organization events
+
+An endpoint's `scope` decides whether it also receives events **owned by** the organizations affiliated to it:
+
+| `scope` | Endpoint receives |
+|---|---|
+| `self` (default) | Only events owned by the endpoint's own organization. This is the behaviour every endpoint had before this field existed, and it is what an unset `scope` means. |
+| `self_and_descendants` | Additionally, events owned by organizations whose parent is this organization, whose affiliation is `APPROVED`, and which are not suspended. |
+
+Rules that hold regardless of `scope`:
+
+- **One hop.** Only direct affiliates. An affiliate of an affiliate is **not** included. Deeper chains are possible in principle, so do not assume the feed covers a whole tree — subscribe at each level you need.
+- **One direction.** An affiliated organization's endpoint never receives its parent's events. `scope` on a child endpoint widens toward *that* child's own affiliates, never upward.
+- **Approval is live, not remembered — within 60 seconds.** Revoking an affiliation stops the feed; it does not require the endpoint to be edited. Affiliation state is cached for up to 60 seconds per organization, so the last cross-organization event may arrive up to a minute after the revocation. Build reconciliation that tolerates that window rather than treating the revocation timestamp as a hard cut-off.
+- **Suspension stops it too.** Suspending or offboarding an affiliated organization stops its events reaching the parent, on the same 60-second bound, even though the affiliation record itself still reads `APPROVED`.
+- **Cross-organization payloads name their owner.** An event delivered to a parent because of `self_and_descendants` carries `org_public_id` identifying the organization the event belongs to. An event that cannot carry that field is not delivered across the boundary at all.
+- The seven `suborg.*` events above are **not** affected by `scope` — they are the parent's own events on the parent's own organization.
+
+> **Availability.** `scope` can be set and read today. The cross-organization delivery it enables is behind a server-side gate (`ENABLE_SUBORG_WEBHOOK_FANOUT`) that is **off**; until it is enabled, an endpoint set to `self_and_descendants` behaves exactly like `self`. Setting it now is safe and takes effect when the gate opens, with no re-registration.
+
 ### Backfill Behavior
 
 During operational backfills, Arkova may promote a historical group of already-confirmed anchors from `SUBMITTED` to `SECURED` in a bulk drain. Those backfills still emit one signed `anchor.secured` webhook per affected anchor, using the exact anchor identities updated by the drain job. Arkova intentionally does not replay historical per-anchor secured emails for that same backfill window to avoid sending a large delayed email burst. For customers subscribed to both webhooks and email, the webhook is the durable integration signal for those historical promotions; normal non-backfill anchor confirmation continues to use the standard email path.
@@ -149,6 +194,7 @@ Register a new webhook endpoint.
 | `events` | string[] | ❌ | `["anchor.secured", "anchor.revoked"]` | Subset of supported events. |
 | `description` | string | ❌ | — | Free-text label, max 500 chars. Useful for distinguishing prod/staging. |
 | `verify` | boolean | ❌ | `false` | If `true`, Arkova sends a synchronous verification ping to your URL with a challenge token. Your endpoint must respond `2xx` and echo the challenge in the body for the registration to succeed. |
+| `scope` | string | ❌ | `"self"` | `"self"` or `"self_and_descendants"`. See [Receiving affiliated-organization events](#receiving-affiliated-organization-events). |
 
 **Example request:**
 

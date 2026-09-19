@@ -220,6 +220,13 @@ describe('Constants', () => {
       'attestation.revoked',
       'anchor.revocation_anchored',
       'attestation.active',
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
     ]);
   });
 });

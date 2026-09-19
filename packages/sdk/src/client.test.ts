@@ -1381,6 +1381,15 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'attestation.revoked': true,
   'anchor.revocation_anchored': true,
   'attestation.active': true,
+  // SCRUM-3972 — affiliated-organization lifecycle. See docs/api/webhooks.md
+  // and services/worker/src/webhooks/payload-schemas.ts.
+  'suborg.created': true,
+  'suborg.approved': true,
+  'suborg.revoked': true,
+  'suborg.credits_allocated': true,
+  'suborg.credits_reclaimed': true,
+  'suborg.suspended': true,
+  'suborg.offboarded': true,
 };
 
 describe('WebhookEventType', () => {
@@ -1406,6 +1415,13 @@ describe('WebhookEventType', () => {
         'attestation.revoked',
         'anchor.revocation_anchored',
         'attestation.active',
+        'suborg.approved',
+        'suborg.created',
+        'suborg.credits_allocated',
+        'suborg.credits_reclaimed',
+        'suborg.offboarded',
+        'suborg.revoked',
+        'suborg.suspended',
       ].sort(),
     );
   });

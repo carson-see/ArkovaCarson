@@ -50,10 +50,10 @@ on:
     types: [opened, edited, synchronize, reopened]
     branches: [main, staging, develop]
     paths-ignore:
-      - 'LICENSE'
-      - '.gitignore'
-      - 'README.md'
-      - 'memory/**.md'
+      - "LICENSE"
+      - ".gitignore"
+      - "README.md"
+      - "memory/**.md"
 
 # SCRUM-4565: Mergify edits its speculative PR body as required checks change.
 # Those body-only updates are metadata, not new source/evidence. Give them a
@@ -133,7 +133,24 @@ jobs:
           fi
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
-          BASE_SHA="$(jq -r '.base.sha // empty' <<<"${DATA}")"
+          # `.base.sha` on the pull-request resource is a cached field. GitHub
+          # can leave it behind the repository ref after main advances (seen
+          # on #2979/#2991/#2995 on 2026-09-19). Resolve the target ref itself;
+          # the repository/ref names still come from GitHub's authenticated PR
+          # record, and this workflow only accepts this repository's allowed
+          # base branches.
+          BASE_REPO="$(jq -r '.base.repo.full_name // empty' <<<"${DATA}")"
+          BASE_REF="$(jq -r '.base.ref // empty' <<<"${DATA}")"
+          if [[ "${BASE_REPO}" != "${{ github.repository }}" ]]; then
+            echo "::error::PR #${PR_NUMBER} targets unexpected base repository '${BASE_REPO}'."
+            exit 1
+          fi
+          if [[ ! "${BASE_REF}" =~ ^(main|staging|develop)$ ]]; then
+            echo "::error::PR #${PR_NUMBER} targets unexpected base ref '${BASE_REF}'."
+            exit 1
+          fi
+          BASE_DATA="$(gh api "repos/${BASE_REPO}/git/ref/heads/${BASE_REF}")"
+          BASE_SHA="$(jq -r '.object.sha // empty' <<<"${BASE_DATA}")"
           # SCRUM-3481: the PR author's login, so the evidence check can reject
           # a residual-risk note whose `Approved by:` names the author. Read
           # from the live API alongside the SHAs, never from the PR body — it
@@ -147,12 +164,18 @@ jobs:
           fi
           MERGE_SHA="$(jq -r '.merge_commit_sha // empty' <<<"${DATA}")"
           MERGEABLE_STATE="$(jq -r '.mergeable_state // empty' <<<"${DATA}")"
-          if [[ -z "${HEAD_SHA}" || -z "${BASE_SHA}" ]]; then
+          if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::gh api returned an empty head/base SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
             exit 1
           fi
           CHECKOUT_SHA="${MERGE_SHA}"
-          if [[ -z "${CHECKOUT_SHA}" ]]; then
+          SYNTHESIZE_MERGE="false"
+          CACHED_BASE_SHA="$(jq -r '.base.sha // empty' <<<"${DATA}")"
+          if [[ "${CACHED_BASE_SHA}" != "${BASE_SHA}" ]]; then
+            echo "::warning::PR #${PR_NUMBER} cached base SHA ${CACHED_BASE_SHA:-<empty>} differs from authoritative ${BASE_REPO}:${BASE_REF} SHA ${BASE_SHA}; synthesizing the current merge from the exact branch head and authoritative base."
+            CHECKOUT_SHA="${HEAD_SHA}"
+            SYNTHESIZE_MERGE="true"
+          elif [[ -z "${CHECKOUT_SHA}" ]]; then
             echo "::warning::PR #${PR_NUMBER} has no computed merge_commit_sha yet (GitHub still calculating mergeability, or the PR has a conflict) — falling back to the branch head SHA for checkout."
             CHECKOUT_SHA="${HEAD_SHA}"
           elif [[ "${MERGEABLE_STATE}" == "dirty" || "${MERGEABLE_STATE}" == "unknown" ]]; then
@@ -172,6 +195,7 @@ jobs:
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"
             echo "checkout_sha=${CHECKOUT_SHA}"
+            echo "synthesize_merge=${SYNTHESIZE_MERGE}"
             echo "author_login=${AUTHOR_LOGIN}"
           } >> "${GITHUB_OUTPUT}"
           # SECURITY (adversarial review, 2026-07-28): the PR body is fully
@@ -198,11 +222,21 @@ jobs:
           ref: ${{ steps.live_pr.outputs.checkout_sha }}
           fetch-depth: 0
 
+      - name: Synthesize merge against authoritative base
+        if: steps.live_pr.outputs.synthesize_merge == 'true'
+        env:
+          AUTHORITATIVE_BASE_SHA: ${{ steps.live_pr.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-ff --no-edit "${AUTHORITATIVE_BASE_SHA}"
+
       - name: Setup Node.js
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install root dependencies (typescript + tsx + supabase-js)
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
