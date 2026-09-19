@@ -1,5 +1,7 @@
 # docs/staging/agents.md
 
+`uat19-completion-20260919/EVIDENCE.md` records independent local review, integrated queue/folder checks, actual JWT verification with mocked data, native concurrency and explicit browser/hosted limits. It is not a soak receipt.
+
 Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.11/1.12.
 
 ## Files

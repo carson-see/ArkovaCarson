@@ -179,10 +179,12 @@ function QueueInner({ selectedOrgId = null }: Readonly<{ selectedOrgId?: string 
   const [showHelp, setShowHelp] = useState(false);
   const effectiveOrgId = selectedOrgId ?? profile?.org_id ?? null;
   const scopeKey = `${user?.id ?? 'no-user'}:${effectiveOrgId ?? 'no-org'}`;
+  const scopeKeyRef = useRef(scopeKey);
   const listRequestRef = useRef(0);
   const scopeGenerationRef = useRef(0);
 
   useEffect(() => {
+    scopeKeyRef.current = scopeKey;
     scopeGenerationRef.current += 1;
   }, [scopeKey]);
 
@@ -202,6 +204,7 @@ function QueueInner({ selectedOrgId = null }: Readonly<{ selectedOrgId?: string 
 
   const fetchPending = useCallback(async () => {
     const requestId = ++listRequestRef.current;
+    const requestScopeKey = scopeKey;
     setError(null);
     try {
       const path = selectedOrgId
@@ -219,13 +222,13 @@ function QueueInner({ selectedOrgId = null }: Readonly<{ selectedOrgId?: string 
       // Preserve reference when payload is unchanged — keeps the grouping
       // memo stable across 30s poll ticks on an idle queue, which is the
       // common case at 10K DAU.
-      if (requestId !== listRequestRef.current) return;
+      if (requestId !== listRequestRef.current || requestScopeKey !== scopeKeyRef.current) return;
       setRows((prev) => (rowsEqual(prev, items) ? prev : items));
     } catch (err) {
-      if (requestId !== listRequestRef.current) return;
+      if (requestId !== listRequestRef.current || requestScopeKey !== scopeKeyRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to fetch queue');
     } finally {
-      if (requestId === listRequestRef.current) setLoading(false);
+      if (requestId === listRequestRef.current && requestScopeKey === scopeKeyRef.current) setLoading(false);
     }
   }, [scopeKey, selectedOrgId]);
 

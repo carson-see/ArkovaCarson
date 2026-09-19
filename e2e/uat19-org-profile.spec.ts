@@ -81,6 +81,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await expect(page.getByRole('button', { name: 'Compliance', exact: true })).toBeVisible();
       await expect(page.getByPlaceholder(/search by filename/i)).toBeVisible();
       await expect(page.getByRole('link', { name: 'LinkedIn' })).toHaveAttribute('href', /linkedin\.com/);
+      await capture(page, testInfo, `admin-org-profile-${viewport.width}`);
       await page.getByRole('button', { name: 'New Folder' }).click();
       await page.getByLabel('Folder name').fill('Evidence');
       const createRequest = page.waitForRequest(request => request.url().endsWith('/api/v1/folders') && request.method() === 'POST');
@@ -92,7 +93,8 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
         const moveDialog = page.getByRole('dialog', { name: 'Move to Folder' });
         await moveDialog.getByRole('button', { name: /Quarterly/ }).click();
         await expect(moveDialog).toBeVisible();
-        await expect(page.getByText('1 selected')).toBeVisible();
+        await expect(moveDialog.getByRole('alert')).toHaveText('Could not move the record. Please try again.');
+        await capture(page, testInfo, 'admin-partial-move-1280');
         await moveDialog.getByRole('button', { name: 'Close' }).click();
       }
       await page.getByRole('button', { name: /^(Secure Document|Secure)$/i }).click();
