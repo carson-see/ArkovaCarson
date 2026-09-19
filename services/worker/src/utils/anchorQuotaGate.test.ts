@@ -8,8 +8,7 @@
  *     a billable customer may carry a contractual cap)
  *   - sandbox orgs are allowed under the cap
  *   - sandbox orgs get 402 problem+json with type "quota-exhausted" at the cap
- *   - read failures fail OPEN (allow + log) — sandbox quota is a soft cap,
- *     not a security boundary
+ *   - config and usage read failures fail CLOSED with a retryable 503
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -167,17 +166,33 @@ describe('ensureAnchorQuotaAvailable', () => {
     expect(status).toHaveBeenCalledWith(402);
   });
 
-  it('fails open when the org_credits read fails (transient DB error)', async () => {
+  it('fails closed when the org_credits read fails (transient DB error)', async () => {
     const db = makeDb({ orgError: { message: 'connection reset' } });
-    const { res, status } = makeRes();
-    await expect(ensureAnchorQuotaAvailable(db, 'org-1', res)).resolves.toBe(true);
-    expect(status).not.toHaveBeenCalled();
+    const { res, status, type, json } = makeRes();
+    await expect(ensureAnchorQuotaAvailable(db, 'org-1', res)).resolves.toBe(false);
+    expect(status).toHaveBeenCalledWith(503);
+    expect(type).toHaveBeenCalledWith('application/problem+json');
+    expect(json).toHaveBeenCalledWith({
+      type: 'https://arkova.ai/errors/quota-check-unavailable',
+      title: 'Anchor quota check unavailable',
+      status: 503,
+      error: 'quota_check_unavailable',
+      message: 'Anchor capacity could not be verified. Retry the request.',
+    });
   });
 
-  it('fails open when the anchor count read fails', async () => {
+  it('fails closed when the anchor usage read fails', async () => {
     const db = makeDb({ org: { is_test: true, anchor_quota: 10, cap_enforced: true }, countError: { message: 'timeout' } });
-    const { res, status } = makeRes();
-    await expect(ensureAnchorQuotaAvailable(db, 'org-1', res)).resolves.toBe(true);
-    expect(status).not.toHaveBeenCalled();
+    const { res, status, type, json } = makeRes();
+    await expect(ensureAnchorQuotaAvailable(db, 'org-1', res)).resolves.toBe(false);
+    expect(status).toHaveBeenCalledWith(503);
+    expect(type).toHaveBeenCalledWith('application/problem+json');
+    expect(json).toHaveBeenCalledWith({
+      type: 'https://arkova.ai/errors/quota-check-unavailable',
+      title: 'Anchor quota check unavailable',
+      status: 503,
+      error: 'quota_check_unavailable',
+      message: 'Anchor capacity could not be verified. Retry the request.',
+    });
   });
 });
