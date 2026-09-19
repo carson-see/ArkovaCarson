@@ -421,6 +421,193 @@ export type Database = {
           },
         ]
       }
+      anchor_credit_purchases: {
+        Row: {
+          amount_paid_cents: number
+          created_at: string
+          currency: string
+          id: string
+          purchaser_user_id: string
+          quantity: number
+          stripe_event_id: string
+          stripe_session_id: string
+          target_org_id: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          amount_paid_cents: number
+          created_at?: string
+          currency: string
+          id?: string
+          purchaser_user_id: string
+          quantity: number
+          stripe_event_id: string
+          stripe_session_id: string
+          target_org_id?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          amount_paid_cents?: number
+          created_at?: string
+          currency?: string
+          id?: string
+          purchaser_user_id?: string
+          quantity?: number
+          stripe_event_id?: string
+          stripe_session_id?: string
+          target_org_id?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "anchor_credit_purchases_target_org_id_fkey"
+            columns: ["target_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_credit_purchases_target_org_id_fkey"
+            columns: ["target_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      anchor_instant_intents: {
+        Row: {
+          anchor_id: string
+          attempt: number
+          created_at: string
+          debit_reason: string | null
+          id: string
+          last_error_code: string | null
+          org_id: string | null
+          rearm_generation: number
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          anchor_id: string
+          attempt?: number
+          created_at?: string
+          debit_reason?: string | null
+          id?: string
+          last_error_code?: string | null
+          org_id?: string | null
+          rearm_generation?: number
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          anchor_id?: string
+          attempt?: number
+          created_at?: string
+          debit_reason?: string | null
+          id?: string
+          last_error_code?: string | null
+          org_id?: string | null
+          rearm_generation?: number
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "anchor_instant_intents_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: true
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_instant_intents_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: true
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_instant_intents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_instant_intents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      anchor_private_tags: {
+        Row: {
+          anchor_id: string
+          created_at: string
+          id: string
+          normalized_tag: string | null
+          org_id: string | null
+          owner_user_id: string
+          scope: string
+          tag: string
+        }
+        Insert: {
+          anchor_id: string
+          created_at?: string
+          id?: string
+          normalized_tag?: string | null
+          org_id?: string | null
+          owner_user_id: string
+          scope: string
+          tag: string
+        }
+        Update: {
+          anchor_id?: string
+          created_at?: string
+          id?: string
+          normalized_tag?: string | null
+          org_id?: string | null
+          owner_user_id?: string
+          scope?: string
+          tag?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "anchor_private_tags_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_private_tags_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "calibration_features"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_private_tags_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_private_tags_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       anchor_proofs: {
         Row: {
           anchor_id: string
@@ -7298,6 +7485,18 @@ export type Database = {
           used_this_month: number
         }[]
       }
+      claim_anchor_instant_intent: {
+        Args: { p_intent_id: string; p_worker_id: string }
+        Returns: {
+          credential_type: string
+          fingerprint: string
+          id: string
+          metadata: Json
+          org_id: string
+          public_id: string
+          user_id: string
+        }[]
+      }
       claim_docusign_signer_backfill_attempt: {
         Args: {
           p_account_id: string
@@ -7395,6 +7594,25 @@ export type Database = {
           source: string
         }[]
       }
+      create_anchor_submission: {
+        Args: {
+          p_action?: string
+          p_credential_type: string
+          p_description: string
+          p_file_mime: string
+          p_file_size: number
+          p_filename: string
+          p_fingerprint: string
+          p_fingerprint_source: string
+          p_metadata: Json
+          p_org_id: string
+          p_org_tags?: string[]
+          p_public_id: string
+          p_user_id: string
+          p_user_tags?: string[]
+        }
+        Returns: Json
+      }
       create_pending_recipient: {
         Args: { p_email: string; p_full_name?: string; p_org_id: string }
         Returns: string
@@ -7491,6 +7709,16 @@ export type Database = {
           p_source_timestamp?: string
         }
         Returns: string
+      }
+      enqueue_existing_anchor_instant_intent: {
+        Args: {
+          p_anchor_id: string
+          p_org_id: string
+          p_org_tags?: string[]
+          p_user_id: string
+          p_user_tags?: string[]
+        }
+        Returns: Json
       }
       enqueue_rule_event: {
         Args: {
@@ -7931,6 +8159,19 @@ export type Database = {
       }
       get_user_org_id: { Args: never; Returns: string }
       get_user_org_ids: { Args: never; Returns: string[] }
+      grant_purchased_anchor_credits: {
+        Args: {
+          p_amount_paid_cents: number
+          p_currency: string
+          p_purchaser_user_id: string
+          p_quantity: number
+          p_stripe_event_id: string
+          p_stripe_session_id: string
+          p_target_org_id: string
+          p_target_user_id: string
+        }
+        Returns: Json
+      }
       hypopg: { Args: never; Returns: Record<string, unknown>[] }
       hypopg_create_index: {
         Args: { sql_order: string }
@@ -8198,6 +8439,10 @@ export type Database = {
         Args: { p_action: string; p_journal_id: string; p_reason?: string }
         Returns: boolean
       }
+      retry_anchor_instant_intent: {
+        Args: { p_anchor_id: string; p_org_id: string; p_user_id: string }
+        Returns: Json
+      }
       revoke_anchor: {
         Args: { anchor_id: string; reason?: string }
         Returns: undefined
@@ -8282,6 +8527,15 @@ export type Database = {
         }[]
       }
       set_onboarding_plan: { Args: { p_tier: string }; Returns: Json }
+      settle_anchor_instant_intent: {
+        Args: {
+          p_error_code?: string
+          p_expected_attempt: number
+          p_intent_id: string
+          p_outcome: string
+        }
+        Returns: Json
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       start_kyb_verification: {

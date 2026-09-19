@@ -29,7 +29,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload, type AttestationUpload } from './FileUpload';
 import { BulkUploadWizard, MixedBatchUploadWizard } from '@/components/upload';
-import { WORKER_URL } from '@/lib/workerClient';
+import { WORKER_URL, workerPostForUrl } from '@/lib/workerClient';
 import { TemplateSelector } from './TemplateSelector';
 import type { TemplateOption } from './TemplateSelector';
 import { AIFieldSuggestions } from './AIFieldSuggestions';
@@ -47,7 +47,7 @@ import { useSecuringCapability } from '@/hooks/useSecuringCapability';
 import { exposedSecuringPaths, type SecuringPath } from '@/lib/queueContract';
 import { toast } from 'sonner';
 import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, EXTRACTION_FAILURE_REASON_COPY, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS, SECURING_CHOICE_LABELS, SECURING_CHOICE_HINTS, SECURE_QUEUE_LABELS } from '@/lib/copy';
-import { ROUTES, verifyUrl, recordDetailPath } from '@/lib/routes';
+import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
 interface SecureDocumentDialogProps {
@@ -91,10 +91,10 @@ export function SecureDocumentDialog({
   const navigate = useNavigate();
 
   // QUEUE-01 / SCRUM-2894 (L2-A1) — Add to Queue / Secure Instantly choice.
-  // capability.canSecureInstantly is hardcoded false this sprint (R5, dark) —
-  // see useSecuringCapability.ts. exposedSecuringPaths() is the frozen
+  // Capability and exact selected credit pool come from the authenticated
+  // worker status endpoint. exposedSecuringPaths() is the frozen
   // queueContract.ts helper every surface uses so exposure logic never drifts.
-  const { capability } = useSecuringCapability();
+  const { capability } = useSecuringCapability(secureOrgId);
   const exposedPaths = exposedSecuringPaths(capability);
 
   const [step, setStep] = useState<Step>('upload');
@@ -104,6 +104,9 @@ export function SecureDocumentDialog({
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [description, setDescription] = useState('');
+  const [userTagsInput, setUserTagsInput] = useState('');
+  const [orgTagsInput, setOrgTagsInput] = useState('');
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [mixedBatchFiles, setMixedBatchFiles] = useState<File[]>([]);
 
@@ -135,6 +138,20 @@ export function SecureDocumentDialog({
       isAIExtractionEnabled().then(setAiEnabled).catch(() => setAiEnabled(false));
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !user) return;
+    // RLS scopes these rows to this user and their exact organization; tags
+    // live outside the public anchor metadata projection.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    void (supabase as any).from('anchor_private_tags').select('tag').order('created_at', { ascending: false }).limit(50)
+      .then(({ data }: { data?: Array<{ tag: string }> }) => {
+        const tags = (data ?? [])
+          .map((row) => row.tag)
+          .filter((tag): tag is string => typeof tag === 'string');
+        setTagSuggestions([...new Set(tags)]);
+      }, () => setTagSuggestions([]));
+  }, [open, user?.id]);
 
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
@@ -349,8 +366,7 @@ export function SecureDocumentDialog({
       }
       // QUEUE-01 / SCRUM-2894: tag which securing path the user chose. This is
       // metadata only — the client never asserts a credit was charged (that's
-      // worker-only, §1.4); the instant path is unreachable in prod this
-      // sprint (capability.canSecureInstantly is hardcoded false, R5).
+      // worker-only, §1.4).
       metadata.securing_path = path;
       const fraudResult = await detectFraudForDocument(fileData.file, {
         credentialType: selectedTemplate?.credential_type ?? acceptedFields.credentialType ?? 'OTHER',
@@ -360,6 +376,42 @@ export function SecureDocumentDialog({
         },
       });
       Object.assign(metadata, fraudResultToMetadata(fraudResult));
+
+      const parseTags = (value: string) => [...new Set(value.split(',').map((tag) => tag.trim()).filter(Boolean))].slice(0, 10);
+      const userTags = parseTags(userTagsInput);
+      const organizationTags = parseTags(orgTagsInput);
+      const useAtomicWorkerPath = path === 'instant' || userTags.length > 0 || organizationTags.length > 0;
+
+      if (useAtomicWorkerPath) {
+        const response = await fetch(`${WORKER_URL}/api/v1/anchor-self-service`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            fingerprint: fileData.fingerprint,
+            filename: fileData.file.name,
+            file_size: fileData.file.size,
+            file_mime: fileData.file.type || undefined,
+            credential_type: selectedTemplate?.credential_type,
+            description: description.trim() || undefined,
+            org_id: secureOrgId,
+            metadata,
+            action: path,
+            private_tags: { user: userTags, organization: organizationTags },
+          }),
+        });
+        const submitted = await response.json().catch(() => ({})) as { public_id?: string; message?: string; error?: string | { message?: string } };
+        if (!response.ok || !submitted.public_id) {
+          const message = typeof submitted.error === 'string' ? submitted.error : submitted.error?.message;
+          throw new Error(submitted.message ?? message ?? 'Failed to secure document.');
+        }
+        const { data: createdRow } = await supabase.from('anchors').select('id').eq('public_id', submitted.public_id).maybeSingle();
+        if (!createdRow?.id) throw new Error('Created document could not be resolved.');
+        setCreatedAnchor({ id: createdRow.id, publicId: submitted.public_id });
+        toast.success(path === 'instant' ? SECURE_QUEUE_LABELS.INSTANT_STARTED_TOAST : SECURE_QUEUE_LABELS.QUEUED_TOAST);
+        setStep('success');
+        onSuccess?.();
+        return;
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- validated spread includes credential types that narrow type rejects
       const { data: inserted, error: insertError } = await (supabase as any)
@@ -389,7 +441,7 @@ export function SecureDocumentDialog({
         details: `Secured document "${fileData.file.name}"`,
       });
 
-      toast.success(path === 'instant' ? SECURE_QUEUE_LABELS.SECURED_TOAST : SECURE_QUEUE_LABELS.QUEUED_TOAST);
+      toast.success(SECURE_QUEUE_LABELS.QUEUED_TOAST);
       setStep('success');
       onSuccess?.();
     } catch (err) {
@@ -414,7 +466,7 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, secureOrgId, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction]);
+  }, [fileData, user, secureOrgId, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction, userTagsInput, orgTagsInput]);
 
   // Run AI extraction after file upload
   const handleStartExtraction = useCallback(async () => {
@@ -545,6 +597,8 @@ export function SecureDocumentDialog({
     setFileData(null);
     setSelectedTemplate(null);
     setDescription('');
+    setUserTagsInput('');
+    setOrgTagsInput('');
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
@@ -559,19 +613,24 @@ export function SecureDocumentDialog({
 
   // QUEUE-01 / SCRUM-2894 — "Secure Instantly" path. Only reachable when
   // exposedPaths includes 'instant', which requires capability.canSecureInstantly
-  // === true; that field is hardcoded false this sprint (R5, dark), so this
-  // handler is code-complete but unreachable in prod until L2-A2 wires the
-  // real server capability. Insufficient-credit callers are redirected to the
-  // existing billing page (buy-credits redirect) — no new checkout is invented.
+  // === true from the server. An insufficient-credit purchase uses the dedicated
+  // anchor-credit checkout; org members receive exact administrator guidance.
   const handleSecureNow = useCallback(async () => {
     if (capability.creditBalance < capability.instantSecureCost) {
-      toast.error(SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
-      handleClose();
-      navigate(ROUTES.BILLING);
+      toast.error(capability.purchaseGuidance ?? SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
       return;
     }
     await handleConfirm(undefined, 'instant');
-  }, [capability, handleConfirm, handleClose, navigate]);
+  }, [capability, handleConfirm]);
+
+  const handlePurchaseCredit = useCallback(async () => {
+    try {
+      const url = await workerPostForUrl('/api/v1/anchor-credits/purchase', { quantity: 1, org_id: secureOrgId });
+      window.location.assign(url);
+    } catch (purchaseError) {
+      toast.error(purchaseError instanceof Error ? purchaseError.message : SECURE_QUEUE_LABELS.PURCHASE_FAILED);
+    }
+  }, [secureOrgId]);
 
   const handleDialogOpenChange = useCallback((nextOpen: boolean) => {
     if (!nextOpen) {
@@ -961,13 +1020,50 @@ export function SecureDocumentDialog({
                 </p>
               </div>
 
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1 text-sm font-medium">
+                  {SECURE_QUEUE_LABELS.USER_TAGS}
+                  <input
+                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    list="anchor-tag-suggestions"
+                    maxLength={650}
+                    placeholder={SECURE_QUEUE_LABELS.TAGS_PLACEHOLDER}
+                    value={userTagsInput}
+                    onChange={(event) => setUserTagsInput(event.target.value)}
+                  />
+                </label>
+                {secureOrgId && (
+                  <label className="space-y-1 text-sm font-medium">
+                    {SECURE_QUEUE_LABELS.ORG_TAGS}
+                    <input
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      list="anchor-tag-suggestions"
+                      maxLength={650}
+                      placeholder={SECURE_QUEUE_LABELS.TAGS_PLACEHOLDER}
+                      value={orgTagsInput}
+                      onChange={(event) => setOrgTagsInput(event.target.value)}
+                    />
+                  </label>
+                )}
+                <datalist id="anchor-tag-suggestions">
+                  {tagSuggestions.map((tag) => <option key={tag} value={tag} />)}
+                </datalist>
+              </div>
+
               {/* QUEUE-01 / SCRUM-2894 (L2-A1) — securing-path hints. The
                   "Secure Instantly" hint only renders when the capability
-                  exposes it (hardcoded false this sprint, R5 dark) so this
+                  exposes it, so this
                   never shows a control the user can't act on. */}
               <div className="space-y-1 text-xs text-muted-foreground" data-testid="securing-choice-hints">
                 <p>{SECURING_CHOICE_HINTS.queue}</p>
                 {exposedPaths.includes('instant') && <p>{SECURING_CHOICE_HINTS.instant}</p>}
+                {exposedPaths.includes('instant') && capability.creditBalance < capability.instantSecureCost && (
+                  capability.canPurchase ? (
+                    <Button type="button" variant="link" className="h-auto p-0 text-xs" onClick={() => void handlePurchaseCredit()}>
+                      {SECURE_QUEUE_LABELS.BUY_ONE_CREDIT}
+                    </Button>
+                  ) : <p>{capability.purchaseGuidance}</p>
+                )}
               </div>
 
               <Alert>

@@ -2,6 +2,13 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-14 — SCRUM-5212: suspension guard covers existing-anchor instant retries
+
+When `ENABLE_ORG_SUSPENSION_GUARD=true`, `POST /api/v1/anchor` checks the selected organization
+before either rearming or first publishing an instant intent for an existing `PENDING` anchor. A
+suspended organization therefore cannot create a durable instant job through the idempotent submit
+path. Ordinary duplicate reads remain side-effect free and continue to return their existing receipt.
+
 
 ## 2026-09-12 — SCRUM-4507: `source.provider` on the verification response, and what it deliberately omits
 

@@ -370,6 +370,9 @@ CI automatically; no workflow edit was needed.
 - The A1/A2/AMAX ladder stands in for `MAX_RETRIES = 5`: the model proves the SHAPE of the ladder, not its depth. Circuit breaker, per-resource head-of-line ordering (SCRUM-2250) and idempotency-key dedupe are **out of scope** — they are covered by `webhooks/delivery.test.ts`.
 - `SUCCESS` and `FAILED` are terminal by design, so `checks: { deadlock: false }` — same resolution as `partnerProvisioning` and `drainRunAccounting`. Documentation-only: no `runtimeAdapter`; the rows live on `webhook_delivery_logs` / `webhook_dead_letter_queue`, which this machine does not own.
 
+## SCRUM-5212 — instant credit recovery
+
+`instantSecureIntent.machine.ts` includes NEEDS_CREDIT, funding, explicit retry and durable-job availability. The interpreter contract test proves the recovery path is reachable; invariant checks alone do not prove progress. A safely refunded attempt is terminal FAILED, matching the SQL. Model generation/claim abstractions do not replace native row-lock or worker authorization tests.
 
 ## CTO #2844 — offboarding interleaving correction (2026-09-14)
 

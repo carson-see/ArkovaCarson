@@ -463,6 +463,10 @@ class AnchorReceipt(ArkovaModel):
     # The caller's link to the verification page. Always emitted — both sites
     # build it via `buildVerifyUrl()`, which returns a string unconditionally.
     record_uri: str
+    action: Literal["queue", "instant"] | None = None
+    credit_state: Literal["pending", "spent", "refunded"] | None = None
+    instant_status: str | None = None
+    idempotent: bool | None = None
 
 
 @dataclass

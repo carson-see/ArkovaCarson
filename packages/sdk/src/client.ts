@@ -150,14 +150,19 @@ export class Arkova {
    * Anchor data — compute fingerprint and submit for network anchoring.
    * Returns a receipt that can be used later for verification.
    */
-  async anchor(data: string | ArrayBuffer): Promise<AnchorReceipt> {
+  async anchor(data: string | ArrayBuffer, options: import('./types').AnchorSubmitOptions = {}): Promise<AnchorReceipt> {
     const fp = await this.fingerprint(data);
 
     // Idempotent server-side: the same fingerprint returns the same publicId
     // (README "Idempotency"), so a transient 429/5xx is safe to retry.
     const response = await this.fetch('/api/v1/anchor', {
       method: 'POST',
-      body: JSON.stringify({ fingerprint: fp }),
+      body: JSON.stringify({
+        fingerprint: fp,
+        ...(options.description ? { description: options.description } : {}),
+        ...(options.action ? { action: options.action } : {}),
+        ...(options.privateTags ? { private_tags: options.privateTags } : {}),
+      }),
     }, { idempotent: true });
 
     const result = await jsonOrThrow<{
@@ -166,6 +171,8 @@ export class Arkova {
       status: string;
       created_at: string;
       chain_tx_id?: string;
+      action?: 'queue' | 'instant';
+      instant_status?: string | null;
     }>(response, 'Anchor request failed');
 
     return {
@@ -174,6 +181,8 @@ export class Arkova {
       status: result.status as AnchorReceipt['status'],
       createdAt: result.created_at,
       networkReceiptId: result.chain_tx_id,
+      action: result.action,
+      instantStatus: result.instant_status,
     };
   }
 

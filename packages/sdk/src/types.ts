@@ -172,6 +172,16 @@ export interface AnchorReceipt {
   createdAt: string;
   /** Network receipt ID (set after anchoring) */
   networkReceiptId?: string;
+  /** Submission path requested by the caller. */
+  action?: 'queue' | 'instant';
+  /** Durable instant intent state when action is instant. */
+  instantStatus?: string | null;
+}
+
+export interface AnchorSubmitOptions {
+  description?: string;
+  action?: 'queue' | 'instant';
+  privateTags?: { user?: string[]; organization?: string[] };
 }
 
 /** Additive rich metadata returned by verification and anchor-detail endpoints */

@@ -24,6 +24,7 @@ describe('Tool Definitions', () => {
     // (nessie_ask) was already a standing 503 by founder directive. See
     // sdks/mcp-server/agents.md.
     expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
+      'arkova_submit_anchor',
       'arkova_verify_anchor',
       'arkova_anchor_status',
       'arkova_search_anchors',
@@ -52,6 +53,32 @@ describe('Tool Definitions', () => {
     expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
       body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
     }));
+  });
+
+  it('submits queue/instant choice and private tags to the canonical anchor route', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ public_id: 'ark_test', action: 'instant', credit_state: 'pending' }),
+    });
+
+    const result = await handleToolCall('arkova_submit_anchor', {
+      fingerprint: 'a'.repeat(64),
+      description: 'Quarterly filing',
+      action: 'instant',
+      user_tags: '["tax"]',
+      organization_tags: '["audit"]',
+    });
+
+    expect(result.isError).toBeUndefined();
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/v1/anchor');
+    expect(JSON.parse(String(init.body))).toEqual({
+      fingerprint: 'a'.repeat(64),
+      description: 'Quarterly filing',
+      action: 'instant',
+      private_tags: { user: ['tax'], organization: ['audit'] },
+    });
   });
 
   it('should have valid input schemas', () => {

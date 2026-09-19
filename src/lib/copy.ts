@@ -4430,9 +4430,15 @@ export const SECURE_QUEUE_LABELS = {
   EMPTY_DESC: 'Documents you add to the queue will appear here until they are secured.',
   COST_PREVIEW: 'Uses 1 credit. You have {n} remaining this cycle.',
   INSUFFICIENT_CREDITS: 'Not enough credits. Add credits or add to the queue (free).',
+  BUY_ONE_CREDIT: 'Buy 1 credit for $2',
+  PURCHASE_FAILED: 'Could not start credit checkout. Please try again.',
+  USER_TAGS: 'Private tags',
+  ORG_TAGS: 'Organization tags',
+  TAGS_PLACEHOLDER: 'Add tags separated by commas',
   NOT_CHARGED_FAILURE: 'We couldn’t secure your document right now. You were not charged. Please try again or add it to the queue.',
   QUEUED_TOAST: 'Added to the queue. No credits used.',
   SECURED_TOAST: 'Your document has been secured.',
+  INSTANT_STARTED_TOAST: 'Instant securing started. Your credit is charged only when processing begins.',
 } as const;
 
 // ─── SCRUM-2481 badge honesty (Lane 3) ───────────────────────────────────────

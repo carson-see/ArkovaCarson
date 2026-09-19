@@ -1,47 +1,47 @@
-/**
- * useSecuringCapability
- *
- * QUEUE-01 / SCRUM-2894 (L2-A1) — client-side snapshot of the
- * `SecuringCapability` contract (src/lib/queueContract.ts) that gates whether
- * the "Secure Instantly" control renders in SecureDocumentDialog.
- *
- * DARK THIS SPRINT (CTO ruling R5, ratified 2026-07-28): `canSecureInstantly`
- * is hardcoded `false` here. The trusted server capability (a field on
- * `GET /api/billing/status`) does not exist yet — wiring it is L2-A2's scope
- * ("Instant-Secure ships dark, flag off"). Per queueContract's own contract
- * note, the client MUST treat `canSecureInstantly` as authoritative and MUST
- * NOT infer it from a client-side default — so until the server field lands,
- * this hook is the fail-closed default, not a placeholder. Flipping this to a
- * real server-sourced value is a follow-up; no flag flip happens in this PR.
- *
- * `creditBalance` is sourced from the user-scoped `credits` table via
- * useCredits() — R4 (ratified 2026-07-28): `credits` is canonical for
- * individual/user-scoped money, `org_credits` for org-scoped. The
- * Secure-Document dialog is a personal action, so user-scoped credits is the
- * correct source here (org-wide admin credit adjustment is a separate
- * surface, A5).
- */
-import { useCredits } from './useCredits';
+import { useQuery } from '@tanstack/react-query';
 import type { SecuringCapability } from '@/lib/queueContract';
+import { workerFetch } from '@/lib/workerClient';
+import { useAuth } from './useAuth';
 
-/** Credits consumed per instant-secure (queueContract: "contract assumes 1"). */
-const INSTANT_SECURE_COST = 1;
-
-interface UseSecuringCapabilityReturn {
-  capability: SecuringCapability;
-  loading: boolean;
+export interface AnchorCreditCapability extends SecuringCapability {
+  scope: 'user' | 'organization';
+  canPurchase: boolean;
+  purchaseGuidance: string | null;
 }
 
-export function useSecuringCapability(): UseSecuringCapabilityReturn {
-  const { credits, loading } = useCredits();
+interface UseSecuringCapabilityReturn {
+  capability: AnchorCreditCapability;
+  loading: boolean;
+  error: string | null;
+}
 
-  const capability: SecuringCapability = {
-    // DARK per R5 — see file header. Never derive this from local/client
-    // state; it must come from a trusted server field once A2 wires it.
-    canSecureInstantly: false,
-    creditBalance: credits?.balance ?? 0,
-    instantSecureCost: INSTANT_SECURE_COST,
+async function fetchCapability(orgId: string | null): Promise<AnchorCreditCapability> {
+  const scope = orgId ? `org_id=${encodeURIComponent(orgId)}` : 'scope=user';
+  const response = await workerFetch(`/api/v1/anchor-credits/status?${scope}`);
+  if (!response.ok) throw new Error('Could not load instant secure availability');
+  return response.json() as Promise<AnchorCreditCapability>;
+}
+
+const CLOSED: AnchorCreditCapability = {
+  canSecureInstantly: false,
+  creditBalance: 0,
+  instantSecureCost: 1,
+  scope: 'user',
+  canPurchase: false,
+  purchaseGuidance: null,
+};
+
+export function useSecuringCapability(orgId: string | null = null): UseSecuringCapabilityReturn {
+  const { user } = useAuth();
+  const query = useQuery({
+    queryKey: ['anchor-credit-capability', user?.id ?? 'none', orgId ?? 'user'],
+    queryFn: () => fetchCapability(orgId),
+    enabled: Boolean(user),
+    staleTime: 30_000,
+  });
+  return {
+    capability: query.data ?? CLOSED,
+    loading: Boolean(user) && query.isLoading,
+    error: query.error ? (query.error as Error).message : null,
   };
-
-  return { capability, loading };
 }

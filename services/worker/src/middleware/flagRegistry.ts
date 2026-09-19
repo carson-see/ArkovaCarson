@@ -65,6 +65,7 @@ const ENV_FLAG_GETTERS = {
   ENABLE_TREASURY_ALERTS: () => config.enableTreasuryAlerts,
   ENABLE_WEBHOOK_HMAC: () => config.enableWebhookHmac,
   ENABLE_RULE_ACTION_DISPATCHER: () => config.enableRuleActionDispatcher,
+  ENABLE_INSTANT_SECURE: () => config.enableInstantSecure,
   ENABLE_ALLOCATION_ROLLOVER: () => config.enableAllocationRollover,
   ENABLE_VISUAL_FRAUD_DETECTION: () => config.enableVisualFraudDetection,
   ENABLE_GRC_INTEGRATIONS: () => config.enableGrcIntegrations,

@@ -534,14 +534,18 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
         record_type: z.string().max(50).optional().describe('Record type (e.g., patent_grant, 10-K)'),
         source: z.string().max(50).optional().describe('Source (e.g., edgar, uspto)'),
         title: z.string().max(500).optional().describe('Document title'),
+        description: z.string().max(1000).optional().describe('Private description visible to the submitting account'),
         source_url: z.string().url().max(2048).optional().describe('Original document URL'),
+        action: z.enum(['queue', 'instant']).optional().describe('Queue for batch anchoring or spend one anchor credit to start now'),
+        user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional().describe('Private user tags'),
+        organization_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional().describe('Private organization tags'),
         idempotency_key: z.string().uuid().optional().describe('Client-supplied UUID for retry deduplication'),
       },
       withTelemetry(
         'arkova_anchor_document',
-        async ({ content_hash, record_type, source, title, source_url, idempotency_key }) => {
+        async ({ content_hash, record_type, source, title, description, source_url, action, user_tags, organization_tags, idempotency_key }) => {
           return handleAnchorDocument(
-            { content_hash, record_type, source, title, source_url, idempotency_key },
+            { content_hash, record_type, source, title, description, source_url, action, user_tags, organization_tags, idempotency_key },
             config,
           );
         },

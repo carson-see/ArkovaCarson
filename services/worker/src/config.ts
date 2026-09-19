@@ -416,6 +416,12 @@ const ConfigSchema = z.object({
    */
   enableConnectorArtifactDrain: boolFlag(false),
   /**
+   * SCRUM-5139: manual/API instant securing. This spends one credit and
+   * broadcasts an exact claimed anchor, so it remains dark until the
+   * credit/refund and chain-path soak has passed.
+   */
+  enableInstantSecure: boolFlag(false),
+  /**
    * DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
    * Default OFF in prod — re-materialization goes through the DS-03 producer,
    * which is itself gated by enableConnectorArtifactEnqueue.
@@ -1187,6 +1193,7 @@ function loadConfig(): Config {
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
     enableConnectorArtifactDrain: process.env.ENABLE_CONNECTOR_ARTIFACT_DRAIN,
+    enableInstantSecure: process.env.ENABLE_INSTANT_SECURE,
     // DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
     // Default OFF in prod — the reconciliation re-materializes via the DS-03
     // producer, which is itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.

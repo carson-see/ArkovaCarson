@@ -21,6 +21,11 @@ import {
 
 type StripeEvent = Stripe.Event;
 
+interface AnchorCreditGrantResult {
+  success?: boolean;
+  error?: string;
+}
+
 const PROFILE_TIER_BY_PLAN_ID: Record<string, SubscriptionTier> = {
   free: 'free',
   individual_verified_monthly: 'verified_individual',
@@ -269,8 +274,13 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     id: string;
     customer: string;
     subscription: string;
-    metadata?: { user_id?: string; price_id?: string; plan_id?: string };
+    metadata?: { user_id?: string; price_id?: string; plan_id?: string; purchase_kind?: string };
   };
+
+  if (session.metadata?.purchase_kind === 'anchor_credits') {
+    await handleAnchorCreditCheckoutComplete(event);
+    return;
+  }
 
   logger.info({ sessionId: session.id }, 'Processing checkout completion');
 
@@ -410,6 +420,50 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   // mapping. Do not reintroduce a write to `verification_status` here.
 
   logger.info({ userId, subscriptionId: session.subscription, planId }, 'Subscription activated');
+}
+
+/** Fulfill one-time $2 anchor-credit checkout into the exact canonical pool. */
+export async function handleAnchorCreditCheckoutComplete(event: StripeEvent): Promise<void> {
+  const session = event.data.object as {
+    id?: string;
+    mode?: string;
+    payment_status?: string;
+    amount_total?: number | null;
+    currency?: string | null;
+    metadata?: Record<string, string>;
+  };
+  const metadata = session.metadata;
+  const quantity = Number(metadata?.quantity);
+  const unitPrice = Number(metadata?.unit_price_cents);
+  const purchaserUserId = metadata?.purchaser_user_id ?? '';
+  const targetUserId = metadata?.target_user_id || null;
+  const targetOrgId = metadata?.target_org_id || null;
+  const validShape = Boolean(session.id && purchaserUserId)
+    && Number.isInteger(quantity) && quantity >= 1 && quantity <= 1000
+    && unitPrice === 200
+    && ((targetUserId !== null) !== (targetOrgId !== null))
+    && (targetUserId === null || targetUserId === purchaserUserId);
+  if (session.mode !== 'payment' || session.payment_status !== 'paid'
+      || session.currency?.toLowerCase() !== 'usd' || !validShape
+      || session.amount_total !== quantity * 200) {
+    throw new Error('Invalid anchor credit checkout completion');
+  }
+
+  const { data, error } = await callRpc<AnchorCreditGrantResult>(db, 'grant_purchased_anchor_credits', {
+    p_stripe_event_id: event.id,
+    p_stripe_session_id: session.id,
+    p_purchaser_user_id: purchaserUserId,
+    p_target_user_id: targetUserId,
+    p_target_org_id: targetOrgId,
+    p_quantity: quantity,
+    p_amount_paid_cents: session.amount_total,
+    p_currency: 'usd',
+  });
+  if (error || !data?.success) {
+    logger.error({ error, code: data?.error, eventId: event.id, sessionId: session.id }, 'Anchor credit grant failed');
+    throw error ?? new Error(data?.error ?? 'Anchor credit grant failed');
+  }
+  logger.info({ eventId: event.id, sessionId: session.id, quantity, targetOrgId, targetUserId }, 'Anchor credits granted');
 }
 
 /**
@@ -961,8 +1015,8 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
   let userId: string | null = null;
   const obj = event.data.object as unknown as Record<string, unknown>;
   const metadata = obj.metadata as Record<string, string> | undefined;
-  if (metadata?.user_id) {
-    userId = metadata.user_id;
+  if (metadata?.user_id || metadata?.purchaser_user_id) {
+    userId = metadata.user_id ?? metadata.purchaser_user_id;
   }
 
   // Claim the event in the MUTABLE webhook_event_claims table BEFORE running

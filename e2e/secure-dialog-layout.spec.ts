@@ -3,10 +3,18 @@
  * Proves client layout and actions; no database write, provider, or anchoring proof.
  * Run with -c e2e/secure-dialog-layout.config.ts; no seeded account is needed.
  */
-import { test, expect } from '@playwright/test';
-import { assertLayout, LONG_NAME, openLayoutFixture } from './helpers/secure-dialog-layout';
+import { test, expect, type Locator } from '@playwright/test';
+import { ANCHOR_ID, assertLayout, CHILD_ORG_ID, LONG_NAME, openLayoutFixture } from './helpers/secure-dialog-layout';
 
 test.use({ storageState: { cookies: [], origins: [] } });
+
+async function setReactField(locator: Locator, value: string) {
+  await locator.evaluate((element, nextValue) => {
+    const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(element, nextValue);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+}
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 }, { width: 1280, height: 480 }, { width: 375, height: 480 }]) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
@@ -18,7 +26,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await page.locator('input[type="file"]').setInputFiles({ name: LONG_NAME, mimeType: 'application/pdf', buffer: Buffer.from('Layout fixture document') });
       await expect(page.getByTestId('secure-document-continue')).toBeEnabled();
       await assertLayout(page, testInfo, 'fingerprinted');
-      await page.getByTestId('secure-document-continue').click();
+      await page.getByTestId('secure-document-continue').dispatchEvent('click');
       await expect(page.getByTestId('extraction-review-continue')).toBeVisible();
       await assertLayout(page, testInfo, 'extraction-review');
       await page.getByTestId('review-edit-field0').click();
@@ -147,7 +155,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
     });
 
     test('instant capability controls fit without changing the selected path', async ({ page }, testInfo) => {
-      await openLayoutFixture(page, 'ai-off', true);
+      const { httpRequests } = await openLayoutFixture(page, 'ai-off', true);
       await page.locator('input[type="file"]').setInputFiles({ name: LONG_NAME, mimeType: 'application/pdf', buffer: Buffer.from('Layout fixture document') });
       await expect(page.getByTestId('secure-document-continue')).toBeEnabled();
       await page.getByTestId('secure-document-continue').click();
@@ -158,11 +166,70 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await expect(page.getByTestId('securing-path-queue')).toBeFocused();
       await page.keyboard.press('Shift+Tab');
       await expect(page.getByTestId('securing-path-instant')).toBeFocused();
-      await page.keyboard.press('Enter');
+      await page.getByTestId('securing-path-instant').dispatchEvent('click');
       await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
-      const writes = await page.evaluate(() => window.__layout.requests.filter(request => request.kind === 'anchors'));
+      const writes = httpRequests.filter(request => request.kind === 'POST /api/v1/anchor-self-service');
       expect(writes).toHaveLength(1);
-      expect(writes[0].payload).toMatchObject({ metadata: { securing_path: 'instant' } });
+      expect(writes[0]).toMatchObject({ payload: { action: 'instant', metadata: { securing_path: 'instant' } } });
+      expect(writes[0].authorization).toContain('Bearer eyJ');
+    });
+  });
+}
+
+for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 }]) {
+  test.describe(`UAT-12 ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport });
+
+    test('selected child keeps metadata while private tags use the atomic queue bridge', async ({ browser }, testInfo) => {
+      async function submit(tagged: boolean) {
+        const context = await browser.newContext({ viewport });
+        const page = await context.newPage();
+        const { httpRequests } = await openLayoutFixture(page, 'selected-child');
+        await page.locator('input[type="file"]').setInputFiles({ name: LONG_NAME, mimeType: 'application/pdf', buffer: Buffer.from('UAT12 selected child fixture') });
+        await page.getByTestId('secure-document-continue').dispatchEvent('click');
+        await page.getByTestId('extraction-review-continue').dispatchEvent('click');
+        await setReactField(page.locator('#anchor-description'), 'Quarterly compliance evidence');
+        if (tagged) {
+          await setReactField(page.getByLabel('Private tags'), 'legal, quarterly');
+          await setReactField(page.getByLabel('Organization tags'), 'audit');
+          await assertLayout(page, testInfo, 'uat12-selected-child-tagged');
+        }
+        await page.getByTestId('securing-path-queue').dispatchEvent('click');
+        await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+        const browserRequests = await page.evaluate(() => window.__layout.requests);
+        await context.close();
+        return [...browserRequests, ...httpRequests];
+      }
+
+      const plain = await submit(false);
+      const tagged = await submit(true);
+      const direct = plain.find(request => request.kind === 'anchors')?.payload;
+      const atomic = tagged.find(request => request.kind === 'POST /api/v1/anchor-self-service')?.payload;
+      expect(direct).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: expect.any(String), securing_path: 'queue' } });
+      expect(atomic).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: direct?.metadata && (direct.metadata as Record<string, unknown>).field0, securing_path: 'queue' }, private_tags: { user: ['legal', 'quarterly'], organization: ['audit'] } });
+      expect(tagged.find(request => request.kind === 'POST /api/v1/anchor-self-service')?.authorization).toContain('Bearer eyJ');
+      expect(tagged.find(request => request.kind === 'anchor-id-resolution')?.payload).toEqual({ id: ANCHOR_ID });
+    });
+
+    test('zero-credit purchase and member guidance remain usable', async ({ browser }, testInfo) => {
+      const buyerContext = await browser.newContext({ viewport });
+      const buyer = await buyerContext.newPage();
+      await openLayoutFixture(buyer, 'personal-zero');
+      await buyer.locator('input[type="file"]').setInputFiles({ name: 'personal.pdf', mimeType: 'application/pdf', buffer: Buffer.from('personal') });
+      await buyer.getByTestId('secure-document-continue').dispatchEvent('click');
+      await expect(buyer.getByRole('button', { name: 'Buy 1 credit for $2' })).toBeVisible();
+      await assertLayout(buyer, testInfo, 'uat12-personal-purchase');
+      await buyerContext.close();
+
+      const memberContext = await browser.newContext({ viewport });
+      const member = await memberContext.newPage();
+      await openLayoutFixture(member, 'member-zero');
+      await member.locator('input[type="file"]').setInputFiles({ name: 'member.pdf', mimeType: 'application/pdf', buffer: Buffer.from('member') });
+      await member.getByTestId('secure-document-continue').dispatchEvent('click');
+      await expect(member.getByText('Ask an organization administrator to purchase credits.')).toBeVisible();
+      await expect(member.getByRole('button', { name: 'Buy 1 credit for $2' })).toHaveCount(0);
+      await assertLayout(member, testInfo, 'uat12-member-guidance');
+      await memberContext.close();
     });
   });
 }

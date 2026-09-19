@@ -103,6 +103,7 @@ import { runAiCreditReconcileJobs } from '../jobs/ai-credit-reconcile.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
+import { runInstantSecureJobs } from '../jobs/instant-secure.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runLockWaitMonitor } from '../jobs/lock-wait-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
@@ -1072,6 +1073,24 @@ cronRouter.post('/drain-connector-artifacts', async (_req, res) => {
     // not leak connector payload fields into logs).
     const err = error instanceof Error ? error.message : String(error);
     logger.error({ err }, 'Connector-artifact drain pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/instant-secure-intents', async (_req, res) => {
+  if (!config.enableInstantSecure) {
+    res.status(503).json({ error: 'instant_secure_unavailable' });
+    return;
+  }
+  try {
+    const result = await runInstantSecureJobs(25);
+    if (result.dead > 0 || result.updateFailed > 0) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Instant-secure intent drain failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

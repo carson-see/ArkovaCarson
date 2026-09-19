@@ -477,7 +477,7 @@ export const PublicCredentialEvidenceMetadataSchema = z.object({
   recipient_identifier_hash: Sha256HexSchema.optional(),
 }).strict();
 
-const PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS = new Set(Object.keys(PublicCredentialEvidenceMetadataSchema.shape));
+export const PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS = new Set(Object.keys(PublicCredentialEvidenceMetadataSchema.shape));
 
 export type PublicCredentialEvidenceMetadataParseResult =
   | {
