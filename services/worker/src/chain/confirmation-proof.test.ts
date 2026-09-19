@@ -27,7 +27,7 @@ type ProviderSliceType = ConfirmationProofProvider;
 // ─── Test helpers: build a real CMerkleBlock + the inputs that produce it ───
 
 function sha256(b: Buffer): Buffer {
-  return bitcoin.crypto.sha256(b);
+  return Buffer.from(bitcoin.crypto.sha256(b));
 }
 function dsha(b: Buffer): Buffer {
   return sha256(sha256(b));

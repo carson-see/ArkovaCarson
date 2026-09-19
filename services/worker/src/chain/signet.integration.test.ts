@@ -57,7 +57,7 @@ function buildFundingTx(
   tx.version = 2;
   // Coinbase-like input (simulates block reward)
   tx.addInput(Buffer.alloc(32, 0), 0xffffffff);
-  tx.addOutput(output!, valueSats);
+  tx.addOutput(output!, BigInt(valueSats));
 
   return { txHex: tx.toHex(), txid: tx.getId(), vout: 0 };
 }
@@ -111,7 +111,7 @@ describe('Signet Integration — Real TX Construction', () => {
 
     // First output must be OP_RETURN with ARKV prefix + fingerprint
     const opReturnOut = tx.outs[0];
-    expect(opReturnOut.value).toBe(0); // OP_RETURN always has 0 value
+    expect(opReturnOut.value).toBe(0n); // OP_RETURN always has 0 value
 
     // Decode the OP_RETURN script
     const decompiled = bitcoin.script.decompile(opReturnOut.script);
@@ -119,7 +119,7 @@ describe('Signet Integration — Real TX Construction', () => {
     expect(decompiled![0]).toBe(bitcoin.opcodes.OP_RETURN);
 
     // The data payload: 4 bytes 'ARKV' + 32 bytes fingerprint
-    const payload = decompiled![1] as Buffer;
+    const payload = Buffer.from(decompiled![1] as Uint8Array);
     expect(payload.length).toBe(36); // 4 (ARKV) + 32 (SHA-256)
     expect(payload.subarray(0, 4).toString()).toBe('ARKV');
     expect(payload.subarray(4).toString('hex')).toBe(TEST_FINGERPRINT);
@@ -128,7 +128,7 @@ describe('Signet Integration — Real TX Construction', () => {
     if (tx.outs.length === 2) {
       const changeOut = tx.outs[1];
       expect(changeOut.value).toBeGreaterThan(0);
-      expect(changeOut.value).toBe(100_000 - result.fee);
+      expect(changeOut.value).toBe(BigInt(100_000 - result.fee));
     }
 
     // P2WPKH: scriptSig is empty, witness contains signature + pubkey
@@ -163,7 +163,7 @@ describe('Signet Integration — Real TX Construction', () => {
 
     // Validate the OP_RETURN contains the correct fingerprint
     const decompiled = bitcoin.script.decompile(tx.outs[0].script);
-    const payload = decompiled![1] as Buffer;
+    const payload = Buffer.from(decompiled![1] as Uint8Array);
     expect(payload.subarray(4).toString('hex')).toBe(fingerprint);
 
     // Tx ID should be deterministic for same inputs
@@ -199,7 +199,7 @@ describe('Signet Integration — Real TX Construction', () => {
 
     // Change should be almost all of the input
     const changeValue = tx.outs[1].value;
-    expect(changeValue).toBe(100_000_000 - result.fee);
+    expect(changeValue).toBe(BigInt(100_000_000 - result.fee));
     expect(changeValue).toBeGreaterThan(99_999_000);
   });
 
@@ -233,7 +233,7 @@ describe('Signet Integration — Real TX Construction', () => {
 
     // No change output — only OP_RETURN
     expect(tx.outs).toHaveLength(1);
-    expect(tx.outs[0].value).toBe(0); // OP_RETURN
+    expect(tx.outs[0].value).toBe(0n); // OP_RETURN
   });
 
   it('rejects invalid fingerprint format', async () => {
