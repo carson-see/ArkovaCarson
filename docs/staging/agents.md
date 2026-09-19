@@ -4,6 +4,8 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 
 ## Files
 
+- **`uat24-completion-20260919/EVIDENCE.md`** — exact local command/results ledger, parent integration/privacy migration renumbering, independent review/premortem and explicit mocked-browser/minimal-schema limitations; not a soak receipt.
+
 - **`uat24-completion-20260919/PLAN.md`** — proposed, not-started T3 full-scope
   folder completion plan, including direct-RLS privacy, selected-org UI,
   partial-move recovery, client parity and independent premortem. New follow-up
