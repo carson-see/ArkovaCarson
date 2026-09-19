@@ -36,7 +36,7 @@ export interface ReportBlockOptions {
   showExplorerLink?: boolean;
 }
 
-const DEFAULT_API_BASE = 'https://arkova-worker-270018525501.us-central1.run.app';
+const DEFAULT_API_BASE = 'https://api.arkova.ai';
 const DEFAULT_APP_BASE = 'https://app.arkova.ai';
 
 const FONT_STACK =
