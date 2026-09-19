@@ -392,6 +392,8 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `audit-event.ts` | Audit event creation and query |
 | `admin-stats.ts` / `admin-lists.ts` / `admin-pipeline-stats.ts` | Admin dashboard data endpoints |
 | `admin-org-members.ts` | Platform-admin org roster + user-search + add-member (service_role, RLS-bypass; backs the org profile UI when an admin views a non-member org) |
+
+- UAT-17 adds `handleOrgAdminAddExistingMember`: an AAL2-authenticated exact-email action backed by the service-only atomic `add_existing_org_member` RPC. The RPC establishes exact-org admin authority before email lookup and owns membership, conditional profile backfill, and audit in one transaction; errors remain bounded and never log the supplied email.
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |
 | `rules-crud.ts` / `rules-draft.ts` | Rules engine CRUD and draft management |
 | `queue-resolution.ts` | Review queue resolution endpoint |

@@ -1507,3 +1507,4 @@ balance read; the existing public offboard HTTP shape stays unchanged.
 The native harness asserts exact balances across both serialization orders and
 zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
 for the final C3 source review and fresh qualification.
+| `0470` | `0470_uat17_verified_domain_and_atomic_member_add.sql` | SCRUM-5145 | no — local draft follow-up | Restricts confirmed-signup auto-association to one exact verified domain and adds a service-only, exact-org-authorized atomic existing-member RPC. Disable signup/member intake before rollback; the older body is unsafe with intake enabled. |
