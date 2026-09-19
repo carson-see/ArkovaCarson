@@ -21,3 +21,8 @@ Per-rule CI enforcement scripts for `memory/feedback_*.md` rules (R0-7 / SCRUM-1
 - Each script imports shared helpers from `../lib/ciContext.ts`.
 - Exit 0 = pass; exit 1 = fail with (a) what failed, (b) why, (c) how to fix/override.
 - Override labels are defined in `../lib/ciContext.ts` `LABELS` export.
+
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+create_webhook_endpoint is deliberately authenticated for WebhookSettingsPage. The exception is pinned to the exact immutable 0454 bytes (live prod/C2 ACL and auth.uid/home-org/ORG_ADMIN guards verified 2026-09-14); changed bodies, new overloads and anonymous re-grants remain violations. Migration 0454 is unchanged.

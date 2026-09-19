@@ -29,7 +29,11 @@ because a user who cannot see it cannot tell which presets extend and which cut.
   open — the expiry did NOT change, and closing implies otherwise (same discipline as revoke/delete).
 
 # agents.md — components/api
-_Last updated: 2026-08-12_
+_Last updated: 2026-09-19_
+
+## 2026-09-19 — create-key picker matches reachable enforced grants
+
+`SELECTABLE_API_SCOPES` deliberately differs from the full accepted vocabulary. The create dialog offers the currently reachable machine grants, including `verify`, `verify:batch`, `usage:read`, `webhooks:manage`, `agents:manage`, and `orgs:manage`. It excludes reserved, unenforced, compatibility-only, or JWT-only grants. When adding a scope, verify an API-key-authenticated route actually requires it; vocabulary membership alone is insufficient.
 
 ## 2026-08-12 — revoke/delete buttons work now (FD-P7, no component change)
 
@@ -61,3 +65,9 @@ Developer-facing API management components: key CRUD, usage dashboard, scope dis
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 ApiSandbox endpoint titles/descriptions scrubbed ("Verify Record", "record registry"); the S1 leftover "Nessie" codename removed from the AI-query endpoint title/description (endpoint path `/api/v1/nessie/query` unchanged — API contract). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-09-19 — Sandbox capability inventory
+
+`ApiSandbox.tsx` is a curated endpoint sampler, not a complete API console. Do not add `/api/v1/nessie/query`: the route is permanently disabled in production by founder directive. The live OpenAPI document is the authority for the complete supported surface.
+
+Verification search is `GET /api/v1/verify/search?q=...`. Its copy is centralized in `DEVELOPER_PAGE_LABELS` and must name the response's auditable `search_mode`; embeddings can be disabled or degraded, in which case the API returns `lexical_substring`.

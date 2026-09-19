@@ -18,9 +18,12 @@ import {
   checkHeadShaIdentity,
   checkCleanPreflightIdentity,
   formatReport,
+  loadIdentityNoResoakDecision,
   main,
+  prNumberFromEvent,
   type EvidenceIdentityInput,
 } from './check-evidence-identity.js';
+import { NO_RESOAK_DECISION_PATH } from './lib/founder-no-resoak.js';
 
 const HEAD = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 const OTHER = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
@@ -539,6 +542,110 @@ describe('formatReport', () => {
     );
     expect(out).toMatch(/::warning::/);
     expect(out).not.toMatch(/::error::/);
+  });
+});
+
+describe('September 19 founder authorization exception', () => {
+  const nowMs = Date.parse('2026-09-19T13:00:00Z');
+  const body = [
+    '## Staging Soak Evidence',
+    'Tier: T2',
+    `PR head SHA: ${OTHER}`,
+    'Preflight result: PENDING',
+    'Founder no-resoak decision: founder-no-resoak-2026-09-19',
+  ].join('\n');
+  const decision = {
+    id: 'founder-no-resoak-2026-09-19',
+    repository: 'carson-see/ArkovaCarson',
+    approved_by: 'carson-see',
+    authority: 'Explicit founder release instruction',
+    starts_at: '2026-09-19T12:00:00Z',
+    expires_at: '2026-09-26T12:00:00Z',
+    prs: [{
+      number: 2841,
+      head_sha: HEAD,
+      existing_evidence: ['retained historical receipt'],
+      residual_risk: 'Historical soak identity does not match the current reviewed head.',
+    }],
+  };
+  const accepted = {
+    repository: 'carson-see/ArkovaCarson',
+    body,
+    actualHeadSha: HEAD,
+    isDraft: false,
+    prNumber: 2841,
+    noResoakDecision: decision,
+    files: ['services/worker/src/api/v1/apiKeys.ts'],
+    nowMs,
+  };
+
+  it('accepts the exact trusted listing without claiming historical identity matches', () => {
+    const result = runEvidenceIdentity(accepted);
+    expect(result.ok).toBe(true);
+    expect(result.findings).toEqual([]);
+    const report = formatReport(result);
+    expect(report).toContain('Founder authorization exception accepted');
+    expect(report).toContain('no historical soak identity is asserted');
+    expect(report).not.toContain('Evidence identity holds');
+  });
+
+  it.each([
+    { prNumber: 9999 },
+    { actualHeadSha: OTHER },
+    { repository: 'other/repo' },
+    { repository: undefined },
+    { noResoakDecision: null },
+    { files: [NO_RESOAK_DECISION_PATH] },
+    { body: body.replace('Founder no-resoak decision: founder-no-resoak-2026-09-19', '') },
+  ])('preserves the original fail-closed identity findings for absent or tampered context: %j', (delta) => {
+    const result = runEvidenceIdentity({ ...accepted, ...delta });
+    expect(result.ok).toBe(false);
+    expect(result.findings.length).toBeGreaterThan(0);
+  });
+
+  it('loads from an existing trusted base without fetching', () => {
+    const calls: string[][] = [];
+    const loaded = loadIdentityNoResoakDecision(
+      'b'.repeat(40),
+      () => decision,
+      (args) => calls.push(args),
+    );
+    expect(loaded).toEqual(decision);
+    expect(calls).toEqual([]);
+  });
+
+  it('fetches only the validated exact base SHA when shallow checkout lacks it', () => {
+    const base = 'b'.repeat(40);
+    let attempts = 0;
+    const calls: string[][] = [];
+    const loaded = loadIdentityNoResoakDecision(
+      base,
+      () => (++attempts === 1 ? null : decision),
+      (args) => calls.push(args),
+    );
+    expect(loaded).toEqual(decision);
+    expect(calls).toEqual([['fetch', '--no-tags', '--depth=1', 'origin', base]]);
+  });
+
+  it.each([undefined, '', 'main', '--upload-pack=evil', 'a'.repeat(39)])(
+    'rejects invalid base input without loading or fetching: %j',
+    (base) => {
+      let touched = false;
+      expect(loadIdentityNoResoakDecision(base, () => { touched = true; }, () => { touched = true; })).toBeNull();
+      expect(touched).toBe(false);
+    },
+  );
+
+  it('fails closed when the exact-base fetch or post-fetch load fails', () => {
+    expect(loadIdentityNoResoakDecision('b'.repeat(40), () => null, () => { throw new Error('denied'); })).toBeNull();
+    expect(loadIdentityNoResoakDecision('b'.repeat(40), () => null, () => undefined)).toBeNull();
+  });
+
+  it('reads a positive integer PR number only from the trusted event payload', () => {
+    expect(prNumberFromEvent('/event.json', () => JSON.stringify({ pull_request: { number: 2841 } }))).toBe(2841);
+    expect(prNumberFromEvent('/event.json', () => JSON.stringify({ pull_request: { number: '2841' } }))).toBeUndefined();
+    expect(prNumberFromEvent('/event.json', () => '{bad')).toBeUndefined();
+    expect(prNumberFromEvent(undefined, () => { throw new Error('must not read'); })).toBeUndefined();
   });
 });
 

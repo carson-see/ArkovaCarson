@@ -2015,3 +2015,8 @@ Notice links trim trailing slashes from the configured frontend URL before addin
 `/settings/api-keys`; otherwise valid configuration produced an unmatched `//` route.
 Tests cover normal, single-slash and repeated-slash base URLs using the actual deps
 factory and a mocked email transport. No email was sent by these tests.
+## 2026-09-19 — Public-only finality webhooks (SCRUM-5063)
+
+The revocation and attestation anchoring jobs emit registered finality events
+using public resource ids and chain receipt fields only. Never restore
+`anchor_id`, `attestation_id`, or `fingerprint` to either payload.

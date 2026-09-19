@@ -34,6 +34,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, posix, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
+import { evaluateNoResoakDecision, loadNoResoakDecision } from './lib/founder-no-resoak.js';
+import { validateLoadHarnessArtifactReference } from './load-harness-artifact.js';
 import {
   REPO,
   getBaseRef,
@@ -1842,7 +1844,7 @@ function isSpecificLoadEvidence(value: string): boolean {
     || NUMERIC_REQUEST_RE.test(value);
 }
 
-function validateLoadConcurrencyEvidence(body: string): string | null {
+export function validateLoadConcurrencyEvidence(body: string, repoRoot = process.cwd()): string | null {
   const field = 'Load/concurrency evidence:';
   const filled = validateFilledEvidenceField(body, field);
   if (filled !== null) return filled;
@@ -1857,6 +1859,8 @@ function validateLoadConcurrencyEvidence(body: string): string | null {
   if (isGenericHealthOnlyEvidence(value)) {
     return `${field} must exercise the changed behavior under load; generic \`/health\` coverage is only supporting worker-health evidence.`;
   }
+  const artifactError = validateLoadHarnessArtifactReference(value, repoRoot);
+  if (artifactError !== null) return artifactError;
   return isSpecificLoadEvidence(value)
     ? null
     : `${field} must name load/concurrency proof for the changed behavior (for example tests/load, k6 VUs, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence).`;
@@ -3350,6 +3354,7 @@ const STAGING_TOOLING_ALLOW = [
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+  /^scripts\/ci\/load-harness-artifact(\.test)?\.ts$/,
   // SCRUM-3026: sanctioned re-trigger helper — mints a fresh PR event
   // (tree-identical empty commit + push, optional PR-body head-SHA bump via
   // `gh pr edit`) so event-driven CI gates re-evaluate CURRENT PR state
@@ -3566,8 +3571,11 @@ interface CheckResult {
 type RcManifestLoader = (path: string) => string | null | undefined;
 
 interface CheckOptions {
+  repository?: string;
   body: string;
   files: string[];
+  /** Trusted decision loaded from the live GitHub-resolved base commit by main(). */
+  noResoakDecision?: unknown;
   headSha?: string;
   baseSha?: string;
   baseDriftFiles?: string[];
@@ -4647,6 +4655,15 @@ export function check(opts: CheckOptions): CheckResult {
 
   addErrors(result, tierDeclarationErrors(declared, required));
 
+  // Explicit founder instruction of 2026-09-19. This is an authorization
+  // exception, not synthetic soak evidence. Only reviewed, exact heads listed
+  // in the trusted base snapshot can opt in; all other PRs retain normal gates.
+  const noResoak = evaluateNoResoakDecision(opts.noResoakDecision, opts);
+  if (noResoak.accepted) {
+    result.notes.push(noResoak.note!);
+    return result;
+  }
+
   // SCRUM-3481 — checked here, ahead of the evidence-path fork, so a
   // self-approved residual-risk note fails on EVERY path (RC manifest,
   // frontend-T2, unsoakable-T2, standard) rather than only the one that
@@ -4724,11 +4741,13 @@ function main(): void {
   const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
   const prNumber = Number.isFinite(parsedPrNumber) ? parsedPrNumber : undefined;
   const result = check({
+    repository: process.env.GITHUB_REPOSITORY,
     body: prBody,
     files,
     headSha: currentHeadSha,
     baseSha: baseRef,
     prNumber,
+    noResoakDecision: loadNoResoakDecision(baseRef),
     // Live-resolved by .github/workflows/staging-evidence.yml from the PR's
     // `.user.login` — see CheckOptions.prAuthor. Empty string → undefined so
     // the author cross-check treats "unknown" as unknown, not as a match.

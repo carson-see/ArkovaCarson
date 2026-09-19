@@ -1851,6 +1851,12 @@ export const openApiSpec: Record<string, any> = {
                   },
                   description: { type: 'string', maxLength: 500, example: 'Production HR system' },
                   verify: { type: 'boolean', description: 'Send a verification ping before persisting' },
+                  scope: {
+                    type: 'string',
+                    enum: ['self', 'self_and_descendants'],
+                    default: 'self',
+                    description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+                  },
                 },
               },
             },
@@ -1925,7 +1931,7 @@ export const openApiSpec: Record<string, any> = {
       },
       patch: {
         summary: 'Update a webhook endpoint',
-        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active}. Updating the URL re-validates SSRF protection. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
+        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active, scope}. Updating the URL re-validates SSRF protection. An omitted field is left unchanged — in particular an omitted `scope` preserves the stored value. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
         operationId: 'updateWebhookEndpoint',
         tags: ['Webhooks'],
         'x-arkova-required-scopes': ['webhooks:manage'],
@@ -1945,6 +1951,11 @@ export const openApiSpec: Record<string, any> = {
                   },
                   description: { type: 'string', maxLength: 500, nullable: true },
                   is_active: { type: 'boolean' },
+                  scope: {
+                    type: 'string',
+                    enum: ['self', 'self_and_descendants'],
+                    description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+                  },
                 },
               },
             },
@@ -2128,6 +2139,54 @@ export const openApiSpec: Record<string, any> = {
           '402': { description: 'No AI credits remaining for the semantic path (flag on, RPC not yet attempted). Retry to get a lexical result instead is NOT automatic on this status — insufficient credits is a distinct condition from a semantic RPC failure.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
           '503': { description: 'ENABLE_VERIFICATION_API is off (worker-wide gate, applies to all of /api/v1/*). No longer returned for ENABLE_SEMANTIC_SEARCH off — see the operation description.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/referrals': {
+      get: {
+        summary: 'Partner referral code and attributed organizations',
+        description:
+          'Returns the calling organization\'s active referral code, the link to share, and the organizations that code introduced. '
+          + 'The organization is derived from the API key — there is no organization parameter. '
+          + 'Identifiers are public ids only. `organization_public_id` is omitted for an organization that has no public id. '
+          + 'MEASURED: which organizations presented this code at creation, and when. '
+          + 'NOT ASSERTED: any commission, payout, discount or revenue share. No field here feeds billing.',
+        operationId: 'listReferrals',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        responses: {
+          '200': {
+            description: 'Referral code and attributed organizations. An organization with no minted code returns `referral_code: null` and an empty list, not a 404.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['referral_code', 'share_url', 'referred', 'total'],
+                  properties: {
+                    referral_code: { type: 'string', nullable: true, description: '8 characters from ABCDEFGHJKMNPQRSTUVWXYZ23456789, or null when none has been minted.' },
+                    share_url: { type: 'string', nullable: true, description: 'Null exactly when referral_code is null.' },
+                    referred: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['display_name', 'referred_at', 'verification_status'],
+                        properties: {
+                          organization_public_id: { type: 'string', description: 'Omitted when the referred organization has no public id.' },
+                          display_name: { type: 'string' },
+                          referred_at: { type: 'string', format: 'date-time' },
+                          verification_status: { type: 'string' },
+                        },
+                      },
+                    },
+                    total: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'API key lacks the read:orgs scope', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
     },
@@ -2689,6 +2748,11 @@ export const openApiSpec: Record<string, any> = {
           },
           is_active: { type: 'boolean' },
           description: { type: 'string', nullable: true },
+          scope: {
+            type: 'string',
+            enum: ['self', 'self_and_descendants'],
+            description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+          },
           created_at: { type: 'string', format: 'date-time' },
           updated_at: { type: 'string', format: 'date-time' },
         },

@@ -121,6 +121,27 @@ describe('ApiKeySettings', () => {
     });
   });
 
+  it('offers every currently enforced machine-to-machine capability', async () => {
+    render(<ApiKeySettings {...defaultProps} />);
+    fireEvent.click(screen.getByText('Create API Key'));
+
+    expect(await screen.findByLabelText('Verify')).toBeInTheDocument();
+    expect(screen.getByLabelText('Batch')).toBeInTheDocument();
+    expect(screen.getByLabelText('Usage')).toBeInTheDocument();
+    expect(screen.getByLabelText('Webhook management')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent management')).toBeInTheDocument();
+  });
+
+  it('does not offer reserved or currently unenforced grants', async () => {
+    render(<ApiKeySettings {...defaultProps} />);
+    fireEvent.click(screen.getByText('Create API Key'));
+
+    expect(await screen.findByLabelText('Search')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Admin rules')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Manage API keys')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Write attestations')).not.toBeInTheDocument();
+  });
+
   it('shows scope badges on key cards', () => {
     render(<ApiKeySettings {...defaultProps} />);
     expect(screen.getAllByText('Verify').length).toBeGreaterThan(0);
