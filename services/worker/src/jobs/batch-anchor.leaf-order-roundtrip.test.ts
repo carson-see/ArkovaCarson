@@ -122,9 +122,23 @@ vi.mock('../utils/db.js', async () => {
   };
 });
 
-import { processBatchAnchors, sortAnchorsForBatch } from './batch-anchor.js';
+import { parseTxidJournalRow, processBatchAnchors, sortAnchorsForBatch } from './batch-anchor.js';
 
 interface Leaf { anchor_id: string; fingerprint: string }
+
+it('rejects malformed journal leaf identifiers instead of stringifying objects', () => {
+  expect(() => parseTxidJournalRow({
+    id: 'journal-1',
+    batch_id: 'batch-1',
+    txid: 'ab'.repeat(32),
+    fingerprint_root: fp('root'),
+    anchor_ids: ['anchor-1'],
+    leaf_order: [{ anchor_id: { unexpected: true }, fingerprint: fp('leaf') }],
+    signed_at: '2026-09-19T00:00:00Z',
+    created_at: '2026-09-19T00:00:00Z',
+    recovery_status: 'PENDING',
+  })).toThrow('leaf_order entries require string anchor_id and fingerprint');
+});
 
 /**
  * Wire the intent-capable (journal) path: sign -> journal -> intent -> broadcast.
