@@ -42,6 +42,7 @@ DECLARE
   v_tag text;
   v_limit bigint;
   v_usage bigint;
+  v_constraint_name text;
 BEGIN
   IF (SELECT auth.role()) IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION 'service_role_required' USING ERRCODE = '42501';
@@ -124,7 +125,11 @@ BEGIN
     );
   EXCEPTION
     WHEN unique_violation THEN
-      RETURN jsonb_build_object('success', false, 'error', 'duplicate');
+      GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+      IF v_constraint_name = 'idx_anchors_user_fingerprint_unique' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'duplicate');
+      END IF;
+      RAISE;
     WHEN SQLSTATE 'P1201' THEN
       SELECT u.count INTO v_usage
       FROM public.org_daily_usage u

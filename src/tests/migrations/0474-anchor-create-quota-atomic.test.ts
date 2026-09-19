@@ -3,11 +3,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const migration = readFileSync(
-  resolve(process.cwd(), 'supabase/migrations/0469_uat12_atomic_anchor_create_quota.sql'),
+  resolve(process.cwd(), 'supabase/migrations/0474_uat12_atomic_anchor_create_quota.sql'),
   'utf8',
 );
 
-describe('0469 UAT-12 atomic canonical create quota', () => {
+describe('0474 UAT-12 atomic canonical create quota', () => {
   it('keeps the existing RPC signature and service-only boundary', () => {
     expect(migration).toMatch(/CREATE OR REPLACE FUNCTION public\.create_anchor_submission\(/i);
     expect(migration).toMatch(/auth\.role\(\)\) IS DISTINCT FROM 'service_role'/i);
@@ -30,9 +30,10 @@ describe('0469 UAT-12 atomic canonical create quota', () => {
     expect(migration).toMatch(/ON CONFLICT \(org_id, usage_date, quota_kind\) DO UPDATE[\s\S]*WHERE public\.org_daily_usage\.count < v_limit/i);
   });
 
-  it('rolls denied and duplicate creates back before returning bounded errors', () => {
+  it('rolls denied and fingerprint-duplicate creates back before returning bounded errors', () => {
     expect(migration).toMatch(/RAISE EXCEPTION 'org_anchor_quota_exceeded' USING ERRCODE = 'P1201'/i);
-    expect(migration).toMatch(/WHEN unique_violation THEN[\s\S]*'error', 'duplicate'/i);
+    expect(migration).toMatch(/WHEN unique_violation THEN[\s\S]*GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME/i);
+    expect(migration).toMatch(/v_constraint_name = 'idx_anchors_user_fingerprint_unique'[\s\S]*'error', 'duplicate'[\s\S]*RAISE;/i);
     expect(migration).toMatch(/WHEN SQLSTATE 'P1201' THEN[\s\S]*'error', 'quota_exceeded'[\s\S]*'limit', v_limit[\s\S]*'current'/i);
   });
 

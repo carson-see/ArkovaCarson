@@ -3,11 +3,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const migration = readFileSync(
-  resolve(process.cwd(), 'supabase/migrations/0468_uat12_anchor_credit_purchase_conservation.sql'),
+  resolve(process.cwd(), 'supabase/migrations/0473_uat12_anchor_credit_purchase_conservation.sql'),
   'utf8',
 );
 
-describe('0468 UAT-12 organization purchase conservation', () => {
+describe('0473 UAT-12 organization purchase conservation', () => {
   it('replaces the purchase grant without double-booking purchased principal in the ledger', () => {
     expect(migration).toMatch(/CREATE OR REPLACE FUNCTION public\.grant_purchased_anchor_credits/i);
     const functionBody = migration.match(

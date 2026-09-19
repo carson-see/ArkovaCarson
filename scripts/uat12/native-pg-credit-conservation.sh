@@ -68,7 +68,7 @@ SQL
 # lock and resume only after CREATE OR REPLACE commits.
 ( $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "BEGIN; LOCK TABLE org_credit_deductions IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(1.5); COMMIT;" >/dev/null ) & blocker_pid=$!
 sleep 0.15
-( $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0468_uat12_anchor_credit_purchase_conservation.sql >"$MIGRATION_LOG" 2>&1 ) & migration_pid=$!
+( $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0473_uat12_anchor_credit_purchase_conservation.sql >"$MIGRATION_LOG" 2>&1 ) & migration_pid=$!
 sleep 0.15
 ( $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "SET request.jwt.claim.role='service_role'; SELECT grant_purchased_anchor_credits('evt-race','cs-race','$U',NULL,'$O',3,600,'usd');" >"$GRANT_LOG" 2>&1 ) & grant_pid=$!
 sleep 0.2
@@ -81,7 +81,7 @@ wait "$blocker_pid" "$migration_pid" "$grant_pid"
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM org_credit_deductions WHERE org_id='$O' AND reason='anchor.credit_purchase' AND entry_type='GRANT';")" == '1' ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM org_credit_deductions WHERE org_id='$O' AND reason='anchor.credit_purchase.principal_reclassification' AND entry_type='REVOKE';")" == '1' ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM org_credit_deductions WHERE org_id='$BAD' AND reason='anchor.credit_purchase' AND entry_type='GRANT';")" == '1' ]]
-$PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0468_uat12_anchor_credit_purchase_conservation.sql >/dev/null
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0473_uat12_anchor_credit_purchase_conservation.sql >/dev/null
 [[ "$($PSQL -At -d "$DB" -c "SELECT divergence FROM org_credit_ledger_divergence('$O');")" == '0' ]]
 
 # Personal path remains unchanged and idempotent.

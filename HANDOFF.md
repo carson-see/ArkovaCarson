@@ -32,8 +32,8 @@
   audit found it held/dequeued, not queued.
   Corrections cover canonical single-document submission, scoped
   private-tag suggestions, honest status/recovery and public-description copy,
-  API/SDK/CLI/MCP parity, purchase conservation (0468), and atomic daily creation
-  quota (0469). Both new migrations remain unapplied candidate changes.
+  API/SDK/CLI/MCP parity, purchase conservation (0473), and atomic daily creation
+  quota (0474). Both new migrations remain unapplied candidate changes.
 - Real local PostgreSQL checks reproduced and corrected the purchase-principal
   divergence and proved quota boundary/duplicate contention; frontend browser
   checks use a standalone mocked-boundary fixture, not a hosted full-stack soak.

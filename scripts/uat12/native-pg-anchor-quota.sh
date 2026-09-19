@@ -41,7 +41,7 @@ CREATE FUNCTION get_user_org_ids() RETURNS SETOF uuid LANGUAGE sql STABLE AS $$ 
 SQL
 
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0461_uat12_private_tags_submit_actions.sql >/dev/null
-$PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0469_uat12_atomic_anchor_create_quota.sql >/dev/null
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0474_uat12_atomic_anchor_create_quota.sql >/dev/null
 
 U=11111111-1111-4111-8111-111111111111
 O=22222222-2222-4222-8222-222222222222
@@ -69,6 +69,17 @@ wait "$a_pid" "$b_pid"
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM job_queue WHERE type='anchor.instant_secure';")" == 1 ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchor_private_tags t JOIN anchors a ON a.id=t.anchor_id WHERE a.org_id='$O';")" == 1 ]]
 [[ "$(cat "$A_LOG"; cat "$B_LOG")" == *'"error": "quota_exceeded"'* ]]
+
+# Only the canonical active (user_id,fingerprint) collision is an idempotency
+# duplicate. A collision on an unrelated unique key must remain an operational
+# error; otherwise the worker falsely reports fingerprint_conflict and hides a
+# broken public-id generator or another schema invariant.
+OTHER_FP=$(printf '9%.0s' {1..64})
+if call_create "$OTHER_FP" "$($PSQL -At -d "$DB" -c "SELECT public_id FROM anchors WHERE org_id='$O' LIMIT 1;")" "'$X'" >"$A_LOG" 2>&1; then
+  echo 'unrelated public_id collision was misclassified as a duplicate' >&2
+  exit 1
+fi
+[[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchors WHERE fingerprint='$OTHER_FP';")" == 0 ]]
 
 # A same-scope replay and a cross-scope same-user conflict both hit the existing
 # global identity constraint and consume no additional quota or metadata writes.
@@ -105,4 +116,4 @@ done
 # Unknown role cannot call the SECURITY DEFINER boundary.
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "RESET request.jwt.claim.role; SELECT create_anchor_submission('$(printf 'd%.0s' {1..64})','ARK-DENIED','$U',NULL,'x',1,NULL,'OTHER',NULL,NULL,'{}','{}','{}','queue');" >/dev/null 2>&1; then exit 1; fi
 
-echo 'UAT-12 native atomic quota PASS boundary=one-winner duplicate=zero-charge cross-scope=bounded personal=no-org-quota null-inputs=bounded null-role=denied'
+echo 'UAT-12 native atomic quota PASS boundary=one-winner duplicate=zero-charge unrelated-unique=raised cross-scope=bounded personal=no-org-quota null-inputs=bounded null-role=denied'
