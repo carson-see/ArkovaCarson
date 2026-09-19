@@ -24,3 +24,4 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 - Compatible with Claude, OpenAI, Cursor, and any MCP client (stdio transport only — see `cli.ts`).
 - Tool names/descriptions/input-property descriptions are CLAUDE.md §1.3 terminology surface (see `index.test.ts`'s standing guard above) — treat them like UI copy, not internal code, when adding or editing a tool.
 - UAT-23 `arkova_import_rows` accepts 1–100 strict fingerprint rows through the canonical API-key import endpoint; raw file fields and tenant overrides are rejected before fetch, with no automatic write retry.
+- The built stdio server currently lists 9 tools; `cli.bin.test.ts` pins that count through a real symlinked process after UAT-12 status and UAT-23 import were added.

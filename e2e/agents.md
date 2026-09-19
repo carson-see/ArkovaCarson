@@ -611,4 +611,4 @@ NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mock
 only account and network boundaries; submissions are captured at the worker HTTP
 boundary and rearm must reuse the original fingerprint.
 
-UAT-23 spreadsheet layout evidence covers 1280×800, 375×812, 1280×480, and 375×480 through the standalone no-seed fixture.
+UAT-23 spreadsheet layout evidence covers 1280×800, 375×812, 1280×480, and 375×480 through the standalone no-seed fixture. Its `org-review` context keeps the selected organization equal to the mocked profile organization so the lower review evidence can exercise both private tag partitions without claiming child-organization authorization. The bottom-scrolled desktop/mobile captures show public description, user and organization tags, explicit queue/instant actions, and the one-credit-per-row disclosure; they remain layout/control evidence, not hosted Auth, database, or email-delivery proof.

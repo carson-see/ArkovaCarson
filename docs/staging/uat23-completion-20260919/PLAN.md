@@ -12,7 +12,7 @@ Dashboard/JWT batches call `POST /api/v1/anchor-self-service/bulk`, where select
 
 ## Verification
 
-Representative browser evidence: [desktop 1280×800](screenshots/bulk-review-1280x800.png) and [mobile 375×812](screenshots/bulk-review-375x812.png).
+Representative browser evidence: initial mapping views at [desktop 1280×800](screenshots/bulk-review-1280x800.png) and [mobile 375×812](screenshots/bulk-review-375x812.png), plus bottom-scrolled review controls at [desktop 1280×800](screenshots/bulk-review-controls-1280x800.png) and [mobile 375×812](screenshots/bulk-review-controls-375x812.png). The latter pair visibly covers the public description, private shared tags, explicit queue/instant choices, and one-credit-per-row disclosure.
 
 - Hook tests: canonical request shape, queue default, no legacy RPC, recipient hints, organization scope across chunks, ambiguous failure, and truthful per-row `NEEDS_CREDIT`.
 - Wizard tests: AI merge, shared metadata controls, tag normalization/limits, instant capability fail-closed, and completion summaries.
@@ -29,6 +29,8 @@ Representative browser evidence: [desktop 1280×800](screenshots/bulk-review-128
 - Activation delivery is at-most-once automatically, not a guarantee of exactly-once receipt: one durable claim permits one provider attempt, ambiguous provider outcomes remain held for manual reconciliation, and neither import replay nor a background loop retries automatically.
 - Shared tags leak: user and organization tags remain private metadata and use the UAT-12 normalization/quantity/length contract. Public description is labeled separately.
 - Partial completion is mistaken for atomic success: created/skipped/failed and instant outcomes remain per-row; no whole-import rollback or blanket success is claimed.
+- Domain-trigger or recovery escalation grants organization access: the actual 0439 association function and Auth confirmation trigger must preserve ordinary verified-domain signup while the server-authored bulk marker blocks auto-join. Orphan recovery must reject unmarked, confirmed, deleted, role/org-associated, and membership-bearing identities, including the deterministic profile-recovery/member-insert race, without token mutation.
+- Activation claims become publicly observable or failures leak internals: `recipient_activation_deliveries` remains FORCE-RLS/service-role-only with no anon/auth privileges; HTTP and per-row failures remain bounded codes without recipient email, activation token, provider response, or cross-tenant identifiers.
 
 ## Proposed T3 window
 
@@ -36,6 +38,16 @@ Use the common identity, isolation, honesty, side-effect, clock, and rollback co
 
 Targeted probes must cover CSV/XLS/XLSX row imports and the one-file alternative; UI via the JWT self-service route plus TypeScript SDK, Python SDK, CLI, npm MCP, and hosted MCP via the API-key import route, with no legacy fallback; queue and instant with one-credit-per-row disclosure and insufficient-credit partial outcomes; shared/private metadata; AI merge/retry; selected-org change midflight; concurrent pending-profile provisioning and orphan reconciliation; no verified-email/org-access escalation; one provider attempt for first activation, ambiguous delivery held, and no automatic retry; strict raw-payload rejection before clients transmit unknown/file-byte fields; chunk transport loss with durable receipt recovery; per-row `NEEDS_CREDIT`, `HELD`, duplicate, and failure outcomes; privacy/public projection; and desktop/mobile/keyboard layouts. Rollback rehearses worker/client rollback as one compatible unit while preserving anchors, receipts, profiles, the activation-delivery claim table (including held claims), ledger/audit rows, and retry evidence. No production or real-money/network side effects are authorized.
 
-Native verification commands are the exact commands recorded in this plan's handoff: root focused Vitest/typecheck/lint and standalone Playwright; `packages/sdk` Vitest plus standalone `tsc`; isolated `uv --no-project` Python pytest and Ruff; `packages/api-cli` Vitest/tsc; `sdks/mcp-server` Vitest/tsc; `services/edge` tests/typecheck; root MCP manifest parity; native PostgreSQL activation-claim and canonical-import scripts under `scripts/uat23/`. Hosted probes remain no-side-effect clean-rig work and cannot be substituted with mocks.
+## Local verification and independent premortem review
+
+Exact commands run on the integrated local candidate:
+
+- `npx vitest run src/components/anchor/SecureDocumentDialog.test.tsx src/hooks/useAnchorSubmissionStatus.test.ts src/hooks/usePrivateTagSuggestions.test.ts` — 51/51 passed.
+- `npx vitest run src/components/upload/BulkUploadWizard.test.tsx src/hooks/useBulkAnchors.test.ts` — 37/37 passed.
+- `npx playwright test --config=e2e/secure-dialog-layout.config.ts --grep "spreadsheet choice, mapping, extraction and processing fit"` — 4/4 passed at 1280×800, 375×812, 1280×480, and 375×480.
+- `npm --prefix services/worker test -- --run src/api/bulk-recipient.test.ts src/api/v1/anchor-submit.test.ts src/api/v1/docs.test.ts src/routes/anchor-self-service.test.ts` — 91/91 passed in the independent worker lane, together with worker typecheck and lint.
+- `scripts/uat23/native-pg-activation-delivery.sh` — passed against an isolated local PostgreSQL fixture. It executes the actual 0439 association function and Auth trigger, proves exactly one durable claim under contention, marker-only orphan recovery/replay, null-input rejection, unmarked/confirmed/member denial, a deterministic membership/recovery race, function-catalog shape, and root/worker generated-type parity.
+
+The native harness is intentionally a minimal local schema and does not prove hosted GoTrue behavior, SMTP delivery, provider receipt, full production-schema migration compatibility, or exactly-once mailbox receipt. The independent premortem review found and closed the membership/recovery serialization race by rechecking membership after the locked profile read. Hosted clean-rig probes, full package/adapter gates, migration rehearsal, and the 25-hour window remain required; mocks and these screenshots cannot substitute for them.
 
 Out of scope: owner reassignment, automatic organization access, the three-hour/daily policy, purchase caps, production migration/deployment, and changes to UAT-12 release disposition.

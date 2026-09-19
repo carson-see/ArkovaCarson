@@ -1458,6 +1458,7 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'anchor.expired': true,
   'anchor.superseded': true,
   'anchor.batch_secured': true,
+  'anchor.revocation_anchored': true,
   'credential.issued': true,
   'credential.verified': true,
   'credential.status_changed': true,
@@ -1472,6 +1473,7 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   // the payloads skipped schema validation entirely.
   'attestation.created': true,
   'attestation.revoked': true,
+  'attestation.active': true,
   // SCRUM-3972 — affiliated-organization lifecycle. See docs/api/webhooks.md
   // and services/worker/src/webhooks/payload-schemas.ts.
   'suborg.created': true,
@@ -1488,6 +1490,7 @@ describe('WebhookEventType', () => {
     expect(Object.keys(WEBHOOK_EVENT_TYPE_PIN).sort()).toEqual(
       [
         'anchor.batch_secured',
+        'anchor.revocation_anchored',
         'anchor.expired',
         'anchor.revoked',
         'anchor.secured',
@@ -1504,6 +1507,7 @@ describe('WebhookEventType', () => {
         'credential.verified',
         'attestation.created',
         'attestation.revoked',
+        'attestation.active',
         'suborg.approved',
         'suborg.created',
         'suborg.credits_allocated',

@@ -5850,7 +5850,6 @@ export type Database = {
         ]
       }
       referral_codes: {
-      referral_codes: {
         Row: {
           active: boolean
           code: string
