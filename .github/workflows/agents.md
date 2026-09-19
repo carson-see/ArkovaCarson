@@ -3,6 +3,16 @@
 ## 2026-09-19 — SCRUM-5253 People mobile layout regression
 
 The E2E job runs `npm run test:e2e:people-layout` after the shared Chromium suite whenever the existing app-affecting change detector enables E2E. The standalone config owns a local Vite server and synthetic HTTP boundaries, so it is intentionally ignored by the shared Playwright config; this explicit CI step is its durable invocation.
+## 2026-09-19 — draft admission saves Actions budget
+
+`ci.yml` has one cheap `CI Admission` job. Ordinary draft pull requests report
+that decision and skip the expensive matrix; `ready_for_review` starts the full
+matrix, while `converted_to_draft` enters the existing concurrency group and
+cancels an obsolete source run. Mergify `mergify/*` speculative drafts always
+run every existing job, as do protected-branch pushes and manual dispatches.
+Every prior `needs` edge remains and each job keeps its established display
+name. `scripts/ci/ci-draft-admission.test.ts` pins triggers, scenarios, gating,
+and the complete pre-admission DAG.
 
 ## PR #2940 — Edge deploy follows the installed Wrangler version
 
