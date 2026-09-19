@@ -75,7 +75,7 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         q.limit=async()=>({data:table==='credential_templates'?[template]:table==='anchor_private_tags'?[{tag:'legal'},{tag:'quarterly'}]:[],error:null});
         q.single=async()=>{if(window.__layout.scenario==='processing')await new Promise(resolve=>{window.__layout.finishInsert=resolve;});
           return window.__layout.scenario==='error'?{data:null,error:{message:'Unable to save. Please try again.'}}:{data:{id:'${ANCHOR_ID}',public_id:'ARK-'+'A'.repeat(40)},error:null};};
-        q.maybeSingle=async()=>{window.__layout.requests.push({kind:'anchor-id-resolution',payload:{id:'${ANCHOR_ID}'}});return {data:{id:'${ANCHOR_ID}'},error:null};};return q;}
+        q.maybeSingle=async()=>{if(window.__layout.scenario==='id-resolution-failed')return {data:null,error:{message:'read unavailable'}};window.__layout.requests.push({kind:'anchor-id-resolution',payload:{id:'${ANCHOR_ID}'}});return {data:{id:'${ANCHOR_ID}'},error:null};};return q;}
       export const supabase={from:query,auth:{getSession:async()=>({data:{session:{access_token:'${AAL2_TOKEN}',aal:'aal2',user:{id:'${USER_ID}',aud:'authenticated'}}},error:null})}};`,
   };
   if (scenario === 'mixed-fingerprinting') {
@@ -86,7 +86,7 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
     if (!['localhost', '127.0.0.1'].includes(url.hostname)) return route.abort();
     if (modules[url.pathname]) return route.fulfill({ contentType: 'application/javascript', body: modules[url.pathname] });
     if (url.pathname.startsWith('/api/')) {
-      if (scenario === 'attestation-submitting') return; // Hold the boundary while asserting the in-flight state.
+      if (scenario === 'attestation-submitting' && url.pathname === '/api/v1/attestations') return; // Hold the boundary while asserting the in-flight state.
       const rawBody = route.request().postData();
       const payload = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : null;
       httpRequests.push({
@@ -107,6 +107,8 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         } });
       }
       if (url.pathname === '/api/v1/anchor-self-service') {
+        if (scenario === 'error') return route.fulfill({ status: 503, json: { error: 'submission_unavailable' } });
+        if (scenario === 'processing') return; // Hold only the submission, not capability reads.
         return route.fulfill({ status: 201, json: { public_id: 'ARK-FIXTURE', fingerprint: payload?.fingerprint, status: 'PENDING', action: payload?.action } });
       }
       if (url.pathname === '/api/v1/anchor-credits/purchase') {
@@ -121,10 +123,8 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
         }
         return route.fulfill({ status: 503, json: { message: 'Analysis unavailable. Try again.' } });
       }
-      if (url.pathname.includes('anchor-bulk')) {
-        if (scenario === 'mixed-submitting') {
-          await page.evaluate(() => new Promise<void>(resolve => { window.__layout.finishBulk = resolve; }));
-        }
+      if (url.pathname === '/api/v1/anchor/bulk/self-service') {
+        if (scenario === 'mixed-submitting') return; // Hold this request without a dangling browser evaluation.
         if (scenario === 'mixed-error') return route.fulfill({ status: 500, json: { error: 'Unable to submit these documents. Please retry.' } });
         if (scenario === 'mixed-blocked') return route.fulfill({ status: 403, json: {} });
         const rows = (payload?.anchors ?? []) as Array<{ fingerprint: string }>;

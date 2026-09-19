@@ -1,5 +1,7 @@
 # agents.md — e2e/
 
+Canonical submission fixtures intercept the real worker routes, including `/api/v1/anchor-self-service` and `/api/v1/anchor/bulk/self-service`. Failure scenarios must fail those routes. Hold only the operation under test, never capability reads; pending route fixtures must not leave a `page.evaluate` promise alive at test teardown. Provenance is derived by the worker, so browser requests must not assert `fingerprint_source`.
+
 ## API key/webhook dashboard targeted UAT (2026-09-19)
 
 `uat-api-webhook-dashboard.spec.ts` and its standalone config exercise the real settings routes/components at 1280px and 375px with auth, Supabase, and worker I/O stubbed only at the browser network boundary. It proves scope/event controls, scrubbed retryable endpoint-read failure, and responsive geometry. It is targeted frontend evidence, not backend/RLS integration proof; the ordinary CI E2E project retains that responsibility. The spec self-skips under every named shared project and runs only with its dedicated config.
