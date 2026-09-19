@@ -36,6 +36,22 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
  *     every Drive API call in this module.
  *   - drive.activity.readonly: Drive Activity read-only visibility (the
  *     connector's declared surface; no direct Activity API caller yet).
+ *   - drive.metadata.readonly (Connectors page — SPEC-CONNECTORS §2.1,
+ *     "Option A"): metadata-only, cannot read file bytes. Minimum scope that
+ *     makes `listChildFolders()` below return anything for an org connecting
+ *     for the first time — `drive.file` alone cannot enumerate pre-existing
+ *     folders (it only sees files the app created or the user handed it via
+ *     the Google Picker). This is the security review that constant's own
+ *     comment asks for — reviewed by the release session's /codereview pass
+ *     on this PR. Widening a scope does NOT widen an existing refresh
+ *     token — every connection made BEFORE this change must re-consent
+ *     before the folder picker will work for it; the endpoint in
+ *     `api/v1/integrations/drive-folders.ts` fails closed
+ *     (`insufficient_drive_scope`) rather than silently returning `[]` for a
+ *     stale grant. CTO verified on prod (read-only, 2026-09-13) that the
+ *     Arkova org's own google_drive grant already includes
+ *     `auth/drive` + `drive.file`, so the picker works for that org today;
+ *     every OTHER org's existing connection needs the re-consent above.
  *   - userinfo.email: the callback's account-identity lookup
  *     (drive-oauth.ts fetchGoogleIdentity → oauth2/v3/userinfo). Without an
  *     identity scope that endpoint 401s and account_id degrades to a
@@ -48,7 +64,20 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 export const DRIVE_DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/drive.activity.readonly',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
   'https://www.googleapis.com/auth/userinfo.email',
+];
+
+/**
+ * Scopes that make `GET /api/v1/integrations/google_drive/folders` listable.
+ * `drive.file` is deliberately NOT in this set — it cannot enumerate a user's
+ * pre-existing folders, so a connection carrying only that scope must be
+ * reported as `insufficient_drive_scope`, never silently return `[]`.
+ */
+export const DRIVE_FOLDER_LISTING_SCOPES = [
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
 ];
 
 const OAuthTokenResponse = z.object({
@@ -93,6 +122,8 @@ export class DriveApiError extends Error {
   status: number;
   /** Bounded (~500 char), byte-safe, PII-scrubbed; never a raw document-fetch body. */
   detail?: string;
+  /** Google's `Retry-After` response header, when present (429/5xx). */
+  retryAfter?: string;
   constructor(msg: string, status: number, detail?: string) {
     super(msg);
     this.name = 'DriveApiError';
@@ -425,6 +456,94 @@ export async function getFileMetadata(args: {
     parents: json.parents ?? [],
     driveId: json.driveId,
   };
+}
+
+/** One folder row returned by {@link listChildFolders}. Metadata-only. */
+export interface DriveFolderEntry {
+  id: string;
+  name: string;
+  /** Always `null` in v1 — see {@link listChildFolders} doc comment. */
+  driveId: string | null;
+}
+
+export interface ListChildFoldersResult {
+  folders: DriveFolderEntry[];
+  nextPageToken?: string;
+}
+
+/**
+ * Escape a value for embedding inside a Drive API `q` query-string literal.
+ *
+ * This is NOT URL-encoding (the caller still passes the assembled `q` through
+ * `URLSearchParams`, which handles that). It is Drive's OWN query-language
+ * escaping: a single quote or backslash inside `parent` could otherwise
+ * terminate the `'<parent>' in parents` clause early and splice attacker-
+ * controlled query syntax after it. Per
+ * https://developers.google.com/drive/api/guides/ref-search-terms, `\` and
+ * `'` are the two characters that need escaping inside a quoted literal.
+ */
+function escapeDriveQueryLiteral(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/**
+ * List the immediate child folders of `parent` in **My Drive only**
+ * (Connectors page folder picker — SPEC-CONNECTORS §2.2).
+ *
+ * Metadata-only: the `fields` mask pulls `id,name,driveId` — never file
+ * content, never a path, never an owner email. `includeItemsFromAllDrives`
+ * is hard-coded `false` (D2 — shared drives are out of v1: neither
+ * `drive-changes-runner.ts` nor `drive-changes-processor.ts` registers a
+ * per-shared-drive watch, so a shared-drive folder selected here would be
+ * silently unmatched forever). `supportsAllDrives=true` is set only for
+ * forward compatibility with the parameter Google requires when
+ * `includeItemsFromAllDrives` is present at all.
+ *
+ * One page per call (`pageSize=100`); the caller passes `pageToken` back for
+ * "Load more". `hasChildren` is not computable without a probe query per row
+ * (100 rows = 101 Drive calls), so it is not part of this return shape at
+ * all — the API layer renders every folder as expandable and reports "no
+ * subfolders" on an empty child page instead.
+ */
+export async function listChildFolders(args: {
+  accessToken: string;
+  parent: string;
+  pageToken?: string;
+  deps?: DriveClientDeps;
+}): Promise<ListChildFoldersResult> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const q = `'${escapeDriveQueryLiteral(args.parent)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const params = new URLSearchParams({
+    q,
+    fields: 'nextPageToken,files(id,name,driveId)',
+    pageSize: '100',
+    orderBy: 'name',
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'false',
+  });
+  if (args.pageToken) params.set('pageToken', args.pageToken);
+  const url = `${DRIVE_API_BASE}/files?${params.toString()}`;
+  const res = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  const json = (await readDriveJson(res, 'Drive files.list folders')) as {
+    files?: Array<{ id?: string; name?: string; driveId?: string }>;
+    nextPageToken?: string;
+  } | null;
+  if (!res.ok) {
+    // Non-document path: files.list (folders) fields mask = id,name,driveId —
+    // metadata only, no bytes. Bounded+scrubbed detail per DriveApiError doc.
+    const err = new DriveApiError('Drive files.list (folders) failed', res.status, boundedErrorDetail(json));
+    const retryAfterHeader = res.headers.get('retry-after');
+    if (retryAfterHeader) err.retryAfter = retryAfterHeader;
+    throw err;
+  }
+  const folders: DriveFolderEntry[] = (json?.files ?? [])
+    .filter((f): f is { id: string; name: string; driveId?: string } => Boolean(f.id && f.name))
+    .map((f) => ({ id: f.id, name: f.name, driveId: f.driveId ?? null }));
+  return json?.nextPageToken
+    ? { folders, nextPageToken: json.nextPageToken }
+    : { folders };
 }
 
 // SCRUM-1650 GD-03: changes.list page response. Subset of fields actually

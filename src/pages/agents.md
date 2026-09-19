@@ -245,6 +245,31 @@ come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
 copy-level half of the same guard.
 _Last updated: 2026-08-30_
 
+## 2026-09-13 — `ConnectorsPage.tsx` added; `OrgProfilePage.tsx` nav + Settings tab changed
+
+New route `/organization/connectors` (`ROUTES.CONNECTORS`), replacing the org header's "Rules" nav
+button. One card per REAL connector (Google Drive, DocuSign) — composed from
+`src/components/connectors/` (see that folder's agents.md for the picker/action-choice/hook
+internals). Writes exactly one `organization_rules` row per connector per org through the EXISTING
+`/api/rules` CRUD — no new rule engine, no migration.
+
+**`/organization/rules` and `/organization/rules/new` are UNCHANGED and stay routed** — PM-9. This
+page does not delete `RulesPage.tsx` / `RuleBuilderPage.tsx`; the only edit to either surface's
+reachability is one button label on `OrgProfilePage` (`Rules` → `Connectors`,
+`navigate(ROUTES.RULES)` → `navigate(ROUTES.CONNECTORS)`). `useNotifications.ts:200`'s
+rule-execution deep link still points at `ROUTES.RULES` — deliberately left alone, a rule-execution
+notification's natural destination is the rule list, not a connector card.
+
+**OAuth return-trip query params consumed at the PAGE level, not the card** (`?drive_error=`,
+`?docusign_error=`) — a card-local `useSearchParams` effect loses the message under React
+StrictMode's double mount (`src/components/integrations/agents.md`, 2026-08-30 item 3).
+`ConnectorsPage` copies `OrgProfilePage`'s existing effect shape rather than re-deriving it.
+
+**`OrgProfilePage.tsx` Settings tab**: `DriveConnectorCard` / `DocusignConnectorCard` REMOVED from
+inline rendering (moved, not duplicated — PM-11) and replaced with a single link row
+("Connectors — Manage connectors" → `navigate(ROUTES.CONNECTORS)`). `AdobeSignConnectorCard` and
+`MemberDocusignConnectorCard` are UNCHANGED and still render inline here (§1.2 — Adobe's live prod
+state is the "unconfigured" denial; personal DocuSign is member-scoped, not an org connector).
 ## 2026-09-11 — UAT-22 selected-org invitations
 
 `OrgProfilePage` passes the authenticated profile's platform-admin status to
