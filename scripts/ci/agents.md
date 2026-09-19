@@ -1,5 +1,9 @@
 # scripts/ci/agents.md
 
+## 2026-09-19 — Evidence-identity support for the founder no-resoak release decision
+
+`check-evidence-identity.ts` consumes the same trusted-base, exact-PR, exact-head founder decision as the staging-evidence gate. It loads the snapshot only from the validated 40-hex `BASE_REF_SHA`; a shallow CI checkout may fetch exactly that commit from `origin`. The PR number comes only from `GITHUB_EVENT_PATH`, and runtime repository identity comes from `GITHUB_REPOSITORY`. Accepted output states that this is an authorization exception and does not claim historical PR-head or preflight identities match the current head. Absent, expired, unlisted, wrong-repository, changed-head, snapshot-edit, malformed-event and failed-fetch contexts retain the original fail-closed identity checks.
+
 ## 2026-09-19 — founder decision for the existing release backlog
 
 `lib/founder-no-resoak.ts` loads the specific release decision from the live GitHub-resolved base commit. It requires the listed PR number, exact reviewed head, explicit body opt-in, retained evidence references, recorded residual risk and an unexpired window. PR-side snapshot edits cannot authorize that PR. `check-staging-evidence.ts` retains tier classification and labels acceptance as an exception, with no new soak claim; all other required checks remain intact. The colocated tests cover wrong heads, missing authority, invalid clocks, snapshot edits, trusted-base loading and gate integration.

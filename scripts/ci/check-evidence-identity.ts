@@ -66,6 +66,13 @@ import {
   type AncestryProvider,
   type ChangedFilesProvider,
 } from './check-staging-evidence.js';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { changedFiles } from './lib/ciContext.js';
+import {
+  evaluateNoResoakDecision,
+  loadNoResoakDecision,
+} from './lib/founder-no-resoak.js';
 
 export type Tier = 'T0' | 'T1' | 'T2' | 'T3';
 
@@ -76,6 +83,8 @@ export interface Finding {
 }
 
 export interface EvidenceIdentityInput {
+  /** Immutable GitHub repository identity. */
+  repository?: string;
   /** The PR body (github.event.pull_request.body). */
   body: string;
   /** The actual PR head SHA (github.event.pull_request.head.sha). */
@@ -84,6 +93,13 @@ export interface EvidenceIdentityInput {
   isDraft: boolean;
   /** Declared tier override; if omitted it is parsed from the body's `Tier:`. */
   declaredTier?: Tier | null;
+  /** Live PR number and trusted-base founder decision. */
+  prNumber?: number;
+  noResoakDecision?: unknown;
+  /** Changed files, used to prevent an authority-snapshot edit self-authorizing. */
+  files?: string[];
+  /** Test seam for the time-bounded founder decision. */
+  nowMs?: number;
   /**
    * Injection points for the Post-soak T0 delta allowance's git-facing
    * questions (ancestry + changed-file list between the soaked `PR head SHA:`
@@ -496,6 +512,32 @@ export function runEvidenceIdentity(
     };
   }
 
+  // September 19 founder release decision. This is an authorization exception,
+  // not a statement that historical soak/preflight identities match this head.
+  // The shared evaluator binds it to the trusted-base snapshot, runtime repo,
+  // exact PR number and exact current head, and rejects snapshot edits.
+  const noResoak = evaluateNoResoakDecision(input.noResoakDecision, {
+    repository: input.repository,
+    body,
+    files: input.files ?? [],
+    headSha: actualHeadSha,
+    prNumber: input.prNumber,
+    nowMs: input.nowMs,
+  });
+  if (noResoak.accepted) {
+    return {
+      skipped: false,
+      skipReason: null,
+      findings: [],
+      notes: [
+        noResoak.note!,
+        'Evidence-identity authorization exception accepted; this does not assert that historical '
+          + 'PR-head or preflight identities match the current head.',
+      ],
+      ok: true,
+    };
+  }
+
   const tier = input.declaredTier ?? extractDeclaredTier(body);
   const soakTier = tier === 'T1' || tier === 'T2' || tier === 'T3';
 
@@ -576,7 +618,11 @@ export function formatReport(
   }
 
   if (result.ok) {
-    lines.push('  ✅ Evidence identity holds: declared PR head SHA matches the actual head; preflight identity is consistent.');
+    if (result.notes.some((note) => note.startsWith('Evidence-identity authorization exception accepted;'))) {
+      lines.push('  ✅ Founder authorization exception accepted; no historical soak identity is asserted for this head.');
+    } else {
+      lines.push('  ✅ Evidence identity holds: declared PR head SHA matches the actual head; preflight identity is consistent.');
+    }
     return lines.join('\n');
   }
 
@@ -596,6 +642,44 @@ function isTruthyEnv(value: string | undefined): boolean {
   return /^(1|true|yes)$/i.test((value ?? '').trim());
 }
 
+const BASE_SHA_RE = /^[a-f0-9]{40}$/;
+
+/** Load the decision from the trusted event base, fetching that exact commit in shallow CI if needed. */
+export function loadIdentityNoResoakDecision(
+  baseSha: string | undefined,
+  load: (sha: string | undefined) => unknown = loadNoResoakDecision,
+  fetchGit: (args: string[]) => void = (args) => {
+    execFileSync(process.env.GIT_BIN ?? '/usr/bin/git', args, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+  },
+): unknown {
+  if (!baseSha || !BASE_SHA_RE.test(baseSha)) return null;
+  const present = load(baseSha);
+  if (present !== null && present !== undefined) return present;
+  try {
+    fetchGit(['fetch', '--no-tags', '--depth=1', 'origin', baseSha]);
+  } catch {
+    return null;
+  }
+  return load(baseSha) ?? null;
+}
+
+/** Resolve the PR number only from GitHub's trusted event payload. */
+export function prNumberFromEvent(
+  eventPath: string | undefined,
+  read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): number | undefined {
+  if (!eventPath) return undefined;
+  try {
+    const parsed = JSON.parse(read(eventPath)) as { pull_request?: { number?: unknown } };
+    const number = parsed.pull_request?.number;
+    return Number.isSafeInteger(number) && (number as number) > 0 ? number as number : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function main(
   argv: string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
@@ -604,6 +688,7 @@ export function main(
   const body = env.PR_BODY ?? '';
   const actualHeadSha = env.PR_HEAD_SHA ?? '';
   const isDraft = isTruthyEnv(env.PR_IS_DRAFT);
+  const prNumber = prNumberFromEvent(env.GITHUB_EVENT_PATH);
 
   if (!actualHeadSha) {
     console.log(
@@ -612,7 +697,16 @@ export function main(
     return 0;
   }
 
-  const result = runEvidenceIdentity({ body, actualHeadSha, isDraft });
+  const noResoakDecision = loadIdentityNoResoakDecision(env.BASE_REF_SHA);
+  const result = runEvidenceIdentity({
+    repository: env.GITHUB_REPOSITORY,
+    body,
+    actualHeadSha,
+    isDraft,
+    prNumber,
+    noResoakDecision,
+    files: noResoakDecision ? changedFiles() : [],
+  });
   console.log(formatReport(result, reportOnly));
 
   if (result.skipped) return 0;
