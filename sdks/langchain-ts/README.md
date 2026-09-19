@@ -52,6 +52,12 @@ Arkova API — none of them read local files, environment variables, or stored s
 | `arkova_batch_verify` | Verify up to 20 public IDs at once, results returned inline |
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |
 
+`arkova_verify_anchor` preserves the verification API response and adds a
+`valid` convenience field derived only from the API's authoritative `verified`
+boolean. Pending states such as `PENDING` and `SUBMITTED`, plus revoked or
+unknown states, return `valid: false`; callers can still inspect `status` and
+the returned proof fields as evidence.
+
 ## Configuration
 
 ```typescript

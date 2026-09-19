@@ -44,6 +44,7 @@ describe('ArkovaVerifyTool', () => {
       ok: true,
       json: () => Promise.resolve({
         public_id: 'ARK-TEST-DOC-123',
+        verified: true,
         status: 'SECURED',
         issuer: 'Test University',
         credential_type: 'degree',
@@ -57,6 +58,32 @@ describe('ArkovaVerifyTool', () => {
     expect(result.valid).toBe(true);
     expect(result.public_id).toBe('ARK-TEST-DOC-123');
     expect(result.status).toBe('SECURED');
+  });
+
+  it.each([
+    ['SUBMITTED', false],
+    ['PENDING', false],
+    ['REVOKED', false],
+    ['UNKNOWN', false],
+  ])('fails closed for %s while preserving API evidence', async (status, verified) => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        verified,
+        public_id: 'ARK-TEST-DOC-123',
+        status,
+        network_receipt_id: status === 'SUBMITTED' ? 'receipt-evidence' : null,
+        proof_availability: 'root_only',
+      }),
+    });
+
+    const result = JSON.parse(await new ArkovaVerifyTool(mockConfig).call('ARK-TEST-DOC-123'));
+
+    expect(result.valid).toBe(false);
+    expect(result.verified).toBe(verified);
+    expect(result.status).toBe(status);
+    expect(result.network_receipt_id).toBe(status === 'SUBMITTED' ? 'receipt-evidence' : null);
+    expect(result.proof_availability).toBe('root_only');
   });
 
   it('should return not found for 404', async () => {

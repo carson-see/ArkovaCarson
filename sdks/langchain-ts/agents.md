@@ -59,3 +59,7 @@ packages (80 tests).
   the regression was observed red before the shared fetch helper was fixed.
 - README compatibility language is deliberately narrow: these are
   zero-dependency callable tool objects, not `@langchain/core` subclasses.
+- `ArkovaVerifyTool.valid` derives only from the verification API's authoritative
+  `verified` boolean. `SUBMITTED`, `PENDING`, revoked, and unknown states fail
+  closed; the complete API response is preserved so status and proof evidence
+  remain available to the caller.
