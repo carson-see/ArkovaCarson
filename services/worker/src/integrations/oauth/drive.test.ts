@@ -15,8 +15,10 @@ import {
   revokeOAuthToken,
   getFileMetadata,
   getSharedDriveName,
+  listChildFolders,
   DriveConfigError,
   DriveApiError,
+  DRIVE_FOLDER_LISTING_SCOPES,
 } from './drive.js';
 
 beforeEach(() => {
@@ -52,14 +54,19 @@ describe('buildAuthorizationUrl', () => {
     expect(new URL(url).searchParams.get('scope')).toBe(DRIVE_DEFAULT_SCOPES.join(' '));
     // Scope-minimality ratchet (FULLSOAK 2026-08, shared-resource register #9):
     // this is the COMPLETE allowlist. drive.file + drive.activity.readonly for
-    // the connector itself; userinfo.email because the callback's
-    // fetchGoogleIdentity (oauth2/v3/userinfo) needs it for the stable
-    // account_id (`sub`) — without it userinfo 401s and account_id degrades to
-    // a constant, breaking the org_integrations upsert key. Any addition here
-    // widens what a leaked refresh token can reach — treat as a security review.
+    // the connector itself; drive.metadata.readonly added for the Connectors
+    // page folder picker (SPEC-CONNECTORS §2.1 "Option A" — reviewed as part
+    // of that CTO spec session, 2026-09-13: metadata-only, cannot read file
+    // bytes, is the minimum scope that makes a pre-existing folder listable);
+    // userinfo.email because the callback's fetchGoogleIdentity
+    // (oauth2/v3/userinfo) needs it for the stable account_id (`sub`) —
+    // without it userinfo 401s and account_id degrades to a constant,
+    // breaking the org_integrations upsert key. Any addition here widens what
+    // a leaked refresh token can reach — treat as a security review.
     expect(DRIVE_DEFAULT_SCOPES).toEqual([
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/drive.activity.readonly',
+      'https://www.googleapis.com/auth/drive.metadata.readonly',
       'https://www.googleapis.com/auth/userinfo.email',
     ]);
   });
@@ -291,5 +298,139 @@ describe('getSharedDriveName', () => {
       deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
     });
     expect(res).toBe('drive-abc');
+  });
+});
+
+// SPEC-CONNECTORS §2.2 / §6 — Connectors page folder picker.
+describe('listChildFolders', () => {
+  it('composes the files.list query and maps the response (My Drive only)', async () => {
+    let capturedUrl = '';
+    let capturedAuth: string | null = null;
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedAuth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return new Response(
+        JSON.stringify({
+          files: [
+            { id: 'f1', name: 'Signed contracts', driveId: undefined },
+            { id: 'f2', name: 'Onboarding', driveId: undefined },
+          ],
+          nextPageToken: 'tok-2',
+        }),
+        { status: 200 },
+      );
+    };
+
+    const res = await listChildFolders({
+      accessToken: 'access-tok',
+      parent: 'root',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(res).toEqual({
+      folders: [
+        { id: 'f1', name: 'Signed contracts', driveId: null },
+        { id: 'f2', name: 'Onboarding', driveId: null },
+      ],
+      nextPageToken: 'tok-2',
+    });
+    expect(capturedAuth).toBe('Bearer access-tok');
+
+    const url = new URL(capturedUrl);
+    expect(url.pathname).toBe('/drive/v3/files');
+    expect(url.searchParams.get('pageSize')).toBe('100');
+    expect(url.searchParams.get('orderBy')).toBe('name');
+    expect(url.searchParams.get('supportsAllDrives')).toBe('true');
+    // D2: My Drive only — this is the literal guard against a shared-drive
+    // folder being selectable and silently never firing (PM-2).
+    expect(url.searchParams.get('includeItemsFromAllDrives')).toBe('false');
+    expect(url.searchParams.get('fields')).toBe('nextPageToken,files(id,name,driveId)');
+    expect(url.searchParams.get('q')).toBe(
+      "'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false",
+    );
+  });
+
+  it('omits nextPageToken from the result when Drive omits it', async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ files: [] }), { status: 200 });
+    const res = await listChildFolders({
+      accessToken: 'at',
+      parent: 'root',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(res).toEqual({ folders: [] });
+    expect('nextPageToken' in res).toBe(false);
+  });
+
+  it('passes pageToken through as the outbound pageToken param', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+    };
+    await listChildFolders({
+      accessToken: 'at',
+      parent: 'folder-1',
+      pageToken: 'page-2',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(new URL(capturedUrl).searchParams.get('pageToken')).toBe('page-2');
+  });
+
+  it('escapes a quote and a backslash in parent so they cannot terminate the q clause (test 19)', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+    };
+    // Attempted injection: close the quoted literal, then splice extra query
+    // syntax after it. Also carries a literal backslash.
+    const maliciousParent = "abc' or trashed=false or '1'='1" + '\\';
+    await listChildFolders({
+      accessToken: 'at',
+      parent: maliciousParent,
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const q = new URL(capturedUrl).searchParams.get('q')!;
+
+    // Exact expected literal: backslashes doubled, quotes backslash-escaped —
+    // Drive's own query-language escaping (not URL-encoding, which
+    // URLSearchParams already handled underneath this).
+    const expectedEscapedParent = maliciousParent.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    expect(q).toBe(
+      `'${expectedEscapedParent}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    );
+    // And the clause the caller's raw input could have spliced in
+    // (` or trashed=false or `) never appears OUTSIDE the quoted literal —
+    // it is still inside the escaped run between the opening and the ONE
+    // real closing quote this function added.
+    expect(q.endsWith("' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false")).toBe(true);
+  });
+
+  it('throws a bounded DriveApiError (with Retry-After when present) on a non-ok response', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+        status: 429,
+        headers: { 'Retry-After': '17' },
+      });
+    const err = await listChildFolders({
+      accessToken: 'at',
+      parent: 'root',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(429);
+    expect((err as DriveApiError).retryAfter).toBe('17');
+    // Bounded/scrubbed detail from the (metadata-only, safe) Google error
+    // JSON — never a raw or unbounded body.
+    expect((err as DriveApiError).detail).toContain('rate limited');
+  });
+
+  it('DRIVE_FOLDER_LISTING_SCOPES excludes drive.file (the #1 risk in SPEC-CONNECTORS §2.1)', () => {
+    expect(DRIVE_FOLDER_LISTING_SCOPES).toEqual([
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.metadata.readonly',
+    ]);
+    expect(DRIVE_FOLDER_LISTING_SCOPES).not.toContain('https://www.googleapis.com/auth/drive.file');
   });
 });

@@ -696,6 +696,76 @@ describe('handleCreateRule', () => {
       expect.objectContaining({ error: expect.objectContaining({ code: 'forbidden' }) }),
     );
   });
+
+  // -- Connectors-page adopt-vs-create race guard (CTO pre-mortem 2026-09-13) --
+
+  const CONNECTOR_CREATE_BODY = {
+    ...VALID_CREATE_BODY,
+    trigger_type: 'WORKSPACE_FILE_MODIFIED' as const,
+    trigger_config: { vendors: ['google_drive'] },
+    action_type: 'AUTO_ANCHOR' as const,
+    action_config: { tag: 'connector-google_drive' },
+  };
+
+  it('refuses a connector-tagged create with 409 rule_exists when an enabled rule of that trigger_type already exists (seeder race)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const raceCheck = tableMock({
+      select: { data: { id: 'seeded-rule-id' }, error: null },
+    });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), raceCheck.from('')));
+
+    const { res, status, json } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: CONNECTOR_CREATE_BODY }), res);
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: 'rule_exists', existing_rule_id: 'seeded-rule-id' }),
+      }),
+    );
+    // Never reached the insert — no second `insert` call recorded anywhere.
+    expect(raceCheck.calls.some((c) => c.method === 'insert')).toBe(false);
+  });
+
+  it('a connector-tagged create proceeds normally when the race-check finds no enabled rule', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), raceCheck.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status, json } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: CONNECTOR_CREATE_BODY }), res);
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(json).toHaveBeenCalledWith({ id: RULE_ID });
+  });
+
+  it('does NOT run the race-check for a create with no connector tag (RulesPage/RuleBuilderPage stays unaffected)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    // Exactly 4 scripted handlers: profiles, membership, insert, audit — if the
+    // race-check ran, it would consume the `rulesInsert` slot as a SELECT and
+    // this test would fail on the insert-shape assertion below.
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status } = mockRes();
+    // VALID_CREATE_BODY's action_config `{tag:'ds'}` does not match the
+    // `connector-<provider>` marker pattern.
+    await handleCreateRule(USER_ID, mockReq({ body: VALID_CREATE_BODY }), res);
+
+    expect(status).toHaveBeenCalledWith(201);
+    const insertCall = rulesInsert.calls.find((c) => c.method === 'insert');
+    expect(insertCall).toBeDefined();
+  });
 });
 
 // -- handleUpdateRule ---------------------------------------------------
@@ -758,13 +828,29 @@ describe('handleUpdateRule', () => {
     );
   });
 
+  // A plain (non-connector) row, disabled — used by every enabled:true test
+  // below to feed `checkConnectorEnableRace`'s current-row read a realistic
+  // answer instead of leaning on tableMock's op defaults. `action_config`
+  // has no `connector-<provider>` tag, so the race-check reads this ONE row
+  // and stops (no second query) — matching a RulesPage/RuleBuilderPage
+  // admin's plain toggle, which the guard must not affect.
+  function plainDisabledRuleRead() {
+    return tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'ds' }, enabled: false },
+        error: null,
+      },
+    });
+  }
+
   it('happy path: partial update returns ok:true', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
     const membership = adminMembership();
+    const currentRuleRead = plainDisabledRuleRead();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res, json } = mockRes();
@@ -774,15 +860,17 @@ describe('handleUpdateRule', () => {
       res,
     );
     expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(rulesUpdate.calls.some((c) => c.method === 'update')).toBe(true);
   });
 
   it('emits ORG_RULE_ENABLED audit when toggling enabled=true (SEC-02)', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
     const membership = adminMembership();
+    const currentRuleRead = plainDisabledRuleRead();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res } = mockRes();
@@ -798,6 +886,97 @@ describe('handleUpdateRule', () => {
     expect(auditInsertCall).toBeDefined();
     const payload = auditInsertCall!.args[0] as { event_type: string };
     expect(payload.event_type).toBe('ORG_RULE_ENABLED');
+  });
+
+  // -- Connectors-page adopt-vs-create race guard, second half (CTO
+  // pre-mortem, 2026-09-13): the enable-PATCH step of the create flow ------
+
+  it('refuses to enable a connector-tagged rule with 409 rule_exists when another enabled rule of that trigger_type already exists (seeder race, second gap)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: false },
+        error: null,
+      },
+    });
+    const raceCheck = tableMock({ select: { data: { id: 'seeded-rule-id' }, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), raceCheck.from('')),
+    );
+
+    const { res, status, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      error: expect.objectContaining({ code: 'rule_exists', existing_rule_id: 'seeded-rule-id' }),
+    });
+    // The update must never fire when the race-check refuses.
+    expect(raceCheck.calls.some((c) => c.method === 'update')).toBe(false);
+  });
+
+  it('enables a connector-tagged rule normally when the enable race-check finds no other enabled rule', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: false },
+        error: null,
+      },
+    });
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(
+        profiles.from(''),
+        membership.from(''),
+        currentRuleRead.from(''),
+        raceCheck.from(''),
+        rulesUpdate.from(''),
+        audit.from(''),
+      ),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it('does NOT run the enable race-check a second time when the rule is already enabled (idempotent re-patch)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: true },
+        error: null,
+      },
+    });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    // Only 4 scripted handlers: if the already-enabled short-circuit didn't
+    // fire, a second SELECT would consume the `rulesUpdate` slot and this
+    // test would fail on the update-shape assertion below.
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(rulesUpdate.calls.some((c) => c.method === 'update')).toBe(true);
   });
 
   it('emits ORG_RULE_DISABLED audit when toggling enabled=false (SEC-02)', async () => {
@@ -821,6 +1000,205 @@ describe('handleUpdateRule', () => {
     expect(auditInsertCall).toBeDefined();
     const payload = auditInsertCall!.args[0] as { event_type: string };
     expect(payload.event_type).toBe('ORG_RULE_DISABLED');
+  });
+
+  // -- D4: action_type on PATCH (Connectors page, SPEC-CONNECTORS §1.5) ---
+
+  it('test 22: PATCH with action_type + action_config succeeds and writes both columns', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'] },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+          org_id: ORG_ID,
+        },
+        error: null,
+      },
+    });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: { action_type: 'INSTANT_SECURE', action_config: { tag: 'connector-google_drive' } },
+      }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+
+    const updateCall = rulesUpdate.calls.find((c) => c.method === 'update');
+    expect(updateCall).toBeDefined();
+    const writtenRow = updateCall!.args[0] as Record<string, unknown>;
+    expect(writtenRow.action_type).toBe('INSTANT_SECURE');
+    expect(writtenRow.action_config).toEqual({ tag: 'connector-google_drive' });
+  });
+
+  it('test 23: PATCH with action_type ALONE gives 400 invalid_config (the pairing superRefine)', async () => {
+    installAuthedCaller();
+    const { res, status, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { action_type: 'INSTANT_SECURE' } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'invalid_config' }) }),
+    );
+  });
+
+  it('test 24: an action_config that fails the target action_type\'s own schema gives 400 invalid_config', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'] },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+          org_id: ORG_ID,
+        },
+        error: null,
+      },
+    });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from('')));
+
+    const { res, status, json } = mockRes();
+    // `tag` must be a string on ActionConfigInstantSecure — a number fails
+    // the Zod parse (Zod object schemas are non-strict, so a config that just
+    // carries EXTRA unrelated keys would silently pass; a genuine type
+    // mismatch on a shared field is what actually proves the merged
+    // (action_type, action_config) pair gets re-validated together).
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: { action_type: 'INSTANT_SECURE', action_config: { tag: 12345 } },
+      }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'invalid_config' }) }),
+    );
+  });
+
+  it('test 25: ORG_RULE_UPDATED audit details carries {from, to} action types', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'] },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+          org_id: ORG_ID,
+        },
+        error: null,
+      },
+    });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: { action_type: 'INSTANT_SECURE', action_config: { tag: 'connector-google_drive' } },
+      }),
+      res,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const auditInsertCall = audit.calls.find((c) => c.method === 'insert');
+    expect(auditInsertCall).toBeDefined();
+    const payload = auditInsertCall!.args[0] as { event_type: string; details: string };
+    expect(payload.event_type).toBe('ORG_RULE_UPDATED');
+    expect(JSON.parse(payload.details)).toEqual({ from: 'AUTO_ANCHOR', to: 'INSTANT_SECURE' });
+  });
+
+  it('regression: an existing-shape PATCH (RulesPage/RuleBuilderPage — no action_type) behaves exactly as before D4', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRuleRead = tableMock({
+      select: {
+        data: {
+          trigger_type: 'ESIGN_COMPLETED',
+          trigger_config: { vendors: ['docusign'] },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'ds' },
+          org_id: ORG_ID,
+        },
+        error: null,
+      },
+    });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res, json } = mockRes();
+    // Pre-D4 shape: name/description/trigger_config/action_config/enabled
+    // only — no action_type field at all.
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: { name: 'Renamed via RuleBuilderPage', trigger_config: { vendors: ['docusign', 'adobe_sign'] } },
+      }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+
+    const updateCall = rulesUpdate.calls.find((c) => c.method === 'update');
+    const writtenRow = updateCall!.args[0] as Record<string, unknown>;
+    expect(writtenRow.name).toBe('Renamed via RuleBuilderPage');
+    expect(writtenRow.trigger_config).toEqual({ vendors: ['docusign', 'adobe_sign'] });
+    // The absent field is genuinely ABSENT from the write, not written as
+    // undefined/null — buildRuleUpdate's `if (patch[k] !== undefined)` guard
+    // is what this pins.
+    expect('action_type' in writtenRow).toBe(false);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    const auditInsertCall = audit.calls.find((c) => c.method === 'insert');
+    const payload = auditInsertCall!.args[0] as { event_type: string; details: string };
+    expect(payload.event_type).toBe('ORG_RULE_UPDATED');
+    // Pre-D4 shape stays the generic {patch} dump — {from,to} is ONLY for an
+    // action_type patch.
+    expect(JSON.parse(payload.details)).toEqual({
+      patch: { name: 'Renamed via RuleBuilderPage', trigger_config: { vendors: ['docusign', 'adobe_sign'] } },
+    });
+  });
+
+  it('test 26: PATCH cannot change trigger_type — the field is absent from the schema and never applied', () => {
+    const parsed = UpdateOrgRuleInput.safeParse({
+      enabled: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- proving an unknown key is stripped, not typed
+      trigger_type: 'SCHEDULED_CRON' as any,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect('trigger_type' in parsed.data).toBe(false);
+    }
   });
 });
 

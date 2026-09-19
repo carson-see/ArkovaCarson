@@ -1,6 +1,42 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
-_Last updated: 2026-08-30 (`adobe-sign-oauth.ts`: the Adobe Sign connect flow that finally populates `org_integrations.webhook_id`)_
+_Last updated: 2026-09-13 (`drive-folders.ts` added — Connectors page folder picker, SPEC-CONNECTORS §2.2)_
+
+## 2026-09-13 — `drive-folders.ts`: `GET /google_drive/folders`, the Connectors page folder picker
+
+New, read-only, session-authenticated (Supabase JWT only — no API-key path), org-admin-gated
+endpoint. Mounted on the SAME path scope as `driveOAuthRouter` in `index.ts` (identical kill switch
+`ENABLE_DRIVE_OAUTH`, identical `rateLimiters.api` 60/min-per-IP, identical `integrationsAuthGate`)
+plus its OWN 30 req/min-per-org limiter (`driveFoldersOrgRateLimit`) — each request is an outbound
+Google API call, and the shared IP bucket alone does not bound one org behind a corporate NAT.
+
+**D3 — fails closed on scope, never returns `{folders: []}` for a denial.** `org_integrations.scope`
+is checked against `DRIVE_FOLDER_LISTING_SCOPES` (exact string membership, NOT substring — `drive.file`
+is a literal prefix of `drive` and would defeat a naive `.includes()` check) BEFORE any Drive call.
+Missing a listing scope → `409 insufficient_drive_scope`. `DRIVE_DEFAULT_SCOPES` in
+`integrations/oauth/drive.ts` gained `drive.metadata.readonly` for exactly this reason — see that
+file's agents.md entry. Every connection made BEFORE that scope change needs a re-consent before this
+endpoint works for it.
+
+**Token path is reused, not reimplemented.** `loadDriveAccessToken()` from
+`integrations/connectors/drive-changes-runner.ts` (decrypt → refresh-if-needed → re-encrypt +
+CAS-write) is imported directly — this endpoint does NOT have its own KMS/decrypt logic.
+
+**Failure mapping is exhaustive and typed** (§2.2's table): `not_connected` (404),
+`insufficient_drive_scope` (409), `reconnect_required` (409, Drive 401), `folder_forbidden` (403),
+`folder_not_found` (404), `drive_unavailable` (502, Drive 429/5xx, carries `Retry-After`), `internal`
+(500, anything else). No shared catch-all message — every branch is a distinct response the frontend
+maps to specific copy (`src/components/connectors/agents.md`).
+
+**Logging is bounded to `{orgId, integrationId, parentId, resultCount, status, durationMs}`** —
+NEVER a folder name, an assembled path, `driveId` owner data, the access token, or the raw Drive
+response body. `listChildFolders()` in `integrations/oauth/drive.ts` carries the same bound via
+`boundedErrorDetail()` on its `DriveApiError`.
+
+**Query injection**: `parent` goes into a Drive `q` clause (`'<parent>' in parents and ...`), which
+has its OWN escaping rules distinct from URL-encoding — a bare `'` or `\` in `parent` could otherwise
+terminate the quoted literal and splice extra query syntax. `listChildFolders()`'s
+`escapeDriveQueryLiteral()` handles this before the value ever reaches `URLSearchParams`.
 
 ## 2026-08-03 — GH #1836 (SECURITY, pen-test scope): Drive `changes.watch` channel token is no longer the org UUID
 
