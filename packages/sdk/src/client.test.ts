@@ -25,6 +25,17 @@ describe('Arkova', () => {
     expect(client).toBeDefined();
   });
 
+  it('routes default requests through the public API hostname', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'healthy' }) });
+
+    await new Arkova().request('/health');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.arkova.ai/health',
+      expect.any(Object),
+    );
+  });
+
   it('creates client with API key', () => {
     const client = new Arkova({ apiKey: 'ak_test_123' });
     expect(client).toBeDefined();
@@ -1368,6 +1379,8 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   // the payloads skipped schema validation entirely.
   'attestation.created': true,
   'attestation.revoked': true,
+  'anchor.revocation_anchored': true,
+  'attestation.active': true,
   // SCRUM-3972 — affiliated-organization lifecycle. See docs/api/webhooks.md
   // and services/worker/src/webhooks/payload-schemas.ts.
   'suborg.created': true,
@@ -1400,6 +1413,8 @@ describe('WebhookEventType', () => {
         'credential.verified',
         'attestation.created',
         'attestation.revoked',
+        'anchor.revocation_anchored',
+        'attestation.active',
         'suborg.approved',
         'suborg.created',
         'suborg.credits_allocated',

@@ -50,6 +50,7 @@ const TIMEOUT_MS = 10000;
 async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Response> {
   return fetch(`${BASE_URL}${path}`, {
     ...options,
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': API_KEY,
