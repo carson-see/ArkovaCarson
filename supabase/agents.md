@@ -20,3 +20,12 @@ Supabase project configuration, migrations, seed data, and email templates.
 ## 2026-09-05 — DocuSign backfill attempt fixtures
 
 Migration0438 adds service-owned polling history. The existing anchors TRUNCATE CASCADE in seed.sql resets that FK-dependent table; it is intentionally not populated with synthetic attempt timestamps during normal local seed. Release qualification uses explicitly labelled, isolated fixtures and actual server-created reservations.
+
+## 2026-09-12 SCRUM-5024 — seed: one partner referral code
+
+`seed.sql` seeds a single ACTIVE `referral_codes` row (`ARKVA234`) for the
+Arkova org so `/settings/referrals` and `tests/rls/referral-attribution.test.ts`
+have something to read after `supabase db reset`. No attribution edge is seeded:
+the empty state is itself worth seeing by default. The literal avoids `O`, `I`,
+`L`, `0` and `1` — the obvious `ARKOVA24` would have been rejected by
+`referral_codes_code_format`.

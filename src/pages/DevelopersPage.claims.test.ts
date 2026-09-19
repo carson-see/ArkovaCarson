@@ -66,3 +66,41 @@ describe('DevelopersPage PRICING_TABLE — R-1 claims ratchet', () => {
     expect(pricingTableSource()).toContain('/ai/search');
   });
 });
+
+describe('DevelopersPage integration claims', () => {
+  it('uses the served GET verification route in the primary example', () => {
+    expect(SOURCE).toContain('/api/v1/verify/ARK-2026-001');
+    expect(SOURCE).not.toContain('/api/v1/verify \\\\');
+    expect(SOURCE).not.toContain('"ai_metadata"');
+  });
+
+  it('links API reference buttons to the live OpenAPI document', () => {
+    expect(SOURCE).toContain("const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs/spec.json`");
+    expect(SOURCE).not.toContain("`${PUBLIC_API_URL}/api/docs`");
+  });
+
+  it('distinguishes REST and hosted MCP authentication', () => {
+    expect(SOURCE).toContain('Authorization: Bearer');
+    expect(SOURCE).toContain('X-API-Key');
+    expect(SOURCE).toContain('https://edge.arkova.ai/mcp');
+  });
+
+  it('offers a secure one-command hosted MCP registration', () => {
+    expect(SOURCE).toContain('claude mcp add --transport http arkova https://edge.arkova.ai/mcp');
+    expect(SOURCE).toContain('--header "X-API-Key: $ARKOVA_API_KEY"');
+    expect(SOURCE).toContain('MCP_COPY_COMMAND');
+    expect(SOURCE).toContain('MCP_KEY_PREREQUISITE');
+    expect(SOURCE).not.toContain('vscode:mcp/install?');
+    expect(SOURCE).not.toContain('cursor://');
+  });
+
+  it('uses version-neutral installs and registry links across a coordinated release', () => {
+    expect(SOURCE).toContain('npm install arkova');
+    expect(SOURCE).toContain('pip install arkova');
+    expect(SOURCE).toContain('npx -y arkova-mcp-server');
+    expect(SOURCE).toContain('https://www.npmjs.com/package/arkova');
+    expect(SOURCE).toContain('https://pypi.org/project/arkova/');
+    expect(SOURCE).not.toMatch(/arkova(?:-mcp-server)?@\d/);
+    expect(SOURCE).not.toContain('CLI is not yet published');
+  });
+});

@@ -1,5 +1,17 @@
 # scripts/ci/agents.md
 
+## 2026-09-19 — current base gate contracts
+
+The staging workflow contract executes the live-state resolver with stale-base fixtures and pins the conditional merge against the authoritative base. Both evidence workflows pass the authenticated current base SHA to their checker. Keep the PR body and source head bound to the live PR record and the founder exception bound to the protected base snapshot.
+
+## 2026-09-19 — Evidence-identity support for the founder no-resoak release decision
+
+`check-evidence-identity.ts` consumes the same trusted-base, exact-PR, exact-head founder decision as the staging-evidence gate. It loads the snapshot only from the validated 40-hex `BASE_REF_SHA`; a shallow CI checkout may fetch exactly that commit from `origin`. The PR number comes only from `GITHUB_EVENT_PATH`, and runtime repository identity comes from `GITHUB_REPOSITORY`. Accepted output states that this is an authorization exception and does not claim historical PR-head or preflight identities match the current head. Absent, expired, unlisted, wrong-repository, changed-head, snapshot-edit, malformed-event and failed-fetch contexts retain the original fail-closed identity checks.
+
+## 2026-09-19 — founder decision for the existing release backlog
+
+`lib/founder-no-resoak.ts` loads the specific release decision from the live GitHub-resolved base commit. It requires the listed PR number, exact reviewed head, explicit body opt-in, retained evidence references, recorded residual risk and an unexpired window. PR-side snapshot edits cannot authorize that PR. `check-staging-evidence.ts` retains tier classification and labels acceptance as an exception, with no new soak claim; all other required checks remain intact. The colocated tests cover wrong heads, missing authority, invalid clocks, snapshot edits, trusted-base loading and gate integration.
+
 ## PR #2940 — Execute the edge health parsers in Bash
 
 `edge-deploy-health-parser.test.ts` executes the actual PRE_SHA/LIVE_SHA
@@ -960,3 +972,7 @@ untrusted queue labels because the runner's queue head leaked into the child.
 All four failures reproduce under a queue-shaped runner environment. Explicit
 forged-queue negative cases still reject those labels; resolver authentication
 and all production gate behavior remain unchanged.
+
+## 2026-09-19 — load-harness artifact admission rejects interrupted salvage files (SCRUM-3444)
+
+`check-staging-evidence.ts` now treats an explicit `load-harness` claim as a byte-bound artifact claim: `Load/concurrency evidence:` must name a git-tracked `artifact=docs/staging/.../load-*.json` and its exact `sha256=<64 lowercase hex>`. `load-harness-artifact.ts` resolves only a bounded, real non-symlinked file canonically below `docs/staging`, hashes the exact bytes before parsing, requires the completed producer's timestamps/duration/request-count/metric shape, and rejects any artifact carrying the producer's `partial` interruption marker. The digest supplies integrity, not independent authenticity: provenance comes from the gate's existing exact-head/current-checkout binding plus the requirement that the artifact is tracked at that reviewed head. Other load evidence forms remain unchanged. This closes the deferred consumer half of #2492: an interrupted salvage file remains useful diagnostically but cannot satisfy release evidence.

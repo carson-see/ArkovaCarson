@@ -515,3 +515,6 @@ describe('response_body surrogate-safe truncation', () => {
     expect(illFormedStringPaths(patch)).toEqual([]);
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));
