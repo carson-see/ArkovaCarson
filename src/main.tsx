@@ -9,6 +9,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { registerArkovaWebMcpOnPage } from './webmcp';
+// SCRUM-5024: side-effect import. The module captures `?ref=` at module scope,
+// so it must be imported BEFORE React renders and before the router reads the
+// URL — same placement rationale as `lib/oauthConfirmation.ts`. Removing this
+// import silently disables every partner referral attribution.
+import './lib/referralCapture';
 import './index.css';
 
 // Render React FIRST for fastest possible first paint.

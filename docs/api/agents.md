@@ -196,6 +196,15 @@ When wording a row, keep "subscribable since <story>" honest: the CRUD allowlist
 worker schema map, so an event is API-subscribable from the moment its schema is registered, which
 may be long before any UI or SDK lists it.
 
+## 2026-09-12 SCRUM-5024 — `GET /api/v1/referrals` documented
+
+Added to `openapi.yaml` (`listReferrals`, `x-arkova-required-scopes: read:orgs`)
+and to the endpoint table in `README.md`. The description states what is
+MEASURED (which organizations entered the code at creation, and when) and what
+is NOT ASSERTED (any commission, payout, discount or revenue share) — the §1.5
+boundary extended by the R-7 claims gate. Schema additions are additive and the
+two nullable fields use `nullable: true`, never `type: 'null'`, which is invalid
+in OpenAPI 3.0.3.
 ## 2026-09-12 — the sub-organization surface is documented in BOTH specs (SCRUM-3971)
 
 Six additive paths under `/organizations/sub-orgs` landed in
@@ -247,3 +256,8 @@ commit or rollback. Retry stays idempotent. The obsolete partial-reclaim
 promise is removed and the unavailable error is `offboard_unavailable`.
 Current hierarchy scope remains direct affiliates; depth 3 in the database
 does not imply this API enumerates all descendants. No live rollout is claimed.
+
+## 2026-09-19 — Finality webhook contracts
+
+The public guide documents subscribable `anchor.revocation_anchored` and
+`attestation.active` events and their public-id-only payload semantics.

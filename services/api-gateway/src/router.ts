@@ -31,6 +31,8 @@ export function resolveRoute(hostname: string, pathname: string): Route {
     if (normalized === '/health') return { kind: 'proxy', path: '/health' };
     if (normalized === '/openapi.json')
       return { kind: 'proxy', path: '/api/docs/spec.json' };
+    if (normalized === '/.well-known/arkova-keys.json')
+      return { kind: 'proxy', path: '/.well-known/arkova-keys.json' };
     if (normalized === '/v1' || normalized.startsWith('/v1/'))
       return { kind: 'proxy', path: `/api${normalized}` };
     if (normalized === '/v2' || normalized.startsWith('/v2/'))

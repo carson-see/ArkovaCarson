@@ -14,6 +14,29 @@ Organization management components: sub-org hierarchy, org verification, and aff
 - `@/lib/workerClient` (WORKER_URL) — worker endpoints for verification and sub-org management
 - `@/lib/supabase` — direct Supabase queries for org data
 
+## 2026-09-12 SCRUM-5024 — `ReferralPanel.tsx` (new)
+
+The organization's referral code, the share link, and the organizations that
+joined through it. Three pinned behaviours (`ReferralPanel.test.tsx`):
+
+- **No auto-mint on load** — the create button is the only path to a code.
+- **A failed load renders an error + retry, never an empty table.** "You referred
+  nobody" and "we could not find out" are different facts and the partner must be
+  able to tell them apart.
+- **`REFERRAL_LABELS.NOT_ASSERTED` is rendered unconditionally.** It is the §1.5
+  measured / not-asserted boundary extended by the R-7 claims gate, not a
+  footnote: the page states which organizations entered the code and when, and
+  explicitly does not represent a commission, discount or payment. Do not soften
+  it into marketing language.
+
+Row keys fall back to `(displayName, referredAt)` when an organization has no
+public id — never to an internal identifier, because none is fetched.
+- Copy lives in `SUB_ORG_LABELS` (§1.3). The local `SUB_ORG_STATE_COPY` block that held the load-error strings while `copy.ts` was locked under a concurrent PR was promoted into `SUB_ORG_LABELS` on 2026-09-13 (`LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / `LOAD_ERROR_RETRY`) and no longer exists — every string is in `copy.ts` now.
+- The row stacks (`flex-col sm:flex-row`) and the name wraps: pinned on one line the org name truncated to ~8 characters at 375 px, which identified the organization worse than its own status chip did (2026-09-13 UAT finding 10).
+- UAT (superseded 2026-09-13 by `e2e/uat-suborg-ux.spec.ts`, which drives the real router in a browser at 1280 and 375 with Supabase and the worker stubbed via `page.route`; the `uat-harness/` directory this line described is no longer in the tree): the visual pass needs no local Supabase — the local stack is shared across worktrees and a concurrent `stop` would wipe the run. Screenshots at 1280 and 375 in `docs/staging/hakichain-suborgs-2026-09/`.
+
+
+
 ## Do / Don't Rules
 - DO: Use dev bypass endpoints in development mode for auto-completing verification steps
 - DO: Use copy from `SUB_ORG_LABELS` for all sub-org UI strings
@@ -32,6 +55,9 @@ OrgVerification verified-badge helper text scrubbed ("shown on all your records"
 - `ManageSubOrgs.tsx` gained the credit provisioning control: parent balance in the header, per-sub-org balance, an amount field, and **Add Credits** / **Reclaim**. Both buttons drive one endpoint — the worker treats a negative amount as a reclaim, which is also the offboarding lever.
 - The control is offered **only for an APPROVED affiliation**. Funding an org whose affiliation is pending or revoked would move credits across a boundary the parent has not (or no longer) accepted.
 - `fetchCredits` is deliberately independent of `fetchSubOrgs` and swallows its failures: credit provisioning is additive to a panel that already worked, so a rollup outage degrades to "no balances shown" rather than taking approve/revoke down with it. `ManageSubOrgsCredits.test.tsx` pins that.
+- Copy lives in `SUB_ORG_LABELS` (§1.3). The older local `SUB_ORG_STATE_COPY` block in this file is a leftover from when `copy.ts` was locked under a concurrent PR — new strings go in `copy.ts`.
+- The row header is `flex-wrap`: with the actions pinned on one line the org name truncated to a single character at 375px.
+- UAT: `uat-harness/` renders this component with stubbed supabase/worker modules, so the visual pass needs no local Supabase — the local stack is shared across worktrees and a concurrent `stop` would wipe the run. Screenshots at 1280 and 375 in `docs/staging/hakichain-suborgs-2026-09/`.
 - Copy lives in `SUB_ORG_LABELS` (§1.3). The local `SUB_ORG_STATE_COPY` block that held the load-error strings while `copy.ts` was locked under a concurrent PR was promoted into `SUB_ORG_LABELS` on 2026-09-13 (`LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / `LOAD_ERROR_RETRY`) and no longer exists — every string is in `copy.ts` now.
 - The row stacks (`flex-col sm:flex-row`) and the name wraps: pinned on one line the org name truncated to ~8 characters at 375 px, which identified the organization worse than its own status chip did (2026-09-13 UAT finding 10).
 - Superseded wording (`c6bdd8070`, PR #2907, 2026-09-13). The two notes above REPLACED their predecessors rather than extending them, and `agents.md` is append-only, so the original text is preserved here. Neither predecessor is true of the current code — read them as history, do not act on them:

@@ -1,4 +1,12 @@
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -36,6 +44,49 @@ function rootCheckoutSteps(workflow: string): string[] {
 function rootLivePrSteps(workflow: string): string[] {
   const idBinding = /^ {8}id:\s*["']?live_pr["']?\s*$/mu;
   return rootSteps(workflow).filter((step) => idBinding.test(step));
+}
+
+function executeLivePrShell(
+  prJson: unknown,
+  baseJson: unknown,
+): { output: string; calls: string[] } {
+  const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+  const step = rootLivePrSteps(workflow)[0];
+  const run = step.split(/^ {8}run: \|\s*$/mu)[1];
+  if (!run) throw new Error("live_pr run block missing");
+  const shell = run
+    .split("\n")
+    .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
+    .join("\n")
+    .replaceAll("${{ github.event.pull_request.number }}", "42")
+    .replaceAll("${{ github.repository }}", "carson-see/ArkovaCarson");
+  const dir = mkdtempSync(resolve(tmpdir(), "live-pr-base-"));
+  const callsPath = resolve(dir, "calls");
+  const outputPath = resolve(dir, "output");
+  const ghPath = resolve(dir, "gh");
+  writeFileSync(resolve(dir, "pr.json"), JSON.stringify(prJson));
+  writeFileSync(resolve(dir, "base.json"), JSON.stringify(baseJson));
+  writeFileSync(
+    ghPath,
+    `#!/usr/bin/env bash\nset -euo pipefail\necho "$*" >> "${callsPath}"\ncase "$*" in\n  *"/pulls/42") cat "${resolve(dir, "pr.json")}" ;;\n  *"/git/ref/heads/main") cat "${resolve(dir, "base.json")}" ;;\n  *) exit 77 ;;\nesac\n`,
+  );
+  chmodSync(ghPath, 0o755);
+  try {
+    execFileSync("bash", ["-c", shell], {
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH}`,
+        GITHUB_OUTPUT: outputPath,
+      },
+      stdio: "pipe",
+    });
+    return {
+      output: readFileSync(outputPath, "utf8"),
+      calls: readFileSync(callsPath, "utf8").trim().split("\n"),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -86,6 +137,12 @@ function assertWorkflowContract(workflow: string): void {
   const livePrStep = livePrSteps[0];
   expect(livePrStep).toMatch(/gh api/u);
   expect(livePrStep).toMatch(/\/pulls\/\$\{PR_NUMBER\}/u);
+  expect(livePrStep).toMatch(/\/git\/ref\/heads\/\$\{BASE_REF\}/u);
+  expect(livePrStep).toMatch(/BASE_REPO.*github\.repository/u);
+  expect(livePrStep).toMatch(/\^\(main\|staging\|develop\)\$/u);
+  expect(livePrStep).toMatch(/\.object\.sha/u);
+  expect(livePrStep).toMatch(/CACHED_BASE_SHA.*BASE_SHA/u);
+  expect(livePrStep).toMatch(/synthesize_merge=/u);
   expect(livePrStep).toMatch(/checkout_sha=/u);
   expect(livePrStep).toMatch(/head_sha=/u);
   expect(livePrStep).toMatch(/base_sha=/u);
@@ -102,9 +159,9 @@ function assertWorkflowContract(workflow: string): void {
   // duplicate output name to its LAST occurrence. A per-run random delimiter
   // (GitHub's own documented remedy) closes this off: the attacker cannot
   // know it in advance.
-  const bodyHeredocStarts = [
-    ...livePrStep.matchAll(/body<<(\S+)\s*$/gmu),
-  ].map((match) => match[1].replace(/^["']|["']$/gu, ""));
+  const bodyHeredocStarts = [...livePrStep.matchAll(/body<<(\S+)\s*$/gmu)].map(
+    (match) => match[1].replace(/^["']|["']$/gu, ""),
+  );
   expect(
     bodyHeredocStarts,
     "the PR-body heredoc must appear exactly once in the live_pr step",
@@ -138,9 +195,8 @@ function assertWorkflowContract(workflow: string): void {
   // this lookup into -1 and failed the required `Tests` check on a PR that
   // changed nothing about the contract being asserted). The assertion below
   // still fails closed if the checkout step is removed outright.
-  const checkoutUses = /^(?: {6}- | {8})uses:\s*actions\/checkout@[^\s#]+/mu.exec(
-    workflow,
-  );
+  const checkoutUses =
+    /^(?: {6}- | {8})uses:\s*actions\/checkout@[^\s#]+/mu.exec(workflow);
   const checkoutIndex = checkoutUses ? checkoutUses.index : -1;
   expect(
     livePrIndex,
@@ -225,6 +281,103 @@ describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
     assertWorkflowContract(workflow);
   });
+
+  it("resolves the authoritative base ref instead of trusting the PR resource's cached base SHA", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const livePrStep = rootLivePrSteps(workflow)[0];
+
+    expect(livePrStep).toContain(
+      'BASE_DATA="$(gh api "repos/${BASE_REPO}/git/ref/heads/${BASE_REF}")"',
+    );
+    expect(livePrStep).toContain("BASE_SHA=\"$(jq -r '.object.sha // empty'");
+    expect(livePrStep).not.toMatch(
+      /^ {10}BASE_SHA="\$\(jq -r '\.base\.sha \/\/ empty'/mu,
+    );
+    expect(livePrStep).toContain(
+      'if [[ "${CACHED_BASE_SHA}" != "${BASE_SHA}" ]]',
+    );
+    expect(livePrStep).toContain('CHECKOUT_SHA="${HEAD_SHA}"');
+    expect(livePrStep).toContain('SYNTHESIZE_MERGE="true"');
+  });
+
+  it("fails closed on malformed authoritative base identity or SHA", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const livePrStep = rootLivePrSteps(workflow)[0];
+
+    expect(livePrStep).toContain(
+      'if [[ "${BASE_REPO}" != "${{ github.repository }}" ]]',
+    );
+    expect(livePrStep).toContain(
+      'if [[ ! "${BASE_REF}" =~ ^(main|staging|develop)$ ]]',
+    );
+    expect(livePrStep).toContain(
+      'if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]',
+    );
+    expect(livePrStep.match(/exit 1/gu)?.length ?? 0).toBeGreaterThanOrEqual(4);
+  });
+
+  it("behaviorally replaces a stale PR base SHA with the authoritative branch ref SHA", () => {
+    const head = "1".repeat(40);
+    const stale = "2".repeat(40);
+    const fresh = "3".repeat(40);
+    const result = executeLivePrShell(
+      {
+        head: { sha: head },
+        base: {
+          sha: stale,
+          ref: "main",
+          repo: { full_name: "carson-see/ArkovaCarson" },
+        },
+        user: { login: "author" },
+        merge_commit_sha: "4".repeat(40),
+        mergeable_state: "clean",
+        body: "evidence",
+      },
+      { object: { sha: fresh } },
+    );
+
+    expect(result.calls).toEqual([
+      "api repos/carson-see/ArkovaCarson/pulls/42",
+      "api repos/carson-see/ArkovaCarson/git/ref/heads/main",
+    ]);
+    expect(result.output).toContain(`base_sha=${fresh}`);
+    expect(result.output).toContain(`checkout_sha=${head}`);
+    expect(result.output).toContain("synthesize_merge=true");
+  });
+
+  it("synthesizes the tested tree against the authoritative base when the merge preview is stale", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const synth = rootSteps(workflow).find((step) => step.includes("Synthesize merge against authoritative base"));
+    expect(synth).toBeDefined();
+    expect(synth).toContain("if: steps.live_pr.outputs.synthesize_merge == 'true'");
+    expect(synth).toContain("AUTHORITATIVE_BASE_SHA: ${{ steps.live_pr.outputs.base_sha }}");
+    expect(synth).toContain('git merge --no-ff --no-edit "${AUTHORITATIVE_BASE_SHA}"');
+  });
+
+  it.each([
+    ["missing ref", { object: {} }],
+    ["malformed ref", { object: { sha: "not-a-sha" } }],
+  ])(
+    "fails closed when the authoritative base API returns %s",
+    (_label, baseJson) => {
+      expect(() =>
+        executeLivePrShell(
+          {
+            head: { sha: "1".repeat(40) },
+            base: {
+              sha: "2".repeat(40),
+              ref: "main",
+              repo: { full_name: "carson-see/ArkovaCarson" },
+            },
+            user: { login: "author" },
+            mergeable_state: "clean",
+            body: "evidence",
+          },
+          baseJson,
+        ),
+      ).toThrow();
+    },
+  );
 
   it("rejects a later checkout that silently switches execution back to the frozen branch head", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
@@ -517,7 +670,8 @@ describe("staging-evidence merge-queue skip actor contract (SCRUM-3812)", () => 
  * the queue is unblocked while every PR is still red.
  */
 describe("staging-evidence workflow soak-gate bypass contract", () => {
-  const soakGateEnvLine = /^ {10}SOAK_GATE_DISABLED:\s*\$\{\{\s*vars\.SOAK_GATE_DISABLED\s*\}\}\s*$/mu;
+  const soakGateEnvLine =
+    /^ {10}SOAK_GATE_DISABLED:\s*\$\{\{\s*vars\.SOAK_GATE_DISABLED\s*\}\}\s*$/mu;
 
   it("threads SOAK_GATE_DISABLED into the check step from the live vars context", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
@@ -526,10 +680,16 @@ describe("staging-evidence workflow soak-gate bypass contract", () => {
 
   it("binds the bypass beside DEPLOY_WORKER_PAUSED on the evidence-check step", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
-    const checkStep = rootSteps(workflow).find((step) => /check-staging-evidence\.ts/u.test(step));
+    const checkStep = rootSteps(workflow).find((step) =>
+      /check-staging-evidence\.ts/u.test(step),
+    );
     expect(checkStep).toBeDefined();
     expect(soakGateEnvLine.test(checkStep!)).toBe(true);
-    expect(/DEPLOY_WORKER_PAUSED:\s*\$\{\{\s*vars\.DEPLOY_WORKER_PAUSED\s*\}\}/u.test(checkStep!)).toBe(true);
+    expect(
+      /DEPLOY_WORKER_PAUSED:\s*\$\{\{\s*vars\.DEPLOY_WORKER_PAUSED\s*\}\}/u.test(
+        checkStep!,
+      ),
+    ).toBe(true);
   });
 
   it("pins the bypass to exactly ONE binding of the key", () => {
@@ -550,7 +710,10 @@ describe("staging-evidence workflow soak-gate bypass contract", () => {
       "${{ github.event.pull_request.title }}",
       "true",
     ]) {
-      const mutated = workflow.replace(soakGateEnvLine, `          SOAK_GATE_DISABLED: ${forged}`);
+      const mutated = workflow.replace(
+        soakGateEnvLine,
+        `          SOAK_GATE_DISABLED: ${forged}`,
+      );
       expect(mutated).not.toBe(workflow);
       expect(soakGateEnvLine.test(mutated)).toBe(false);
     }
