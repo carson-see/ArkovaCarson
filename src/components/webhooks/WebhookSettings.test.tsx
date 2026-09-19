@@ -56,6 +56,16 @@ describe('WebhookSettings', () => {
   // =========================================================================
 
   describe('endpoint list rendering', () => {
+    it('links endpoint editing guidance to the published API specification', () => {
+      render(<WebhookSettings {...defaultProps} />);
+
+      expect(
+        screen.getByRole('link', {
+          name: 'Update endpoint URLs and event subscriptions with the webhook API',
+        }),
+      ).toHaveAttribute('href', 'https://api.arkova.ai/api/docs/spec.json');
+    });
+
     it('renders all endpoints with URLs and event badges', () => {
       render(<WebhookSettings {...defaultProps} />);
 
