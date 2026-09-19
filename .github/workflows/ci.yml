@@ -2336,13 +2336,22 @@ jobs:
           fi
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
+          BASE_REPO="$(jq -r '.base.repo.full_name // empty' <<<"${DATA}")"
+          BASE_REF="$(jq -r '.base.ref // empty' <<<"${DATA}")"
+          if [[ "${BASE_REPO}" != "${{ github.repository }}" || ! "${BASE_REF}" =~ ^(main|staging|develop)$ ]]; then
+            echo "::error::PR #${PR_NUMBER} has an unexpected base repository/ref."
+            exit 1
+          fi
+          BASE_DATA="$(gh api "repos/${BASE_REPO}/git/ref/heads/${BASE_REF}")"
+          BASE_SHA="$(jq -r '.object.sha // empty' <<<"${BASE_DATA}")"
           IS_DRAFT="$(jq -r '.draft // false' <<<"${DATA}")"
-          if [[ -z "${HEAD_SHA}" ]]; then
-            echo "::error::gh api returned an empty head SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
+          if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::gh api returned an invalid head/base SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
             exit 1
           fi
           {
             echo "head_sha=${HEAD_SHA}"
+            echo "base_sha=${BASE_SHA}"
             echo "is_draft=${IS_DRAFT}"
           } >> "${GITHUB_OUTPUT}"
           # SECURITY: the PR body is fully author-controlled. A FIXED heredoc
@@ -2383,6 +2392,7 @@ jobs:
           # exactly the fields that go stale on a bare rerun.
           PR_BODY: ${{ steps.live_pr.outputs.body }}
           PR_HEAD_SHA: ${{ steps.live_pr.outputs.head_sha }}
+          BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
           PR_IS_DRAFT: ${{ steps.live_pr.outputs.is_draft }}
         run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts
 

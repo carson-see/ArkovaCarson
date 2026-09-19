@@ -1,3 +1,4 @@
+- 2026-09-19 workflow-parser blackout prevention: added `check-workflow-yaml.ts` and its mutation tests. The checker parses every tracked GitHub Actions workflow with `js-yaml`, rejects duplicate keys and hollow workflow roots, and reproduces the plain-scalar `--only-binary=:all:` defect that made GitHub reject `ci.yml` before creating any jobs. `npm run ci:workflow-yaml` is the local pre-push command; it is deliberately not a new Actions job because invalid workflow YAML cannot schedule its own validator.
 # scripts/ci — historical change log
 
 Dated per-gate narrative moved out of `agents.md` on 2026-08-01. Entries are the

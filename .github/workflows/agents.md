@@ -1,5 +1,9 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-19 — authoritative PR base resolution
+
+The staging and identity gates resolve the target branch through GitHub’s authenticated git/ref API. The PR resource’s cached base SHA can lag main and must not select the trusted release snapshot. When staging sees this mismatch, it checks out the exact source head and merges the authoritative base before running the checker; conflicts fail closed. This local merge is never pushed and does not assert new soak evidence.
+
 ## 2026-09-19 — draft admission saves Actions budget
 
 `ci.yml` has one cheap `CI Admission` job. Ordinary draft pull requests report
@@ -248,7 +252,7 @@ issue comment), so a change to one of those can take effect outside the PR cycle
 |------|---------|---------|
 | `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 26 jobs (verified by `yaml.safe_load` 2026-08-23; the previous "24" was stale): secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity, anti-hollow-soak. The last two were report-only until SCRUM-2965/2977 activated them fail-closed and added them to every .mergify.yml queue rule; `evidence-identity` skips Mergify's speculative merge-queue PRs and resolves PR body/head LIVE via `gh api`, because this workflow's `pull_request` trigger declares no `types:` and so never fires on a body `edited`. |
 | `staging-evidence.yml` | `pull_request` incl. **`edited`**/`labeled`/`unlabeled` | The `Staging Soak Evidence Gate` required check (CLAUDE.md §1.11/§1.12). `edited` matters: a body-only evidence update fires no `synchronize`. |
-| `migration-drift.yml` | `push` main + `pull_request` incl. **`edited`** | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
+| `migration-drift.yml` | `push` main + source-changing `pull_request` events | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
 | `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
 | `gitleaks.yml` | `pull_request` main + `push` main | Single `scan` job — secret scanning. |
 | `deploy-worker.yml` | **`push` to `main`** filtered to `services/worker/**` + `workflow_dispatch` | Cloud Run worker deploy: `pre-deploy-checks` → `deploy-gate` (the `vars.DEPLOY_WORKER_PAUSED` pause) → `deploy`. Worker lint uses `npm run lint` (matches CI). |
@@ -874,3 +878,7 @@ collecting a result without iterating it silently drops that suite from the gate
 ## 2026-09-19 — bounded ptau mirror recovery
 
 `recover-ptau-mirror.yml` is a manual, main-only production-environment workflow for recovering the pinned Powers of Tau input from the existing trusted zk artifact cache when both public upstreams return 403. It deliberately requests an impossible exact cache key and restores only the established `zk-artifacts-Linux-circom2.1.9-` prefix, then requires the repository-pinned SHA-256 and a >10 MB size before WIF authentication. Upload uses Cloud Storage generation precondition zero, so it creates the fixed object once and cannot overwrite any existing bytes. A second download into a fresh runner-temp path rechecks the same hash without using Actions cache. It does not create the bucket or alter public IAM; those one-time infrastructure operations stay explicit and reviewable.
+
+## 2026-09-19 — stop rerunning migration drift on PR-body edits
+
+`migration-drift.yml` no longer subscribes to `pull_request.edited`. The workflow reads the checked-out migration tree and live production state; it never reads PR-body evidence. A body edit leaves the head SHA and its existing required-check result unchanged, while `staging-evidence.yml` remains subscribed to `edited` because that workflow does consume the body. This removes repeated WIF, Secret Manager, Supabase API, dependency-install, and ledger-audit jobs without dropping a source, base, or evidence validation. The old Mergify status-edit isolation remains necessary only in `staging-evidence.yml`.

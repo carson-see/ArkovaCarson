@@ -161,13 +161,15 @@
     },
     {
       "number": 2997,
-      "head_sha": "cb28bcc49b8580a323dce2703c96a0a5849090c7",
+      "head_sha": "c61cd630cbd0e5690d56ebab3b9a0b5137fa8500",
       "existing_evidence": [
         "PTAU workflow shell review, immutable upload and hash controls, nine focused consumer tests and shell syntax validation passed. Root reviewed consumer fallback/atomic rename.",
         "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19",
-        "Final source security fixes use HTTPS-only redirects and lockfile snarkjs executable; ten focused tests passed, root reviewed delta."
+        "Final source security fixes use HTTPS-only redirects and lockfile snarkjs executable; ten focused tests passed, root reviewed delta.",
+        "September19 root-reviewed conflict resolution: Current main merged with documentation union only; anonymous mirror18957464bytes exact SHA256 verified; real empty-cache six-step circuit build and14proof tests passed, postmerge27tests passed."
       ],
-      "residual_risk": "Owned bucket is empty/private until recovery runs; release must verify recovered hash, object access and real cache-miss consumer before claiming this operational gap closed."
+      "residual_risk": "Owned bucket is empty/private until recovery runs; release must verify recovered hash, object access and real cache-miss consumer before claiming this operational gap closed.",
+      "prior_reviewed_source": "cb28bcc49b8580a323dce2703c96a0a5849090c7"
     },
     {
       "number": 2998,
@@ -198,12 +200,14 @@
     },
     {
       "number": 3003,
-      "head_sha": "6ed44cf883c723edbdca5583afe02a4deaebdcf7",
+      "head_sha": "d1787becf3a38121fdadafc5ce8182e39a387bf5",
       "existing_evidence": [
         "320/375/1280 real browser layout checks and four component tests passed. Independent UAT owner reviewed evidence; CI runs the specific mobile flow and preserves its artifacts. Unrelated Sonar suppression removed.",
-        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19",
+        "September19 root-reviewed conflict resolution: Current main merged without functional mobile changes; actual Playwright320/375/1280, build typecheck and54workflow/append-only tests passed."
       ],
-      "residual_risk": "Scope is People page action visibility, not a complete mobile redesign. Final queue CI required; no timed browser soak asserted."
+      "residual_risk": "Scope is People page action visibility, not a complete mobile redesign. Final queue CI required; no timed browser soak asserted.",
+      "prior_reviewed_source": "6ed44cf883c723edbdca5583afe02a4deaebdcf7"
     },
     {
       "number": 3004,
