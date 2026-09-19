@@ -33,6 +33,11 @@ export const VALID_EVENTS = [
   // BUG-002: advance 7-day expiry warning. Emitted by the
   // check-credential-expiry cron behind the ENABLE_EXPIRY_ALERTS flag.
   'compliance.document_expiring',
+  'job.completed',
+  'compliance.certificate_expiring',
+  'compliance.anchor_delayed',
+  'compliance.signature_revoked',
+  'compliance.timestamp_coverage_low',
   // SCRUM-3982: attestation lifecycle. Dispatched-but-unregistered until now,
   // which meant no subscription was possible AND the payload skipped schema
   // validation. `attestation.revoked`'s producer is not yet reachable; it is
@@ -40,6 +45,8 @@ export const VALID_EVENTS = [
   // delivery has happened.
   'attestation.created',
   'attestation.revoked',
+  'anchor.revocation_anchored',
+  'attestation.active',
   // SCRUM-3972 — affiliated-organization lifecycle. Same caveat as
   // anchor.superseded above: listing them here mirrors the worker allowlist,
   // it does not by itself give a Zap author a per-event trigger.

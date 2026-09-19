@@ -367,6 +367,54 @@ export const AttestationRevokedPayloadSchema = z
   })
   .strict();
 
+/** Finality signal emitted after an anchor revocation receipt is confirmed. */
+export const AnchorRevocationAnchoredPayloadSchema = z
+  .object({
+    ...PUBLIC_ID_FIELDS,
+    status: z.literal('REVOKED'),
+    revocation_tx_id: z.string().min(1),
+    revocation_block_height: z.number().int().nonnegative().nullable(),
+    original_chain_tx_id: z.string().min(1).nullable(),
+  })
+  .strict();
+
+/** Finality signal emitted by the attestation anchoring job. */
+export const AttestationActivePayloadSchema = z
+  .object({
+    ...PUBLIC_ID_FIELDS,
+    attestation_type: z.string().min(1).max(64),
+    status: z.literal('ACTIVE'),
+    chain_tx_id: z.string().min(1),
+    chain_timestamp: isoTimestamp,
+  })
+  .strict();
+
+const opaqueRef = (prefix: 'job' | 'cert') => z.string().regex(new RegExp(`^${prefix}_[a-f0-9]{32}$`));
+
+export const JobCompletedPayloadSchema = z.object({
+  job_ref: opaqueRef('job'), status: z.enum(['complete', 'failed']),
+  total: z.number().int().nonnegative(), result_count: z.number().int().nonnegative(),
+  error_code: z.literal('processing_failed').nullable(),
+}).strict();
+export const ComplianceCertificateExpiringPayloadSchema = z.object({
+  certificate_ref: opaqueRef('cert'), expires_at: isoTimestamp,
+  warning_level: z.enum(['30_day', '7_day', '1_day']),
+  days_remaining: z.union([z.literal(30), z.literal(7), z.literal(1)]),
+}).strict();
+export const ComplianceAnchorDelayedPayloadSchema = z.object({
+  pending_count: z.number().int().positive(), oldest_pending_since: isoTimestamp,
+  threshold_minutes: z.number().int().positive(),
+}).strict();
+export const ComplianceSignatureRevokedPayloadSchema = z.object({
+  public_id: z.string().min(1).max(128), revocation_reason: z.string().min(1).max(2000),
+  revoked_at: isoTimestamp,
+}).strict();
+export const ComplianceTimestampCoverageLowPayloadSchema = z.object({
+  coverage_pct: z.number().int().min(0).max(100), threshold_pct: z.number().int().min(0).max(100),
+  total_signatures: z.number().int().positive(), timestamped_signatures: z.number().int().nonnegative(),
+  period_days: z.number().int().positive(),
+}).strict();
+
 /**
  * SCRUM-3972 — affiliated-organization ("sub-org") lifecycle events.
  *
@@ -504,8 +552,15 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'credential.verified': CredentialVerifiedPayloadSchema,
   'credential.status_changed': CredentialStatusChangedPayloadSchema,
   'compliance.document_expiring': ComplianceDocumentExpiringPayloadSchema,
+  'job.completed': JobCompletedPayloadSchema,
+  'compliance.certificate_expiring': ComplianceCertificateExpiringPayloadSchema,
+  'compliance.anchor_delayed': ComplianceAnchorDelayedPayloadSchema,
+  'compliance.signature_revoked': ComplianceSignatureRevokedPayloadSchema,
+  'compliance.timestamp_coverage_low': ComplianceTimestampCoverageLowPayloadSchema,
   'attestation.created': AttestationCreatedPayloadSchema,
   'attestation.revoked': AttestationRevokedPayloadSchema,
+  'anchor.revocation_anchored': AnchorRevocationAnchoredPayloadSchema,
+  'attestation.active': AttestationActivePayloadSchema,
   // SCRUM-3972 — appended AFTER compliance.document_expiring. Declaration
   // order here is the canonical order every mirror surface is compared
   // against by scripts/ci/check-webhook-event-registration-drift.ts.
@@ -535,6 +590,9 @@ export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChan
 export type ComplianceDocumentExpiringPayload = z.infer<typeof ComplianceDocumentExpiringPayloadSchema>;
 export type AttestationCreatedPayload = z.infer<typeof AttestationCreatedPayloadSchema>;
 export type AttestationRevokedPayload = z.infer<typeof AttestationRevokedPayloadSchema>;
+export type AnchorRevocationAnchoredPayload = z.infer<typeof AnchorRevocationAnchoredPayloadSchema>;
+export type AttestationActivePayload = z.infer<typeof AttestationActivePayloadSchema>;
+export type JobCompletedPayload = z.infer<typeof JobCompletedPayloadSchema>;
 export type SubOrgCreatedPayload = z.infer<typeof SubOrgCreatedPayloadSchema>;
 export type SubOrgApprovedPayload = z.infer<typeof SubOrgApprovedPayloadSchema>;
 export type SubOrgRevokedPayload = z.infer<typeof SubOrgRevokedPayloadSchema>;
@@ -676,13 +734,6 @@ export function findBannedPayloadKeys(data: unknown, path: string[] = []): strin
  * Nothing is ever added: a NEW event type must ship with a schema.
  */
 export const LEGACY_UNREGISTERED_EVENT_TYPES = [
-  'job.completed',
-  'attestation.active',
-  'anchor.revocation_anchored',
-  'compliance.anchor_delayed',
-  'compliance.certificate_expiring',
-  'compliance.signature_revoked',
-  'compliance.timestamp_coverage_low',
 ] as const;
 
 const LEGACY_UNREGISTERED_EVENT_TYPE_SET: ReadonlySet<string> = new Set<string>(

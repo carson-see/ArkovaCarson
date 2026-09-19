@@ -1358,6 +1358,11 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'credential.verified': true,
   'credential.status_changed': true,
   'compliance.document_expiring': true,
+  'job.completed': true,
+  'compliance.certificate_expiring': true,
+  'compliance.anchor_delayed': true,
+  'compliance.signature_revoked': true,
+  'compliance.timestamp_coverage_low': true,
   // SCRUM-3982: attestation lifecycle. Both were dispatched by the worker
   // while unregistered, so a typed SDK consumer had no way to subscribe and
   // the payloads skipped schema validation entirely.
@@ -1385,6 +1390,11 @@ describe('WebhookEventType', () => {
         'anchor.submitted',
         'anchor.superseded',
         'compliance.document_expiring',
+        'job.completed',
+        'compliance.certificate_expiring',
+        'compliance.anchor_delayed',
+        'compliance.signature_revoked',
+        'compliance.timestamp_coverage_low',
         'credential.issued',
         'credential.status_changed',
         'credential.verified',

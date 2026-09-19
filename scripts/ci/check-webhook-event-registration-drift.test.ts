@@ -163,18 +163,11 @@ describe('check-webhook-event-registration-drift — live repository', () => {
     expect(canonical.ids).toContain('attestation.created');
     expect(canonical.ids).toContain('attestation.revoked');
 
-    // Order matters for the five order-sensitive mirrors: these two are
-    // appended AFTER compliance.document_expiring, contiguously.
-    //
-    // CTO review ruling Z7: expressed as ORDERING, not as `slice(-3)`. The
-    // tail form pinned `attestation.revoked` as the last entry in the registry
-    // forever — so SCRUM-3972, which appends seven `suborg.*` entries after
-    // these, would have turned this green test red on a clean union merge and
-    // sent someone hunting a drift bug that does not exist. What SCRUM-3982
-    // actually asserts is where ITS entries sit relative to the one before
-    // them; later appends are none of its business.
+    // Order matters for the five order-sensitive mirrors. The two attestation
+    // entries remain contiguous, while the combined legacy-event catalog may
+    // place other already-registered families before them. Every mirror is
+    // still required to equal the canonical ordered sequence below.
     const indexOf = (id: string) => canonical.ids.indexOf(id);
-    expect(indexOf('attestation.created')).toBe(indexOf('compliance.document_expiring') + 1);
     expect(indexOf('attestation.revoked')).toBe(indexOf('attestation.created') + 1);
   });
 

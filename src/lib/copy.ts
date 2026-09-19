@@ -702,6 +702,11 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
   'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
+  'job.completed': 'A batch verification request finished processing.',
+  'compliance.certificate_expiring': 'A signing certificate is approaching its expiration date.',
+  'compliance.anchor_delayed': 'One or more document records have waited longer than the configured securing threshold.',
+  'compliance.signature_revoked': 'A signature was revoked.',
+  'compliance.timestamp_coverage_low': 'Signature timestamp coverage fell below the configured threshold.',
   // CTO ruling Z5 (2026-09-12), §1.13 R-7: scoped to the single-create route.
   // POST /api/v1/attestations dispatches this event; the bulk route
   // POST /api/v1/attestations/batch-create does not dispatch anything, so a
@@ -709,6 +714,8 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   // attestation was created" until batch-create emits.
   'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
+  'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
+  'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
   'suborg.created': 'A parent organization created an affiliated organization.',
   'suborg.approved': 'A parent organization approved an affiliated organization.',
   'suborg.revoked': 'A parent organization revoked an affiliation.',

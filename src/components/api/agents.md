@@ -1,5 +1,9 @@
 # agents.md — components/api
-_Last updated: 2026-08-12_
+_Last updated: 2026-09-19_
+
+## 2026-09-19 — create-key picker matches reachable enforced grants
+
+`SELECTABLE_API_SCOPES` deliberately differs from the full accepted vocabulary. The create dialog offers the currently reachable machine grants, including `verify`, `verify:batch`, `usage:read`, `webhooks:manage`, `agents:manage`, and `orgs:manage`. It excludes reserved, unenforced, compatibility-only, or JWT-only grants. When adding a scope, verify an API-key-authenticated route actually requires it; vocabulary membership alone is insufficient.
 
 ## 2026-08-12 — revoke/delete buttons work now (FD-P7, no component change)
 

@@ -397,6 +397,32 @@ pre-check and the pin). Webhook fan-out is the first hot path on this primitive;
 keyed by pinned IP and a shared resolve are the follow-up. IPv6-literal hosts (`https://[…]/`) pass
 the bracketed hostname as TLS `servername` (SCRUM-5038).
 
+## 2026-09-19 — SCRUM-5063 finality event disposition
+
+`anchor.revocation_anchored` and `attestation.active` now have strict,
+public-id-only schemas and are removed from the legacy bypass ratchet. Their
+producers no longer send internal anchor UUIDs or document fingerprints.
+
+## 2026-09-19 — deferred webhook-family disposition
+
+The historical SCRUM-3982 gap list above is preserved as the state recorded
+when that work landed. SCRUM-5063 later registered
+`anchor.revocation_anchored` and `attestation.active` with strict public-only
+schemas and removed internal anchor identifiers and fingerprints at their
+producers. The deferred-gap batch then registered `job.completed`,
+`compliance.anchor_delayed`, `compliance.certificate_expiring`,
+`compliance.signature_revoked`, and `compliance.timestamp_coverage_low`.
+Job and certificate producers now derive deterministic, domain-separated
+opaque references; raw job errors and certificate subject names are omitted.
+`compliance.signature_revoked` remains correctly marked non-live because no
+lifecycle callsite invokes its emitter.
+The historical registry and gap list above are preserved verbatim as the state
+recorded when SCRUM-3982 landed. SCRUM-5063 now registers
+`anchor.revocation_anchored` and `attestation.active` with strict public-only
+schemas. Their reachable job producers no longer send internal anchor UUIDs,
+attestation UUIDs, or document fingerprints. The worker registry, generated
+API guide, dashboard catalog, SDK type union, and Zapier allowlist are kept in
+sync by the registration-drift gate.
 
 ## 2026-09-14 — SCRUM-3972 review correction
 

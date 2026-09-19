@@ -1,5 +1,9 @@
 # agents.md — e2e/
 
+## API key/webhook dashboard targeted UAT (2026-09-19)
+
+`uat-api-webhook-dashboard.spec.ts` and its standalone config exercise the real settings routes/components at 1280px and 375px with auth, Supabase, and worker I/O stubbed only at the browser network boundary. It proves scope/event controls, scrubbed retryable endpoint-read failure, and responsive geometry. It is targeted frontend evidence, not backend/RLS integration proof; the ordinary CI E2E project retains that responsibility. The spec self-skips under every named shared project and runs only with its dedicated config.
+
 ## UAT-22 invitation list browser probe (2026-09-14)
 
 The opt-in `uat22-platform-invite.spec.ts` distinguishes mocked GET list responses from POST create responses and checks that the sent invite appears after refresh at 1280px and 375px. This is browser transport/rendering coverage with real fixture auth, not live worker/DB proof. The real mounted-router counterpart is `services/worker/src/api/admin-invitations.local.test.ts`; both remain explicit local runs with fixture prerequisites. No skip was removed.
