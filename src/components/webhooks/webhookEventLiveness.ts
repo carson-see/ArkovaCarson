@@ -41,22 +41,53 @@ export interface WebhookCatalogEntry {
 // Field lists verified 2026-07-06 against
 // services/worker/src/webhooks/payload-schemas.ts (strict Zod schemas).
 // `?` marks nullable/optional fields.
-export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
-  'anchor.submitted': {
+export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, "id">> = {
+  "anchor.submitted": {
     live: true,
-    fields: ['public_id', 'status', 'submitted_at', 'chain_tx_id?', 'chain_block_height?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "submitted_at",
+      "chain_tx_id?",
+      "chain_block_height?",
+      "org_public_id?",
+    ],
   },
-  'anchor.secured': {
+  "anchor.secured": {
     live: true,
-    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'chain_timestamp', 'secured_at', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "chain_tx_id",
+      "chain_block_height",
+      "chain_timestamp",
+      "secured_at",
+      "org_public_id?",
+    ],
   },
-  'anchor.revoked': {
+  "anchor.revoked": {
     live: true,
-    fields: ['public_id', 'status', 'revoked_at', 'revocation_reason?', 'chain_tx_id?', 'chain_block_height?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "revoked_at",
+      "revocation_reason?",
+      "chain_tx_id?",
+      "chain_block_height?",
+      "org_public_id?",
+    ],
   },
-  'anchor.expired': {
+  "anchor.expired": {
     live: true,
-    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'expires_at', 'expired_at', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "chain_tx_id",
+      "chain_block_height",
+      "expires_at",
+      "expired_at",
+      "org_public_id?",
+    ],
   },
   // DI-775 (SCRUM-3538): `live: true` — the emit point is real:
   // `dispatchWebhookEvent(..., 'anchor.superseded', ...)` in
@@ -64,9 +95,18 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
   // POST /api/anchor/:id/supersede path. Fields mirror
   // AnchorSupersededPayloadSchema (strict); SUPERSEDED can only follow
   // SECURED, so the chain fields are non-null there and are listed unmarked.
-  'anchor.superseded': {
+  "anchor.superseded": {
     live: true,
-    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'superseded_at', 'superseded_by_public_id?', 'supersession_reason?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "chain_tx_id",
+      "chain_block_height",
+      "superseded_at",
+      "superseded_by_public_id?",
+      "supersession_reason?",
+      "org_public_id?",
+    ],
   },
   // CTO ruling Z5 (2026-09-12): `live: false` — corrected, not downgraded.
   // The event has been registered and subscribable since SCRUM-1794 and its
@@ -79,35 +119,76 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
   // audit row is not a delivery. Subscribers to the merkle-batch path receive
   // the per-anchor `anchor.secured` fan-out and nothing else. Flip this only
   // when a dispatch site exists (§1.13 R-7).
-  'anchor.batch_secured': {
+  "anchor.batch_secured": {
     live: false,
-    fields: ['public_ids', 'anchor_count', 'chain_tx_id', 'chain_block_height', 'chain_timestamp', 'secured_at'],
+    fields: [
+      "public_ids",
+      "anchor_count",
+      "chain_tx_id",
+      "chain_block_height",
+      "chain_timestamp",
+      "secured_at",
+    ],
   },
   // Emits on connector credential import (SCRUM-1798 Phase 2a,
   // services/worker/src/api/v1/credential-sources.ts) — unflagged.
-  'credential.issued': {
+  "credential.issued": {
     live: true,
-    fields: ['public_id', 'status', 'issued_at', 'expires_at?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "issued_at",
+      "expires_at?",
+      "credential_type",
+      "recipient_public_id?",
+      "org_public_id?",
+    ],
   },
   // Wired but flag-gated dark: ENABLE_CREDENTIAL_VERIFIED_WEBHOOK defaults
   // false and is unset in prod. Flip only after verifying the prod flag.
-  'credential.verified': {
+  "credential.verified": {
     live: false,
-    fields: ['public_id', 'status', 'verified_at', 'verifier_country?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "verified_at",
+      "verifier_country?",
+      "credential_type",
+      "recipient_public_id?",
+      "org_public_id?",
+    ],
   },
   // Four live producers (SCRUM-1800): revoke, supersede, bulk-confirm, and
   // reorg-revert — any anchor with a credential_type emits on those
   // transitions, no feature flag.
-  'credential.status_changed': {
+  "credential.status_changed": {
     live: true,
-    fields: ['public_id', 'previous_status', 'new_status', 'changed_at', 'reason?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "previous_status",
+      "new_status",
+      "changed_at",
+      "reason?",
+      "credential_type",
+      "recipient_public_id?",
+      "org_public_id?",
+    ],
   },
   // BUG-002: `live: true` is asserted because the emit point is real —
   // POST /cron/check-credential-expiry, behind the ENABLE_EXPIRY_ALERTS flag.
   // Field list mirrors ComplianceDocumentExpiringPayloadSchema (strict).
-  'compliance.document_expiring': {
+  "compliance.document_expiring": {
     live: true,
-    fields: ['public_id', 'status', 'expires_at', 'days_remaining', 'warning_level', 'credential_type?', 'label?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "expires_at",
+      "days_remaining",
+      "warning_level",
+      "credential_type?",
+      "label?",
+      "org_public_id?",
+    ],
   },
   'job.completed': { live: true, fields: ['job_ref', 'status', 'total', 'result_count', 'error_code'] },
   'compliance.certificate_expiring': { live: true, fields: ['certificate_ref', 'expires_at', 'warning_level', 'days_remaining'] },
@@ -123,9 +204,15 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
   // line 707) creates attestations without dispatching anything, so a bulk
   // caller receives no event. The copy.ts description says so — do not widen
   // it back to "an attestation was created" (§1.13 R-7).
-  'attestation.created': {
+  "attestation.created": {
     live: true,
-    fields: ['public_id', 'attestation_type', 'status', 'created_at', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "attestation_type",
+      "status",
+      "created_at",
+      "org_public_id?",
+    ],
   },
   // `live: false` — verified, not inferred. The revoke handler's dispatch is
   // guarded on `attestation.attester_org_id`, and the ownership query above it
@@ -133,9 +220,38 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
   // and this event has never been delivered. Subscribable + contract-locked;
   // flipping this badge requires making the producer reachable, not editing
   // this line (§1.13 R-7).
-  'attestation.revoked': {
+  "attestation.revoked": {
     live: false,
-    fields: ['public_id', 'status', 'revocation_reason', 'revoked_at', 'attestation_type?', 'org_public_id?'],
+    fields: [
+      "public_id",
+      "status",
+      "revocation_reason",
+      "revoked_at",
+      "attestation_type?",
+      "org_public_id?",
+    ],
+  },
+  "anchor.revocation_anchored": {
+    live: true,
+    fields: [
+      "public_id",
+      "status",
+      "revocation_tx_id",
+      "revocation_block_height",
+      "original_chain_tx_id",
+      "org_public_id?",
+    ],
+  },
+  "attestation.active": {
+    live: true,
+    fields: [
+      "public_id",
+      "attestation_type",
+      "status",
+      "chain_tx_id",
+      "chain_timestamp",
+      "org_public_id?",
+    ],
   },
   'anchor.revocation_anchored': {
     live: true,
