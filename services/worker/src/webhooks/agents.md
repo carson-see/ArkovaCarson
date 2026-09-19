@@ -35,8 +35,6 @@ in the same PR. Re-verify with:
 | `credential.verified` | `CredentialVerifiedPayloadSchema` | `services/worker/src/api/v1/verify.ts` + `services/worker/src/api/v1/oracle.ts` (SCRUM-1799) | Wired but dark: BOTH sites gated on `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` (default false; verified unset in prod 2026-08-29) |
 | `credential.status_changed` | `CredentialStatusChangedPayloadSchema` | Four sites (SCRUM-1800): `services/worker/src/api/anchor-revoke.ts` (revoke), `services/worker/src/api/anchor-lineage.ts` (supersede), `services/worker/src/jobs/check-confirmations.ts` (bulk confirm), `services/worker/src/jobs/chain-maintenance.ts` (reorg revert) | Live for any anchor with non-null `credential_type`; no feature flag |
 | `compliance.document_expiring` | `ComplianceDocumentExpiringPayloadSchema` | `services/worker/src/routes/cron.ts` (`POST /cron/check-credential-expiry`, behind `ENABLE_EXPIRY_ALERTS`) | Live, flag-gated (BUG-002) |
-| `anchor.revocation_anchored` | `AnchorRevocationAnchoredPayloadSchema` (SCRUM-5063) | `services/worker/src/jobs/revocation.ts` | Live; public-id-only payload |
-| `attestation.active` | `AttestationActivePayloadSchema` (SCRUM-5063) | `services/worker/src/jobs/attestationAnchor.ts` | Live; public-id-only payload |
 
 ### Dispatched but UNREGISTERED (validation-bypassed) — BUG-002 shape
 
@@ -53,6 +51,9 @@ never dispatch sites against it).
 | Event | Dispatch site(s) | Payload risk if ever registered as-is |
 |---|---|---|
 | `job.completed` | `services/worker/src/api/v1/batch.ts` (complete + failed paths) | `job_id` (internal `batch_verification_jobs` UUID, §6); raw `error` message string |
+| `anchor.revocation_anchored` | `services/worker/src/jobs/revocation.ts` | Ships `anchor_id` (internal UUID, §6) AND `fingerprint` (§1.6) in the data block |
+| `attestation.created` / `attestation.revoked` | `services/worker/src/api/v1/attestations.ts` | Unaudited here — audit before registering |
+| `attestation.active` | `services/worker/src/jobs/attestationAnchor.ts` | Unaudited here — audit before registering |
 
 Registering any of these requires the full "Adding a new event type" checklist
 below — the schema is what makes the banned fields impossible, not the
@@ -210,18 +211,23 @@ six ordered mirrors updated in the same commit
 | `attestation.created` | `AttestationCreatedPayloadSchema` (SCRUM-3982) | `services/worker/src/api/v1/attestations.ts` (`POST /api/v1/attestations`) | Live. The `profiles` lookup selects `org_id`, so the dispatch guard can be true |
 | `attestation.revoked` | `AttestationRevokedPayloadSchema` (SCRUM-3982) | `services/worker/src/api/v1/attestations.ts` (`PATCH /api/v1/attestations/:publicId/revoke`) | Registered + subscribable, **never dispatched**: the guard reads `attestation.attester_org_id` while the ownership query selects only `id, status, attester_user_id`, so it is always false |
 
-### Historical SCRUM-3982 gaps and current disposition
+### What this PR deliberately did NOT close — stated gaps
 
-The following bullets described the state when SCRUM-3982 landed. SCRUM-5063 now closes the first two items for `anchor.revocation_anchored` and `attestation.active`; five unregistered families remain.
-
-- **Five event types remain dispatched-but-unregistered**: `job.completed`, `compliance.anchor_delayed`,
+- **Seven event types remain dispatched-but-unregistered**: `attestation.active`,
+  `anchor.revocation_anchored`, `job.completed`, `compliance.anchor_delayed`,
   `compliance.certificate_expiring`, `compliance.signature_revoked`,
   `compliance.timestamp_coverage_low`. A clean payload on any of them still
   passes with `bypassed: true`, by design — the ban is on the FIELDS, not on
   being unregistered, and refusing unknown types wholesale would break seven
   live call sites at once with no subscriber benefit (nothing can subscribe to
   an unregistered type).
-- **Closed by SCRUM-5063:** the revocation and attestation anchoring producers now ship public-id-only payloads through strict registered schemas.
+- **Two of those producers ship banned fields and are refused at this boundary
+  rather than fixed at source**: `services/worker/src/jobs/revocation.ts`
+  (`anchor_id` + `fingerprint`) and `services/worker/src/jobs/attestationAnchor.ts`
+  (`fingerprint`). Both are T3 anchor-lifecycle files, and both wrap the
+  dispatch in a non-fatal try/catch, so the refusal costs a warn log and the
+  job continues. Their payloads must be rewritten public-id-only in a T3
+  change, not here.
 - **`job_id`, `certificate_id` and `signature_id` are NOT in
   `BANNED_PAYLOAD_KEYS`.** They are internal UUIDs on unregistered events, and
   they still pass. The ban list is derived from what this file's header
@@ -380,7 +386,7 @@ pre-check and the pin). Webhook fan-out is the first hot path on this primitive;
 keyed by pinned IP and a shared resolve are the follow-up. IPv6-literal hosts (`https://[…]/`) pass
 the bracketed hostname as TLS `servername` (SCRUM-5038).
 
-## 2026-09-19 — Finality event registration (SCRUM-5063)
+## 2026-09-19 — SCRUM-5063 finality event disposition
 
 `anchor.revocation_anchored` and `attestation.active` now have strict,
 public-id-only schemas and are removed from the legacy bypass ratchet. Their
@@ -399,3 +405,10 @@ Job and certificate producers now derive deterministic, domain-separated
 opaque references; raw job errors and certificate subject names are omitted.
 `compliance.signature_revoked` remains correctly marked non-live because no
 lifecycle callsite invokes its emitter.
+The historical registry and gap list above are preserved verbatim as the state
+recorded when SCRUM-3982 landed. SCRUM-5063 now registers
+`anchor.revocation_anchored` and `attestation.active` with strict public-only
+schemas. Their reachable job producers no longer send internal anchor UUIDs,
+attestation UUIDs, or document fingerprints. The worker registry, generated
+API guide, dashboard catalog, SDK type union, and Zapier allowlist are kept in
+sync by the registration-drift gate.
