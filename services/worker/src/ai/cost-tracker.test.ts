@@ -317,220 +317,34 @@ describe('AI Cost Tracker', () => {
     });
   });
 
-  describe('ensureAICreditsPeriod (SCRUM-4939)', () => {
-    beforeEach(() => {
-      mockConfig.aiCreditsMonthlyAllocation = 100;
-    });
-
-    it('returns false immediately for an empty orgId without touching the DB', async () => {
-      const result = await ensureAICreditsPeriod('');
-      expect(result).toBe(false);
+  describe('ensureAICreditsPeriod atomic RPC (SCRUM-4939)', () => {
+    it('passes owner, configured allocation, and exact time to the atomic RPC', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
+      const now = new Date('2026-09-12T14:00:00Z');
+      mockConfig.aiCreditsMonthlyAllocation = 250;
+      await expect(ensureAICreditsPeriod('org-123', now)).resolves.toBe(true);
+      expect(db.rpc).toHaveBeenCalledWith('ensure_ai_credits_period', {
+        p_org_id: 'org-123', p_monthly_allocation: 250, p_now: now.toISOString(),
+      });
       expect(db.from).not.toHaveBeenCalled();
     });
 
-    it('creates a row for the current UTC calendar month when none exists', async () => {
-      const { insertMock } = createAiCreditsMock({
-        selectResults: [
-          { data: null, error: null },
-          { data: [{ id: 'inserted-row' }], error: null },
-        ],
-      });
-
-      const now = new Date('2026-09-12T14:00:00Z');
-      const result = await ensureAICreditsPeriod('org-123', now);
-
-      expect(result).toBe(true);
-      expect(db.from).toHaveBeenCalledWith('ai_credits');
-      expect(insertMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          org_id: 'org-123',
-          monthly_allocation: 100,
-          used_this_month: 0,
-          period_start: '2026-09-01T00:00:00.000Z',
-          period_end: '2026-10-01T00:00:00.000Z',
-        }),
-      );
+    it('allows concurrent callers to share the database-serialized result', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      (db.rpc as ReturnType<typeof vi.fn>).mockImplementation(async () => { await gate; return { data: true, error: null }; });
+      const calls = [ensureAICreditsPeriod('org-123'), ensureAICreditsPeriod('org-123')];
+      release();
+      await expect(Promise.all(calls)).resolves.toEqual([true, true]);
+      expect(db.rpc).toHaveBeenCalledTimes(2);
+      expect(db.from).not.toHaveBeenCalled();
     });
 
-    it('stamps the configured monthly allocation on a newly created row', async () => {
-      mockConfig.aiCreditsMonthlyAllocation = 250;
-      const { insertMock } = createAiCreditsMock({
-        selectResults: [
-          { data: null, error: null },
-          { data: [{ id: 'inserted-row' }], error: null },
-        ],
-      });
-
-      await ensureAICreditsPeriod('org-123', new Date('2026-09-12T14:00:00Z'));
-
-      expect(insertMock).toHaveBeenCalledWith(
-        expect.objectContaining({ monthly_allocation: 250 }),
-      );
-    });
-
-    it('is a no-op and never overwrites used_this_month when a row already covers the period', async () => {
-      const { insertMock, deleteMock } = createAiCreditsMock({
-        selectResults: [{ data: { id: 'row-1' }, error: null }],
-      });
-
-      const result = await ensureAICreditsPeriod('org-123', new Date('2026-09-12T14:00:00Z'));
-
-      expect(result).toBe(true);
-      expect(insertMock).not.toHaveBeenCalled();
-      expect(deleteMock).not.toHaveBeenCalled();
-    });
-
-    it('returns false without throwing when the period lookup errors', async () => {
-      const { insertMock } = createAiCreditsMock({
-        selectResults: [{ data: null, error: { message: 'timeout' } }],
-      });
-
-      const result = await ensureAICreditsPeriod('org-123');
-
-      expect(result).toBe(false);
-      expect(insertMock).not.toHaveBeenCalled();
-    });
-
-    it('returns false without throwing when the insert fails (treated as non-fatal)', async () => {
-      createAiCreditsMock({
-        selectResults: [{ data: null, error: null }],
-        insertResult: { data: null, error: { message: 'insert failed' } },
-      });
-
-      const result = await ensureAICreditsPeriod('org-123');
-
-      expect(result).toBe(false);
+    it('fails closed on RPC error and invalid owner', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: { message: 'lock timeout' } });
+      await expect(ensureAICreditsPeriod('org-123')).resolves.toBe(false);
+      await expect(ensureAICreditsPeriod('')).resolves.toBe(false);
       expect(logger.warn).toHaveBeenCalled();
-    });
-
-    it('returns false without throwing on an unexpected exception', async () => {
-      (db.from as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        throw new Error('boom');
-      });
-
-      const result = await ensureAICreditsPeriod('org-123');
-
-      expect(result).toBe(false);
-    });
-
-    /**
-     * TOCTOU: `ai_credits` has no unique (org_id, period_start) constraint, so
-     * two concurrent first-ever requests for one org can both find no row and
-     * both insert. `deduct_ai_credits`'s UPDATE has no row limit, so a surviving
-     * duplicate makes every later deduction increment BOTH rows — the org burns
-     * credits at 2x for the rest of the month. The re-read after insert has to
-     * collapse that back to one row.
-     */
-    describe('concurrent provisioning (TOCTOU)', () => {
-      it('deletes only its own row when it loses the race to an older row', async () => {
-        const { deleteMock, deleteEq } = createAiCreditsMock({
-          selectResults: [
-            { data: null, error: null },
-            // Re-read: the racer's row sorted first (older created_at).
-            { data: [{ id: 'racer-row' }, { id: 'inserted-row' }], error: null },
-          ],
-        });
-
-        const result = await ensureAICreditsPeriod('org-123');
-
-        expect(result).toBe(true);
-        expect(deleteMock).toHaveBeenCalledTimes(1);
-        // Never the pre-existing row — only the one this call inserted.
-        expect(deleteEq).toHaveBeenCalledWith('id', 'inserted-row');
-      });
-
-      it('keeps its own row and deletes nothing when it wins the race', async () => {
-        const { deleteMock } = createAiCreditsMock({
-          selectResults: [
-            { data: null, error: null },
-            { data: [{ id: 'inserted-row' }, { id: 'racer-row' }], error: null },
-          ],
-        });
-
-        const result = await ensureAICreditsPeriod('org-123');
-
-        expect(result).toBe(true);
-        expect(deleteMock).not.toHaveBeenCalled();
-      });
-
-      it('two racing callers collapse to exactly one surviving row', async () => {
-        // Both callers select empty, both insert, both re-read the same two
-        // rows. Exactly one of them must issue a delete, and it must delete
-        // its own row — otherwise the org is left double-charging.
-        const deleted: string[] = [];
-        const bothRows = [{ id: 'row-a' }, { id: 'row-b' }];
-
-        const runCaller = async (ownId: string) => {
-          let selectCall = 0;
-          (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-            select: vi.fn(() => {
-              const result =
-                selectCall++ === 0
-                  ? { data: null, error: null }
-                  : { data: bothRows, error: null };
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const chain: any = {};
-              for (const m of ['eq', 'lte', 'gt', 'order', 'limit']) {
-                chain[m] = vi.fn(() => chain);
-              }
-              chain.maybeSingle = vi.fn().mockResolvedValue(result);
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              chain.then = (f: any, r: any) => Promise.resolve(result).then(f, r);
-              return chain;
-            }),
-            insert: vi.fn(() => ({
-              select: vi.fn(() => ({
-                maybeSingle: vi.fn().mockResolvedValue({ data: { id: ownId }, error: null }),
-              })),
-            })),
-            delete: vi.fn(() => ({
-              eq: vi.fn((_col: string, id: string) => {
-                deleted.push(id);
-                return Promise.resolve({ error: null });
-              }),
-            })),
-          });
-          return ensureAICreditsPeriod('org-123');
-        };
-
-        // Sequential because the shared `db.from` mock is per-caller; the
-        // assertion is on the convergent outcome, which is order-independent.
-        await runCaller('row-a');
-        await runCaller('row-b');
-
-        // Only the loser (row-b, sorted after row-a) removes itself.
-        expect(deleted).toEqual(['row-b']);
-        expect(bothRows.length - deleted.length).toBe(1);
-      });
-
-      it('leaves the duplicate and logs at error level when the compensating delete fails', async () => {
-        createAiCreditsMock({
-          selectResults: [
-            { data: null, error: null },
-            { data: [{ id: 'racer-row' }, { id: 'inserted-row' }], error: null },
-          ],
-          deleteResult: { error: { message: 'delete blocked' } },
-        });
-
-        const result = await ensureAICreditsPeriod('org-123');
-
-        expect(result).toBe(true);
-        expect(logger.error).toHaveBeenCalled();
-      });
-
-      it('never deletes when the post-insert re-read itself fails', async () => {
-        const { deleteMock } = createAiCreditsMock({
-          selectResults: [
-            { data: null, error: null },
-            { data: null, error: { message: 're-read failed' } },
-          ],
-        });
-
-        const result = await ensureAICreditsPeriod('org-123');
-
-        expect(result).toBe(true);
-        expect(deleteMock).not.toHaveBeenCalled();
-      });
     });
   });
 });
