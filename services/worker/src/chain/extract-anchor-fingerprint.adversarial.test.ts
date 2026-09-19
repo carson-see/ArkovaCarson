@@ -65,7 +65,7 @@ const META8 = Buffer.from('0011223344556677', 'hex'); // 8-byte truncated metada
 
 /** Compile `[OP_RETURN, payload]` and return its hex. */
 const opReturn = (payload: Buffer): string =>
-  bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]).toString('hex');
+  Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload])).toString('hex');
 
 // ─── Contract spec ──────────────────────────────────────────────────────────
 
@@ -129,19 +129,19 @@ describe('extractAnchorFingerprint — canonical-decode CONTRACT (SCRUM-2591)', 
   // ── (e) split across TWO pushes: [OP_RETURN, ARKV, fingerprint] ──
 
   it('(e) rejects a split-push OP_RETURN [OP_RETURN, <ARKV>, <fingerprint>] (chunks !== 2)', () => {
-    const hex = bitcoin.script
-      .compile([bitcoin.opcodes.OP_RETURN, ARKV, FP_BYTES])
+    const hex = Buffer.from(bitcoin.script
+      .compile([bitcoin.opcodes.OP_RETURN, ARKV, FP_BYTES]))
       .toString('hex');
     expect(extractAnchorFingerprint(hex)).toBeNull();
   });
 
   it('(e2) rejects a multi-push OP_RETURN even if a later push equals ARKV+fingerprint', () => {
-    const hex = bitcoin.script
+    const hex = Buffer.from(bitcoin.script
       .compile([
         bitcoin.opcodes.OP_RETURN,
         Buffer.from('deadbeef', 'hex'),
         Buffer.concat([ARKV, FP_BYTES]),
-      ])
+      ]))
       .toString('hex');
     expect(extractAnchorFingerprint(hex)).toBeNull();
   });
@@ -150,8 +150,8 @@ describe('extractAnchorFingerprint — canonical-decode CONTRACT (SCRUM-2591)', 
 
   it('(g) rejects a non-OP_RETURN script that pushes a canonical ARKV+fp buffer', () => {
     // A bare data push (no OP_RETURN) — decompiles to [<buffer>], length 1, not 2.
-    const hex = bitcoin.script
-      .compile([Buffer.concat([ARKV, FP_BYTES])])
+    const hex = Buffer.from(bitcoin.script
+      .compile([Buffer.concat([ARKV, FP_BYTES])]))
       .toString('hex');
     expect(extractAnchorFingerprint(hex)).toBeNull();
   });
