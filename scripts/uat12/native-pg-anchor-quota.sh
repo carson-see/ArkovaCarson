@@ -33,7 +33,7 @@ CREATE UNIQUE INDEX idx_anchors_user_fingerprint_unique ON anchors(user_id,finge
 CREATE TABLE job_queue(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), type text, payload jsonb, priority int, max_attempts int, status text, attempts int);
 CREATE TABLE credits(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid UNIQUE REFERENCES auth.users, balance int NOT NULL DEFAULT 0, monthly_allocation int DEFAULT 0, purchased int DEFAULT 0, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
 CREATE TABLE credit_transactions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid REFERENCES auth.users, transaction_type credit_transaction_type, amount int, balance_after int, reason text, reference_id uuid, created_at timestamptz DEFAULT now());
-CREATE TABLE org_credits(org_id uuid PRIMARY KEY REFERENCES organizations, balance int DEFAULT 0, monthly_allocation int DEFAULT 0, purchased int DEFAULT 0, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
+CREATE TABLE org_credits(org_id uuid PRIMARY KEY REFERENCES organizations, balance int DEFAULT 0, monthly_allocation int DEFAULT 0, purchased int DEFAULT 0, anchor_quota int, cap_enforced boolean NOT NULL DEFAULT false, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
 CREATE TABLE org_credit_deductions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid REFERENCES organizations, reference_id uuid, reason text, amount int, balance_after int, entry_type text, created_at timestamptz DEFAULT now(), UNIQUE(org_id,reference_id,reason));
 CREATE TABLE anchor_txid_journal(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), anchor_ids uuid[], recovery_status text);
 CREATE TABLE org_daily_usage(org_id uuid REFERENCES organizations, usage_date date, quota_kind text, count bigint NOT NULL, updated_at timestamptz, PRIMARY KEY(org_id,usage_date,quota_kind));
@@ -42,14 +42,17 @@ SQL
 
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0461_uat12_private_tags_submit_actions.sql >/dev/null
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0474_uat12_atomic_anchor_create_quota.sql >/dev/null
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0475_atomic_contractual_anchor_cap.sql >/dev/null
 
 U=11111111-1111-4111-8111-111111111111
 O=22222222-2222-4222-8222-222222222222
 X=33333333-3333-4333-8333-333333333333
+Y=44444444-4444-4444-8444-444444444444
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" <<SQL >/dev/null
 INSERT INTO auth.users VALUES ('$U');
-INSERT INTO organizations(id,tier) VALUES ('$O','FREE'),('$X','FREE');
+INSERT INTO organizations(id,tier) VALUES ('$O','FREE'),('$X','FREE'),('$Y','FREE');
 INSERT INTO org_daily_usage VALUES ('$O',(now() AT TIME ZONE 'UTC')::date,'anchors_created',99,now());
+INSERT INTO org_credits(org_id,anchor_quota,cap_enforced) VALUES ('$X',1,true);
 SQL
 
 call_create() {
@@ -70,12 +73,58 @@ wait "$a_pid" "$b_pid"
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchor_private_tags t JOIN anchors a ON a.id=t.anchor_id WHERE a.org_id='$O';")" == 1 ]]
 [[ "$(cat "$A_LOG"; cat "$B_LOG")" == *'"error": "quota_exceeded"'* ]]
 
+# The contractual lifetime cap is independent of the tier daily counter. Two
+# requests racing for its final slot serialize on org_credits; exactly one
+# anchor is committed and the loser reports the contractual boundary. The
+# winner still consumes the separate daily quota exactly once.
+( call_create "$(printf '1%.0s' {1..64})" 'ARK-CONTRACT-A' "'$X'" >"$A_LOG" ) & a_pid=$!
+( call_create "$(printf '2%.0s' {1..64})" 'ARK-CONTRACT-B' "'$X'" >"$B_LOG" ) & b_pid=$!
+wait "$a_pid" "$b_pid"
+contract_anchor_count=$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchors WHERE org_id='$X';")
+contract_daily_count=$($PSQL -At -d "$DB" -c "SELECT count FROM org_daily_usage WHERE org_id='$X' AND quota_kind='anchors_created';")
+contract_results=$(cat "$A_LOG" "$B_LOG")
+if [[ "$contract_anchor_count" != 1 || "$contract_daily_count" != 1 ]]; then
+  echo "contractual final-slot race was not conserved: anchors=$contract_anchor_count daily=$contract_daily_count" >&2
+  exit 1
+fi
+if [[ "$contract_results" != *'"error": "contractual_quota_exceeded"'* ]]; then
+  echo 'contractual final-slot loser did not return contractual_quota_exceeded' >&2
+  exit 1
+fi
+
+# A contended contractual authority fails within the function's five-second
+# lock deadline instead of holding a request until the outer statement timeout.
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" >"$A_LOG" 2>&1 <<SQL & lock_pid=$!
+BEGIN;
+SELECT org_id FROM org_credits WHERE org_id='$X' FOR UPDATE;
+\echo CONTRACT_LOCK_HELD
+SELECT pg_sleep(7);
+ROLLBACK;
+SQL
+for _ in {1..100}; do
+  grep -q CONTRACT_LOCK_HELD "$A_LOG" && break
+  sleep 0.05
+done
+grep -q CONTRACT_LOCK_HELD "$A_LOG" || { echo 'contract lock fixture did not acquire' >&2; exit 1; }
+lock_started=$(date +%s)
+set +e
+call_create "$(printf '3%.0s' {1..64})" 'ARK-CONTRACT-CONTENDED' "'$X'" >"$B_LOG" 2>&1
+lock_rc=$?
+set -e
+lock_elapsed=$(( $(date +%s) - lock_started ))
+wait "$lock_pid"
+if [[ "$lock_rc" -eq 0 || "$lock_elapsed" -lt 4 || "$lock_elapsed" -gt 6 ]]; then
+  echo "contract lock deadline failed: rc=$lock_rc elapsed=${lock_elapsed}s" >&2
+  exit 1
+fi
+grep -qi 'lock timeout' "$B_LOG" || { echo 'contended call did not report lock timeout' >&2; exit 1; }
+
 # Only the canonical active (user_id,fingerprint) collision is an idempotency
 # duplicate. A collision on an unrelated unique key must remain an operational
 # error; otherwise the worker falsely reports fingerprint_conflict and hides a
 # broken public-id generator or another schema invariant.
 OTHER_FP=$(printf '9%.0s' {1..64})
-if call_create "$OTHER_FP" "$($PSQL -At -d "$DB" -c "SELECT public_id FROM anchors WHERE org_id='$O' LIMIT 1;")" "'$X'" >"$A_LOG" 2>&1; then
+if call_create "$OTHER_FP" "$($PSQL -At -d "$DB" -c "SELECT public_id FROM anchors WHERE org_id='$O' LIMIT 1;")" "'$Y'" >"$A_LOG" 2>&1; then
   echo 'unrelated public_id collision was misclassified as a duplicate' >&2
   exit 1
 fi
@@ -86,10 +135,10 @@ fi
 WIN_FP=$($PSQL -At -d "$DB" -c "SELECT trim(fingerprint) FROM anchors WHERE org_id='$O';")
 before=$($PSQL -At -d "$DB" -c "SELECT count FROM org_daily_usage WHERE org_id='$O' AND quota_kind='anchors_created';")
 [[ "$(call_create "$WIN_FP" 'ARK-REPLAY' "'$O'")" == *'"error": "duplicate"'* ]]
-[[ "$(call_create "$WIN_FP" 'ARK-CROSS-SCOPE' "'$X'")" == *'"error": "duplicate"'* ]]
+[[ "$(call_create "$WIN_FP" 'ARK-CROSS-SCOPE' "'$Y'")" == *'"error": "duplicate"'* ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT count FROM org_daily_usage WHERE org_id='$O' AND quota_kind='anchors_created';")" == "$before" ]]
-[[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM org_daily_usage WHERE org_id='$X';")" == 0 ]]
-[[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchors WHERE org_id='$X';")" == 0 ]]
+[[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM org_daily_usage WHERE org_id='$Y';")" == 0 ]]
+[[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchors WHERE org_id='$Y';")" == 0 ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM anchor_private_tags t JOIN anchors a ON a.id=t.anchor_id WHERE a.org_id='$O';")" == 1 ]]
 
 # Personal scope preserves the existing no-org-quota boundary and still creates
@@ -116,4 +165,4 @@ done
 # Unknown role cannot call the SECURITY DEFINER boundary.
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "RESET request.jwt.claim.role; SELECT create_anchor_submission('$(printf 'd%.0s' {1..64})','ARK-DENIED','$U',NULL,'x',1,NULL,'OTHER',NULL,NULL,'{}','{}','{}','queue');" >/dev/null 2>&1; then exit 1; fi
 
-echo 'UAT-12 native atomic quota PASS boundary=one-winner duplicate=zero-charge unrelated-unique=raised cross-scope=bounded personal=no-org-quota null-inputs=bounded null-role=denied'
+echo 'UAT-12 native atomic quota PASS daily=one-winner contractual=one-winner independent-counters=yes lock-timeout=5s duplicate=zero-charge unrelated-unique=raised cross-scope=bounded personal=no-org-quota null-inputs=bounded null-role=denied'

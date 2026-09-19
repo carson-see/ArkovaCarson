@@ -1648,3 +1648,16 @@ to its owner. No insert/update/delete policy or worker RPC changes. The native
 UAT-24 harness executes the effective 0462 + 0464 + 0480 stack under forced RLS
 and proves owner, platform-context, ancestor-context, peer-denial, global
 privacy, and NULL-identity behavior. File-only, not applied to any hosted DB.
+## 2026-09-19 — 0475 atomic contractual anchor-cap conservation
+
+`0475_atomic_contractual_anchor_cap.sql` compensates for the final-slot race
+between the worker's contractual-cap precheck and the canonical anchor-create
+RPC. It preserves 0474's separate tier daily counter, but locks the owning
+`org_credits` row and checks the active-anchor lifetime cap before inserting.
+The active-anchor read is capped at `anchor_quota` rows, and lock acquisition
+has a five-second deadline so a contended credit row cannot pin a request until
+the broader statement timeout.
+The initial review incorrectly equated matching old production/B4 RPC hashes
+with canonical 0474. Both were still on the older 0461-era body. Migration 0475
+is based on immutable 0474 file SHA256 `00a15bd4...e6e64bb`; B4 first received
+0474 during qualification, and production application remained pending.
