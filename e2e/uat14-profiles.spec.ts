@@ -92,12 +92,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   expect(uploads[0]).toMatchObject({ type: 'image/png' });
   expect(uploads[0].path).toMatch(new RegExp(`^users/${PUBLIC_USER}/avatar/.+\\.png$`));
   await expect.poll(() => profileWrites.some(write => typeof write.avatar_storage_path === 'string')).toBe(true);
+  await expect(page.locator('#profile-avatar')).toHaveValue('');
   await expect(page.getByAltText('Current profile')).toBeVisible();
 
   const beforeMalformed = uploads.length;
   await page.locator('#profile-banner').setInputFiles({ name: 'broken.png', mimeType: 'image/png', buffer: onePixelPng.subarray(0, 20) });
   await page.waitForTimeout(200);
   expect(uploads).toHaveLength(beforeMalformed);
+  await expect(page.locator('#profile-banner')).toHaveValue('');
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
   await page.screenshot({ path: path.join('docs/staging/uat14-completion-20260919/screenshots', `settings-editor-${viewport.width}.png`), fullPage: true });

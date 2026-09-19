@@ -127,7 +127,7 @@ retry and an initial zero-credit offboard. This regression failed on the prior
 ## 2026-09-19 — UAT-14 native profile-media fixture
 
 `uat14/native-pg-profile-media.sh` owns a unique loopback PostgreSQL database and exercises actual 0481 SQL against a minimal Auth/Storage-shaped schema. It does not establish hosted Supabase bucket behavior or whole-schema replay.
-The fixture also pins inactive/deleted/private v2 denial, active-only anonymous media reads, and the intended function ACL matrix with no PUBLIC execute grant.
+The fixture executes both v2 public projections as `anon`, pins inactive/deleted/private/suspended denial, active-only anonymous media reads, and the exact per-function anon/authenticated/service-role ACL matrix with no PUBLIC execute grant.
 ## UAT-19 native queue authorization proof
 
 `uat19/native-pg-queue-resolution.sh` owns a loopback-only throwaway PostgreSQL database. It exercises migration 0477 with service-role ACL, exact secondary/no-primary membership, approved direct parent, stale/null authorization denial with zero mutations, server-bound collision keys, and a different-winner concurrent race that must produce one winner without deadlock.

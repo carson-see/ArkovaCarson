@@ -26,6 +26,8 @@ describe('profile media signing', () => {
     ['http://tracker.example/avatar.png', undefined],
     ['data:image/svg+xml,<svg/>', undefined],
     ['//tracker.example/avatar.png', undefined],
+    ['/\\tracker.example/avatar.png', undefined],
+    ['/legacy/\navatar.png', undefined],
   ])('bounds legacy fallback %s', (input, expected) => {
     expect(safeProfileMediaFallbackUrl(input)).toBe(expected);
   });

@@ -75,4 +75,19 @@ describe('validateProfileImage', () => {
     expect(commit.mock.invocationCallOrder[0]).toBeLessThan(remove.mock.invocationCallOrder[0]);
     expect(remove).toHaveBeenCalledWith([previousPath]);
   });
+
+  it('surfaces a resolved old-object cleanup error without undoing the committed pointer', async () => {
+    remove.mockResolvedValueOnce({ error: new Error('storage cleanup denied') });
+    const warning = vi.fn();
+    const commit = vi.fn().mockResolvedValue(true);
+    const previousPath = 'users/11111111-1111-4111-8111-111111111111/avatar/old.png';
+    await expect(replaceProfileMedia({
+      file: file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg'),
+      scope: 'users', scopeId: '11111111-1111-4111-8111-111111111111',
+      kind: 'avatar', previousPath, commit, onCleanupWarning: warning,
+    })).resolves.toMatch(/\.png$/);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith([previousPath]);
+    expect(warning).toHaveBeenCalledTimes(1);
+  });
 });

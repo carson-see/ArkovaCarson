@@ -3270,6 +3270,7 @@ export const PROFILE_MEDIA_LABELS = {
   SANITIZE_FAILED: 'Image could not be sanitized.',
   SANITIZED_TOO_LARGE: 'Sanitized image must be 2 MB or smaller.',
   METADATA_UPDATE_FAILED: 'Image metadata update failed.',
+  CLEANUP_WARNING: 'The image was updated, but an older stored copy could not be removed. Please try again later.',
 } as const;
 
 export const TERM_REPLACEMENTS: Record<string, string> = {

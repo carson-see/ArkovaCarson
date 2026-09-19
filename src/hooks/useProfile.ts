@@ -56,7 +56,7 @@ interface ProfileState {
 
 interface ProfileActions {
   refreshProfile: () => Promise<void>;
-  updateProfile: (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'avatar_storage_path' | 'banner_storage_path' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>) => Promise<boolean>;
+  updateProfile: (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'avatar_storage_path' | 'banner_storage_path' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>, mediaPrecondition?: { field: 'avatar_storage_path' | 'banner_storage_path'; expected: string | null }) => Promise<boolean>;
 }
 
 type ProfileContextValue = ProfileState & ProfileActions;
@@ -161,17 +161,25 @@ function useProfileInternal(): ProfileState & ProfileActions {
   }, [user, hasProductAuthority, qc]);
 
   const updateProfile = useCallback(
-    async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'avatar_storage_path' | 'banner_storage_path' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>): Promise<boolean> => {
+    async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'avatar_storage_path' | 'banner_storage_path' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>, mediaPrecondition?: { field: 'avatar_storage_path' | 'banner_storage_path'; expected: string | null }): Promise<boolean> => {
       if (!user || !hasProductAuthority) return false;
       const parsed = ProfileUpdateSchema.safeParse(updates);
       if (!parsed.success) return false;
 
-      const { error: updateError } = await supabase
+      let updateQuery = supabase
         .from('profiles')
         .update(parsed.data)
         .eq('id', user.id);
+      updateQuery = mediaPrecondition?.expected === null
+        ? updateQuery.is(mediaPrecondition.field, null)
+        : mediaPrecondition
+          ? updateQuery.eq(mediaPrecondition.field, mediaPrecondition.expected)
+          : updateQuery;
+      const { data: updatedRow, error: updateError } = await updateQuery
+        .select('id')
+        .maybeSingle();
 
-      if (updateError) {
+      if (updateError || updatedRow?.id !== user.id) {
         toast.error(TOAST.PROFILE_UPDATE_FAILED);
         return false;
       }

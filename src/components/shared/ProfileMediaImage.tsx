@@ -7,7 +7,17 @@ const SIGNED_URL_RETRY_MS = 5_000;
 
 export function safeProfileMediaFallbackUrl(value?: string | null): string | undefined {
   if (!value) return undefined;
-  if (value.startsWith('/') && !value.startsWith('//')) return value;
+  // Browsers normalize slash-backslash forms (for example `/\\host/path`) as
+  // network-path URLs. Reject controls and every backslash before parsing so a
+  // value described as same-origin cannot escape to another host.
+  if (value.includes('\\') || [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  })) return undefined;
+  if (value.startsWith('/') && !value.startsWith('//')) {
+    const parsed = new URL(value, 'https://arkova.invalid');
+    return parsed.origin === 'https://arkova.invalid' ? `${parsed.pathname}${parsed.search}${parsed.hash}` : undefined;
+  }
   try {
     const parsed = new URL(value);
     return parsed.protocol === 'https:' ? parsed.toString() : undefined;

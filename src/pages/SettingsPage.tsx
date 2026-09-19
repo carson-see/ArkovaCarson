@@ -133,7 +133,8 @@ export function SettingsPage() {
       const field = kind === 'avatar' ? 'avatar_storage_path' : 'banner_storage_path';
       const oldPath = profile?.[field] ?? null;
       await replaceProfileMedia({ file, scope: 'users', scopeId: profile.public_id, kind, previousPath: oldPath,
-        commit: (path) => updateProfile({ [field]: path }) });
+        commit: (path) => updateProfile({ [field]: path }, { field, expected: oldPath }),
+        onCleanupWarning: () => toast.warning(PROFILE_MEDIA_LABELS.CLEANUP_WARNING) });
     } catch (uploadError) {
       if (userIdRef.current === requestUserId) toast.error(uploadError instanceof Error ? uploadError.message : PROFILE_MEDIA_LABELS.UPLOAD_FAILED);
     } finally {
@@ -248,12 +249,12 @@ export function SettingsPage() {
           <CardContent className="space-y-5">
             <div className="flex items-center gap-4">
               <ProfileMediaImage storagePath={profile?.avatar_storage_path} fallbackUrl={profile?.avatar_url} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE} className="h-20 w-20 rounded-full object-cover" />
-              <div className="flex-1 space-y-2"><Label htmlFor="profile-avatar">{PROFILE_MEDIA_LABELS.PROFILE_PHOTO}</Label><Input id="profile-avatar" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(e) => void handleMediaUpload('avatar', e.target.files?.[0])} /></div>
+              <div className="flex-1 space-y-2"><Label htmlFor="profile-avatar">{PROFILE_MEDIA_LABELS.PROFILE_PHOTO}</Label><Input id="profile-avatar" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(event) => { const input = event.currentTarget; void handleMediaUpload('avatar', input.files?.[0]).finally(() => { input.value = ''; }); }} /></div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-banner">{PROFILE_MEDIA_LABELS.PROFILE_BANNER}</Label>
               <ProfileMediaImage storagePath={profile?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE_BANNER} className="h-28 w-full rounded-lg object-cover" />
-              <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(e) => void handleMediaUpload('banner', e.target.files?.[0])} />
+              <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(event) => { const input = event.currentTarget; void handleMediaUpload('banner', input.files?.[0]).finally(() => { input.value = ''; }); }} />
             </div>
             {mediaUploading && <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />{PROFILE_MEDIA_LABELS.UPLOADING(mediaUploading)}</p>}
           </CardContent>

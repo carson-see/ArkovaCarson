@@ -51,7 +51,7 @@ interface UseOrganizationResult {
   loading: boolean;
   updating: boolean;
   error: string | null;
-  updateOrganization: (updates: EditableOrgFields) => Promise<boolean>;
+  updateOrganization: (updates: EditableOrgFields, mediaPrecondition?: { field: 'logo_storage_path' | 'banner_storage_path'; expected: string | null }) => Promise<boolean>;
   refreshOrganization: () => Promise<void>;
 }
 
@@ -79,7 +79,7 @@ export function useOrganization(orgId: string | null | undefined, platformAdmin 
   }, [orgId, qc]);
 
   const updateOrganization = useCallback(
-    async (updates: EditableOrgFields): Promise<boolean> => {
+    async (updates: EditableOrgFields, mediaPrecondition?: { field: 'logo_storage_path' | 'banner_storage_path'; expected: string | null }): Promise<boolean> => {
       if (!orgId) return false;
 
       // Validate before DB call (CLAUDE.md §1.2 / §6)
@@ -92,11 +92,16 @@ export function useOrganization(orgId: string | null | undefined, platformAdmin 
 
       // Use .select() to detect silent RLS failures — if RLS blocks the UPDATE,
       // Supabase returns { data: [], error: null } instead of an error.
-      const { data: updatedRows, error: updateError } = await supabase
+      let updateQuery = supabase
         .from('organizations')
         .update(parsed.data)
-        .eq('id', orgId)
-        .select();
+        .eq('id', orgId);
+      updateQuery = mediaPrecondition?.expected === null
+        ? updateQuery.is(mediaPrecondition.field, null)
+        : mediaPrecondition
+          ? updateQuery.eq(mediaPrecondition.field, mediaPrecondition.expected)
+          : updateQuery;
+      const { data: updatedRows, error: updateError } = await updateQuery.select();
 
       if (updateError) {
         toast.error(TOAST.ORG_UPDATE_FAILED);

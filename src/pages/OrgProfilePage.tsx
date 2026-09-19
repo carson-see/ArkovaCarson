@@ -381,7 +381,8 @@ function OrgProfilePageInner() {
       const field = kind === 'logo' ? 'logo_storage_path' : 'banner_storage_path';
       const oldPath = organization?.[field] ?? null;
       await replaceProfileMedia({ file, scope: 'organizations', scopeId: organization.public_id, kind, previousPath: oldPath,
-        commit: (path) => updateOrganization({ [field]: path }) });
+        commit: (path) => updateOrganization({ [field]: path }, { field, expected: oldPath }),
+        onCleanupWarning: () => toast.warning(PROFILE_MEDIA_LABELS.CLEANUP_WARNING) });
       if (orgIdRef.current === requestOrgId) toast.success(kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED);
     } catch (uploadError) {
       if (orgIdRef.current === requestOrgId) toast.error(uploadError instanceof Error ? uploadError.message : ORG_LOGO_LABELS.UPLOAD_FAILED);

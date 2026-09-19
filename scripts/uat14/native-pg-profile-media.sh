@@ -51,25 +51,31 @@ SQL
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "SET ROLE authenticated; SET request.jwt.claim.sub='$OTHER'; SET request.jwt.claim.aal='aal2'; INSERT INTO storage.objects(bucket_id,name) VALUES ('profile-media','users/person-public/avatar/dddddddd-dddd-4ddd-8ddd-dddddddddddd.png');" >/dev/null 2>&1; then exit 1; fi
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "SET ROLE authenticated; SET request.jwt.claim.sub='$U'; SET request.jwt.claim.aal='aal1'; INSERT INTO storage.objects(bucket_id,name) VALUES ('profile-media','users/person-public/avatar/dddddddd-dddd-4ddd-8ddd-dddddddddddd.png');" >/dev/null 2>&1; then exit 1; fi
 [[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT count(*) FROM storage.objects WHERE name='$A';")" == *$'1' ]]
-[[ "$($PSQL -At -d "$DB" -c "SELECT get_public_member_profile_v2('person-public')->>'avatar_storage_path';")" == "$A" ]]
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_member_profile_v2('person-public')->>'avatar_storage_path';")" == *"$A" ]]
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_org_profile_v2('$O'::uuid)->>'logo_storage_path';")" == *"$L" ]]
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET is_public_profile=false WHERE id='$U';" >/dev/null
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_member_profile_v2('person-public')->>'error';")" == *'Profile not found' ]]
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET is_public_profile=true WHERE id='$U';" >/dev/null
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET status='INACTIVE' WHERE id='$U';" >/dev/null
-[[ "$($PSQL -At -d "$DB" -c "SELECT get_public_member_profile_v2('person-public')->>'error';")" == 'Profile not found' ]]
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_member_profile_v2('person-public')->>'error';")" == *'Profile not found' ]]
 [[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT count(*) FROM storage.objects WHERE name='$A';")" == *$'0' ]]
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET status='ACTIVE', deleted_at=now() WHERE id='$U';" >/dev/null
-[[ "$($PSQL -At -d "$DB" -c "SELECT get_public_member_profile_v2('person-public')->>'error';")" == 'Profile not found' ]]
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_member_profile_v2('person-public')->>'error';")" == *'Profile not found' ]]
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET deleted_at=NULL WHERE id='$U';" >/dev/null
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET is_public_profile=false WHERE id='$U';" >/dev/null
-[[ "$($PSQL -At -d "$DB" -c "SELECT get_public_member_profile_v2('person-public')->>'error';")" == 'Profile not found' ]]
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_member_profile_v2('person-public')->>'error';")" == *'Profile not found' ]]
 [[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT count(*) FROM storage.objects WHERE name='$A';")" == *$'0' ]]
 [[ "$($PSQL -At -d "$DB" -c "SET ROLE authenticated; SET request.jwt.claim.sub='$U'; SET request.jwt.claim.aal='aal1'; SELECT count(*) FROM storage.objects WHERE name='$A';")" == *$'0' ]]
 [[ "$($PSQL -At -d "$DB" -c "SET ROLE authenticated; SET request.jwt.claim.sub='$U'; SET request.jwt.claim.aal='aal2'; SELECT count(*) FROM storage.objects WHERE name='$A';")" == *$'1' ]]
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE organizations SET suspended=true WHERE id='$O';" >/dev/null
 [[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT count(*) FROM storage.objects WHERE name='$L';")" == *$'0' ]]
+[[ "$($PSQL -At -d "$DB" -c "SET ROLE anon; SELECT get_public_org_profile_v2('$O'::uuid)->>'error';")" == *'Organization not found' ]]
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET avatar_storage_path='users/other-public/avatar/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png' WHERE id='$U';" >/dev/null 2>&1; then exit 1; fi
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "UPDATE profiles SET public_id=NULL, avatar_storage_path='users/none/avatar/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png' WHERE id='$OTHER';" >/dev/null 2>&1; then exit 1; fi
 [[ "$($PSQL -At -d "$DB" -c "SELECT string_agg(table_name||'.'||column_name||':'||data_type,',' ORDER BY table_name,column_name) FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('avatar_storage_path','banner_storage_path','logo_storage_path');")" == 'organizations.banner_storage_path:text,organizations.logo_storage_path:text,profiles.avatar_storage_path:text,profiles.banner_storage_path:text' ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT string_agg(proname||'('||pg_get_function_identity_arguments(oid)||'):'||pg_get_function_result(oid),',' ORDER BY proname) FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN ('get_public_member_profile_v2','get_public_org_profile_v2');")" == 'get_public_member_profile_v2(p_public_id text):jsonb,get_public_org_profile_v2(p_org_id uuid):jsonb' ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT array_to_string(allowed_mime_types,',') FROM storage.buckets WHERE id='profile-media';")" == 'image/png' ]]
-[[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname IN ('can_read_profile_media','can_write_profile_media','get_public_member_profile_v2','get_public_org_profile_v2') AND has_function_privilege('anon',p.oid,'EXECUTE') AND has_function_privilege('authenticated',p.oid,'EXECUTE');")" == 3 ]]
+ACL_MATRIX="$($PSQL -At -d "$DB" -c "SELECT string_agg(p.proname||':'||has_function_privilege('anon',p.oid,'EXECUTE')||':'||has_function_privilege('authenticated',p.oid,'EXECUTE')||':'||has_function_privilege('service_role',p.oid,'EXECUTE'),',' ORDER BY p.proname) FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname IN ('can_read_profile_media','can_write_profile_media','get_public_member_profile_v2','get_public_org_profile_v2');")"
+[[ "$ACL_MATRIX" == 'can_read_profile_media:true:true:true,can_write_profile_media:false:true:true,get_public_member_profile_v2:true:true:true,get_public_org_profile_v2:true:true:true' ]]
 [[ "$($PSQL -At -d "$DB" -c "SELECT count(*) FROM pg_proc p, LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.pronamespace='public'::regnamespace AND p.proname IN ('can_read_profile_media','can_write_profile_media','get_public_member_profile_v2','get_public_org_profile_v2') AND a.grantee=0 AND a.privilege_type='EXECUTE';")" == 0 ]]
-echo 'UAT-14 native profile media PASS owner-write cross-owner-deny aal1-deny public-toggle owner-read pending-org-cleanup org-suspension path-check opaque-DTO'
+echo 'UAT-14 native profile media PASS owner-write cross-owner-deny aal1-deny public-toggle owner-read pending-org-cleanup org-suspension path-check opaque-DTO exact-ACL anon-v2'

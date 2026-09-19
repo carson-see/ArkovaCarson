@@ -49,6 +49,7 @@ export async function replaceProfileMedia(options: {
   kind: 'avatar' | 'banner' | 'logo';
   previousPath?: string | null;
   commit: (path: string) => Promise<boolean>;
+  onCleanupWarning?: () => void;
 }): Promise<string> {
   const validated = await validateProfileImage(options.file);
   const path = profileMediaPath(options.scope, options.scopeId, options.kind, validated.extension);
@@ -63,7 +64,12 @@ export async function replaceProfileMedia(options: {
   }
   const ownedPrefix = `${options.scope}/${options.scopeId}/${options.kind}/`;
   if (options.previousPath?.startsWith(ownedPrefix) && options.previousPath !== path) {
-    void bucket.remove([options.previousPath]).catch(() => undefined);
+    try {
+      const { error: cleanupError } = await bucket.remove([options.previousPath]);
+      if (cleanupError) options.onCleanupWarning?.();
+    } catch {
+      options.onCleanupWarning?.();
+    }
   }
   return path;
 }
