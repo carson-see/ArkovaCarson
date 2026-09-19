@@ -85,6 +85,15 @@ describe('DevelopersPage integration claims', () => {
     expect(SOURCE).toContain('https://edge.arkova.ai/mcp');
   });
 
+  it('offers a secure one-command hosted MCP registration', () => {
+    expect(SOURCE).toContain('claude mcp add --transport http arkova https://edge.arkova.ai/mcp');
+    expect(SOURCE).toContain('--header "X-API-Key: $ARKOVA_API_KEY"');
+    expect(SOURCE).toContain('MCP_COPY_COMMAND');
+    expect(SOURCE).toContain('MCP_KEY_PREREQUISITE');
+    expect(SOURCE).not.toContain('vscode:mcp/install?');
+    expect(SOURCE).not.toContain('cursor://');
+  });
+
   it('uses version-neutral installs and registry links across a coordinated release', () => {
     expect(SOURCE).toContain('npm install arkova');
     expect(SOURCE).toContain('pip install arkova');

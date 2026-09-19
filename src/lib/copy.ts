@@ -2576,6 +2576,11 @@ export const DEVELOPER_PAGE_LABELS = {
   MCP_TOOL_VERIFY_DESC: 'Verify a record by its public ID',
   MCP_TOOL_SEARCH: 'arkova_search_anchors',
   MCP_TOOL_SEARCH_DESC: 'Search the public record registry',
+  MCP_ONE_COMMAND_TITLE: 'Connect Claude Code in one command',
+  MCP_KEY_PREREQUISITE: 'First set ARKOVA_API_KEY in your shell. The command expands it before Claude Code saves the server configuration.',
+  MCP_COPY_COMMAND: 'Copy install command',
+  MCP_COMMAND_COPIED: 'Install command copied',
+  MCP_ONE_CLICK_NOTE: 'One-click links are omitted because Arkova does not put API keys in URLs. Use a client’s secure secret prompt or the command above.',
 
   // API docs card on ApiKeySettingsPage
   API_DOCS_CARD_TITLE: 'API Documentation',

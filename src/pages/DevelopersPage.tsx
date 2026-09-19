@@ -15,13 +15,14 @@ import { Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Ke
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
-import { PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
+import { DEVELOPER_PAGE_LABELS, PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
 
 const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
 const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
 const NPM_SDK_URL = 'https://www.npmjs.com/package/arkova';
 const PYPI_SDK_URL = 'https://pypi.org/project/arkova/';
 const NPM_MCP_URL = 'https://www.npmjs.com/package/arkova-mcp-server';
+const CLAUDE_MCP_COMMAND = 'claude mcp add --transport http arkova https://edge.arkova.ai/mcp --header "X-API-Key: $ARKOVA_API_KEY"';
 
 const CURL_LINES = [
   { num: '1', parts: [{ text: 'curl', cls: 'text-[#a8e8ff]' }, { text: ' -X GET', cls: 'text-[#dce3ed]' }] },
@@ -83,6 +84,7 @@ export function DevelopersPage() {
   const [copied, setCopied] = useState(false);
   const [sdkTab, setSdkTab] = useState<'curl' | 'typescript' | 'python'>('curl');
   const [sdkCopied, setSdkCopied] = useState(false);
+  const [mcpCommandCopied, setMcpCommandCopied] = useState(false);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(CURL_RAW);
@@ -94,6 +96,12 @@ export function DevelopersPage() {
     await navigator.clipboard.writeText(SDK_EXAMPLES[sdkTab]);
     setSdkCopied(true);
     setTimeout(() => setSdkCopied(false), 2000);
+  };
+
+  const handleMcpCommandCopy = async () => {
+    await navigator.clipboard.writeText(CLAUDE_MCP_COMMAND);
+    setMcpCommandCopied(true);
+    setTimeout(() => setMcpCommandCopied(false), 2000);
   };
 
   return (
@@ -348,6 +356,22 @@ export function DevelopersPage() {
                 <p><strong className="text-[#dce3ed]">Hosted:</strong> no install; discover the current catalog with <code className="text-[#a8e8ff]">tools/list</code>.</p>
                 <p className="mt-2"><strong className="text-[#dce3ed]">Local stdio:</strong> <code className="text-[#a8e8ff]">npx -y arkova-mcp-server</code>. Hosted and local tool catalogs are independently maintained, so discover tools from the transport you connect.</p>
                 <a className="mt-2 inline-block text-xs text-[#00d4ff] underline" href={NPM_MCP_URL} target="_blank" rel="noopener noreferrer">View arkova-mcp-server on npm</a>
+              </div>
+              <div className="mb-6 rounded-lg border border-[#00d4ff]/25 bg-[#101820] p-5">
+                <h3 className="text-sm font-bold text-[#dce3ed]">{DEVELOPER_PAGE_LABELS.MCP_ONE_COMMAND_TITLE}</h3>
+                <p className="mt-2 text-xs leading-relaxed text-[#bbc9cf]">{DEVELOPER_PAGE_LABELS.MCP_KEY_PREREQUISITE}</p>
+                <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-start">
+                  <pre className="min-w-0 flex-1 overflow-x-auto rounded-md bg-[#0d141b] p-4 text-xs text-[#a8e8ff]"><code>{CLAUDE_MCP_COMMAND}</code></pre>
+                  <button
+                    type="button"
+                    onClick={handleMcpCommandCopy}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-[#00d4ff]/40 px-4 py-3 text-xs font-bold text-[#00d4ff] transition-colors hover:bg-[#00d4ff]/10"
+                  >
+                    {mcpCommandCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {mcpCommandCopied ? DEVELOPER_PAGE_LABELS.MCP_COMMAND_COPIED : DEVELOPER_PAGE_LABELS.MCP_COPY_COMMAND}
+                  </button>
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-[#859398]">{DEVELOPER_PAGE_LABELS.MCP_ONE_CLICK_NOTE}</p>
               </div>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
