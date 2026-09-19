@@ -50,3 +50,7 @@ suite on a pull request. It fires only when someone edits `VALID_EVENTS` and
 forgets this list. The gate that keys off the source of truth is
 `scripts/ci/check-webhook-event-registration-drift.ts`, inside the required root
 `Tests` job.
+
+## 2026-09-19 — Finality event mirror pin
+
+The Zapier allowlist test pins both finality events added by SCRUM-5063.

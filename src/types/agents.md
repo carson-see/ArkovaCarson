@@ -121,6 +121,15 @@ schema. Catalog regeneration confirmed the same RPC entry in both canonical
 files. This includes current0444/0446/0447 filenames and all merged migrations;
 it does not claim staging qualification or a full-file type resynchronization.
 
+## 2026-09-12 SCRUM-5024 — `database.types.ts` entries hand-written
+
+`referral_codes`, `organization_referrals` and the four `0455` functions
+(`ensure_org_referral_code`, `generate_referral_code`, `get_org_referrals`,
+`record_org_referral`) were added BY HAND, in the generator's alphabetical
+positions and shape. `npm run gen:types` needs a live local Supabase, and the
+authoring session had none and was barred from touching a rig. Re-run the
+generator against a database with `0455` applied before relying on these as
+generated output; a diff there is the authoritative correction.
 ## 2026-09-12 — 0453 type delta was HAND-WRITTEN, not regenerated (SCRUM-3971)
 
 `organizations.public_id` goes `string | null` -> `string` in `Row`, and the four

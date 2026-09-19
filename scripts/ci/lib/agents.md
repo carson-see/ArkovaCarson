@@ -2,6 +2,10 @@
 
 Shared library code for CI gate scripts.
 
+## September 19 founder no-resoak decision
+
+`founder-no-resoak.ts` validates the narrowly scoped backlog exception. Its loader reads only the full SHA of the live PR base supplied by GitHub, using a fixed `git` executable and fixed snapshot path. The evaluator binds runtime repository, exact PR/head, explicit body opt-in, existing evidence, residuals and the admission window; malformed or missing authority leaves the ordinary soak gate in force. Expiry affects fresh checks, not GitHub's cached successes; release close requires removing the decision snapshot after the queue drains.
+
 ## Queue PR authentication (2026-09-14, PR #2938 review)
 
 Queue-shaped branch names are not authority. The resolver now always reads the

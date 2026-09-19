@@ -517,6 +517,44 @@ jobs:
       # (SCRUM-3384 narrows the older CPU-throttling reading — on a warm
       # instance node-cron fires normally) — see the PR's Premortem.
       #
+      # PROOF-SIG activation (SCRUM-5258): PROOF_SIGNING_KMS_KEY +
+      # PROOF_SIGNING_KEY_ID were never set on any prod revision, so
+      # `resolveSigner()` (services/worker/src/api/v1/verify-proof.ts) returned
+      # null and `GET /api/v1/verify/{id}/proof?format=signed` answered 503 on
+      # every revision from the feature shipping (SCRUM-900, merged 2026-04-28)
+      # to this commit. Nothing else was missing: the KMS key
+      # `arkova-signing/proof-signing` (EC_SIGN_ED25519) has had an ENABLED
+      # version 1 since 2026-06-01, `roles/cloudkms.signerVerifier` is granted
+      # to this service's runtime SA (270018525501-compute) and to nothing
+      # else, and the PUBLIC half is already served by `proofKeysRouter` at
+      # /.well-known/arkova-keys.json and by didWebRouter at
+      # /.well-known/did.json. Verified before wiring: the published JWK's `x`
+      # and the `gcloud kms keys versions get-public-key` export are the same
+      # 32 bytes (E95nHQxUy2VbBqdFSiVmmbz5Y1ChmF5LLekUikHtX2I), so a signature
+      # produced by this key verifies against the key we already publish.
+      #
+      # These two are NOT in config.ts and carry no Zod validation (unlike
+      # GCP_KMS_KEY_RESOURCE_NAME), so a typo here does not fail the boot — it
+      # silently restores the 503. That is why both are asserted in
+      # scripts/ci/deploy-worker-history-contract.test.ts AND in the "Verify
+      # serving revision carries required config" step below.
+      #
+      # PROOF_SIGNING_KEY_ID must stay equal to the `status: active` entry id
+      # in the key registry (`arkova-proof-2026-q2`); a bundle names its key in
+      # `signing_key_id`, and a verifier that cannot resolve that id against
+      # the published registry cannot check the signature. Rotation is
+      # registry-edit + redeploy, and retired keys stay listed so historical
+      # bundles keep verifying.
+      #
+      # NOT fixed here (follow-ups, both pre-existing): docs.arkova.ai/keys.json
+      # is a separate static surface in services/api-gateway/ that still serves
+      # `keys: []` plus a notice claiming signed envelopes are not enabled —
+      # that notice becomes false the moment this deploys, and correcting it is
+      # a different service with a different deploy path. And
+      # api.arkova.ai/.well-known/arkova-keys.json 404s at the edge even though
+      # the worker serves it on its run.app origin; did.json resolves on
+      # app.arkova.ai, which is the route a did:web verifier follows.
+      #
       # QUEUE-07 activation (CTO decision): ENABLE_QUEUE_DIGEST was previously
       # absent here entirely, so `config.enableQueueDigest` fell back to its
       # boolFlag(false) code default and POST /jobs/queue-digest was a
@@ -585,7 +623,7 @@ jobs:
             --tag canary \
             --no-traffic \
             --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_secretkey_prod:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret_prod:latest,INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest,HEALTH_DETAIL_TOKEN=HEALTH_DETAIL_TOKEN:latest,IP_HASH_PEPPER=ip-hash-pepper:latest,COMPUTEID_WEBHOOK_SECRET=computeid-webhook-secret:latest,COMPUTEID_CA_CERT_PEM=computeid-ca-cert-pem:latest" \
-            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||AI_EXTRACTION_LATENCY_BUDGET_MS=15000||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=false||ENABLE_DRIVE_OAUTH=true||ENABLE_DRIVE_WEBHOOK=true||ENABLE_DRIVE_CHANGES_RUNNER=true||ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true||ENABLE_CONNECTOR_ARTIFACT_DRAIN=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||EMAIL_FROM=noreply@arkova.ai||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031||ENABLE_QUEUE_DIGEST=true||ENABLE_PLATFORM_HEALTH_DIGEST=true||ENABLE_COMPUTEID_INTEGRATION=false||CLOUDFLARE_ORIGIN_GUARD_MODE=off" \
+            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||AI_EXTRACTION_LATENCY_BUDGET_MS=15000||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||PROOF_SIGNING_KMS_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/proof-signing/cryptoKeyVersions/1||PROOF_SIGNING_KEY_ID=arkova-proof-2026-q2||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=false||ENABLE_DRIVE_OAUTH=true||ENABLE_DRIVE_WEBHOOK=true||ENABLE_DRIVE_CHANGES_RUNNER=true||ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true||ENABLE_CONNECTOR_ARTIFACT_DRAIN=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||EMAIL_FROM=noreply@arkova.ai||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031||ENABLE_QUEUE_DIGEST=true||ENABLE_PLATFORM_HEALTH_DIGEST=true||ENABLE_COMPUTEID_INTEGRATION=false||CLOUDFLARE_ORIGIN_GUARD_MODE=off" \
             --quiet
 
       - name: Smoke test canary revision
@@ -680,7 +718,8 @@ jobs:
           for required in CRON_SECRET DOCUSIGN_INTEGRATION_KEY DOCUSIGN_CLIENT_SECRET \
                           DOCUSIGN_CONNECT_HMAC_SECRET ENABLE_DOCUSIGN_OAUTH \
                           ENABLE_DOCUSIGN_WEBHOOK DOCUSIGN_DEMO \
-                          ENABLE_CONNECTOR_ARTIFACT_DRAIN; do
+                          ENABLE_CONNECTOR_ARTIFACT_DRAIN \
+                          PROOF_SIGNING_KMS_KEY PROOF_SIGNING_KEY_ID; do
             case " ${NAMES} " in
               *" ${required} "*) ;;
               *) MISSING="${MISSING} ${required}";;

@@ -196,3 +196,10 @@ untrusted queue labels because the runner's queue head leaked into the child.
 All four failures reproduce under a queue-shaped runner environment. Explicit
 forged-queue negative cases still reject those labels; resolver authentication
 and all production gate behavior remain unchanged.
+
+## 2026-09-19 — Referral RPC nullable-role ratchet
+
+`scrum5024-referral-rpc-tenant-authority.test.ts` reads the effective last
+migration definition and requires both referral SECURITY DEFINER RPCs to
+coalesce a missing caller role to non-service. The live PostgreSQL counterpart
+is `tests/rls/referral-rpc-empty-claims.test.ts`.

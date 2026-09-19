@@ -28,6 +28,7 @@ import {
 // contract module so the producer, the queue schema and the record page all
 // read one declaration. Type-only import — no runtime edge added here.
 import type { DriveRevisionKind } from './drive-artifact-producer.js';
+import { reportDriveProcessingFailure } from './drive-connect-health.js';
 
 export interface DriveProcessorDb {
   /** Insert a row into drive_revision_ledger; resolve to true on success,
@@ -375,6 +376,15 @@ export async function processDriveChanges(args: {
     } catch (err) {
       // Bubble up; webhook handler decides whether to 200-ack or retry.
       log?.error?.({ err, integrationId: args.integration.id, pageToken }, 'drive changes.list failed');
+      // P0-2: this is exactly the class of failure (a stuck/410/429/5xx
+      // changes.list call) the hardening audit found invisible — reported
+      // here with integration-level context, before the webhook's generic
+      // catch-all.
+      reportDriveProcessingFailure(err, {
+        stage: 'changes_list',
+        orgId: args.integration.org_id,
+        integrationId: args.integration.id,
+      });
       throw err;
     }
     result.pagesProcessed += 1;
@@ -507,6 +517,17 @@ export async function processDriveChanges(args: {
           revision_id: d.revisionId,
         });
         log?.error?.({ err, integrationId: args.integration.id, fileId: d.fileId, revisionId: d.revisionId }, 'drive enqueueRuleEvent/enqueueFileChangedJob threw — ledger rolled back, page abort');
+        // P0-2: the richest-context report in the whole chain — this is the
+        // exact "rule event dispatched, fetch job never enqueued" split the
+        // audit flagged (organization_rule_executions can read success while
+        // this call, immediately after, still fails).
+        reportDriveProcessingFailure(err, {
+          stage: 'enqueue',
+          orgId: args.integration.org_id,
+          integrationId: args.integration.id,
+          fileId: d.fileId,
+          revisionId: d.revisionId,
+        });
         throw err;
       }
       if (ruleEventId === null) {
@@ -517,7 +538,15 @@ export async function processDriveChanges(args: {
           revision_id: d.revisionId,
         });
         log?.warn?.({ integrationId: args.integration.id, fileId: d.fileId, revisionId: d.revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back, page abort');
-        throw new Error('drive enqueueRuleEvent returned null');
+        const nullEnqueueError = new Error('drive enqueueRuleEvent returned null');
+        reportDriveProcessingFailure(nullEnqueueError, {
+          stage: 'enqueue',
+          orgId: args.integration.org_id,
+          integrationId: args.integration.id,
+          fileId: d.fileId,
+          revisionId: d.revisionId,
+        });
+        throw nullEnqueueError;
       }
       if (fileChangedJobId === null) {
         await args.db.deleteRevisionLedgerEntry({
@@ -526,7 +555,19 @@ export async function processDriveChanges(args: {
           revision_id: d.revisionId,
         });
         log?.warn?.({ integrationId: args.integration.id, fileId: d.fileId, revisionId: d.revisionId, ruleEventId }, 'drive enqueueFileChangedJob returned null — ledger rolled back, page abort');
-        throw new Error('drive enqueueFileChangedJob returned null');
+        // P0-2: this is the SINGLE most direct hit on the audit's headline
+        // scenario — the rule event (ruleEventId) enqueued successfully but
+        // the file-fetch job did not, so organization_rule_executions will
+        // read success while the document never gets fetched/fingerprinted.
+        const nullFileChangedJobError = new Error('drive enqueueFileChangedJob returned null');
+        reportDriveProcessingFailure(nullFileChangedJobError, {
+          stage: 'enqueue',
+          orgId: args.integration.org_id,
+          integrationId: args.integration.id,
+          fileId: d.fileId,
+          revisionId: d.revisionId,
+        });
+        throw nullFileChangedJobError;
       }
       result.queued += 1;
     }
