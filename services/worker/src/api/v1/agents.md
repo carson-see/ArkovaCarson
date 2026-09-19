@@ -1,4 +1,6 @@
 # services/worker/src/api/v1/agents.md
+PR #2904 review: `webhooks-self-service.test.ts` explicitly disables descendant fanout in its config seam while preserving the real delivery module used by signed-ping and replay assertions.
+
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
@@ -1615,6 +1617,9 @@ above WAS escaped — the inconsistency is the tell). Each term now goes through
 filters here; if you need OR semantics across columns, run the terms separately and union.
 
 
+## 2026-09-14 — SCRUM-3972 review correction
+
+Webhook test-ping tests explicitly mock the opt-in fan-out config dependency; normal validated configuration owns the production flag.
 ## CTO #2844 — atomic offboard transaction (2026-09-14)
 
 `offboardSubOrgCore` now makes one identity-specific RPC call: `offboard_suborg`
@@ -1639,3 +1644,7 @@ two-call offboard traffic sharing the database. The native harness preserves
 a negative control proving that migration application alone does not close
 the old worker's transaction gap. Existing unsafe offboard handlers must not
 be restored as a rollback target.
+
+## PR #2904 integration with #2844 atomic offboarding
+
+Approve/revoke, credit transfer and offboard events emit once inside the shared successful cores, covering session and API-key callers. Approve/revoke requires its audit write before emission. Offboard waits for0460's single transaction and uses its returned locked balances; it never re-reads or reclaims credits in HTTP. Idempotent retries emit offboard completion without repeating a reclaim or suspension. Public response shapes are unchanged.
