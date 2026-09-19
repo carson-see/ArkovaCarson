@@ -34,6 +34,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, posix, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
+import { evaluateNoResoakDecision, loadNoResoakDecision } from './lib/founder-no-resoak.js';
 import {
   REPO,
   getBaseRef,
@@ -3566,8 +3567,11 @@ interface CheckResult {
 type RcManifestLoader = (path: string) => string | null | undefined;
 
 interface CheckOptions {
+  repository?: string;
   body: string;
   files: string[];
+  /** Trusted decision loaded from the live GitHub-resolved base commit by main(). */
+  noResoakDecision?: unknown;
   headSha?: string;
   baseSha?: string;
   baseDriftFiles?: string[];
@@ -4647,6 +4651,15 @@ export function check(opts: CheckOptions): CheckResult {
 
   addErrors(result, tierDeclarationErrors(declared, required));
 
+  // Explicit founder instruction of 2026-09-19. This is an authorization
+  // exception, not synthetic soak evidence. Only reviewed, exact heads listed
+  // in the trusted base snapshot can opt in; all other PRs retain normal gates.
+  const noResoak = evaluateNoResoakDecision(opts.noResoakDecision, opts);
+  if (noResoak.accepted) {
+    result.notes.push(noResoak.note!);
+    return result;
+  }
+
   // SCRUM-3481 — checked here, ahead of the evidence-path fork, so a
   // self-approved residual-risk note fails on EVERY path (RC manifest,
   // frontend-T2, unsoakable-T2, standard) rather than only the one that
@@ -4724,11 +4737,13 @@ function main(): void {
   const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
   const prNumber = Number.isFinite(parsedPrNumber) ? parsedPrNumber : undefined;
   const result = check({
+    repository: process.env.GITHUB_REPOSITORY,
     body: prBody,
     files,
     headSha: currentHeadSha,
     baseSha: baseRef,
     prNumber,
+    noResoakDecision: loadNoResoakDecision(baseRef),
     // Live-resolved by .github/workflows/staging-evidence.yml from the PR's
     // `.user.login` — see CheckOptions.prAuthor. Empty string → undefined so
     // the author cross-check treats "unknown" as unknown, not as a match.

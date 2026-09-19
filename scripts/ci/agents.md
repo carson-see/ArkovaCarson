@@ -1,5 +1,9 @@
 # scripts/ci/agents.md
 
+## 2026-09-19 — founder decision for the existing release backlog
+
+`lib/founder-no-resoak.ts` loads the specific release decision from the live GitHub-resolved base commit. It requires the listed PR number, exact reviewed head, explicit body opt-in, retained evidence references, recorded residual risk and an unexpired window. PR-side snapshot edits cannot authorize that PR. `check-staging-evidence.ts` retains tier classification and labels acceptance as an exception, with no new soak claim; all other required checks remain intact. The colocated tests cover wrong heads, missing authority, invalid clocks, snapshot edits, trusted-base loading and gate integration.
+
 ## PR #2940 — Execute the edge health parsers in Bash
 
 `edge-deploy-health-parser.test.ts` executes the actual PRE_SHA/LIVE_SHA
