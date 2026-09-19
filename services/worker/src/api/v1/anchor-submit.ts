@@ -21,7 +21,11 @@ import {
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
+import {
+  ensureAnchorQuotaAvailable,
+  writeQuotaCheckUnavailable,
+  writeQuotaExhausted,
+} from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { submitJob } from '../../utils/jobQueue.js';
@@ -434,6 +438,14 @@ async function handleAnchorSubmit(req: Request, res: Response) {
           resetValue: resetAt.toISOString(), retryAfter,
           resetEpochSeconds: Math.floor(resetAt.getTime() / 1000),
         });
+        return;
+      }
+      if (!insertError && anchor.error === 'contractual_quota_exceeded') {
+        if (typeof anchor.limit !== 'number' || typeof anchor.current !== 'number') {
+          writeQuotaCheckUnavailable(res);
+          return;
+        }
+        writeQuotaExhausted(res, anchor.current, anchor.limit);
         return;
       }
       if (!insertError && anchor.error === 'organization_unavailable') {

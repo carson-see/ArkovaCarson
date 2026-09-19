@@ -45,7 +45,7 @@ interface OrgQuotaRow {
   cap_enforced: boolean | null;
 }
 
-function writeQuotaCheckUnavailable(res: Response): false {
+export function writeQuotaCheckUnavailable(res: Response): false {
   res.status(503)
     .type('application/problem+json')
     .json({
@@ -54,6 +54,21 @@ function writeQuotaCheckUnavailable(res: Response): false {
       status: 503,
       error: 'quota_check_unavailable',
       message: 'Anchor capacity could not be verified. Retry the request.',
+    });
+  return false;
+}
+
+export function writeQuotaExhausted(res: Response, used: number, quota: number): false {
+  res.status(402)
+    .type('application/problem+json')
+    .json({
+      type: 'https://arkova.ai/errors/quota-exhausted',
+      title: 'Anchor quota exhausted',
+      status: 402,
+      error: 'quota_exhausted',
+      message: `This sandbox org has used all ${quota} of its allotted anchors. Contact Arkova for a top-up.`,
+      used,
+      quota,
     });
   return false;
 }
@@ -117,16 +132,5 @@ export async function ensureAnchorQuotaAvailable(
   // dispatch on `error === 'quota_exhausted'`. Schema is documented in the
   // partner brief and the SCRUM-1739 spec.
   logger.warn({ orgId, used, quota }, 'anchor_quota_exhausted');
-  res.status(402)
-    .type('application/problem+json')
-    .json({
-      type: 'https://arkova.ai/errors/quota-exhausted',
-      title: 'Anchor quota exhausted',
-      status: 402,
-      error: 'quota_exhausted',
-      message: `This sandbox org has used all ${quota} of its allotted anchors. Contact Arkova for a top-up.`,
-      used,
-      quota,
-    });
-  return false;
+  return writeQuotaExhausted(res, used, quota);
 }
