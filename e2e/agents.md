@@ -596,3 +596,5 @@ instant/queue keyboard actionability, purchase/admin guidance, and durable
 NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
 only account and network boundaries; submissions are captured at the worker HTTP
 boundary and rearm must reuse the original fingerprint.
+
+UAT-23 spreadsheet layout evidence covers 1280×800, 375×812, 1280×480, and 375×480 through the standalone no-seed fixture.

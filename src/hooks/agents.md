@@ -200,3 +200,5 @@ explicit personal scope, poll only active instant intents, and refresh on focus.
 `usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
 its query key includes both user and selected organization to prevent stale scope
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
+
+UAT-23 bulk imports use only the JWT canonical HTTP bridge; preserve prior-chunk receipts, never auto-retry an ambiguous write, and keep the invocation's original organization scope.

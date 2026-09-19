@@ -266,6 +266,15 @@ describe('OpenAPI spec', () => {
     expect(status.responses['200'].content['application/json'].schema.properties.instant_status.enum)
       .toContain('NEEDS_CREDIT');
     expect(openApiSpec.paths['/anchor-self-service/{publicId}/submission-status']).toBeDefined();
+    const importApi = openApiSpec.paths['/anchor/import'].post;
+    expect(importApi['x-arkova-required-scopes']).toEqual(expect.arrayContaining(['anchor:write']));
+    expect(importApi.requestBody.content['application/json'].schema.properties.rows.maxItems).toBe(100);
+    expect(importApi.responses['207'].content['application/json'].schema.properties.results.items.properties)
+      .not.toHaveProperty('id');
+    const selfServiceImport = openApiSpec.paths['/anchor-self-service/bulk'].post;
+    expect(selfServiceImport.security).toEqual([{ SupabaseJWT: [] }]);
+    expect(selfServiceImport.requestBody.content['application/json'].schema.required)
+      .toEqual(expect.arrayContaining(['org_id', 'action', 'rows']));
   });
 
   it('has all four tags', () => {

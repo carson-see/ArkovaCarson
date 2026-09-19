@@ -150,3 +150,7 @@ how the default came to exist. Do not "tidy" the DEFAULT away.
 `offboard_suborg` and `offboard_suborg_as_api_key` mirror the worker copy and
 0460 signatures. They are hand-written pending canonical type generation
 against the qualified migrated database, matching the explicit 0453 caveat.
++
+## UAT-23 activation delivery receipt — 2026-09-19
+
+Added the generated-shape table entry for `recipient_activation_deliveries` from migration 0471, mirrored in the worker type copy. Canonical regeneration against a qualified migrated database remains a release check.

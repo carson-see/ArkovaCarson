@@ -157,3 +157,7 @@ migration 0460, mirrored in the frontend type copy. As with this PR's 0453
 additions these signatures are hand-written; canonical generation against
 the qualified migrated database remains a release check. No types are claimed
 to have been regenerated from an unapplied migration.
++
+## UAT-23 activation delivery receipt — 2026-09-19
+
+Added the generated-shape table entry for `recipient_activation_deliveries` from migration 0471. The matching frontend type copy is identical. Canonical regeneration against a qualified migrated database remains a release check.

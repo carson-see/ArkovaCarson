@@ -5001,3 +5001,26 @@ export const TWO_FACTOR_SETUP_LABELS = {
   LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
   LOAD_ERROR_RETRY: 'Retry',
 } as const;
+
+export const BULK_IMPORT_LABELS = {
+  DESCRIPTION: 'Public description for every row',
+  USER_TAGS: 'Private tags for every row',
+  ORGANIZATION_TAGS: 'Organization tags for every row',
+  QUEUE_ACTION: 'Add all to queue',
+  INSTANT_ACTION: 'Secure all instantly',
+  INSTANT_UNAVAILABLE: 'Instant securing is no longer available. Choose “Add all to queue” to continue without credits.',
+  INSTANT_CREDIT_COST: (count: number) => `Instant securing uses one credit per row — up to ${count} ${count === 1 ? 'credit' : 'credits'} for this import. Rows without available credits may be saved with “Need credit” status.`,
+  COMPLETE: 'Upload Complete',
+  COMPLETE_WITH_ISSUES: 'Upload Completed with Issues',
+  SAVED_BODY: 'The records below were saved. Instant securing states are reported separately.',
+  PARTIAL_BODY: 'Only the reported records are confirmed. Keep their receipts and retry only the unresolved rows.',
+  CREATED: (count: number) => `${count} Created`,
+  SKIPPED: (count: number) => `${count} Skipped`,
+  FAILED: (count: number) => `${count} Failed`,
+  NEEDS_CREDIT: (count: number) => `${count} Need credit`,
+  HELD: (count: number) => `${count} Held for review`,
+  INSTANT_FAILED: (count: number) => `${count} Instant failed`,
+  INSTANT_PENDING: (count: number) => `${count} Instant pending`,
+  INSTANT_UNKNOWN: (count: number) => `${count} Status unavailable`,
+  PARTIAL_TRANSPORT: 'The import stopped after a partial response. Confirmed row receipts were preserved.',
+} as const;

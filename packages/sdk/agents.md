@@ -153,3 +153,5 @@ retries.
 `attestation.revoked` is typed and subscribable but its worker producer is not
 reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
+
+UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–100 fingerprint rows, API-key-derived tenant, and no automatic write retry.

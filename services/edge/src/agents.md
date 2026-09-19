@@ -343,3 +343,5 @@ email/MFA pending roles. `X-API-Key` machine authentication is unchanged.
 The write-gated MCP surface includes `arkova_get_submission_status`, proxied to the caller-scoped worker route with the caller API key. Descriptions are public verification metadata; user/org tags remain private. Keep tool definition, Zod registry, live registration, and server card synchronized.
 Status-handler tests retain safe string error codes but collapse structured upstream bodies to the
 HTTP status; internal provider messages must never reach MCP output.
+
+UAT-23 `arkova_import_rows` is registered only inside the same flag-and-write-scope branch as `arkova_anchor_document`; its strict schema rejects unknown/raw fields and forwards 1–100 rows only to `/api/v1/anchor/import` with the validated caller API key.

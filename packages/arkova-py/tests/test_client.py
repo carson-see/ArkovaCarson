@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from arkova import (
     BULK_ANCHOR_MAX_ROWS,
     Anchor,
+    AnchorImportRow,
     AnchorReceipt,
     Arkova,
     ArkovaError,
@@ -38,6 +39,66 @@ def json_response(
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_anchor_import_uses_canonical_path_and_parses_207(asynchronous: bool) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(
+            {
+                "total": 1,
+                "created": 0,
+                "skipped": 0,
+                "failed": 1,
+                "results": [
+                    {
+                        "fingerprint": "a" * 64,
+                        "status": "failed",
+                        "reason": "invalid_public_metadata",
+                    }
+                ],
+            },
+            207,
+        )
+
+    row = AnchorImportRow(fingerprint="a" * 64, filename="row.pdf", fingerprint_provided=True)
+    if asynchronous:
+
+        async def run():
+            async with AsyncArkova(
+                api_key="ak_test", transport=httpx.MockTransport(handler)
+            ) as client:
+                return await client.anchor_import([row], action="queue")
+
+        result = asyncio.run(run())
+    else:
+        with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+            result = client.anchor_import([row], action="queue")
+    assert result.failed == 1
+    assert seen[0].url.path == "/v1/anchor/import"
+    assert "org_id" not in json.loads(seen[0].content)
+
+
+def test_anchor_import_never_retries_a_write_error() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return json_response({"error": "unavailable"}, 503)
+
+    with (
+        Arkova(api_key="ak_test", retries=3, transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError),
+    ):
+        client.anchor_import(
+            [AnchorImportRow(fingerprint="a" * 64, filename="row.pdf", fingerprint_provided=True)],
+            action="queue",
+        )
+    assert calls == 1
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("timestamp", ["omitted", None, "2026-09-02T02:58:11Z"])
 @pytest.mark.parametrize(
     ("method", "path", "kind"),
@@ -51,12 +112,19 @@ def json_response(
     ],
 )
 def test_all_readers_preserve_nullable_observed_timestamp(
-    asynchronous: bool, timestamp: str | None, method: str, path: str, kind: str,
+    asynchronous: bool,
+    timestamp: str | None,
+    method: str,
+    path: str,
+    kind: str,
 ) -> None:
     """Both clients keep missing/null observations as None across all timestamp models."""
     payload = {
-        "verified": True, "status": "ACTIVE", "type": kind,
-        "public_id": "ARK-TIMESTAMP", "fingerprint": "a" * 64,
+        "verified": True,
+        "status": "ACTIVE",
+        "type": kind,
+        "public_id": "ARK-TIMESTAMP",
+        "fingerprint": "a" * 64,
         "record_uri": "https://app.arkova.ai/verify/ARK-TIMESTAMP",
     }
     if timestamp != "omitted":
@@ -68,7 +136,8 @@ def test_all_readers_preserve_nullable_observed_timestamp(
         return json_response(payload)
 
     options = {
-        "api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+        "api_key": "ak_test",
+        "base_url": "https://api.arkova.ai/api/v2",
         "transport": httpx.MockTransport(handler),
     }
 
@@ -634,7 +703,9 @@ def test_user_agent_matches_installed_package_version() -> None:
 
 
 def test_fingerprint_matches_known_sha256() -> None:
-    with Arkova(api_key="ak_test", transport=httpx.MockTransport(lambda r: json_response({}))) as client:
+    with Arkova(
+        api_key="ak_test", transport=httpx.MockTransport(lambda r: json_response({}))
+    ) as client:
         fp = client.fingerprint("hello world")
     assert fp == "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
@@ -700,16 +771,27 @@ def test_anchor_sends_description_tags_and_instant_action() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
-        return json_response({
-            "public_id": "ARK-INSTANT", "fingerprint": "a" * 64, "status": "PENDING",
-            "created_at": "2026-01-01T00:00:00Z", "record_uri": "https://app.arkova.ai/verify/ARK-INSTANT",
-            "action": "instant", "credit_state": "pending", "instant_status": "QUEUED",
-        }, status_code=201)
+        return json_response(
+            {
+                "public_id": "ARK-INSTANT",
+                "fingerprint": "a" * 64,
+                "status": "PENDING",
+                "created_at": "2026-01-01T00:00:00Z",
+                "record_uri": "https://app.arkova.ai/verify/ARK-INSTANT",
+                "action": "instant",
+                "credit_state": "pending",
+                "instant_status": "QUEUED",
+            },
+            status_code=201,
+        )
 
     with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
         receipt = client.anchor(
-            fingerprint="a" * 64, description="Quarterly agreement", action="instant",
-            user_tags=["legal"], organization_tags=["q3"],
+            fingerprint="a" * 64,
+            description="Quarterly agreement",
+            action="instant",
+            user_tags=["legal"],
+            organization_tags=["q3"],
         )
     assert seen[0]["action"] == "instant"
     assert seen[0]["private_tags"] == {"user": ["legal"], "organization": ["q3"]}
@@ -1035,7 +1117,13 @@ def test_anchor_bulk_surfaces_per_row_errors_on_partial_success() -> None:
                 "validated": 2,
                 "queued": 1,
                 "duplicates": [],
-                "errors": [{"row": 1, "code": "insert_failed", "message": "Failed to create anchor record."}],
+                "errors": [
+                    {
+                        "row": 1,
+                        "code": "insert_failed",
+                        "message": "Failed to create anchor record.",
+                    }
+                ],
                 "dry_run": False,
                 "anchors": [
                     {
@@ -1071,10 +1159,12 @@ def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
             {
                 "error": "duplicate_fingerprints",
                 "message": (
-                    'Batch contains 1 duplicate fingerprint(s); pick a duplicate_strategy '
+                    "Batch contains 1 duplicate fingerprint(s); pick a duplicate_strategy "
                     'other than "fail" to proceed.'
                 ),
-                "duplicates": [{"row": 1, "fingerprint": "a" * 64, "scope": "in_db", "decision": "fail"}],
+                "duplicates": [
+                    {"row": 1, "fingerprint": "a" * 64, "scope": "in_db", "decision": "fail"}
+                ],
             },
             status_code=409,
         )
@@ -1083,7 +1173,9 @@ def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
         Arkova(api_key="ak_test", retries=0, transport=httpx.MockTransport(handler)) as client,
         pytest.raises(ArkovaError) as exc_info,
     ):
-        client.anchor_bulk([BulkAnchorInput(fingerprint="a" * 64), BulkAnchorInput(fingerprint="a" * 64)])
+        client.anchor_bulk(
+            [BulkAnchorInput(fingerprint="a" * 64), BulkAnchorInput(fingerprint="a" * 64)]
+        )
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "duplicate_fingerprints"
@@ -1092,7 +1184,12 @@ def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
 def test_anchor_bulk_402_insufficient_credits_preserves_code_and_status() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return json_response(
-            {"error": "insufficient_credits", "balance": 0, "required": 5, "message": "Not enough credits."},
+            {
+                "error": "insufficient_credits",
+                "balance": 0,
+                "required": 5,
+                "message": "Not enough credits.",
+            },
             status_code=402,
         )
 
@@ -1269,9 +1366,7 @@ def prod_shaped_legal_verification() -> dict:
         "expiry_date": None,
         "anchor_timestamp": "2026-03-11T18:22:41.000Z",
         "bitcoin_block": 901_447,
-        "network_receipt_id": (
-            "3c1f9a7e2b6d48f0a5c3e9b17d24f8a0c6e5b3d1f9a72e4c8b06d5a1f3e7c9b24"
-        ),
+        "network_receipt_id": ("3c1f9a7e2b6d48f0a5c3e9b17d24f8a0c6e5b3d1f9a72e4c8b06d5a1f3e7c9b24"),
         "merkle_proof_hash": None,
         "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
         "jurisdiction": "KE",
@@ -1439,7 +1534,17 @@ def test_verify_types_the_proof_and_fingerprint_evidence_fields() -> None:
 # BOTH emit sites (the idempotent duplicate hit at 200 and the fresh insert at
 # 201) build this same object literal with no conditional key.
 ANCHOR_RECEIPT_EMITTED_KEYS = frozenset(
-    {"public_id", "fingerprint", "status", "created_at", "record_uri", "action", "credit_state", "instant_status", "idempotent"}
+    {
+        "public_id",
+        "fingerprint",
+        "status",
+        "created_at",
+        "record_uri",
+        "action",
+        "credit_state",
+        "instant_status",
+        "idempotent",
+    }
 )
 
 # services/worker/src/api/v2/resourceDetails.ts — `mapAnchorDetail()`. One

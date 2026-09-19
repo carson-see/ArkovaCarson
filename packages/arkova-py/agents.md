@@ -55,3 +55,7 @@ wired; deleting the job fails that suite.
 - Confirmed (no edit needed): `pyproject.toml` `version = "2.3.0"` and
   `.github/workflows/publish-python-sdk.yml`'s tag trigger (`arkova-py-v*`) would fire on a pushed
   `arkova-py-v2.3.0` tag. No tag was pushed as part of this pass — that remains an operator step.
+
+## 2026-09-19 — UAT-23 row import
+
+Sync and async `anchor_import()` accept 1–100 already-fingerprinted rows, derive tenant from the API key, send no document bytes, and never automatically retry the write. This source change is versioned 2.4.0 with a changelog entry; no package publication or tag is authorized here.

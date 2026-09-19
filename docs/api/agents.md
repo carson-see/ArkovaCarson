@@ -256,3 +256,5 @@ pre-confirmation instant states are available through authenticated submission-s
 `anchor.submitted` remains registrable because the legacy direct processor emits it, but the docs
 must not promise it for `POST /api/v1/anchor`. The strict lifecycle payload schemas continue to ban
 fingerprints, private tags, metadata, and internal ids.
+
+Hosted MCP declares 15 default plus 3 conditionally registered write tools; registry, server card, schemas, live registration, and reference docs must change together.

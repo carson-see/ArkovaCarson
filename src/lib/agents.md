@@ -849,3 +849,5 @@ Two differences from the DocuSign module, both deliberate:
 
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
+
+UAT-23 user-facing import and per-row instant-state strings live in `copy.ts`; keep one-credit-per-row and partial-status language truthful.

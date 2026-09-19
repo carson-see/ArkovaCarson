@@ -44,4 +44,4 @@ against `wrangler.toml` so a var missing on the rig cannot produce a green hollo
 - External services are mocked; no real GCP/Cloudflare calls in tests.
 ## 2026-09-19 — MCP manifest count
 
-The registered/server-card tool-set ratchet is 17 after adding the write-gated UAT-12 submission-status tool. Update the exact-count assertion only with a matching registry and server-card change.
+The registered/server-card tool-set ratchet is 18: 15 default plus the 3 write-gated anchor, status, and UAT-23 import tools. Update the exact-count assertion only with a matching registry and server-card change.

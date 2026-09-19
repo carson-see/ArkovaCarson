@@ -26,6 +26,7 @@ describe('Tool Definitions', () => {
     expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
       'arkova_submit_anchor',
       'arkova_get_submission_status',
+      'arkova_import_rows',
       'arkova_verify_anchor',
       'arkova_anchor_status',
       'arkova_search_anchors',
@@ -33,6 +34,29 @@ describe('Tool Definitions', () => {
       'arkova_batch_verify',
       'arkova_verify_signature',
     ]);
+  });
+
+  it('imports bounded fingerprint rows without file bytes or an org override', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 207, json: () => Promise.resolve({
+      total: 1, created: 0, skipped: 0, failed: 1,
+      results: [{ fingerprint: 'a'.repeat(64), status: 'failed', reason: 'invalid_public_metadata' }],
+    }) });
+    const result = await handleToolCall('arkova_import_rows', {
+      action: 'queue', rows: JSON.stringify([{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }]),
+    });
+    expect(result.isError).not.toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/anchor/import'), expect.objectContaining({ method: 'POST' }));
+    const body = JSON.parse(String(mockFetch.mock.calls[0][1].body));
+    expect(body).not.toHaveProperty('org_id');
+    expect(body.rows).toHaveLength(1);
+  });
+
+  it('rejects raw-document import fields before fetch', async () => {
+    const result = await handleToolCall('arkova_import_rows', {
+      action: 'queue', rows: JSON.stringify([{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true, rawDocument: 'secret' }]),
+    });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('submits queue/instant choice and private tags to the canonical anchor route', async () => {

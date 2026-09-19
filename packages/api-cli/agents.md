@@ -5,3 +5,7 @@
 `arkova status <public-id>` reads the API-key caller-scoped
 `GET /api/v1/anchor/{publicId}/submission-status` contract and prints bounded JSON unchanged. It is
 a read command: no retry/rearm or credit purchase is inferred from status output.
+
+## 2026-09-19 — UAT-23 row import
+
+`arkova import <rows-json-file>` accepts only strict fingerprint rows, caps input at 100, sends no file bytes or `org_id`, and never automatically retries the write.

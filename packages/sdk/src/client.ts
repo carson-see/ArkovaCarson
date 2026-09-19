@@ -44,7 +44,11 @@ import type {
   MerkleProofEntry,
   ProofBundle,
   ProofBundleSignature,
+  AnchorImportRow,
+  AnchorImportOptions,
+  AnchorImportResponse,
 } from './types';
+import { BULK_ANCHOR_CREDENTIAL_TYPES } from './types';
 
 const ANCHOR_LIFECYCLE_STATUSES = new Set<AnchorLifecycleStatus>([
   'PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED',
@@ -85,6 +89,7 @@ export const VERIFY_BATCH_SYNC_LIMIT = 20;
  * atomicity across the whole logical batch. Same posture as `verifyBatch()`.
  */
 export const BULK_ANCHOR_MAX_ROWS = 1000;
+export const ANCHOR_IMPORT_MAX_ROWS = 100;
 
 const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'sleep'>> = {
   retries: 2,
@@ -318,6 +323,52 @@ export class Arkova {
     }>(response, 'Bulk anchor request failed');
 
     return mapBulkAnchorResponse(result);
+  }
+
+  /** Import 1–100 already-fingerprinted spreadsheet rows through the canonical submission contract. */
+  async anchorImport(rows: AnchorImportRow[], options: AnchorImportOptions): Promise<AnchorImportResponse> {
+    if (rows.length < 1 || rows.length > ANCHOR_IMPORT_MAX_ROWS) {
+      throw new ArkovaError(`anchorImport accepts 1–${ANCHOR_IMPORT_MAX_ROWS} rows`, 400, 'invalid_request');
+    }
+    if (options.description !== undefined && options.description.length > 1000) {
+      throw new ArkovaError('anchorImport description exceeds 1000 characters', 400, 'invalid_request');
+    }
+    if (options.action !== 'queue' && options.action !== 'instant') throw new ArkovaError('anchorImport action must be queue or instant', 400, 'invalid_request');
+    const credentialTypes = new Set<string>(BULK_ANCHOR_CREDENTIAL_TYPES);
+    const wireRows = rows.map((row, index) => {
+      if (!/^[a-fA-F0-9]{64}$/.test(row.fingerprint) || row.filename.length < 1 || row.filename.length > 255
+        || typeof row.fingerprintProvided !== 'boolean' || (row.fileSize !== undefined && (!Number.isInteger(row.fileSize) || row.fileSize < 0))
+        || (row.credentialType !== undefined && !credentialTypes.has(row.credentialType))) {
+        throw new ArkovaError(`anchorImport row ${index} is invalid`, 400, 'invalid_request');
+      }
+      return {
+        fingerprint: row.fingerprint.toLowerCase(), filename: row.filename,
+        fingerprint_provided: row.fingerprintProvided,
+        ...(row.fileSize === undefined ? {} : { file_size: row.fileSize }),
+        ...(row.credentialType === undefined ? {} : { credential_type: row.credentialType }),
+        ...(row.metadata === undefined ? {} : { metadata: row.metadata }),
+        ...(row.recipientEmail === undefined ? {} : { recipient_email: row.recipientEmail }),
+        ...(row.recipientName === undefined ? {} : { recipient_name: row.recipientName }),
+      };
+    });
+    // Write retries are intentionally disabled: a lost response may contain durable per-row receipts.
+    const response = await this.fetch('/api/v1/anchor/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: options.action,
+        rows: wireRows,
+        ...(options.description === undefined ? {} : { description: options.description }),
+        ...(options.privateTags === undefined ? {} : { private_tags: options.privateTags }),
+      }),
+    });
+    const result = await jsonOrThrow<{
+      total: number; created: number; skipped: number; failed: number;
+      results: Array<{ fingerprint: string; status: 'created' | 'skipped' | 'failed'; public_id?: string; instant_status?: AnchorInstantStatus | null; reason?: string }>;
+    }>(response, 'Anchor import failed');
+    return { ...result, results: result.results.map((row) => ({
+      fingerprint: row.fingerprint, status: row.status, publicId: row.public_id,
+      instantStatus: row.instant_status, reason: row.reason,
+    })) };
   }
 
   /** Shape one `anchorBulk()` input into the wire (snake_case) row shape, fingerprinting `data` rows client-side. */

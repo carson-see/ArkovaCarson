@@ -10,7 +10,7 @@ name = "arkova"
 # (they read `None` on every response ever returned), but `.chain_tx_id` on a
 # receipt now raises AttributeError instead of answering `None`, and that is a
 # source-visible break. See CHANGELOG.md.
-version = "2.3.0"
+version = "2.4.0"
 description = "Typed Python SDK for the Arkova Verification APIs"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -17,11 +17,33 @@ ResourceDetailType = Literal["record", "fingerprint", "document"]
 # services/worker/src/api/v1/anchor-bulk.ts. Keep in sync; the server is
 # authoritative and rejects unknown values.
 BulkAnchorCredentialType = Literal[
-    "DEGREE", "LICENSE", "CERTIFICATE", "TRANSCRIPT", "PROFESSIONAL", "CPE", "CLE",
-    "BADGE", "ATTESTATION", "FINANCIAL", "LEGAL", "INSURANCE", "SEC_FILING", "PATENT",
-    "REGULATION", "PUBLICATION", "CHARITY", "ACCREDITATION", "FINANCIAL_ADVISOR",
-    "BUSINESS_ENTITY", "RESUME", "MEDICAL", "MILITARY", "IDENTITY",
-    "CONTRACT_PRESIGNING", "CONTRACT_POSTSIGNING", "OTHER",
+    "DEGREE",
+    "LICENSE",
+    "CERTIFICATE",
+    "TRANSCRIPT",
+    "PROFESSIONAL",
+    "CPE",
+    "CLE",
+    "BADGE",
+    "ATTESTATION",
+    "FINANCIAL",
+    "LEGAL",
+    "INSURANCE",
+    "SEC_FILING",
+    "PATENT",
+    "REGULATION",
+    "PUBLICATION",
+    "CHARITY",
+    "ACCREDITATION",
+    "FINANCIAL_ADVISOR",
+    "BUSINESS_ENTITY",
+    "RESUME",
+    "MEDICAL",
+    "MILITARY",
+    "IDENTITY",
+    "CONTRACT_PRESIGNING",
+    "CONTRACT_POSTSIGNING",
+    "OTHER",
 ]
 
 # How the server should handle a fingerprint that already exists (in-batch or in-org).
@@ -328,6 +350,7 @@ class OrgList(ArkovaModel):
 # Mirrors the worker's mapAnchorDetail shape; never carries internal
 # id/org_id/user_id/record_id columns.
 
+
 class OrganizationDetail(ArkovaModel):
     """Response of ``GET /api/v2/organizations/{public_id}``.
 
@@ -539,3 +562,31 @@ class BulkAnchorResponse(ArkovaModel):
     dry_run: bool
     # Omitted by the server on dry runs.
     anchors: list[BulkAnchorResultRow] | None = None
+
+
+@dataclass
+class AnchorImportRow:
+    fingerprint: str
+    filename: str
+    fingerprint_provided: bool
+    file_size: int | None = None
+    credential_type: str | None = None
+    metadata: dict[str, Any] | None = None
+    recipient_email: str | None = None
+    recipient_name: str | None = None
+
+
+class AnchorImportResultRow(ArkovaModel):
+    fingerprint: str
+    status: Literal["created", "skipped", "failed"]
+    public_id: str | None = None
+    instant_status: str | None = None
+    reason: str | None = None
+
+
+class AnchorImportResponse(ArkovaModel):
+    total: int
+    created: int
+    skipped: int
+    failed: int
+    results: list[AnchorImportResultRow]

@@ -21,11 +21,13 @@ import {
   handleSearchCredentials,
   handleAnchorDocument,
   handleGetSubmissionStatus,
+  handleImportRows,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
   type SupabaseConfig,
 } from './mcp-tools.js';
+import { validateToolArgs } from './mcp-tool-schemas.js';
 import {
   realPublicAnchorRow,
   pendingPublicAnchorRow,
@@ -46,6 +48,50 @@ const mockFetch = vi.fn();
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
+});
+
+describe('handleImportRows', () => {
+  it.each([
+    [{ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true, raw_document: 'secret' }], action: 'queue' }],
+    [{ rows: Array.from({ length: 101 }, () => ({ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true })), action: 'queue' }],
+    [{ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true, file_size: 0 }], action: 'queue' }],
+    [{ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true, credential_type: 'NOT_REAL' }], action: 'queue' }],
+    [{ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }], action: 'later' }],
+  ])('strict schema rejects invalid import input before a handler can run', (input) => {
+    expect(validateToolArgs('arkova_import_rows', input).ok).toBe(false);
+  });
+
+  it('forwards the validated API key and preserves a 207 result without retry', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, created: 0, skipped: 0, failed: 1, results: [{ fingerprint: 'a'.repeat(64), status: 'failed', reason: 'invalid_public_metadata' }] }), { status: 207 }));
+    const result = await handleImportRows({ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }], action: 'queue' }, {
+      ...CONFIG, workerBaseUrl: 'https://worker.example', callerApiKey: 'ak_test',
+    });
+    expect(result.isError).not.toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith('https://worker.example/api/v1/anchor/import', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
+    }));
+  });
+
+  it('fails closed without caller API-key authority', async () => {
+    const result = await handleImportRows({ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }], action: 'queue' }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on malformed success and bounds upstream error text', async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'private provider detail with spaces' }), { status: 500 }));
+    const config = { ...CONFIG, workerBaseUrl: 'https://worker.example', callerApiKey: 'ak_test' };
+    const input = { rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }], action: 'queue' as const };
+    expect((await handleImportRows(input, config)).isError).toBe(true);
+    const errored = await handleImportRows(input, config);
+    expect(errored.isError).toBe(true);
+    expect(errored.content[0].text).toContain('HTTP 500');
+    expect(errored.content[0].text).not.toContain('private provider detail');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 afterEach(() => {

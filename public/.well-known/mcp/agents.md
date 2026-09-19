@@ -80,3 +80,5 @@ exact DBA string against the filing. If the confirmed string differs from
 legal name), this value needs a follow-up correction — do not treat this
 commit as the final word on the string's exact form, only on removing the
 non-existent placeholder entity.
+
+UAT-23 adds `arkova_import_rows` to the documented conditional write surface; keep the server card exactly aligned with `TOOL_DEFINITIONS` and the 15+3 count.

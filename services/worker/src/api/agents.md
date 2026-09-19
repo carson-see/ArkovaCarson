@@ -580,3 +580,7 @@ The helper uses a direct PENDING comparison and has no test-only export. Behavio
   promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
   23505 on that insert is now treated as success (the membership exists). Any other insert error
   still throws and triggers the new-account rollback.
++
+## 2026-09-19 — UAT-23 pending recipient provisioning
+
+`bulk-recipient.ts` resolves normalized-email profiles or creates an unconfirmed Auth user carrying both server markers, then repairs the trigger-created profile to `PENDING_ACTIVATION` with no org, role, or membership. Marker-owned unconfirmed ACTIVE rows are partial provisioning, not activated accounts. Lost Auth-create responses and profile-write failures recover through 0471's service-only RPC, which fails closed for confirmed/unmarked/deleted/inactive/tenant-assigned/member identities and can bind recovery to the known created user ID. Email-HMAC availability is checked before auth writes. Recipient assignment writes `anchor_recipients` with `claimed_at=NULL`; issuer assignment is not recipient possession. Migration 0471 supplies the durable at-most-once automatic activation-email claim; provider idempotency keys contain only the token digest. A `sending` receipt after a provider ambiguity is not automatically reclaimed, so this guarantees at most one automatic provider attempt, not exactly-once SMTP or guaranteed delivery.

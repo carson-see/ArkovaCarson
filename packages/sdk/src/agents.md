@@ -129,3 +129,5 @@ health/read/verify/folder paths.
 The client validates both lifecycle and instant status enums at the JSON boundary before returning
 the typed result; unknown persisted values fail closed as `ArkovaError(502, invalid_response)` rather
 than being asserted into the public union or rendered as a known state.
+
+UAT-23 `anchorImport()` is additive and distinct from legacy `anchorBulk()`: 1–100 already-fingerprinted rows, canonical `/api/v1/anchor/import`, tenant derived from the API key, no document bytes, and no automatic write retry.

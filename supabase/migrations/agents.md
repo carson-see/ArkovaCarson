@@ -1510,3 +1510,7 @@ balance read; the existing public offboard HTTP shape stays unchanged.
 The native harness asserts exact balances across both serialization orders and
 zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
 for the final C3 source review and fresh qualification.
++
+## 0471 — UAT-23 activation delivery claim (2026-09-19)
+
+`0471_uat23_activation_delivery_claim.sql` adds a service-role-only, FORCE-RLS, PII-free receipt keyed by `(profile_id, token_hash)`. The worker claims before contacting the email provider; replay reads the durable `sending|sent|failed` disposition and never automatically sends twice. The token itself is never stored. A provider ambiguity remains `sending` and is surfaced as pending rather than reclaimed. The same migration adds service-only `recover_bulk_recipient_profile`, a bounded crash-recovery RPC that accepts only one exact unconfirmed Auth identity carrying both server markers and refuses deleted/inactive, tenant-assigned, member, confirmed, unmarked, or ambiguous identities. Safe rollback disables dispatch and recovery callers while retaining receipts; ordinary rollback must not drop the claims and re-enable duplicate email. Native local harness: `scripts/uat23/native-pg-activation-delivery.sh`.

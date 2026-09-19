@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.0
+
+- Add synchronous and asynchronous `anchor_import()` for canonical 1–100 row spreadsheet imports. Inputs contain fingerprints and metadata only; write requests are never automatically retried.
+
 All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
 anything earlier, see `git log -- packages/arkova-py/`.
 

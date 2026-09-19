@@ -128,6 +128,13 @@ export interface AnchorDocumentInput {
 }
 
 export interface SubmissionStatusInput { public_id: string }
+export interface ImportRowsInput {
+  rows: Array<{ fingerprint: string; filename: string; fingerprint_provided: boolean; file_size?: number; credential_type?: string; metadata?: Record<string, unknown>; recipient_email?: string; recipient_name?: string }>;
+  action: 'queue' | 'instant';
+  description?: string;
+  user_tags?: string[];
+  organization_tags?: string[];
+}
 
 // Standalone edge build: mirror the worker's accepted anchor credential enum.
 // Unknown legacy MCP record types normalize to OTHER instead of making the
@@ -509,6 +516,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       type: 'object',
       properties: { public_id: { type: 'string', description: 'Arkova public identifier returned by submission' } },
       required: ['public_id'],
+    },
+  },
+  {
+    name: 'arkova_import_rows',
+    description: 'Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant path. Never accepts file bytes. Descriptions are public; tags are private.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rows: { type: 'array', description: 'Rows containing fingerprint, filename, and fingerprint_provided', maxItems: 100 },
+        action: { type: 'string', enum: ['queue', 'instant'], description: 'Submission path' },
+        description: { type: 'string', maxLength: 1000, description: 'Shared public description' },
+        user_tags: { type: 'array', maxItems: 10, description: 'Private user tags' },
+        organization_tags: { type: 'array', maxItems: 10, description: 'Private organization tags' },
+      },
+      required: ['rows', 'action'],
     },
   },
   {
@@ -1726,6 +1748,27 @@ export async function handleAnchorDocument(
       return errorResult('Anchor submission timed out');
     }
     return errorResult(safeErrorText(error, 'arkova_anchor_document'));
+  }
+}
+
+export async function handleImportRows(input: ImportRowsInput, config: SupabaseConfig): Promise<ToolResult> {
+  if (!config.workerBaseUrl || !config.callerApiKey) return errorResult('Row import requires API-key authentication and the Arkova API endpoint.');
+  try {
+    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}/api/v1/anchor/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': config.callerApiKey },
+      body: JSON.stringify({ action: input.action, rows: input.rows, ...(input.description ? { description: input.description } : {}), ...((input.user_tags?.length || input.organization_tags?.length) ? { private_tags: { user: input.user_tags ?? [], organization: input.organization_tags ?? [] } } : {}) }),
+    });
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+    if (!response.ok) {
+      const code = typeof body?.error === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(body.error) ? body.error : `HTTP ${response.status}`;
+      return errorResult(`Row import failed: ${code}`);
+    }
+    if (!body || !Array.isArray(body.results) || !['total', 'created', 'skipped', 'failed'].every((key) => Number.isInteger(body[key]))) {
+      return errorResult('Row import failed: malformed response');
+    }
+    return textResult(body);
+  } catch (error) {
+    return errorResult(safeErrorText(error, 'arkova_import_rows'));
   }
 }
 

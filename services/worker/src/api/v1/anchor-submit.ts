@@ -36,6 +36,9 @@ import { denyOverQuota, setQuotaHeaders, type OrgTier } from '../../middleware/p
 
 const router = Router();
 
+/** Trusted in-process override used by the JWT bulk bridge; never parsed from JSON. */
+export const BULK_FINGERPRINT_SOURCE = Symbol('bulkFingerprintSource');
+
 // Frozen request shape per CLAUDE.md §1.8 — additive nullable fields only.
 // Fingerprint must be 64-char hex (SHA-256). Description capped to keep
 // inserts predictable and PostgREST payload size bounded. Metadata key syntax
@@ -242,7 +245,7 @@ function dashboardMetadata(metadata: Record<string, unknown> | undefined): Recor
   ));
 }
 
-async function handleAnchorSubmit(req: Request, res: Response) {
+export async function handleAnchorSubmit(req: Request, res: Response) {
   // Require API key
   if (!req.apiKey) {
     res.status(401).json({ error: 'API key required. Include X-API-Key header.' });
@@ -405,7 +408,9 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       p_filename: body.filename ?? `api-${truncateUtf16Safe(fingerprint, 12)}`,
       p_file_size: body.file_size ?? null, p_file_mime: body.file_mime ?? null,
       p_credential_type: credentialType, p_description: body.description ?? null, p_metadata: metadata,
-      p_fingerprint_source: req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
+      p_fingerprint_source: Object.prototype.hasOwnProperty.call(req, BULK_FINGERPRINT_SOURCE)
+        ? (req as Request & { [BULK_FINGERPRINT_SOURCE]?: 'document_bytes' | null })[BULK_FINGERPRINT_SOURCE] ?? null
+        : req.apiKey.keyPrefix === 'jwt-session' ? 'document_bytes' : null,
       p_user_tags: body.private_tags?.user ?? [], p_org_tags: body.private_tags?.organization ?? [],
       p_action: body.action,
     } as never);

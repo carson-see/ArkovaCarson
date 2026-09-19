@@ -36,6 +36,7 @@ const HELP = {
     'arkova status <public-id>',
     'arkova probe <public-id> [--org-id id]',
     'arkova anchor <local-file> [--action queue|instant] [--description text] [--tag value] [--org-tag value]',
+    'arkova import <rows-json-file> --action queue|instant [--description text] [--tag value] [--org-tag value]',
     'arkova folder list [--scope USER|ORG] [--org-id id] [--owner-user-id id] [--context-org-id id]',
     'arkova folder create --name name --scope USER|ORG [--org-id id] [--context-org-id id] [--parent-folder-id id]',
     'arkova folder move --record-id id [--record-id id] (--folder-id id|--root)',
@@ -84,6 +85,26 @@ function validateTags(values: string[], flag: string): string[] {
     throw new UsageError(`${flag} accepts up to 10 values of 1-64 characters`);
   }
   return values;
+}
+
+const IMPORT_ROW_KEYS = new Set(['fingerprint', 'filename', 'fingerprint_provided', 'file_size', 'credential_type', 'metadata', 'recipient_email', 'recipient_name']);
+const IMPORT_CREDENTIAL_TYPES = new Set(['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE', 'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL', 'INSURANCE', 'SEC_FILING', 'PATENT', 'REGULATION', 'PUBLICATION', 'CHARITY', 'ACCREDITATION', 'FINANCIAL_ADVISOR', 'BUSINESS_ENTITY', 'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY', 'CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING', 'OTHER']);
+function validateImportRows(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) throw new UsageError('rows-json-file must contain 1-100 row objects');
+  return value.map((row, index) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) throw new UsageError(`import row ${index} must be an object`);
+    const record = row as Record<string, unknown>;
+    if (Object.keys(record).some((key) => !IMPORT_ROW_KEYS.has(key))) throw new UsageError(`import row ${index} contains an unsupported field`);
+    if (typeof record.fingerprint !== 'string' || !/^[a-fA-F0-9]{64}$/.test(record.fingerprint)
+      || typeof record.filename !== 'string' || record.filename.length < 1 || record.filename.length > 255
+      || typeof record.fingerprint_provided !== 'boolean'
+      || (record.file_size !== undefined && (typeof record.file_size !== 'number' || !Number.isInteger(record.file_size) || record.file_size < 0))
+      || (record.credential_type !== undefined && (typeof record.credential_type !== 'string' || !IMPORT_CREDENTIAL_TYPES.has(record.credential_type)))
+      || (record.metadata !== undefined && (!record.metadata || typeof record.metadata !== 'object' || Array.isArray(record.metadata)))
+      || (record.recipient_email !== undefined && typeof record.recipient_email !== 'string')
+      || (record.recipient_name !== undefined && typeof record.recipient_name !== 'string')) throw new UsageError(`import row ${index} is invalid`);
+    return record;
+  });
 }
 
 async function loadConfig(args: string[], io: CliIo): Promise<ArkovaConfig> {
@@ -171,6 +192,24 @@ async function runCommand(args: string[], client: CliClient, readLocalFile: (pat
     return {
       value: await client.request('/api/v1/anchor', { method: 'POST', body: JSON.stringify(body) }, { idempotent: true }),
     };
+  }
+  if (command === 'import') {
+    const path = required(args.shift(), 'rows-json-file');
+    if (path === '-') throw new UsageError('import requires a local JSON file path');
+    const action = required(takeOption(args, '--action'), '--action');
+    if (action !== 'queue' && action !== 'instant') throw new UsageError('--action must be queue or instant');
+    const description = takeOption(args, '--description');
+    if (description && description.length > 1000) throw new UsageError('--description must be at most 1000 characters');
+    const userTags = validateTags(takeMany(args, '--tag'), '--tag');
+    const organizationTags = validateTags(takeMany(args, '--org-tag'), '--org-tag');
+    noExtra(args);
+    let rows: unknown;
+    try { rows = JSON.parse((await readLocalFile(path)).toString('utf8')); } catch { throw new UsageError('rows-json-file must contain valid JSON'); }
+    rows = validateImportRows(rows);
+    return { value: await client.request('/api/v1/anchor/import', {
+      method: 'POST',
+      body: JSON.stringify({ action, rows, ...(description ? { description } : {}), ...((userTags.length || organizationTags.length) ? { private_tags: { user: userTags, organization: organizationTags } } : {}) }),
+    }) };
   }
   if (command === 'folder') return runFolder(args, client);
   throw new UsageError(command ? `Unknown command: ${command}` : 'A command is required');

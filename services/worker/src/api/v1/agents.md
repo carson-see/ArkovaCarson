@@ -1659,3 +1659,7 @@ a scope-local replay must normalize to the exact stored user/org sets; otherwise
 `submission_metadata_conflict` before retry/enqueue side effects. Omitted tags mean transport replay,
 not tag replacement. The canonical transaction owns org daily-quota accounting; personal scope
 skips that org-only quota, and HTTP must not pre-increment or compensate usage around the RPC.
++
+## 2026-09-19 — UAT-23 canonical import transport
+
+`POST /anchor/import` is the additive API-key import transport (1–100 rows, batch limiter, anchor write scope). It delegates every row in-process to `anchor-submit.ts`, preserving canonical quota, tags, instant intent, metadata filtering, idempotency, and bounded errors. The key supplies the tenant; caller-selected mismatches are rejected. Legacy `/anchor/bulk` remains unchanged. OpenAPI documents 200 all-success and 207 partial receipts with public IDs only.

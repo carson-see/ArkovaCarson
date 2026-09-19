@@ -450,8 +450,24 @@
         "additionalProperties": false
       }
     },
-    {
-      "name": "arkova_get_submission_status",
+  {
+    "name": "arkova_import_rows",
+    "description": "Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant path. Never accepts file bytes. Descriptions are public; tags are private. Conditionally available with the same write gate as arkova_anchor_document.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "rows": { "type": "array", "description": "Rows containing fingerprint, filename, and fingerprint_provided", "maxItems": 100 },
+        "action": { "type": "string", "enum": ["queue", "instant"], "description": "Submission path" },
+        "description": { "type": "string", "maxLength": 1000, "description": "Shared public description" },
+        "user_tags": { "type": "array", "maxItems": 10, "description": "Private user tags" },
+        "organization_tags": { "type": "array", "maxItems": 10, "description": "Private organization tags" }
+      },
+      "required": ["rows", "action"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "arkova_get_submission_status",
       "description": "Read the caller-scoped durable queue or instant submission state, including bounded credit and retry state. Returns no private tags, metadata, or internal identifiers. Conditionally available with the same write-scope gate as arkova_anchor_document.",
       "inputSchema": {
         "type": "object",

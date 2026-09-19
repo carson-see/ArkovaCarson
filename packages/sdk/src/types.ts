@@ -640,6 +640,39 @@ export interface BulkAnchorInput {
   externalId?: string;
 }
 
+export interface AnchorImportRow {
+  fingerprint: string;
+  filename: string;
+  fingerprintProvided: boolean;
+  fileSize?: number;
+  credentialType?: string;
+  metadata?: Record<string, unknown>;
+  recipientEmail?: string;
+  recipientName?: string;
+}
+
+export interface AnchorImportOptions {
+  action: 'queue' | 'instant';
+  description?: string;
+  privateTags?: { user: string[]; organization: string[] };
+}
+
+export interface AnchorImportResultRow {
+  fingerprint: string;
+  status: 'created' | 'skipped' | 'failed';
+  publicId?: string;
+  instantStatus?: AnchorInstantStatus | null;
+  reason?: string;
+}
+
+export interface AnchorImportResponse {
+  total: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  results: AnchorImportResultRow[];
+}
+
 /** Options for `arkova.anchorBulk()`. */
 export interface AnchorBulkOptions {
   /** Validate every row but don't queue or deduct credits. */

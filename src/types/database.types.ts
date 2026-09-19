@@ -5751,6 +5751,42 @@ export type Database = {
         }
         Relationships: []
       }
+      recipient_activation_deliveries: {
+        Row: {
+          claimed_at: string
+          completed_at: string | null
+          failure_code: string | null
+          profile_id: string
+          status: string
+          token_hash: string
+        }
+        Insert: {
+          claimed_at?: string
+          completed_at?: string | null
+          failure_code?: string | null
+          profile_id: string
+          status?: string
+          token_hash: string
+        }
+        Update: {
+          claimed_at?: string
+          completed_at?: string | null
+          failure_code?: string | null
+          profile_id?: string
+          status?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipient_activation_deliveries_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+
       report_artifacts: {
         Row: {
           created_at: string
@@ -7275,6 +7311,16 @@ export type Database = {
       activate_user: {
         Args: { p_password: string; p_token: string }
         Returns: Json
+      }
+      recover_bulk_recipient_profile: {
+        Args: {
+          p_activation_token: string
+          p_activation_token_expires_at: string
+          p_email: string
+          p_expected_user_id?: string
+          p_full_name: string
+        }
+        Returns: { activation_token: string; profile_id: string }[]
       }
       admin_adjust_org_credit: {
         Args: {

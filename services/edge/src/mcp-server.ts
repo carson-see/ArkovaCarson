@@ -39,6 +39,7 @@ import {
   handleNessieQuery,
   handleAnchorDocument,
   handleGetSubmissionStatus,
+  handleImportRows,
   handleVerifyDocument,
   handleVerifyBatch,
   handleAgentSearch,
@@ -48,6 +49,7 @@ import {
   handleAgentGetOrganization,
   type SupabaseConfig,
   type ToolResult,
+  type ImportRowsInput,
 } from './mcp-tools';
 import type { Env } from './env';
 import { fireAndForgetAudit, type McpAuditEntry } from './mcp-audit-log';
@@ -561,6 +563,21 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
         async ({ public_id }) => handleGetSubmissionStatus({ public_id }, config),
         telemetry,
       ),
+    );
+    tool(
+      'arkova_import_rows',
+      TOOL_DESC['arkova_import_rows'],
+      {
+        rows: z.array(z.object({
+          fingerprint: contentHashSchema, filename: z.string().min(1).max(255), fingerprint_provided: z.boolean(),
+          file_size: z.number().int().positive().optional(), credential_type: z.enum(['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE', 'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL', 'INSURANCE', 'SEC_FILING', 'PATENT', 'REGULATION', 'PUBLICATION', 'CHARITY', 'ACCREDITATION', 'FINANCIAL_ADVISOR', 'BUSINESS_ENTITY', 'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY', 'CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING', 'OTHER']).optional(),
+          metadata: z.record(z.string(), z.unknown()).optional(), recipient_email: z.string().email().optional(), recipient_name: z.string().max(255).optional(),
+        }).strict()).min(1).max(100),
+        action: z.enum(['queue', 'instant']), description: z.string().max(1000).optional(),
+        user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+        organization_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+      },
+      withTelemetry('arkova_import_rows', async (input) => handleImportRows(input as unknown as ImportRowsInput, config), telemetry),
     );
   }
 

@@ -335,3 +335,7 @@ a quick per-instance signal, not a durable audit trail — the `origin_guard_wou
 ## 2026-09-19 — UAT-12 JWT status bridge
 
 `anchor-self-service.ts` accepts status GETs only with one explicit scope: `?scope=user` or `?org_id=<uuid>`. It re-derives profile/membership before delegating to the canonical anchor router; never infer GET scope from a body or trust a client organization id without membership.
++
+## 2026-09-19 — UAT-23 JWT bulk import bridge
+
+`POST /api/v1/anchor-self-service/bulk` accepts at most 100 strict rows and delegates each to the canonical single-submit handler without loopback HTTP. Recipient-bearing imports are authorized for the exact selected organization before any row runs: owner/admin or platform admin only; personal recipient provisioning fails closed. Non-recipient personal imports remain valid. Safe metadata survives; private/reserved/underscore keys remain filtered by the canonical handler. Results are 200 or 207 with bounded per-row codes and no internal IDs.

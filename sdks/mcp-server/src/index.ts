@@ -163,6 +163,21 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: 'arkova_import_rows',
+    description: 'Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant submission path. Never accepts document bytes. ' + API_ONLY_NOTE,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rows: { type: 'string', description: 'JSON array of row objects with fingerprint, filename, and fingerprint_provided' },
+        action: { type: 'string', description: 'Submission path', enum: ['queue', 'instant'] },
+        description: { type: 'string', description: 'Optional shared public description, up to 1,000 characters' },
+        user_tags: { type: 'string', description: 'Optional JSON array of private user tags' },
+        organization_tags: { type: 'string', description: 'Optional JSON array of private organization tags' },
+      },
+      required: ['rows', 'action'],
+    },
+  },
+  {
     name: 'arkova_verify_anchor',
     description: 'Verify an anchored record on the Arkova network by its public ID. Returns the verification result including issuer, record type, and anchor proof. ' + API_ONLY_NOTE,
     inputSchema: {
@@ -285,6 +300,8 @@ export async function handleToolCall(
         return await handleSubmitAnchor(args);
       case 'arkova_get_submission_status':
         return await handleSubmissionStatus(args.public_id);
+      case 'arkova_import_rows':
+        return await handleImportRows(args);
       case 'arkova_verify_anchor':
         return await handleVerifyCredential(args.public_id);
       case 'arkova_anchor_status':
@@ -314,6 +331,42 @@ async function handleSubmissionStatus(publicId: string): Promise<McpToolResult> 
     return errorResult(`Submission status unavailable: ${code}`);
   }
   return textResult(JSON.stringify(body ?? {}));
+}
+
+async function handleImportRows(args: Record<string, string>): Promise<McpToolResult> {
+  let rows: unknown;
+  let userTags: string[];
+  let organizationTags: string[];
+  try {
+    rows = JSON.parse(args.rows);
+    userTags = parsePrivateTags(args.user_tags, 'user_tags');
+    organizationTags = parsePrivateTags(args.organization_tags, 'organization_tags');
+  } catch (error) {
+    return errorResult(error instanceof Error ? error.message : 'Invalid import input');
+  }
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) return errorResult('rows must be a JSON array of 1-100 row objects');
+  const keys = new Set(['fingerprint', 'filename', 'fingerprint_provided', 'file_size', 'credential_type', 'metadata', 'recipient_email', 'recipient_name']);
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)
+      || Object.keys(row).some((key) => !keys.has(key))
+      || typeof row.fingerprint !== 'string' || !/^[a-fA-F0-9]{64}$/.test(row.fingerprint)
+      || typeof row.filename !== 'string' || row.filename.length < 1 || row.filename.length > 255
+      || typeof row.fingerprint_provided !== 'boolean'
+      || (row.file_size !== undefined && (typeof row.file_size !== 'number' || !Number.isInteger(row.file_size) || row.file_size < 0))
+      || (row.metadata !== undefined && (!row.metadata || typeof row.metadata !== 'object' || Array.isArray(row.metadata)))) return errorResult(`row ${index} is invalid or contains an unsupported field`);
+  }
+  if (args.action !== 'queue' && args.action !== 'instant') return errorResult('action must be queue or instant');
+  const res = await arkovaFetch('/api/v1/anchor/import', { method: 'POST', body: JSON.stringify({
+    action: args.action, rows,
+    ...(args.description ? { description: args.description } : {}),
+    ...((userTags.length || organizationTags.length) ? { private_tags: { user: userTags, organization: organizationTags } } : {}),
+  }) });
+  if (!res.ok) return errorResult(`Import API returned ${res.status}`);
+  const body = await res.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || !Array.isArray(body.results) || !['total', 'created', 'skipped', 'failed'].every((key) => Number.isInteger(body[key]))) {
+    return errorResult('Import API returned a malformed response');
+  }
+  return textResult(JSON.stringify(body, null, 2));
 }
 
 function parsePrivateTags(raw: string | undefined, scope: string): string[] {

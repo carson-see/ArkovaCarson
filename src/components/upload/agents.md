@@ -1,5 +1,17 @@
 # agents.md — components/upload
 
+## 2026-09-19 — UAT-23 spreadsheet import completion
+
+`BulkUploadWizard` owns row-wise spreadsheet imports; `FileUpload` continues to
+offer the separate "one document" path. Row-wise imports use one explicit
+queue/instant action and shared description/private-tag defaults for the whole
+import while preserving each row's metadata. Successful AI extraction fields
+must be merged by row index before submission; do not retain them only for UI.
+The wizard always supplies an explicit action to `useBulkAnchors`, which routes
+through the authenticated canonical bulk bridge. Uploader ownership is retained;
+recipient email/name are linking hints, never authority to create an auth user,
+verified profile, membership, or organization access.
+
 ## SCRUM-4448 — nested securing wizard layout
 
 `BulkUploadWizard` shrinks within its parent, uses compact mobile progress markers, and stacks column mapping controls and review actions below the small breakpoint. `AIExtractionStep` stacks its action groups on mobile. Browser coverage in `e2e/secure-dialog-layout.spec.ts` includes upload, mapping, extraction idle/in-flight/recovery and processing; successful bulk completion closes the parent dialog immediately by existing design. Record parsing, attestation, extraction and worker payloads are unchanged.

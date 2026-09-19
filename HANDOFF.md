@@ -14,6 +14,11 @@
 
 ## Now
 
+### 2026-09-19 — UAT-23 completion preparation
+
+- Current founder authority permits exactly the two new in-scope UAT-23/UAT-17 draft PRs while total open PRs, including drafts, remains at or below 25. UAT-12 continues in existing PR2966. This supersedes the older zero-new-PR and sequential-session text below for this session only; it authorizes no merge, deployment, production mutation, or soak side effect.
+- UAT-23 is tracked by SCRUM-5265 and Confluence page 153223169. Candidate work stays on `cto/uat23-completion-20260919`, stacked on UAT-12 completion commit `6ff342fb1`; the eventual remote PR head is the only eligible soak identity.
+
 ### 2026-09-19 — UAT-12 completion follow-up preparation
 
 - **Publication authority:** Carson explicitly authorized reuse of existing

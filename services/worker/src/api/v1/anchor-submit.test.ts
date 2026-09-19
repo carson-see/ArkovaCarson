@@ -81,6 +81,8 @@ vi.mock('../../lib/urls.js', () => ({
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { requireScope } from '../../middleware/apiKeyAuth.js';
 import { submitJob } from '../../utils/jobQueue.js';
+import { submitCanonicalRow } from '../../routes/anchor-self-service-bulk.js';
+import type { Request } from 'express';
 
 // CodeRabbit PR #736 nit: prefer interface for object-shape type assertions
 // per repository TypeScript conventions.
@@ -201,6 +203,32 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       p_metadata: { ai_summary: 'safe summary', jurisdiction: 'MI', securing_path: 'instant' },
       p_user_tags: ['audit'], p_org_tags: ['quarterly'],
       p_fingerprint_source: 'document_bytes',
+    }));
+  });
+
+  it('bulk in-process delegation preserves safe extraction fields and does not overclaim a provided source', async () => {
+    const req = {
+      apiKey: {
+        keyId: 'user-1', userId: 'user-1', orgId: 'org-1',
+        scopes: ['anchor:write'], rateLimitTier: 'paid', keyPrefix: 'jwt-session',
+      },
+    } as Request;
+    const outcome = await submitCanonicalRow(req, {
+      fingerprint: VALID_FINGERPRINT,
+      filename: 'import.pdf',
+      action: 'queue',
+      metadata: {
+        ai_summary: 'safe summary', jurisdiction: 'MI', csv_source_column: 'source-a',
+        email: 'private@example.test', _internal: 'drop-me',
+      },
+      private_tags: { user: [], organization: [] },
+    }, false);
+    expect(outcome.status).toBe(201);
+    expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.objectContaining({
+      p_fingerprint_source: null,
+      p_metadata: {
+        ai_summary: 'safe summary', jurisdiction: 'MI', csv_source_column: 'source-a', securing_path: 'queue',
+      },
     }));
   });
 

@@ -7,17 +7,20 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { supabase } from '@/lib/supabase';
-import { WORKER_URL } from '@/lib/workerClient';
+import { workerFetch } from '@/lib/workerClient';
+import type { SecuringPath } from '@/lib/queueContract';
 import type { BulkAnchorRecord } from '@/lib/csvParser';
 import { useEntitlements } from '@/hooks/useEntitlements';
-import { ENTITLEMENT_LABELS, TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
+import { BULK_IMPORT_LABELS, ENTITLEMENT_LABELS, TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
 
 /** R19: options for createBulkAnchors. `attested` must be true whenever the
  * batch contains any record-derived (fingerprintProvided === false) rows —
  * the issuer-attestation acknowledgement gate (BulkUploadWizard ReviewStep). */
 export interface CreateBulkAnchorsOptions {
   attested?: boolean;
+  action?: SecuringPath;
+  description?: string;
+  privateTags?: { user: string[]; organization: string[] };
 }
 
 interface BulkAnchorResult {
@@ -26,6 +29,7 @@ interface BulkAnchorResult {
   id?: string;
   reason?: string;
   existingId?: string;
+  instant_status?: 'QUEUED' | 'PROCESSING' | 'NEEDS_CREDIT' | 'RETRYABLE' | 'HELD' | 'SUBMITTED' | 'FAILED' | null;
 }
 
 interface BulkCreateResult {
@@ -34,6 +38,7 @@ interface BulkCreateResult {
   skipped: number;
   failed: number;
   results: BulkAnchorResult[];
+  partial?: boolean;
 }
 
 interface UseBulkAnchorsReturn {
@@ -93,9 +98,9 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
       // R19 (CTO ruling 2026-07-28): any record whose fingerprint was
       // synthesized from row text (fingerprintProvided === false) requires
       // the issuer-attestation acknowledgement before the batch may proceed.
-      // Client-side gate mirrors the server-side class computation in
-      // bulk_create_anchors (0376) — this does not replace it, it prevents
-      // an unacknowledged submission from ever reaching the RPC.
+      // Client-side gate mirrors the canonical worker's record-class
+      // computation. It does not replace server enforcement; it prevents an
+      // unacknowledged submission from reaching the bulk HTTP boundary.
       const requiresAttestation = records.some(r => r.fingerprintProvided === false);
       if (requiresAttestation && !options.attested) {
         setError(RECORD_ATTESTATION_LABELS.ACKNOWLEDGEMENT_REQUIRED_ERROR);
@@ -126,28 +131,30 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
           const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
           const totalBatches = Math.ceil(records.length / BATCH_SIZE);
           const batch = records.slice(i, i + BATCH_SIZE);
-          const batchData = batch.map(r => ({
-            fingerprint: r.fingerprint,
-            filename: r.filename,
-            fileSize: r.fileSize || null,
-            credentialType: r.credentialType || null,
-            metadata: r.metadata || null,
-            // R19: narrow boolean signal only — bulk_create_anchors (0376)
-            // computes fingerprint_source server-side from this, never from
-            // a client-supplied label.
-            fingerprintProvided: r.fingerprintProvided ?? false,
-            ...(targetOrgId ? { orgId: targetOrgId } : {}),
-          }));
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data, error: rpcError } = await (supabase as any).rpc(
-            'bulk_create_anchors',
-            { anchors_data: batchData }
-          );
-
-          if (rpcError) {
-            throw new Error(rpcError.message || 'Failed to process batch');
-          }
+          const response = await workerFetch('/api/v1/anchor-self-service/bulk', {
+              method: 'POST',
+              body: JSON.stringify({
+                org_id: targetOrgId,
+                action: options.action ?? 'queue',
+                description: options.description?.trim() || undefined,
+                private_tags: options.privateTags ?? { user: [], organization: [] },
+                rows: batch.map((record) => ({
+                  fingerprint: record.fingerprint,
+                  filename: record.filename,
+                  file_size: record.fileSize,
+                  credential_type: record.credentialType,
+                  metadata: record.metadata,
+                  fingerprint_provided: record.fingerprintProvided ?? false,
+                  recipient_email: record.email,
+                  recipient_name: typeof record.metadata?.recipient_name === 'string'
+                    ? record.metadata.recipient_name
+                    : undefined,
+                })),
+              }),
+            });
+          const data = await response.json().catch(() => null) as BulkCreateResult | null;
+          const hasStructuredResults = Boolean(data && Array.isArray(data.results));
+          if (!response.ok && !hasStructuredResults) throw new Error('Failed to process batch');
 
           if (data) {
             totalCreated += data.created || 0;
@@ -157,6 +164,21 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             if (data.results) {
               allResults.push(...data.results);
             }
+          }
+
+          if (!response.ok) {
+            const partialResult: BulkCreateResult = {
+              total: allResults.length,
+              created: totalCreated,
+              skipped: totalSkipped,
+              failed: totalFailed,
+              results: allResults,
+              partial: true,
+            };
+            setError(BULK_IMPORT_LABELS.PARTIAL_TRANSPORT);
+            toast.warning(BULK_IMPORT_LABELS.PARTIAL_TRANSPORT);
+            await refreshEntitlements();
+            return partialResult;
           }
 
           // Update progress + report per-batch completion
@@ -180,57 +202,6 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
           results: allResults,
         };
 
-        // Auto-create recipient profiles for records with email addresses (BETA-04)
-        // Recipient creation is non-fatal to the anchor batch (anchors are already
-        // created above), but real failures must still be counted and surfaced —
-        // never swallowed into a false "complete" toast (SCRUM-2598).
-        let recipientFailed = 0;
-        const recipientRecords = records.filter(r => r.email);
-        if (recipientRecords.length > 0) {
-          const workerUrl = WORKER_URL;
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session) {
-            let orgId = targetOrgId;
-            if (!orgId) {
-              // Fetch org_id from user's profile — required by /api/recipients endpoint
-              const { data: userProfile } = await supabase
-                .from('profiles')
-                .select('org_id')
-                .eq('id', session.user.id)
-                .single();
-              orgId = userProfile?.org_id ?? null;
-            }
-
-            if (orgId) {
-              const recipientResults = await Promise.allSettled(
-                recipientRecords.map(async r => {
-                  const response = await fetch(`${workerUrl}/api/recipients`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${session.access_token}`,
-                    },
-                    body: JSON.stringify({
-                      email: r.email,
-                      orgId,
-                      fullName: r.metadata?.recipient_name ?? r.metadata?.recipient ?? r.filename.replace('.credential', ''),
-                      credentialLabel: r.credentialType ?? 'Credential',
-                    }),
-                  });
-                  if (!response.ok) {
-                    throw new Error(`Recipient creation failed (${response.status})`);
-                  }
-                  return response;
-                })
-              );
-              recipientFailed = recipientResults.filter(r => r.status === 'rejected').length;
-            }
-            // No resolvable orgId: recipient creation was never attempted (same
-            // pre-existing behavior as before this fix) — not counted as a failure.
-          }
-          // No session: recipient creation was never attempted, same as before.
-        }
-
         // Refresh entitlement counts after successful bulk creation
         await refreshEntitlements();
 
@@ -239,12 +210,6 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             TOAST.BULK_PARTIAL
               .replace('{created}', String(totalCreated))
               .replace('{failed}', String(totalFailed))
-          );
-        } else if (recipientFailed > 0) {
-          toast.warning(
-            TOAST.BULK_RECIPIENTS_FAILED
-              .replace('{created}', String(totalCreated))
-              .replace('{failed}', String(recipientFailed))
           );
         } else {
           toast.success(
