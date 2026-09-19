@@ -1922,7 +1922,7 @@ jobs:
 
       - name: Install Python SDK with dev extras
         run: >-
-          python -m pip install --only-binary=:all: --upgrade "pip==26.2.1" && python -m pip install --only-binary=:all: -e ".[dev]"
+          python -m pip install --only-binary=:all: --upgrade "pip==26.2.1" && python -m pip install --only-binary=:all: -e ".[dev]" # NOSONAR — isolated CI tooling; pip and ruff are exact-pinned, remaining dev ranges are bounded in pyproject.toml
 
       - name: Run Python SDK tests
         run: pytest
