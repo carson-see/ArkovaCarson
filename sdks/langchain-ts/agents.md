@@ -39,6 +39,17 @@ helper, the phrase, and the constant are duplicated here deliberately rather tha
 Suite for this package is 32 tests after release qualification. Run it from
 this package directory so its local config and pinned dev toolchain are used.
 
+Historical pre-qualification note retained verbatim for append-only policy; the
+2026-09-19 section below supersedes its counts and toolchain state:
+
+Suite for this package is 31 tests; `npx vitest run --root sdks` from the repo root covers both
+packages (80 tests).
+
+**Pre-existing, not introduced here:** `npx tsc --noEmit` in this package reports one error,
+`tsconfig.json(5,25): TS5107 moduleResolution=node10 is deprecated`. It comes from the committed
+`tsconfig.json` (last touched in PR #761) meeting the newer TypeScript resolved from the repo root
+— this package declares no devDependencies of its own. Unrelated to this change and left alone.
+
 ## 2026-09-19 — first-public-release qualification
 
 - The package now owns its TypeScript/Vitest dev toolchain, lockfile and local
