@@ -1,4 +1,28 @@
+## 2026-09-12 — SCRUM-5023: `POST /jobs/api-key-expiry-notice`
+
+Daily API-key expiry notice (job in `jobs/api-key-expiry-notice.ts`, scheduler entry in
+`scripts/gcp-setup/cloud-scheduler.sh`). **Cloud Scheduler is the only trigger — there is deliberately
+no `scheduled.ts` in-process entry**, so nothing about this job double-fires on a warm instance.
+Flag-free but safe unconfigured: with no email provider the
+job returns `skipped: true` without touching the database or the audit ledger, so an unconfigured
+environment does not consume a key's one warning.
+
+**Answers 200 on a partly-failed sweep.** `failed` is a per-key count the body carries. A 500 would
+make Cloud Scheduler re-drive the whole window for the sake of one bad row, re-mailing every key that
+already succeeded — the audit-row dedupe would catch those duplicates, but relying on it to clean up
+after an avoidable retry is the wrong order of defences.
+
 # services/worker/src/routes/agents.md
+
+## 2026-09-19 — global CORS must preserve the v1 header contract
+
+`index.ts` mounts `corsMiddleware` before `/api/v1`, so the global middleware must defer the exact
+`/api/v1` boundary and legacy `/v1` alias to the v1 router's shared CORS owner. That owner carries
+API-key/idempotency headers, PUT, and its own production origin policy; duplicating any subset
+globally makes the contracts drift. Non-v1 browser routes keep their narrower historical header
+list, and `/api/v10` or `/v10` are not treated as v1.
+The integration regression belongs in `index.test.ts` so a unit test of the v1 router alone cannot
+miss mount-order preemption.
 
 ## UAT-22 invitation GET route (2026-09-14)
 
@@ -129,8 +153,8 @@ What that changes for this folder:
 
 ## Conventions
 - **Adding a `cronRouter.post` route requires a trigger decision in the same change** (PR #2067 ratchet): declare it in `scripts/gcp-setup/cloud-scheduler.sh`'s `JOBS` array or list it in `NOT_SCHEDULED` with a reason. `scripts/gcp-setup/cloud-scheduler.test.ts` fails otherwise — note it runs in the ROOT vitest suite, not the worker suite, so `cd services/worker && npm test` won't surface it locally; CI's Tests job will.
-- Every cron endpoint wraps work in `trackOperation(...)` so SIGTERM drains in-flight jobs.
-- Errors are logged with `{error, jobName}` context and never re-thrown (Cloud Scheduler treats non-200 as retry-eligible).
+- **`trackOperation(...)` wraps the IN-PROCESS schedules (`scheduled.ts`), not these HTTP routes.** Verified 2026-09-12: `cron.ts` has 111 `cronRouter.post` routes and **zero** `trackOperation` calls — the importers are `index.ts`, `scheduled.ts` and `lifecycle.ts`. So an HTTP-triggered job is **not** drained on SIGTERM by this router; a Cloud Run revision replaced mid-sweep drops it, and recovery is Cloud Scheduler's retry, not graceful shutdown. Wrap a new route yourself if the job cannot tolerate that.
+- Errors are logged and never re-thrown (Cloud Scheduler treats non-200 as retry-eligible), but the context object is **`{error}`** plus a message string — `logger.error({ error }, 'Anchor processing failed')` — across all 94 call sites. There is no `jobName` field anywhere in `cron.ts`; the job is identified by the message text, so grep the message, not a structured field.
 - HTTP-triggered jobs are protected by `X-Cron-Secret` per AUDIT-03 (handled in middleware before this router).
 - In-process schedules are conditional: `chainInitialized` guard for chain-touching jobs; `disableInProcessAnchorCron` guard for `anchors`-table jobs.
 

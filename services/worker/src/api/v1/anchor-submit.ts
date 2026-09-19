@@ -140,6 +140,14 @@ async function findCallerAnchor(
   return query.maybeSingle();
 }
 
+const compareTagsLexically = (a: string | null, b: string | null): number => {
+  // Match Array.sort()'s historical string coercion for nullable generated rows,
+  // while making the intended lexical order explicit for static analysis.
+  const left = a === null ? 'null' : a;
+  const right = b === null ? 'null' : b;
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+
 async function sendIdempotentReceipt(
   existing: { id: string; public_id: string | null; fingerprint: string; status: string; created_at: string; metadata?: unknown },
   body: AnchorSubmitRequest,
@@ -157,12 +165,12 @@ async function sendIdempotentReceipt(
       return;
     }
     const requested = {
-      user: [...new Set(body.private_tags.user.map((tag) => tag.trim().toLocaleLowerCase()))].sort(),
-      organization: [...new Set(body.private_tags.organization.map((tag) => tag.trim().toLocaleLowerCase()))].sort(),
+      user: [...new Set(body.private_tags.user.map((tag) => tag.trim().toLocaleLowerCase()))].sort(compareTagsLexically),
+      organization: [...new Set(body.private_tags.organization.map((tag) => tag.trim().toLocaleLowerCase()))].sort(compareTagsLexically),
     };
     const stored = {
-      user: (storedTags ?? []).filter((tag) => tag.scope === 'user').map((tag) => tag.normalized_tag).sort(),
-      organization: (storedTags ?? []).filter((tag) => tag.scope === 'organization').map((tag) => tag.normalized_tag).sort(),
+      user: (storedTags ?? []).filter((tag) => tag.scope === 'user').map((tag) => tag.normalized_tag).sort(compareTagsLexically),
+      organization: (storedTags ?? []).filter((tag) => tag.scope === 'organization').map((tag) => tag.normalized_tag).sort(compareTagsLexically),
     };
     if (requested.user.join('\0') !== stored.user.join('\0')
       || requested.organization.join('\0') !== stored.organization.join('\0')) {

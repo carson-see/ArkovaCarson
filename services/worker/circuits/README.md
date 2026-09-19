@@ -90,9 +90,9 @@ above differs. Pin diagnostics in this order:
 
 ## Powers of Tau
 
-`build.sh` downloads the `powersOfTau28_hez_final_14` file from the public
-Polygon zkEVM mirror at
-`https://storage.googleapis.com/zkevm/ptau/`. This is the artifact of the
+`build.sh` downloads the `powersOfTau28_hez_final_14` file from Arkova's public,
+managed-prefix Cloud Storage mirror. The historical Polygon zkEVM and Hermez
+public URLs return HTTP 403 and are not treated as working fallbacks. This is the artifact of the
 universal hermez ceremony and is reusable across any circuit ≤ 2^14
 constraints. Our circuit has ~558 non-linear constraints (well within
 budget). The script verifies SHA-256
