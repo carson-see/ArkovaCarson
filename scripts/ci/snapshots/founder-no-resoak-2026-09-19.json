@@ -91,11 +91,12 @@
     },
     {
       "number": 2967,
-      "head_sha": "4a6c66bd391533211056e7c23bdd2fccda96bf5b",
+      "head_sha": "aace4ce6792d66272c2e493ee12033b9cc7b0f69",
       "prior_reviewed_source": "da12020a4b2eb999a6441e058f175c14a1f1cba2",
       "existing_evidence": [
         "/Volumes/Extreme/offload/codex-release-evidence/2026-09-14/oldest-review/qualification/c3-window1/summary.json",
-        "PR body: native PostgreSQL rollback/reapply and description persistence/repair tests"
+        "PR body: native PostgreSQL rollback/reapply and description persistence/repair tests",
+        "2026-09-19: corrected malformed organization UUID in RLS fixture; native PostgreSQL17 actual migration function roundtrip and rollback verified. Runtime SQL unchanged."
       ],
       "residual_risk": "C3 was interrupted without continuity/closing cycle. Production data repair remains a separately authorized action."
     },
