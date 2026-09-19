@@ -5,8 +5,9 @@
 The Python SDK test and PyPI workflows use the same exact `setup-uv` commit,
 uv version, Python 3.12 interpreter, and committed `packages/arkova-py/uv.lock`.
 `uv sync --locked --all-extras --no-install-project --no-build` installs only
-locked third-party wheels. The local project is then installed editable with
-`--no-deps --no-build-isolation`, using the locked Hatchling already present.
+locked third-party wheels. The local project is built once with the locked
+Hatchling and no isolated resolver, then its wheel is installed with
+`uv pip --no-deps --no-build`; tests and lint run with `uv run --no-build`.
 Commands run with `--no-sync` so uv cannot silently resolve again. Keep the two
 workflows in parity; `ci-workflow-contract.test.ts` fails if either drifts.
 

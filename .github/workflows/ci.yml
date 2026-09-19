@@ -2048,18 +2048,22 @@ jobs:
           enable-cache: true
           cache-dependency-glob: packages/arkova-py/uv.lock
 
-      - name: Install locked Python SDK with dev extras
+      - name: Install locked Python SDK dependencies
+        run: uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
+
+      - name: Build and install first-party Python SDK wheel
         run: |
-          uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
-          uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable .
+          rm -rf dist
+          uv run --locked --no-sync --no-build python -m build --wheel --no-isolation
+          uv pip install --python .venv/bin/python --no-deps --no-build dist/*.whl
 
       - name: Run Python SDK tests
-        run: uv run --locked --no-sync pytest
+        run: uv run --locked --no-sync --no-build pytest
 
       # Ruff and every other dev dependency come from uv.lock. This is the same
       # locked command the publish gate runs.
       - name: Lint Python SDK (publish-gate parity)
-        run: uv run --locked --no-sync ruff check src tests
+        run: uv run --locked --no-sync --no-build ruff check src tests
 
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:

@@ -31,18 +31,19 @@ jobs:
           cache-dependency-glob: packages/arkova-py/uv.lock
 
       - name: Install locked development environment
-        run: |
-          uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
-          uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable .
+        run: uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
 
-      - name: Test
-        run: uv run --locked --no-sync pytest
+      - name: Build and install first-party distribution
+        run: |
+          rm -rf dist
+          uv run --locked --no-sync --no-build python -m build --no-isolation
+          uv pip install --python .venv/bin/python --no-deps --no-build dist/*.whl
+
+      - name: Test installed wheel
+        run: uv run --locked --no-sync --no-build pytest
 
       - name: Lint
-        run: uv run --locked --no-sync ruff check src tests
-
-      - name: Build
-        run: uv run --locked --no-sync python -m build --no-isolation
+        run: uv run --locked --no-sync --no-build ruff check src tests
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/arkova-py-v')

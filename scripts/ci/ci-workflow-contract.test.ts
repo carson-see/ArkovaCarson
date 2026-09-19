@@ -367,7 +367,7 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
       /working-directory:\s*packages\/arkova-py/u,
     );
     expect(job, "the job must execute the suite, not merely install it").toMatch(
-      /run:\s*uv run --locked --no-sync pytest\b/u,
+      /run:\s*uv run --locked --no-sync --no-build pytest\b/u,
     );
   });
 
@@ -375,7 +375,7 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
     // publish-python-sdk.yml gates the PyPI upload on `ruff check src tests`.
     // A finding that only surfaces there blocks a release instead of a review —
     // exactly the ordering that let 2.2.0 ship unchecked.
-    expect(pythonJob()).toMatch(/run:\s*uv run --locked --no-sync ruff check src tests/u);
+    expect(pythonJob()).toMatch(/run:\s*uv run --locked --no-sync --no-build ruff check src tests/u);
   });
 
   it("installs every extra from the committed lock with an exact uv toolchain", () => {
@@ -383,7 +383,8 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
     expect(job).toMatch(/astral-sh\/setup-uv@[a-f0-9]{40}/u);
     expect(job).toMatch(/version:\s*["']0\.10\.3["']/u);
     expect(job).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
-    expect(job).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build-isolation --editable \./u);
+    expect(job).toMatch(/uv run --locked --no-sync --no-build python -m build --wheel --no-isolation/u);
+    expect(job).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build dist\/\*\.whl/u);
     expect(job).not.toMatch(/python -m pip/u);
   });
 
@@ -397,11 +398,20 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
       expect(workflow).toMatch(/version:\s*["']0\.10\.3["']/u);
       expect(workflow).toMatch(/cache-dependency-glob:\s*packages\/arkova-py\/uv\.lock/u);
       expect(workflow).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
-      expect(workflow).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build-isolation --editable \./u);
-      expect(workflow).toMatch(/uv run --locked --no-sync pytest/u);
-      expect(workflow).toMatch(/uv run --locked --no-sync ruff check src tests/u);
+      expect(workflow).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build dist\/\*\.whl/u);
+      expect(workflow).toMatch(/uv run --locked --no-sync --no-build pytest/u);
+      expect(workflow).toMatch(/uv run --locked --no-sync --no-build ruff check src tests/u);
+      expect(workflow).not.toContain("--editable");
+      const uvRuns = workflow.match(/uv run[^\n]*/gu) ?? [];
+      expect(uvRuns.length).toBeGreaterThan(0);
+      expect(uvRuns.every((command) => command.includes("--no-build"))).toBe(true);
+      const buildIndex = workflow.indexOf("python -m build");
+      const installIndex = workflow.indexOf("uv pip install");
+      expect(buildIndex).toBeGreaterThan(-1);
+      expect(installIndex).toBeGreaterThan(buildIndex);
+      expect(workflow.match(/python -m build/gu)).toHaveLength(1);
     }
-    expect(publish).toMatch(/uv run --locked --no-sync python -m build --no-isolation/u);
+    expect(publish).toMatch(/uv run --locked --no-sync --no-build python -m build --no-isolation/u);
   });
 
   it("matches the publish workflow's interpreter", () => {
