@@ -30,6 +30,8 @@ function admitted(event: { name: string; draft?: boolean; head?: string }): bool
   return event.name !== 'pull_request' || event.head?.startsWith('mergify/') === true || event.draft !== true;
 }
 
+const focusedJob = 'protected-main-focused';
+
 describe('CI draft admission', () => {
   it('subscribes to readiness transitions and manual verification', () => {
     expect(source).toContain('types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]');
@@ -48,7 +50,7 @@ describe('CI draft admission', () => {
 
   it('gates every expensive job and retains the pre-admission DAG', () => {
     for (const [id, block] of Object.entries(jobBlocks())) {
-      if (id === 'admission') continue;
+      if (id === 'admission' || id === focusedJob) continue;
       const dependencies = needs(block);
       expect(dependencies, `${id} must depend on admission`).toContain('admission');
       expect(block, `${id} must consume admission`).toContain("needs.admission.outputs.run_full == 'true'");
@@ -56,5 +58,9 @@ describe('CI draft admission', () => {
         (originalDependencies[id] ?? []).sort(),
       );
     }
+    expect(jobBlocks()[focusedJob]).toContain("needs.admission.outputs.run_focused == 'true'");
+    expect(jobBlocks()['secret-scan']).toContain(
+      "needs.admission.outputs.run_full == 'true' || needs.admission.outputs.run_focused == 'true'",
+    );
   });
 });

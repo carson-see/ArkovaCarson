@@ -3,6 +3,10 @@
 ## 2026-09-19 — SCRUM-5253 People mobile layout regression
 
 The E2E job runs `npm run test:e2e:people-layout` after the shared Chromium suite whenever the existing app-affecting change detector enables E2E. The standalone config owns a local Vite server and synthetic HTTP boundaries, so it is intentionally ignored by the shared Playwright config; this explicit CI step is its durable invocation.
+## 2026-09-19 — authoritative PR base resolution
+
+The staging and identity gates resolve the target branch through GitHub’s authenticated git/ref API. The PR resource’s cached base SHA can lag main and must not select the trusted release snapshot. When staging sees this mismatch, it checks out the exact source head and merges the authoritative base before running the checker; conflicts fail closed. This local merge is never pushed and does not assert new soak evidence.
+
 ## 2026-09-19 — draft admission saves Actions budget
 
 `ci.yml` has one cheap `CI Admission` job. Ordinary draft pull requests report
@@ -13,6 +17,21 @@ run every existing job, as do protected-branch pushes and manual dispatches.
 Every prior `needs` edge remains and each job keeps its established display
 name. `scripts/ci/ci-draft-admission.test.ts` pins triggers, scenarios, gating,
 and the complete pre-admission DAG.
+
+## 2026-09-19 — protected-main T0 pushes use focused validation
+
+`ci.yml` reuses `requiredTierFor` for pushes to `main`. A supported T0-only
+docs/test/CI-policy push runs `Protected Main Focused Validation` plus the
+unchanged `Secret Scanning` security job instead
+of starting the runtime, browser, scanner, and build matrix. The focused job
+parses every workflow, checks governance pointers, typechecks/builds the root,
+lints shipped copy, runs the complete `scripts/ci` contract suite for CI-policy
+changes, and executes directly changed root/worker/shell tests. Worker tests use
+worker-local dependencies and also run worker typecheck/build deploy parity.
+Runtime/deploy/migration paths, Supabase-backed RLS/infra tests, unsupported T0 paths,
+deletions, renames, missing objects, non-ancestor ranges, malformed SHAs, and
+empty diffs all run the full matrix. PRs, Mergify candidates, staging/develop
+pushes, and manual dispatch remain full-matrix under their prior rules.
 
 ## PR #2940 — Edge deploy follows the installed Wrangler version
 
@@ -251,7 +270,7 @@ issue comment), so a change to one of those can take effect outside the PR cycle
 |------|---------|---------|
 | `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 26 jobs (verified by `yaml.safe_load` 2026-08-23; the previous "24" was stale): secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity, anti-hollow-soak. The last two were report-only until SCRUM-2965/2977 activated them fail-closed and added them to every .mergify.yml queue rule; `evidence-identity` skips Mergify's speculative merge-queue PRs and resolves PR body/head LIVE via `gh api`, because this workflow's `pull_request` trigger declares no `types:` and so never fires on a body `edited`. |
 | `staging-evidence.yml` | `pull_request` incl. **`edited`**/`labeled`/`unlabeled` | The `Staging Soak Evidence Gate` required check (CLAUDE.md §1.11/§1.12). `edited` matters: a body-only evidence update fires no `synchronize`. |
-| `migration-drift.yml` | `push` main + `pull_request` incl. **`edited`** | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
+| `migration-drift.yml` | `push` main + source-changing `pull_request` events | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
 | `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
 | `gitleaks.yml` | `pull_request` main + `push` main | Single `scan` job — secret scanning. |
 | `deploy-worker.yml` | **`push` to `main`** filtered to `services/worker/**` + `workflow_dispatch` | Cloud Run worker deploy: `pre-deploy-checks` → `deploy-gate` (the `vars.DEPLOY_WORKER_PAUSED` pause) → `deploy`. Worker lint uses `npm run lint` (matches CI). |
@@ -873,3 +892,8 @@ When merging the invitation integration with the Zapier CI addition, preserve
 both `uat22-local-integration` and `zapier-validation` in the result map and
 the aggregation loop. Either failure or cancellation must fail required Tests;
 collecting a result without iterating it silently drops that suite from the gate.
+
+
+## 2026-09-19 — stop rerunning migration drift on PR-body edits
+
+`migration-drift.yml` no longer subscribes to `pull_request.edited`. The workflow reads the checked-out migration tree and live production state; it never reads PR-body evidence. A body edit leaves the head SHA and its existing required-check result unchanged, while `staging-evidence.yml` remains subscribed to `edited` because that workflow does consume the body. This removes repeated WIF, Secret Manager, Supabase API, dependency-install, and ledger-audit jobs without dropping a source, base, or evidence validation. The old Mergify status-edit isolation remains necessary only in `staging-evidence.yml`.

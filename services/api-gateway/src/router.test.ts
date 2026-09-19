@@ -53,6 +53,13 @@ describe('resolveRoute — api.arkova.ai', () => {
     expect(r).toEqual({ kind: 'proxy', path: '/health' });
   });
 
+  it('proxies the canonical proof-key registry without opening arbitrary well-known paths', () => {
+    expect(resolveRoute('api.arkova.ai', '/.well-known/arkova-keys.json')).toEqual({
+      kind: 'proxy', path: '/.well-known/arkova-keys.json',
+    });
+    expect(resolveRoute('api.arkova.ai', '/.well-known/private.json').kind).toBe('not_found');
+  });
+
   it('maps /openapi.json to the published spec path', () => {
     const r = resolveRoute('api.arkova.ai', '/openapi.json');
     expect(r).toEqual({ kind: 'proxy', path: '/api/docs/spec.json' });

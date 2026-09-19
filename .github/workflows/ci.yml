@@ -53,18 +53,77 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_full: ${{ steps.decision.outputs.run_full }}
+      run_focused: ${{ steps.decision.outputs.run_focused }}
     steps:
+      - name: Checkout protected-main history for tier admission
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js for protected-main tier admission
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install tier-detector dependencies
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: npm ci --ignore-scripts
+
+      - name: Classify protected-main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        id: main_push
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: node_modules/.bin/tsx scripts/ci/main-push-admission.ts
+
       - name: Admit protected, ready, and speculative runs
         id: decision
         env:
-          RUN_FULL: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'mergify/') || github.event.pull_request.draft != true }}
-        run: echo "run_full=$RUN_FULL" >> "$GITHUB_OUTPUT"
+          DEFAULT_RUN_FULL: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'mergify/') || github.event.pull_request.draft != true }}
+          MAIN_PUSH_RUN_FULL: ${{ steps.main_push.outputs.run_full }}
+          MAIN_PUSH_RUN_FOCUSED: ${{ steps.main_push.outputs.run_focused }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "run_full=${MAIN_PUSH_RUN_FULL:-true}" >> "$GITHUB_OUTPUT"
+            echo "run_focused=${MAIN_PUSH_RUN_FOCUSED:-false}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_full=$DEFAULT_RUN_FULL" >> "$GITHUB_OUTPUT"
+            echo "run_focused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  protected-main-focused:
+    name: Protected Main Focused Validation
+    needs: admission
+    if: ${{ needs.admission.outputs.run_focused == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Run changed-surface and CI policy validation
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: node_modules/.bin/tsx scripts/ci/run-main-t0-validation.ts
 
   # Secret scanning - block commits containing secrets
   secret-scan:
     name: Secret Scanning
     needs: admission
-    if: ${{ needs.admission.outputs.run_full == 'true' }}
+    if: ${{ needs.admission.outputs.run_full == 'true' || needs.admission.outputs.run_focused == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2350,13 +2409,22 @@ jobs:
           fi
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
+          BASE_REPO="$(jq -r '.base.repo.full_name // empty' <<<"${DATA}")"
+          BASE_REF="$(jq -r '.base.ref // empty' <<<"${DATA}")"
+          if [[ "${BASE_REPO}" != "${{ github.repository }}" || ! "${BASE_REF}" =~ ^(main|staging|develop)$ ]]; then
+            echo "::error::PR #${PR_NUMBER} has an unexpected base repository/ref."
+            exit 1
+          fi
+          BASE_DATA="$(gh api "repos/${BASE_REPO}/git/ref/heads/${BASE_REF}")"
+          BASE_SHA="$(jq -r '.object.sha // empty' <<<"${BASE_DATA}")"
           IS_DRAFT="$(jq -r '.draft // false' <<<"${DATA}")"
-          if [[ -z "${HEAD_SHA}" ]]; then
-            echo "::error::gh api returned an empty head SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
+          if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::gh api returned an invalid head/base SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
             exit 1
           fi
           {
             echo "head_sha=${HEAD_SHA}"
+            echo "base_sha=${BASE_SHA}"
             echo "is_draft=${IS_DRAFT}"
           } >> "${GITHUB_OUTPUT}"
           # SECURITY: the PR body is fully author-controlled. A FIXED heredoc
@@ -2397,6 +2465,7 @@ jobs:
           # exactly the fields that go stale on a bare rerun.
           PR_BODY: ${{ steps.live_pr.outputs.body }}
           PR_HEAD_SHA: ${{ steps.live_pr.outputs.head_sha }}
+          BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
           PR_IS_DRAFT: ${{ steps.live_pr.outputs.is_draft }}
         run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts
 

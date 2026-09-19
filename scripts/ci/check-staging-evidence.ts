@@ -3355,6 +3355,10 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/load-harness-artifact(\.test)?\.ts$/,
+  // Protected-main admission and its focused runner execute only in CI. Keep
+  // this exact family T0 so a future safety fix to the admission policy does
+  // not demand a staging soak for code that never enters a deployed artifact.
+  /^scripts\/ci\/(?:main-push-admission(?:\.test)?|run-main-t0-validation)\.ts$/,
   // SCRUM-3026: sanctioned re-trigger helper — mints a fresh PR event
   // (tree-identical empty commit + push, optional PR-body head-SHA bump via
   // `gh pr edit`) so event-driven CI gates re-evaluate CURRENT PR state

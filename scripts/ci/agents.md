@@ -1,5 +1,22 @@
 # scripts/ci/agents.md
 
+## 2026-09-19 — protected-main T0 admission
+
+`main-push-admission.ts` resolves the exact `before..after` push range and
+classifies it with the same `requiredTierFor` used by staging evidence. It has a
+second allowlist for focused validation support; an unfamiliar T0 path stays on
+the full matrix. Deployment/publish workflows and Supabase-backed RLS/infra
+tests are explicitly unsupported; only `ci.yml` has the complete focused
+workflow-policy contract. `run-main-t0-validation.ts` re-resolves the range before
+running focused checks so workflow output alone cannot widen admission.
+Deletions and renames deliberately fail closed to the full matrix. Focused
+pushes retain the independent secret scan, root build/typecheck/copy lint, and
+worker-local typecheck/build when worker tests change.
+
+## 2026-09-19 — current base gate contracts
+
+The staging workflow contract executes the live-state resolver with stale-base fixtures and pins the conditional merge against the authoritative base. Both evidence workflows pass the authenticated current base SHA to their checker. Keep the PR body and source head bound to the live PR record and the founder exception bound to the protected base snapshot.
+
 ## 2026-09-19 — Evidence-identity support for the founder no-resoak release decision
 
 `check-evidence-identity.ts` consumes the same trusted-base, exact-PR, exact-head founder decision as the staging-evidence gate. It loads the snapshot only from the validated 40-hex `BASE_REF_SHA`; a shallow CI checkout may fetch exactly that commit from `origin`. The PR number comes only from `GITHUB_EVENT_PATH`, and runtime repository identity comes from `GITHUB_REPOSITORY`. Accepted output states that this is an authorization exception and does not claim historical PR-head or preflight identities match the current head. Absent, expired, unlisted, wrong-repository, changed-head, snapshot-edit, malformed-event and failed-fetch contexts retain the original fail-closed identity checks.
