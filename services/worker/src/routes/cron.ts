@@ -238,7 +238,10 @@ function getRegisteredJobPaths(): Set<string> {
  * and `/lock-wait` reach the same handler and must therefore share one bucket.
  */
 function normalizeJobPath(path: string): string {
-  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  let trimmed = path;
+  while (trimmed.length > 1 && trimmed.endsWith('/')) {
+    trimmed = trimmed.slice(0, -1);
+  }
   return trimmed.toLowerCase();
 }
 
