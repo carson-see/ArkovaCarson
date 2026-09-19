@@ -38,66 +38,6 @@ import {
   CREDIT_ALLOCATIONS,
 } from './cost-tracker.js';
 
-interface QueryResult {
-  data: unknown;
-  error: unknown;
-}
-
-/**
- * Mocks `db.from('ai_credits')` for `ensureAICreditsPeriod`.
- *
- * The real code issues up to three statements: the covering-period lookup
- * (`.eq().lte().gt().order().order().limit(1).maybeSingle()`), the
- * `.insert().select().maybeSingle()`, and — only after an insert — the
- * re-read that closes the TOCTOU window (the same select chain, awaited
- * directly for the full row list). `selectResults` is consumed one entry per
- * `select()` call, so a test can hand the lookup and the re-read different
- * answers; the last entry repeats if the code selects more times than the
- * test provided.
- */
-function createAiCreditsMock(opts: {
-  selectResults: QueryResult[];
-  insertResult?: QueryResult;
-  deleteResult?: { error: unknown };
-}) {
-  let selectCall = 0;
-
-  const insertSelectMaybeSingle = vi
-    .fn()
-    .mockResolvedValue(opts.insertResult ?? { data: { id: 'inserted-row' }, error: null });
-  const insertMock = vi.fn(() => ({
-    select: vi.fn(() => ({ maybeSingle: insertSelectMaybeSingle })),
-  }));
-
-  const deleteEq = vi.fn().mockResolvedValue(opts.deleteResult ?? { error: null });
-  const deleteMock = vi.fn(() => ({ eq: deleteEq }));
-
-  const selectMock = vi.fn(() => {
-    const result =
-      opts.selectResults[Math.min(selectCall, opts.selectResults.length - 1)];
-    selectCall += 1;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chain: any = {};
-    for (const method of ['eq', 'lte', 'gt', 'order', 'limit']) {
-      chain[method] = vi.fn(() => chain);
-    }
-    chain.maybeSingle = vi.fn().mockResolvedValue(result);
-    // The re-read awaits the chain itself rather than calling maybeSingle().
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    chain.then = (onFulfilled: any, onRejected: any) =>
-      Promise.resolve(result).then(onFulfilled, onRejected);
-    return chain;
-  });
-
-  (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-    select: selectMock,
-    insert: insertMock,
-    delete: deleteMock,
-  });
-
-  return { selectMock, insertMock, deleteMock, deleteEq };
-}
-
 describe('AI Cost Tracker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
