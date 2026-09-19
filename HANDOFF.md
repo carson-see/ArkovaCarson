@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-09-19T21:20Z → 21:55Z — CTO review session (Claude Fable): c2ce T3 window 1 VOID, window 2 running; two prod findings ticketed
+
+**Read this block first.** It supersedes the 2026-09-14 `### Soaks` block below for the b4 rig.
+
+- **Window 1 of the Codex controller's c2ce union soak is VOID.** Rig `arkova-worker-cto-train-b4-0913-staging` (Supabase `dlfcwhljvkomeouykcwk`, revision `…-c2ce`, candidate `c2ce445f62814645779b24cd2bb52a7bf886a118`). Start 2026-09-19T20:02:47.956Z, 15/15 cycles ok, last good cycle 21:14:15.258Z. The supervisor (pid 14850) was tied to a Codex exec-session TTY; when that session ended it took SIGHUP, its `cleanup()` trap paused scheduler job `b4-daily-anchor-flush-49b` and then hung in `zsh -lc` opening the dead terminal (`sample`: `init_io -> open()`, PPID 1). No cycle ran after 21:14:15Z; the 600 s `max_gap_seconds` limit was crossed at 21:24:15Z, so `validate-observer-49b.mjs` fails `observer gap`. This predates the review session (session dir created 21:20:17Z; hung process started 21:19:21Z).
+- **Window 2 is RUNNING — same harness, nothing edited.** Orphan stopped with `kill -9 -14850` (SIGKILL on purpose: the trap's cleanup command would have torn down the observer fixture/API key, which are intact); window-1 log preserved as `observer-c2ce-window.VOID-window1-20260919T212712Z.ndjson`; scheduler job resumed (ENABLED); supervisor relaunched setsid-detached with stdin `/dev/null` (pid/pgid 85953, TTY `??`). **Start 2026-09-19T21:27:22.694Z. Floors: T1 23:27:23Z · T2 2026-09-20T01:27:23Z · T3 2026-09-20T21:27:23Z** (observer key `required_valid_through` 2026-09-20T23:49:35Z covers the T3 close). 5/5 cycles ok at 21:47:48Z, max gap 307 s. Evidence dir `/Volumes/Extreme/offload/codex-release-evidence/2026-09-19/t3-final-qualification/` — read `WINDOW1-VOID-NOTICE-READ-FIRST.md` there. Do NOT start a second supervisor on that output path, do NOT SIGTERM pgid 85953 unless you intend the fixture teardown, and do NOT push to any PR head in the composite.
+- **Tier census of the 17 open PRs (detector run on real file lists):** T1 #3008; T2 #2998 #3000 #3003 #3015 #2912; everything else T3. #3008/#3000/#3015 heads are ancestors of the composite and #2998's runtime files are tree-identical to it; #3003 differs only in CI/SDK-packaging/one frontend file; #2912 is covered by `scripts/ci/snapshots/founder-no-resoak-2026-09-19.json` and is blocked by a failing E2E job, not by soak. No new rigs were provisioned.
+- **Read-only review of all 17 (code review / debug / TLA precheck / simplify), nothing pushed.** DO-NOT-SHIP: **#3019** (see SCRUM-5280; also `add_existing_org_member` re-adds the stale `profiles.role='ORG_ADMIN'` authorization fallback that 0477/#3024 removed). CLOSE as superseded: **#2968** (head `39404d4d6` is a git ancestor of #3022's head). SHIP: #3008 #2998 #3005 #3024. SHIP-WITH-FOLLOWUP: #3000, #3015 (live `recover-broadcasts` scheduler job has no `retryCount`, so the PR body's retry claim is wrong), #3003 (`${{ github.event.pull_request.draft }}` interpolated in a `run:` block, ARK-SEC-012), #2912, #2999 (no `NOTIFY pgrst` after the new RPC; `deduct_ai_credits` has no `lock_timeout`; `machines/aiCreditsPeriodProvision.machine.ts` now models deleted code), #3004 (0468's rollback comment, followed literally, restores baseline `anon`/`authenticated` EXECUTE that 0377 revoked), #3020 (created anchor reported `failed` when `linkBulkRecipient` throws), #3022, #3025 (0481 `ADD CONSTRAINT` not replay-idempotent), #2966 (TLA `check` run: `instantSecureIntent` proofPassed 23/23 states, `bitcoinAnchor` unregressed; CONFLICTING is doc-only `agents.md` anchor collisions), #2964 (not superseded; 0459 sorts behind the already-applied 0460 — needs `--include-all`). Every fix on a composite member is a follow-up commit or compensating migration AFTER the window closes.
+- **Two prod findings, ticketed and in the Bug Tracker (footer comment 153190516 on Confluence 88768514):**
+  - **SCRUM-5280 (Highest)** — `organizations.domain` and `organizations.domain_verified` are UPDATE-able by `authenticated` with only `is_org_admin_of(id)` as the policy and no guard trigger, while `auto_associate_profile_to_org_by_email_domain` trusts `domain_verified`. An org admin can self-assert a victim domain and capture its signups. No abuse: the only verified org is Arkova itself (`arkova.ai`, email, 2026-03-27). Fix is an unwritten T3 compensating migration.
+  - **SCRUM-5281 (High)** — prod carries 0462 without 0480, so `folders_select_user` lets platform admins SELECT every user's globally-personal folders. Fix = 0480 (#3022; sha256 `67e3df8c99069e23ab3155226c0673bdd42dc9761905d17b984c8e754adb1e73`, byte-identical in the composite). **Apply to prod only after the T3 floor above**, with exemption `0480` added to `ledger-numeric-exemptions.json` in the same motion and the §0-rule-10 numeric reconciliation. NOT applied by this session.
+- **Correction for other sessions:** the Atlassian connector IS usable (claude.ai connector, user carson) — the "unauthenticated" entry in the plugin list is a different, unused server.
+
+
 ### 2026-09-14T12:24Z — Train B5c sealed (#2841 #2909), rig 1
 
 - Train B5c (T2, 4h floor) soaked on rig 1 (Supabase `xhvasifpunswhsgfsstd`, Cloud Run
@@ -73,7 +87,11 @@
   running per §1.11A (do not tear down). Full trail:
   `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
 
-### Soaks — Train B5c CLOSED 2026-09-14T12:24Z; rig 1 idle, no supervisor running
+### Soaks — c2ce union T3/T2/T1 window 2 RUNNING on the b4 rig (started 2026-09-19T21:27:22Z) — do not push to composite heads, do not touch pgid 85953
+
+Rig `arkova-worker-cto-train-b4-0913-staging` / Supabase `dlfcwhljvkomeouykcwk` is IN USE: supervisor pid 85953, floors T1 2026-09-19T23:27:23Z, T2 2026-09-20T01:27:23Z, T3 2026-09-20T21:27:23Z. Details in the 2026-09-19 block above. The Codex controller was additionally preparing rig 1 for #3024/#3025 at 21:14Z — confirm with its evidence dir before touching rig 1.
+
+### Soaks (2026-09-14, rig 1 only) — Train B5c CLOSED 2026-09-14T12:24Z; rig 1 idle then, no supervisor running
 
 Rig 1 (`arkova-worker-cto-train-b-0912-staging`, Supabase `xhvasifpunswhsgfsstd`) has NO
 soak running right now for a NEW candidate. The Train B5c supervisor (pid 971, launched
@@ -2826,4 +2844,4 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 
 
 
-_Last refreshed: 2026-09-14 by Claude Sonnet 5 (CTO release session) — claims verified against gh pr checks/gcloud/MCP output cited in /Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/SEAL-LOG.md._
+_Last refreshed: 2026-09-19 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
