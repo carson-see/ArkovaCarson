@@ -1664,7 +1664,7 @@ def test_anchor_receipt_exposes_the_record_uri_every_response_carries() -> None:
 
 
 def test_anchor_receipt_status_is_not_narrowed_to_a_literal() -> None:
-    """`status` stays `str` even though the endpoint only ever sends `PENDING`.
+    """`status` stays `str` because idempotent replay returns existing state.
 
     Same reasoning as `fingerprint_source` / `proof_availability` in 2.2.1:
     a `Literal["PENDING"]` would be an API snapshot promoted to a hard
@@ -1682,6 +1682,23 @@ def test_anchor_receipt_status_is_not_narrowed_to_a_literal() -> None:
     )
 
     assert receipt.status == "SOME_FUTURE_STATUS"
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "EXPIRED", "SUPERSEDED", "PENDING_RESOLUTION"],
+)
+def test_anchor_receipt_represents_every_current_lifecycle_status(status: str) -> None:
+    receipt = AnchorReceipt.model_validate(
+        {
+            "public_id": "ARK-2026-C3A718D0",
+            "fingerprint": "a" * 64,
+            "status": status,
+            "created_at": "2026-01-06T12:00:00Z",
+            "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
+        }
+    )
+    assert receipt.status == status
 
 
 @pytest.mark.parametrize(

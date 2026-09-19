@@ -13,10 +13,9 @@
  * pins the check into every queue rule, and pins the ci.yml job name, so the two
  * cannot silently drift apart.
  *
- * It also pins the two properties that make requiring the check SAFE rather than
- * a queue deadlock: the job must carry no job-level `if:` and no path filter, or
- * it reports `skipped` on the PRs it does not apply to — and `skipped` never
- * satisfies `check-success`.
+ * Shared draft admission is the only permitted job condition. Ready PRs
+ * and Mergify candidates still run; no extra condition or path filter may
+ * suppress this required check. ci-draft-admission.test.ts covers admission.
  *
  * Follows the raw-content contract style of mergify-orphaned-export-gate.test.ts.
  */
@@ -67,11 +66,13 @@ describe('.mergify.yml — Third-Party Notices Freshness gates the queue', () =>
 });
 
 describe('ci.yml — the notices-freshness job cannot deadlock the queue', () => {
-  it('carries no job-level `if:` guard', () => {
+  it('uses only queue-safe draft admission', () => {
     const job = noticesJobBlock();
-    // A job-level `if:` that evaluates false reports `skipped`, and `skipped`
-    // never satisfies `check-success` — the queue would wait forever.
-    expect(job).not.toMatch(/\n {4}if:/u);
+    // Shared admission runs every ready and Mergify PR; no extra condition
+    // may suppress this required check on a queue candidate.
+    expect(job).toContain("    if: ${{ needs.admission.outputs.run_full == 'true' }}\n");
+    expect(job.match(/^    if:/gm)).toHaveLength(1);
+    expect(job).toContain('    needs: admission\n');
   });
 
   it('carries no path filter', () => {

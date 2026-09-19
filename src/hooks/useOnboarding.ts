@@ -7,6 +7,7 @@
 
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { readReferralCode, clearReferralCode } from '@/lib/referralCapture';
 
 type UserRole = 'INDIVIDUAL' | 'ORG_ADMIN';
 
@@ -80,6 +81,86 @@ async function linkUserToNewOrg(orgId: string, userId: string): Promise<string |
   if (profileError) return profileError.message;
 
   return null;
+}
+
+/**
+ * Outcome of one attribution attempt. `applied` mirrors the RPC verdict;
+ * `reason` is always populated so a caller can COUNT outcomes rather than
+ * discover that "nothing happened" (BUILDER-CONTRACT clauses 1 and 2).
+ *
+ * `rpc_failed` and `threw` are this layer's own reasons — the RPC's own total
+ * verdict set is no_code / unknown_code / self_referral / already_attributed /
+ * recorded.
+ */
+export interface ReferralAttributionOutcome {
+  applied: boolean;
+  reason:
+    | 'no_code'
+    | 'unknown_code'
+    | 'self_referral'
+    | 'already_attributed'
+    | 'recorded'
+    | 'rpc_failed'
+    | 'threw';
+}
+
+/**
+ * SCRUM-5024 — attribute a freshly created organization to a partner, if the
+ * visitor arrived through a partner link.
+ *
+ * Called AFTER the organization exists, never threaded into
+ * `update_profile_onboarding`: adding an optional org-creating parameter to
+ * that RPC would mean the referral silently disappears down whichever fallback
+ * branch the caller happens to take, and there are three of them.
+ *
+ * NEVER changes the signup result. A referral is an attribution, not a
+ * precondition — a mistyped code must not fail an organization that already
+ * exists in the database. Every non-applied outcome is therefore logged at
+ * error level with its reason and returned to the caller, not swallowed.
+ */
+export async function applyCapturedReferral(orgId: string): Promise<ReferralAttributionOutcome> {
+  const code = readReferralCode();
+  if (!code) return { applied: false, reason: 'no_code' };
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error: rpcError } = await (supabase as any).rpc('record_org_referral', {
+      p_org_id: orgId,
+      p_code: code,
+      p_source: 'signup',
+    });
+
+    if (rpcError) {
+      // The code stays parked: an RPC that failed to run has not decided
+      // anything, so a later attempt may still succeed.
+      console.error('[useOnboarding] referral attribution RPC failed', {
+        orgId,
+        reason: 'rpc_failed',
+        message: rpcError.message,
+      });
+      return { applied: false, reason: 'rpc_failed' };
+    }
+
+    const verdict = data as { applied?: boolean; reason?: string } | null;
+    const applied = verdict?.applied === true;
+    const reason = (verdict?.reason ?? 'rpc_failed') as ReferralAttributionOutcome['reason'];
+
+    // The database has ruled. Retrying a refused code cannot start succeeding,
+    // so the parked code is dropped either way.
+    clearReferralCode();
+
+    if (!applied) {
+      console.error('[useOnboarding] referral not applied', { orgId, reason });
+    }
+    return { applied, reason };
+  } catch (err) {
+    console.error('[useOnboarding] referral attribution threw', {
+      orgId,
+      reason: 'threw',
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return { applied: false, reason: 'threw' };
+  }
 }
 
 export function useOnboarding(): OnboardingState & OnboardingActions {
@@ -196,6 +277,9 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
             return null;
           }
 
+          // Org-creating branch 1 of 3 (RPC rejected, direct insert).
+          await applyCapturedReferral(orgData.id);
+
           const directResult: OnboardingResult = {
             success: true,
             role: 'ORG_ADMIN',
@@ -251,8 +335,16 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
             return null;
           }
 
+          // Org-creating branch 2 of 3 (RPC returned already_set with no org).
+          await applyCapturedReferral(orgData.id);
+
           onboardingResult.org_id = orgData.id;
           onboardingResult.success = true;
+        } else if (onboardingResult.org_id) {
+          // Org-creating branch 3 of 3 — the ordinary path: the RPC itself
+          // created the organization. `else if` and not a second unconditional
+          // call, so the fallback branch above cannot attribute twice.
+          await applyCapturedReferral(onboardingResult.org_id);
         }
 
         setResult(onboardingResult);
@@ -286,6 +378,11 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
     }
   }, []);
 
+  // SCRUM-5024, deliberate non-attribution: joining an existing organization by
+  // email domain creates NO organization, so there is nothing to attribute — a
+  // partner refers organizations, not seats. Accepting an invitation
+  // (`/accept-invite`) is the same case and is likewise not attributed. A
+  // referral code parked by either visitor stays parked until it expires.
   const joinOrgByDomain = useCallback(async (orgId: string): Promise<OnboardingResult | null> => {
     setLoading(true);
     setError(null);

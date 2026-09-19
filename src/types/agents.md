@@ -125,6 +125,15 @@ it does not claim staging qualification or a full-file type resynchronization.
 ## 2026-09-14 — UAT12 full-schema generated contracts
 
 The three instant-credit tables and six submission/claim/settlement/retry RPC entries are copied verbatim from Supabase generation against the reused full-schema B4 project after exact 0451 and 0460–0464 application. The reviewed historical 0453 ledger is preserved. Generated source SHA256: `543d81f12c03ada06b99a3c72941cac70b16d463cbcf69455c5c5b2f10583bdd`. This commits only the owned generated entries, preserving unrelated baseline contracts and excluding staging-only tables; it does not claim a fresh full replay or completed qualification. Both frontend and worker files contain identical generated entries.
+## 2026-09-12 SCRUM-5024 — `database.types.ts` entries hand-written
+
+`referral_codes`, `organization_referrals` and the four `0455` functions
+(`ensure_org_referral_code`, `generate_referral_code`, `get_org_referrals`,
+`record_org_referral`) were added BY HAND, in the generator's alphabetical
+positions and shape. `npm run gen:types` needs a live local Supabase, and the
+authoring session had none and was barred from touching a rig. Re-run the
+generator against a database with `0455` applied before relying on these as
+generated output; a diff there is the authoritative correction.
 ## 2026-09-12 — 0453 type delta was HAND-WRITTEN, not regenerated (SCRUM-3971)
 
 `organizations.public_id` goes `string | null` -> `string` in `Row`, and the four

@@ -114,6 +114,10 @@ Two traps hit here, both now costly to rediscover:
 unreachable today, so no delivery of it has occurred — see
 `services/worker/src/webhooks/agents.md`.
 
+## 2026-09-19 — remaining webhook types mirrored
+
+`WebhookEventType` includes `job.completed` plus the four registered compliance contracts. The exhaustive client-test pin and repository drift gate keep the SDK union aligned with the worker allowlist; this is a source change for the next artifact freeze and does not claim a package release.
+
 ## SCRUM-5211 — authenticated redirects fail closed
 
 The private fetch wrapper forces `redirect: 'error'` after caller options are

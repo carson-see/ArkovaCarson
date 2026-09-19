@@ -20,6 +20,10 @@ import express from 'express';
 import request from 'supertest';
 
 // ─── Mocks ───────────────────────────────────────────
+// The real delivery import reaches fanout; this suite exercises self-service
+// with descendant fanout disabled and does not boot a configured worker.
+vi.mock('../../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));
+
 vi.mock('../../utils/db.js', () => ({
   db: {
     from: vi.fn(),

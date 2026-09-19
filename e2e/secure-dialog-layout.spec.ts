@@ -36,7 +36,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await assertLayout(page, testInfo, 'success');
       const writes = httpRequests.filter(request => request.kind === 'POST /api/v1/anchor-self-service');
       expect(writes).toHaveLength(1);
-      expect(writes[0].payload).toMatchObject({ filename: LONG_NAME, fingerprint_source: 'document_bytes', description: 'Layout fixture description', action: 'queue', metadata: { securing_path: 'queue' } });
+      expect(writes[0].payload).toMatchObject({ filename: LONG_NAME, description: 'Layout fixture description', action: 'queue', metadata: { securing_path: 'queue' } });
+      // The worker derives provenance from the authenticated bridge; callers cannot assert it.
+      expect(writes[0].payload).not.toHaveProperty('fingerprint_source');
       await page.getByRole('button', { name: 'Done', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
     });
@@ -210,6 +212,21 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       expect(atomic).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: plainAtomic?.metadata && (plainAtomic.metadata as Record<string, unknown>).field0, securing_path: 'queue' }, private_tags: { user: ['legal', 'quarterly'], organization: ['audit'] } });
       expect(tagged.find(request => request.kind === 'POST /api/v1/anchor-self-service')?.authorization).toContain('Bearer eyJ');
       expect(tagged.find(request => request.kind === 'anchor-id-resolution')?.payload).toEqual({ id: ANCHOR_ID });
+    });
+
+    test('canonical submission survives an unavailable private record lookup', async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport);
+      const { httpRequests } = await openLayoutFixture(page, 'id-resolution-failed');
+      await page.locator('input[type="file"]').setInputFiles({ name: 'receipt.pdf', mimeType: 'application/pdf', buffer: Buffer.from('receipt fixture') });
+      await page.getByTestId('secure-document-continue').click();
+      await page.getByTestId('extraction-review-continue').click();
+      await page.getByTestId('securing-path-queue').click();
+      await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+      await expect(page.getByText('Securing Failed', { exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'View Record', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Copy Verification Link', exact: true })).toBeVisible();
+      expect(httpRequests.filter(request => request.kind === 'POST /api/v1/anchor-self-service')).toHaveLength(1);
+      await assertLayout(page, testInfo, 'uat12-receipt-without-private-id');
     });
 
     test('zero-credit purchase and member guidance remain usable', async ({ browser }, testInfo) => {

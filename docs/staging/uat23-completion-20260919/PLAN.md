@@ -4,7 +4,7 @@ Tracking: [SCRUM-5265](https://arkova.atlassian.net/browse/SCRUM-5265) · [canon
 
 ## Scope and delivery
 
-This branch is stacked on UAT-12 commit `6ff342fb1` so it reuses the canonical queue/instant submission contract without duplicating PR #2966. That local base is not soak qualification for the eventual remote candidate head. Delivery is one new draft UAT-23 PR, subject to the cap of 25 total open PRs including drafts. It does not deploy, merge, mutate a hosted database, send recipient email, or modify release/soak queues.
+This branch is stacked on UAT-12 commit `5c11f6ab2e70278b2371d53c85ada47469fead8e` so it reuses the canonical queue/instant submission contract without duplicating PR #2966. That local base is not soak qualification for the eventual remote candidate head. Delivery is one new draft UAT-23 PR, subject to the cap of 25 total open PRs including drafts. It does not deploy, merge, mutate a hosted database, send recipient email, or modify release/soak queues.
 
 Row-wise CSV/XLS/XLSX imports retain uploader ownership. One import-wide action (`queue` or `instant`), public description, and private user/organization tag defaults apply to every row; canonical public-field allowlists govern retained metadata. Successful allowlisted AI extraction fields merge into their matching row before submission, with explicit spreadsheet values taking precedence. Recipient email/name drive an auth-backed, unconfirmed pending profile without verified email or organization access. A newly created pending profile gets one automatic provider delivery attempt. An ambiguous delivery is held for reconciliation and is not automatically retried; import replay does not initiate another attempt.
 

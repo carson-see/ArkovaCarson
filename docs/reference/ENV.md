@@ -433,6 +433,30 @@ Added by the CIBA v1.0 release (SCRUM-1010). All flags default to the safe value
 # (fail-loud). dev/test can flip false to skip verification.
 ENABLE_WEBHOOK_HMAC=true
 
+# SCRUM-3972 — cross-org outbound webhook fan-out. DARK BY DEFAULT.
+# Read by config.ts as config.enableSubOrgWebhookFanout (boolFlag(false)).
+# When true, webhooks/delivery.ts ALSO delivers an event owned by org C to the
+# active endpoints of org P when C.parent_org_id = P, C.parent_approval_status
+# = 'APPROVED', and the endpoint's `scope` column (migration 0454) is
+# 'self_and_descendants'. One hop only; scope 'self' endpoints are unaffected,
+# and a child NEVER receives a parent's events in either direction.
+#
+# WHY IT IS OFF: turning it on reverses decision D2
+# (services/worker/src/api/v1/orgSubOrgs.ts — "a parent sees what its sub-orgs
+# SPEND, never what they secured"). It starts sending a parent the public
+# identifiers of documents an affiliated organization secured. That is a
+# founder decision, which is also why it is env-backed rather than a
+# switchboard_flags row: a DB write must not be able to re-open it.
+# Deliberately NOT in deploy-worker.yml --set-env-vars, so prod resolves the
+# config.ts default (false) until the flag is added there on purpose.
+#
+# NOT gated by this flag: the seven suborg.* lifecycle events
+# (suborg.created/approved/revoked/credits_allocated/credits_reclaimed/
+# suspended/offboarded). Those are the parent's OWN affiliation actions,
+# emitted on the parent's own org id, and reach default scope 'self'
+# endpoints — no boundary is crossed.
+ENABLE_SUBORG_WEBHOOK_FANOUT=false
+
 # ARK-106 — rules engine execution worker (SCRUM-1018)
 # When false, the /jobs/rules-engine cron no-ops. Keep true unless draining.
 ENABLE_RULES_ENGINE=true

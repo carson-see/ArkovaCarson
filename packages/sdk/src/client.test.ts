@@ -228,6 +228,32 @@ describe('anchor', () => {
     expect(result.idempotent).toBe(true);
   });
 
+  it.each([
+    'PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED',
+    'REVOKED', 'EXPIRED', 'SUPERSEDED', 'PENDING_RESOLUTION',
+  ] as const)('represents an idempotent receipt in lifecycle state %s', async (status) => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      public_id: 'ARK-1', fingerprint: 'a'.repeat(64), status,
+      created_at: '2026-01-01T00:00:00Z', idempotent: true,
+    }) });
+
+    await expect(client.anchor('same data')).resolves.toMatchObject({ status, idempotent: true });
+  });
+
+  it('rejects an unknown anchor receipt lifecycle state', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      public_id: 'ARK-1', fingerprint: 'a'.repeat(64), status: 'CORRUPT',
+      created_at: '2026-01-01T00:00:00Z',
+    }) });
+
+    await expect(client.anchor('same data')).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'invalid_response',
+    });
+  });
+
   it('reads and maps caller-scoped durable submission status', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
@@ -1436,11 +1462,25 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'credential.verified': true,
   'credential.status_changed': true,
   'compliance.document_expiring': true,
+  'job.completed': true,
+  'compliance.certificate_expiring': true,
+  'compliance.anchor_delayed': true,
+  'compliance.signature_revoked': true,
+  'compliance.timestamp_coverage_low': true,
   // SCRUM-3982: attestation lifecycle. Both were dispatched by the worker
   // while unregistered, so a typed SDK consumer had no way to subscribe and
   // the payloads skipped schema validation entirely.
   'attestation.created': true,
   'attestation.revoked': true,
+  // SCRUM-3972 — affiliated-organization lifecycle. See docs/api/webhooks.md
+  // and services/worker/src/webhooks/payload-schemas.ts.
+  'suborg.created': true,
+  'suborg.approved': true,
+  'suborg.revoked': true,
+  'suborg.credits_allocated': true,
+  'suborg.credits_reclaimed': true,
+  'suborg.suspended': true,
+  'suborg.offboarded': true,
 };
 
 describe('WebhookEventType', () => {
@@ -1454,11 +1494,23 @@ describe('WebhookEventType', () => {
         'anchor.submitted',
         'anchor.superseded',
         'compliance.document_expiring',
+        'job.completed',
+        'compliance.certificate_expiring',
+        'compliance.anchor_delayed',
+        'compliance.signature_revoked',
+        'compliance.timestamp_coverage_low',
         'credential.issued',
         'credential.status_changed',
         'credential.verified',
         'attestation.created',
         'attestation.revoked',
+        'suborg.approved',
+        'suborg.created',
+        'suborg.credits_allocated',
+        'suborg.credits_reclaimed',
+        'suborg.offboarded',
+        'suborg.revoked',
+        'suborg.suspended',
       ].sort(),
     );
   });

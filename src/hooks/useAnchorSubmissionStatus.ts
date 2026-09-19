@@ -13,6 +13,12 @@ const submissionStatusSchema = z.object({
   updated_at: z.string().min(1),
 }).strict();
 
+class SubmissionStatusError extends Error {
+  constructor(readonly retryable: boolean) {
+    super('Could not load securing status');
+  }
+}
+
 export interface AnchorSubmissionStatus {
   publicId: string;
   action: 'queue' | 'instant';
@@ -26,9 +32,13 @@ export interface AnchorSubmissionStatus {
 async function fetchSubmissionStatus(publicId: string, orgId: string | null): Promise<AnchorSubmissionStatus> {
   const scope = orgId ? `org_id=${encodeURIComponent(orgId)}` : 'scope=user';
   const response = await workerFetch(`/api/v1/anchor-self-service/${encodeURIComponent(publicId)}/submission-status?${scope}`);
-  if (!response.ok) throw new Error('Could not load securing status');
+  if (!response.ok) {
+    // Authorization and absence are durable for this request context. Retrying
+    // them every three seconds only creates load and cannot advance status.
+    throw new SubmissionStatusError(response.status !== 403 && response.status !== 404);
+  }
   const parsed = submissionStatusSchema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Could not load securing status');
+  if (!parsed.success) throw new SubmissionStatusError(false);
   return {
     publicId: parsed.data.public_id,
     action: parsed.data.action,
@@ -41,9 +51,7 @@ async function fetchSubmissionStatus(publicId: string, orgId: string | null): Pr
 }
 
 function shouldPoll(status: AnchorSubmissionStatus | undefined): number | false {
-  // A transient first-read failure must recover without requiring the user to
-  // refocus the tab. Once data exists, only live instant states keep polling.
-  if (!status) return 3_000;
+  if (!status) return false;
   if (status.action !== 'instant') return false;
   return ['QUEUED', 'PROCESSING', 'RETRYABLE'].includes(status.instantStatus ?? '') ? 3_000 : false;
 }
@@ -54,7 +62,16 @@ export function useAnchorSubmissionStatus(publicId: string | null, orgId: string
     queryKey: ['anchor-submission-status', user?.id ?? 'none', orgId ?? 'personal', publicId ?? 'none'],
     queryFn: () => fetchSubmissionStatus(publicId!, orgId),
     enabled: Boolean(user && publicId),
-    refetchInterval: (state) => shouldPoll(state.state.data),
+    retry: (failureCount, error) => (error instanceof SubmissionStatusError ? error.retryable : true)
+      && failureCount < 2,
+    // A successfully read active intent remains recoverable through transient
+    // poll failures because React Query retains its durable data. An initial
+    // failed read uses the bounded retry budget above, then waits for focus or
+    // the explicit Try Again action instead of polling forever.
+    refetchInterval: (state) => state.state.error instanceof SubmissionStatusError
+      && !state.state.error.retryable
+      ? false
+      : shouldPoll(state.state.data),
     refetchOnWindowFocus: 'always',
   });
   return {

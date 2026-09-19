@@ -17,7 +17,7 @@
 ### 2026-09-19 — UAT-23 completion preparation
 
 - Current founder authority permits exactly the two new in-scope UAT-23/UAT-17 draft PRs while total open PRs, including drafts, remains at or below 25. UAT-12 continues in existing PR2966. This supersedes the older zero-new-PR and sequential-session text below for this session only; it authorizes no merge, deployment, production mutation, or soak side effect.
-- UAT-23 is tracked by SCRUM-5265 and Confluence page 153223169. Candidate work stays on `cto/uat23-completion-20260919`, stacked on UAT-12 completion commit `6ff342fb1`; the eventual remote PR head is the only eligible soak identity.
+- UAT-23 is tracked by SCRUM-5265 and Confluence page 153223169. Candidate work stays on `cto/uat23-completion-20260919`, stacked on refreshed UAT-12 completion commit `5c11f6ab2e70278b2371d53c85ada47469fead8e`; the eventual remote PR head is the only eligible soak identity.
 
 ### 2026-09-19 — UAT-12 completion follow-up preparation
 
@@ -37,8 +37,8 @@
   audit found it held/dequeued, not queued.
   Corrections cover canonical single-document submission, scoped
   private-tag suggestions, honest status/recovery and public-description copy,
-  API/SDK/CLI/MCP parity, purchase conservation (0468), and atomic daily creation
-  quota (0469). Both new migrations remain unapplied candidate changes.
+  API/SDK/CLI/MCP parity, purchase conservation (0473), and atomic daily creation
+  quota (0474). Both new migrations remain unapplied candidate changes.
 - Real local PostgreSQL checks reproduced and corrected the purchase-principal
   divergence and proved quota boundary/duplicate contention; frontend browser
   checks use a standalone mocked-boundary fixture, not a hosted full-stack soak.

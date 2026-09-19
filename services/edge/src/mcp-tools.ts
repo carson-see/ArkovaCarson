@@ -35,6 +35,9 @@ const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
 /** Request timeout for the worker-proxied semantic credential search (ms). */
 const SEARCH_WORKER_FETCH_TIMEOUT_MS = 15_000;
 
+/** Timeout for authenticated worker writes and status reads (ms). */
+const AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS = 10_000;
+
 /**
  * Search mode reported on every `arkova_search_anchors` result payload.
  *
@@ -1693,12 +1696,11 @@ async function submitAnchorViaWorker(
   config: SupabaseConfig,
 ): Promise<ToolResult | undefined> {
   if (!config.workerBaseUrl || !config.callerApiKey) return undefined;
-  const base = config.workerBaseUrl.replace(/\/$/, '');
   const credentialType = workerCredentialType(input.record_type);
   const sourceUrl = workerSafeSourceUrl(input.source_url);
-  const response = await fetch(`${base}/api/v1/anchor`, {
+  const { response, body } = await authenticatedWorkerJson(config, '/api/v1/anchor', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': config.callerApiKey },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       fingerprint: input.content_hash,
       credential_type: credentialType,
@@ -1717,12 +1719,38 @@ async function submitAnchorViaWorker(
       },
     }),
   });
-  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     const message = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
     return errorResult(`Anchor submission failed: ${message}`);
   }
   return textResult(body);
+}
+
+async function authenticatedWorkerJson(
+  config: SupabaseConfig,
+  path: string,
+  init: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<{ response: Response; body: Record<string, unknown> | null }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS);
+  const base = config.workerBaseUrl!.replace(/\/$/, '');
+  try {
+    const response = await fetch(`${base}${path}`, {
+      ...init,
+      redirect: 'error',
+      headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },
+      signal: controller.signal,
+    });
+    let body: Record<string, unknown> | null = null;
+    try {
+      body = await response.json() as Record<string, unknown>;
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+    }
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function handleAnchorDocument(
@@ -1779,12 +1807,10 @@ export async function handleGetSubmissionStatus(
   if (!config.workerBaseUrl || !config.callerApiKey) {
     return errorResult('Submission status requires API-key authentication and the Arkova API endpoint.');
   }
-  const base = config.workerBaseUrl.replace(/\/$/, '');
   try {
-    const response = await fetch(`${base}/api/v1/anchor/${encodeURIComponent(input.public_id)}/submission-status`, {
-      headers: { Accept: 'application/json', 'X-API-Key': config.callerApiKey },
+    const { response, body } = await authenticatedWorkerJson(config, `/api/v1/anchor/${encodeURIComponent(input.public_id)}/submission-status`, {
+      headers: { Accept: 'application/json' },
     });
-    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {
       const code = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
       return errorResult(`Submission status unavailable: ${code}`);

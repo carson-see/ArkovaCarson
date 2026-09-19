@@ -155,3 +155,7 @@ reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
 
 UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–100 fingerprint rows, API-key-derived tenant, and no automatic write retry.
+## 2026-09-19 — Finality webhook event types
+
+The SDK webhook union includes `anchor.revocation_anchored` and
+`attestation.active`, matching the worker registry.

@@ -93,9 +93,9 @@ green aggregate test count cannot replace a missing scenario.
    queued events/intents for replay; do not drop audit rows or reverse a real
    customer grant. Confirm no in-flight purchase call or canonical create before
    function rollback.
-3. Treat 0469 as one worker+RPC change: with writes still disabled, restore both
+3. Treat 0474 as one worker+RPC change: with writes still disabled, restore both
    the prior worker quota reservation and the prior RPC body, or restore neither.
-   Rolling back only 0469 makes organization creates unmetered; rolling back only
+   Rolling back only 0474 makes organization creates unmetered; rolling back only
    the worker double-charges quota. Rehearse worker rollback while retaining
    compatible additive schema. The old
    org-purchase implementation double-books conservation, so restoring0461 is
@@ -121,7 +121,7 @@ green aggregate test count cannot replace a missing scenario.
   rerun overlap checks and obtain a new review after any rebase or retarget.
 - **Accounting rollback regression:** never serve purchases through restored
   duplicate-grant code. Abort if the rehearsal violates this invariant.
-- **Quota-policy drift:** 0469 derives the exact organization tier and carries
+- **Quota-policy drift:** 0474 derives the exact organization tier and carries
   the current 100 / 10,000 / 1,000,000 daily limits transactionally. Compare those
   values to the worker tier table in CI and at soak admission; any mismatch is
   a release-blocking contract change, not a documentation correction.

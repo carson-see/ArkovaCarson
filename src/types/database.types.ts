@@ -4863,6 +4863,69 @@ export type Database = {
           },
         ]
       }
+      organization_referrals: {
+        Row: {
+          referral_code_id: string | null
+          referral_code_used: string
+          referred_at: string
+          referred_org_id: string
+          referrer_org_id: string
+          source: string
+        }
+        Insert: {
+          referral_code_id?: string | null
+          referral_code_used: string
+          referred_at?: string
+          referred_org_id: string
+          referrer_org_id: string
+          source: string
+        }
+        Update: {
+          referral_code_id?: string | null
+          referral_code_used?: string
+          referred_at?: string
+          referred_org_id?: string
+          referrer_org_id?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_referrals_referral_code_id_fkey"
+            columns: ["referral_code_id"]
+            isOneToOne: false
+            referencedRelation: "referral_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_referrals_referred_org_id_fkey"
+            columns: ["referred_org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_referrals_referred_org_id_fkey"
+            columns: ["referred_org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_referrals_referrer_org_id_fkey"
+            columns: ["referrer_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_referrals_referrer_org_id_fkey"
+            columns: ["referrer_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_rule_events: {
         Row: {
           attempt_count: number
@@ -5786,7 +5849,59 @@ export type Database = {
           },
         ]
       }
-
+      referral_codes: {
+      referral_codes: {
+        Row: {
+          active: boolean
+          code: string
+          created_at: string
+          created_by: string | null
+          id: string
+          org_id: string
+          revoked_at: string | null
+        }
+        Insert: {
+          active?: boolean
+          code: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          org_id: string
+          revoked_at?: string | null
+        }
+        Update: {
+          active?: boolean
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          org_id?: string
+          revoked_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_codes_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_codes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_codes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       report_artifacts: {
         Row: {
           created_at: string
@@ -7038,6 +7153,7 @@ export type Database = {
           is_active: boolean
           org_id: string
           public_id: string
+          scope: string
           secret_hash: string
           updated_at: string
           url: string
@@ -7051,6 +7167,7 @@ export type Database = {
           is_active?: boolean
           org_id: string
           public_id: string
+          scope?: string
           secret_hash: string
           updated_at?: string
           url: string
@@ -7064,6 +7181,7 @@ export type Database = {
           is_active?: boolean
           org_id?: string
           public_id?: string
+          scope?: string
           secret_hash?: string
           updated_at?: string
           url?: string
@@ -7615,7 +7733,7 @@ export type Database = {
         Returns: string
       }
       create_webhook_endpoint: {
-        Args: { p_events: string[]; p_url: string }
+        Args: { p_events: string[]; p_scope?: string; p_url: string }
         Returns: Json
       }
       debit_and_enqueue_anchor: {
@@ -7731,6 +7849,10 @@ export type Database = {
         }
         Returns: string
       }
+      ensure_org_referral_code: {
+        Args: { p_org_id: string }
+        Returns: string
+      }
       expire_payment_grace_if_due: { Args: never; Returns: number }
       finalize_public_record_anchor_batch: {
         Args: {
@@ -7752,6 +7874,7 @@ export type Database = {
         Returns: string
       }
       generate_public_id: { Args: never; Returns: string }
+      generate_referral_code: { Args: never; Returns: string }
       get_agents_for_user: {
         Args: { p_user_id: string }
         Returns: {
@@ -7841,6 +7964,15 @@ export type Database = {
       get_org_members_public: {
         Args: { p_limit?: number; p_offset?: number; p_org_id: string }
         Returns: Json
+      }
+      get_org_referrals: {
+        Args: { p_org_id: string }
+        Returns: {
+          display_name: string
+          organization_public_id: string
+          referred_at: string
+          verification_status: string
+        }[]
       }
       get_org_subtree: {
         Args: { p_max_depth?: number; p_root_id: string }
@@ -8180,6 +8312,10 @@ export type Database = {
           duplicate: boolean
           rule_event_id: string
         }[]
+      }
+      record_org_referral: {
+        Args: { p_code: string; p_org_id: string; p_source: string }
+        Returns: Json
       }
       recover_stuck_broadcasts: {
         Args: { p_limit?: number; p_stale_minutes?: number }
