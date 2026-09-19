@@ -84,7 +84,7 @@ describe('POST /api/v1/org/sub-orgs/offboard (SCRUM-3868)', () => {
 
   it('returns the balance actually reclaimed by the single atomic RPC', async () => {
     mockDb();
-    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 40, already_suspended: false }, error: null });
+    rpc().mockResolvedValueOnce({ data: { success: true, reclaimed: 40, already_suspended: false, parent_balance: 140, child_balance: 0 }, error: null });
     const res = await request(buildApp(ADMIN))
       .post('/api/v1/org/sub-orgs/offboard')
       .send({ childOrgId: CHILD, reason: 'engagement ended', callerUserId: 'forged' });
