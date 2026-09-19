@@ -1629,3 +1629,16 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+## 2026-09-19 — 0475 atomic contractual anchor-cap conservation
+
+`0475_atomic_contractual_anchor_cap.sql` compensates for the final-slot race
+between the worker's contractual-cap precheck and the canonical anchor-create
+RPC. It preserves 0474's separate tier daily counter, but locks the owning
+`org_credits` row and checks the active-anchor lifetime cap before inserting.
+The active-anchor read is capped at `anchor_quota` rows, and lock acquisition
+has a five-second deadline so a contended credit row cannot pin a request until
+the broader statement timeout.
+The initial review incorrectly equated matching old production/B4 RPC hashes
+with canonical 0474. Both were still on the older 0461-era body. Migration 0475
+is based on immutable 0474 file SHA256 `00a15bd4...e6e64bb`; B4 first received
+0474 during qualification, and production application remained pending.

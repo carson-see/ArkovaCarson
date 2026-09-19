@@ -21,7 +21,11 @@ import {
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
+import {
+  ensureAnchorQuotaAvailable,
+  writeQuotaCheckUnavailable,
+  writeQuotaExhausted,
+} from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { submitJob } from '../../utils/jobQueue.js';
@@ -139,6 +143,14 @@ async function findCallerAnchor(
   return query.maybeSingle();
 }
 
+const compareTagsLexically = (a: string | null, b: string | null): number => {
+  // Match Array.sort()'s historical string coercion for nullable generated rows,
+  // while making the intended lexical order explicit for static analysis.
+  const left = a === null ? 'null' : a;
+  const right = b === null ? 'null' : b;
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+
 async function sendIdempotentReceipt(
   existing: { id: string; public_id: string | null; fingerprint: string; status: string; created_at: string; metadata?: unknown },
   body: AnchorSubmitRequest,
@@ -156,12 +168,12 @@ async function sendIdempotentReceipt(
       return;
     }
     const requested = {
-      user: [...new Set(body.private_tags.user.map((tag) => tag.trim().toLocaleLowerCase()))].sort(),
-      organization: [...new Set(body.private_tags.organization.map((tag) => tag.trim().toLocaleLowerCase()))].sort(),
+      user: [...new Set(body.private_tags.user.map((tag) => tag.trim().toLocaleLowerCase()))].sort(compareTagsLexically),
+      organization: [...new Set(body.private_tags.organization.map((tag) => tag.trim().toLocaleLowerCase()))].sort(compareTagsLexically),
     };
     const stored = {
-      user: (storedTags ?? []).filter((tag) => tag.scope === 'user').map((tag) => tag.normalized_tag).sort(),
-      organization: (storedTags ?? []).filter((tag) => tag.scope === 'organization').map((tag) => tag.normalized_tag).sort(),
+      user: (storedTags ?? []).filter((tag) => tag.scope === 'user').map((tag) => tag.normalized_tag).sort(compareTagsLexically),
+      organization: (storedTags ?? []).filter((tag) => tag.scope === 'organization').map((tag) => tag.normalized_tag).sort(compareTagsLexically),
     };
     if (requested.user.join('\0') !== stored.user.join('\0')
       || requested.organization.join('\0') !== stored.organization.join('\0')) {
@@ -386,10 +398,9 @@ export async function handleAnchorSubmit(req: Request, res: Response) {
       }
     }
 
-    // SCRUM-1740 — sandbox anchor quota gate. No-op for prod orgs
-    // (anchor_quota is NULL). Sandbox orgs with is_test=true and a
-    // configured cap get a 402 quota_exhausted problem+json response when
-    // they hit their limit. Re-submissions of an existing fingerprint
+    // SCRUM-1740 — contractual anchor quota gate. An explicit enforced cap
+    // returns 402 at the limit; a config or usage read fault returns retryable
+    // 503 rather than bypassing the cap. Re-submissions of an existing fingerprint
     // already short-circuited at the dedup-check above, so partners can
     // re-anchor without consuming quota.
     if (orgId && !(await ensureAnchorQuotaAvailable(db, orgId, res))) {
@@ -440,6 +451,14 @@ export async function handleAnchorSubmit(req: Request, res: Response) {
           resetValue: resetAt.toISOString(), retryAfter,
           resetEpochSeconds: Math.floor(resetAt.getTime() / 1000),
         });
+        return;
+      }
+      if (!insertError && anchor.error === 'contractual_quota_exceeded') {
+        if (typeof anchor.limit !== 'number' || typeof anchor.current !== 'number') {
+          writeQuotaCheckUnavailable(res);
+          return;
+        }
+        writeQuotaExhausted(res, anchor.current, anchor.limit);
         return;
       }
       if (!insertError && anchor.error === 'organization_unavailable') {

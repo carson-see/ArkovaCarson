@@ -1220,7 +1220,8 @@ async function searchAgentOrgs(
   const matches: Array<Record<string, unknown>> = [];
   const seenPublicIds = new Set<string>();
 
-  for (let offset = 0; matches.length < limit; offset += pageSize) {
+  let offset = 0;
+  while (matches.length < limit) {
     const params = new URLSearchParams({
       user_id: `eq.${config.userId}`,
       select: 'role,organizations(public_id,display_name,description,domain,website_url,verification_status)',
@@ -1256,6 +1257,7 @@ async function searchAgentOrgs(
     }
 
     if (memberships.length < pageSize) break;
+    offset += pageSize;
   }
 
   return matches.map((org) => ({

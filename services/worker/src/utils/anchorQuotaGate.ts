@@ -29,10 +29,10 @@
  * existing fingerprint does not consume quota — matching the partner
  * guide's sandbox-economy promise.
  *
- * Gated for safety: if the count query fails for any reason, we fail OPEN
- * (allow the request) and log loudly. The cap is a soft business rule on a
- * sandbox org — failing closed on a transient DB blip would block partners
- * from doing valid work.
+ * A config or usage read failure fails closed with a retryable 503. Otherwise
+ * an enforced contractual cap can be bypassed whenever its backing read is
+ * unavailable. A successful missing row and an explicit `cap_enforced=false`
+ * remain allowed states.
  */
 
 import type { Response } from 'express';
@@ -45,10 +45,38 @@ interface OrgQuotaRow {
   cap_enforced: boolean | null;
 }
 
+export function writeQuotaCheckUnavailable(res: Response): false {
+  res.status(503)
+    .type('application/problem+json')
+    .json({
+      type: 'https://arkova.ai/errors/quota-check-unavailable',
+      title: 'Anchor quota check unavailable',
+      status: 503,
+      error: 'quota_check_unavailable',
+      message: 'Anchor capacity could not be verified. Retry the request.',
+    });
+  return false;
+}
+
+export function writeQuotaExhausted(res: Response, used: number, quota: number): false {
+  res.status(402)
+    .type('application/problem+json')
+    .json({
+      type: 'https://arkova.ai/errors/quota-exhausted',
+      title: 'Anchor quota exhausted',
+      status: 402,
+      error: 'quota_exhausted',
+      message: `This sandbox org has used all ${quota} of its allotted anchors. Contact Arkova for a top-up.`,
+      used,
+      quota,
+    });
+  return false;
+}
+
 /**
- * Returns true if the caller may proceed; false if a 402 response has been
- * written (and the caller must early-return). For non-sandbox orgs this is
- * always a no-op `true` after one cheap row read.
+ * Returns true if the caller may proceed; false if a 402 or 503 response has
+ * been written (and the caller must early-return). An org without an enforced
+ * cap is a no-op `true` after one cheap row read.
  */
 export async function ensureAnchorQuotaAvailable(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,9 +92,8 @@ export async function ensureAnchorQuotaAvailable(
     .maybeSingle<OrgQuotaRow>();
 
   if (error) {
-    // Fail open on read failure — see file header.
     logger.error({ err: error.message ?? String(error), orgId }, 'anchor_quota_gate_read_failed');
-    return true;
+    return writeQuotaCheckUnavailable(res);
   }
 
   // No row, cap not enforced, or no cap configured → no gating.
@@ -94,7 +121,7 @@ export async function ensureAnchorQuotaAvailable(
 
   if (countError) {
     logger.error({ err: countError.message ?? String(countError), orgId }, 'anchor_quota_gate_count_failed');
-    return true;
+    return writeQuotaCheckUnavailable(res);
   }
 
   const used = rows?.length ?? 0;
@@ -105,16 +132,5 @@ export async function ensureAnchorQuotaAvailable(
   // dispatch on `error === 'quota_exhausted'`. Schema is documented in the
   // partner brief and the SCRUM-1739 spec.
   logger.warn({ orgId, used, quota }, 'anchor_quota_exhausted');
-  res.status(402)
-    .type('application/problem+json')
-    .json({
-      type: 'https://arkova.ai/errors/quota-exhausted',
-      title: 'Anchor quota exhausted',
-      status: 402,
-      error: 'quota_exhausted',
-      message: `This sandbox org has used all ${quota} of its allotted anchors. Contact Arkova for a top-up.`,
-      used,
-      quota,
-    });
-  return false;
+  return writeQuotaExhausted(res, used, quota);
 }

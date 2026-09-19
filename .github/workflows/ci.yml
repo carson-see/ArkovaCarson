@@ -53,18 +53,77 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_full: ${{ steps.decision.outputs.run_full }}
+      run_focused: ${{ steps.decision.outputs.run_focused }}
     steps:
+      - name: Checkout protected-main history for tier admission
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js for protected-main tier admission
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install tier-detector dependencies
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: npm ci --ignore-scripts
+
+      - name: Classify protected-main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        id: main_push
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: node_modules/.bin/tsx scripts/ci/main-push-admission.ts
+
       - name: Admit protected, ready, and speculative runs
         id: decision
         env:
-          RUN_FULL: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'mergify/') || github.event.pull_request.draft != true }}
-        run: echo "run_full=$RUN_FULL" >> "$GITHUB_OUTPUT"
+          DEFAULT_RUN_FULL: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'mergify/') || github.event.pull_request.draft != true }}
+          MAIN_PUSH_RUN_FULL: ${{ steps.main_push.outputs.run_full }}
+          MAIN_PUSH_RUN_FOCUSED: ${{ steps.main_push.outputs.run_focused }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "run_full=${MAIN_PUSH_RUN_FULL:-true}" >> "$GITHUB_OUTPUT"
+            echo "run_focused=${MAIN_PUSH_RUN_FOCUSED:-false}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_full=$DEFAULT_RUN_FULL" >> "$GITHUB_OUTPUT"
+            echo "run_focused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  protected-main-focused:
+    name: Protected Main Focused Validation
+    needs: admission
+    if: ${{ needs.admission.outputs.run_focused == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Run changed-surface and CI policy validation
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: node_modules/.bin/tsx scripts/ci/run-main-t0-validation.ts
 
   # Secret scanning - block commits containing secrets
   secret-scan:
     name: Secret Scanning
     needs: admission
-    if: ${{ needs.admission.outputs.run_full == 'true' }}
+    if: ${{ needs.admission.outputs.run_full == 'true' || needs.admission.outputs.run_focused == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -292,14 +351,17 @@ jobs:
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9
         #   Client-side only, user-supplied files. Tracked for replacement post-launch.
-        run: npm audit --audit-level=critical --omit=dev
+        # Audit the committed dependency graph instead of the platform-specific
+        # node_modules tree. Optional native packages can be extraneous on one
+        # runner and make npm's retiring quick-audit endpoint reject the tree.
+        run: npm audit --package-lock-only --audit-level=critical --omit=dev
 
       - name: Run npm audit (worker production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - snarkjs -> bfj -> jsonpath -> underscore <=1.13.7: GHSA-qpx9-hpmf-5gmw
         #   DoS vuln, not exploitable server-side. Tracked for replacement.
         working-directory: services/worker
-        run: npm ci --ignore-scripts && npm audit --audit-level=critical --omit=dev
+        run: npm ci --ignore-scripts && npm audit --package-lock-only --audit-level=critical --omit=dev
 
   # Third-party notices freshness (see scripts/ci/check-third-party-notices-fresh.ts).
   #
@@ -1968,25 +2030,35 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Python SDK with dev extras
-        run: >-
-          python -m pip install --only-binary=:all: --upgrade "pip==26.2.1" && python -m pip install --only-binary=:all: -e ".[dev]"
+      - name: Setup locked Python package manager
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.3"
+          enable-cache: true
+          cache-dependency-glob: packages/arkova-py/uv.lock
+
+      - name: Install locked Python SDK dependencies
+        run: uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
+
+      - name: Build and install first-party Python SDK wheel
+        run: |
+          rm -rf dist
+          uv run --locked --no-sync --no-build python -m build --wheel --no-isolation
+          wheels=(dist/*.whl)
+          [[ ${#wheels[@]} -eq 1 && -f ${wheels[0]} ]]
+          wheel_hash=$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)
+          printf '%s --hash=sha256:%s\n' "${wheels[0]}" "$wheel_hash" > "$RUNNER_TEMP/arkova-wheel-requirements.txt"
+          uv pip install --python .venv/bin/python --no-deps --no-build --require-hashes --requirement "$RUNNER_TEMP/arkova-wheel-requirements.txt"
 
       - name: Run Python SDK tests
-        run: pytest
+        env:
+          ARKOVA_TEST_INSTALLED_WHEEL: "1"
+        run: uv run --locked --no-sync --no-build pytest
 
-      # ruff is pinned to an EXACT version in pyproject.toml — see the comment on
-      # the pin there. This is the same command the publish gate runs.
-      #
-      # NOTE on the pip bootstrap above: this job pins `pip==26.2.1` while
-      # publish-python-sdk.yml still bootstraps an unpinned pip. That is a
-      # deliberate asymmetry, not drift — pinning the publish file's line would
-      # re-classify it as NEW code and hand SonarCloud a fresh S8544 on a line
-      # that has been there untouched for months, without changing what it
-      # installs. The parity that matters and is test-enforced is the
-      # python-version plus the pytest/ruff commands, not the bootstrap.
+      # Ruff and every other dev dependency come from uv.lock. This is the same
+      # locked command the publish gate runs.
       - name: Lint Python SDK (publish-gate parity)
-        run: ruff check src tests
+        run: uv run --locked --no-sync --no-build ruff check src tests
 
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:
@@ -2372,6 +2444,11 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
+        with:
+          # The live base can advance after GitHub synthesized refs/pull/N/merge.
+          # Full history lets ciContext resolve the real fork point instead of
+          # falling back to a misleading live-base..stale-merge two-dot diff.
+          fetch-depth: 0
 
       - name: Setup Node.js
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
