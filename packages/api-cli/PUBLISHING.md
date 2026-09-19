@@ -9,6 +9,11 @@ Release only from a clean, isolated checkout at the approved commit. Publish
 `arkova@3.0.0` first and confirm that exact version is visible from npm. Then:
 
 ```sh
+# The CLI prebuild hooks compile the sibling SDK, so install it first.
+cd packages/sdk
+npm ci --ignore-scripts
+npm run build
+
 cd packages/api-cli
 npm ci --ignore-scripts
 npm run build
@@ -19,6 +24,14 @@ npm run lint
 npm pkg delete private
 npm pkg set 'dependencies.arkova=3.0.0'
 npm install --package-lock-only --ignore-scripts
+
+# Re-resolve from the public registry and qualify the exact release state.
+rm -rf node_modules
+npm ci --ignore-scripts
+npm run build
+npm run typecheck
+npm test
+npm run lint
 
 npm pack --dry-run
 npm publish --dry-run

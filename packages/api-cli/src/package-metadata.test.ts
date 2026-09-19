@@ -14,9 +14,11 @@ const manifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), '
 const publishing = readFileSync(resolve(packageRoot, 'PUBLISHING.md'), 'utf8');
 
 describe('CLI source and release metadata', () => {
-  it('keeps the source manifest private and linked to the sibling SDK', () => {
-    expect(manifest.private).toBe(true);
-    expect(manifest.dependencies?.arkova).toBe('file:../sdk');
+  it('accepts only a complete source or release manifest state', () => {
+    const sourceState = manifest.private === true && manifest.dependencies?.arkova === 'file:../sdk';
+    const releaseState = manifest.private === undefined && manifest.dependencies?.arkova === '3.0.0';
+
+    expect(sourceState || releaseState).toBe(true);
   });
 
   it('ships only the executable, declarations, README, and license', () => {
@@ -29,5 +31,7 @@ describe('CLI source and release metadata', () => {
     expect(publishing).toContain("npm pkg delete private");
     expect(publishing).toContain("npm pkg set 'dependencies.arkova=3.0.0'");
     expect(publishing).toContain('no `file:` dependency');
+    expect(publishing).toContain('npm ci --ignore-scripts');
+    expect(publishing).toContain('npm test');
   });
 });
