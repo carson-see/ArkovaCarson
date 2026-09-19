@@ -57,6 +57,7 @@ describe('validateProfileImage', () => {
 
   it('preserves the metadata failure when cleanup also rejects', async () => {
     remove.mockRejectedValueOnce(new Error('cleanup unavailable'));
+    const warning = vi.fn();
     const input = file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg');
     await expect(replaceProfileMedia({
       file: input,
@@ -64,7 +65,29 @@ describe('validateProfileImage', () => {
       scopeId: '11111111-1111-4111-8111-111111111111',
       kind: 'avatar',
       commit: vi.fn().mockResolvedValue(false),
+      previousPath: 'users/11111111-1111-4111-8111-111111111111/avatar/old.png',
+      onCleanupWarning: warning,
     })).rejects.toThrow('Image metadata update failed.');
+    const uploadedPath = upload.mock.calls[0][0] as string;
+    expect(remove).toHaveBeenCalledWith([uploadedPath]);
+    expect(remove).not.toHaveBeenCalledWith(['users/11111111-1111-4111-8111-111111111111/avatar/old.png']);
+    expect(warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the metadata failure and warns when new-object cleanup resolves with an error', async () => {
+    remove.mockResolvedValueOnce({ error: new Error('cleanup denied') });
+    const warning = vi.fn();
+    const previousPath = 'users/11111111-1111-4111-8111-111111111111/avatar/old.png';
+    await expect(replaceProfileMedia({
+      file: file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg'),
+      scope: 'users', scopeId: '11111111-1111-4111-8111-111111111111',
+      kind: 'avatar', previousPath,
+      commit: vi.fn().mockResolvedValue(false), onCleanupWarning: warning,
+    })).rejects.toThrow('Image metadata update failed.');
+    const uploadedPath = upload.mock.calls[0][0] as string;
+    expect(remove).toHaveBeenCalledWith([uploadedPath]);
+    expect(remove).not.toHaveBeenCalledWith([previousPath]);
+    expect(warning).toHaveBeenCalledTimes(1);
   });
 
   it('deletes the prior object only after a successful metadata commit', async () => {
@@ -89,5 +112,29 @@ describe('validateProfileImage', () => {
     expect(commit).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledWith([previousPath]);
     expect(warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps one winner when two replacements race from the same old pointer', async () => {
+    const previousPath = 'users/11111111-1111-4111-8111-111111111111/avatar/old.png';
+    let currentPath = previousPath;
+    const commit = vi.fn(async (nextPath: string) => {
+      if (currentPath !== previousPath) return false;
+      currentPath = nextPath;
+      return true;
+    });
+    const input = file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg');
+    const settled = await Promise.allSettled([
+      replaceProfileMedia({ file: input, scope: 'users', scopeId: '11111111-1111-4111-8111-111111111111', kind: 'avatar', previousPath, commit }),
+      replaceProfileMedia({ file: input, scope: 'users', scopeId: '11111111-1111-4111-8111-111111111111', kind: 'avatar', previousPath, commit }),
+    ]);
+    const winner = settled.find((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled');
+    expect(settled.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(settled.filter(result => result.status === 'rejected')).toHaveLength(1);
+    expect(currentPath).toBe(winner?.value);
+    expect(remove).toHaveBeenCalledWith([previousPath]);
+    const uploadedPaths = upload.mock.calls.map(call => call[0] as string);
+    const loserPath = uploadedPaths.find(path => path !== winner?.value);
+    expect(remove).toHaveBeenCalledWith([loserPath]);
+    expect(remove).not.toHaveBeenCalledWith([winner?.value]);
   });
 });

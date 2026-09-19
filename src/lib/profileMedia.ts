@@ -59,7 +59,12 @@ export async function replaceProfileMedia(options: {
   try {
     if (!await options.commit(path)) throw new Error(PROFILE_MEDIA_LABELS.METADATA_UPDATE_FAILED);
   } catch (error) {
-    await bucket.remove([path]).catch(() => undefined);
+    try {
+      const { error: cleanupError } = await bucket.remove([path]);
+      if (cleanupError) options.onCleanupWarning?.();
+    } catch {
+      options.onCleanupWarning?.();
+    }
     throw error;
   }
   const ownedPrefix = `${options.scope}/${options.scopeId}/${options.kind}/`;
