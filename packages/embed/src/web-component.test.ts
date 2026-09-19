@@ -59,7 +59,7 @@ describe('ArkovaVerifyElement', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/verify/ARK-TEST-001'),
+      'https://api.arkova.ai/api/v1/verify/ARK-TEST-001',
       expect.any(Object),
     );
 
