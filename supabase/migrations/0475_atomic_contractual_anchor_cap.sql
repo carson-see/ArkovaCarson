@@ -1,6 +1,9 @@
 -- Compensating migration for the contractual-cap race spanning #2966/#3000.
--- Based on the exact live/canonical 0474 create_anchor_submission definition
--- (production pg_get_functiondef MD5 4b73e7b8252fec8da79994f651df147e).
+-- Based on the immutable canonical 0474 migration file, SHA256
+-- 00a15bd4a90e3003a93d0b3645b73d4aafa7cdd9bafc5561c61d07a92e6e64bb.
+-- Production still had the older 0461-era RPC when this file was authored;
+-- matching old production/B4 function hashes were not evidence that 0474 had
+-- been applied. B4 first received the reviewed 0474 effect during qualification.
 --
 -- Rollback: restore the complete create_anchor_submission definition from 0474
 -- in a disabled-write window. Reverting only the worker is safe because its
