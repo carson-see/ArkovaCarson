@@ -56,6 +56,27 @@ export const ResolveQueueInput = z
 
 const QueueOrgId = z.string().uuid();
 
+// Keep best-effort notification writes inside the Cloud Run request lifetime,
+// but never let a stalled PostgREST call hold the operator request forever.
+export const QUEUE_NOTIFICATION_TIMEOUT_MS = 2_000;
+
+async function runQueueNotification(operation: () => Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('queue notification dispatch timed out')),
+          QUEUE_NOTIFICATION_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'conflict' | 'internal' {
   if (status === 403) return 'forbidden';
   if (status === 404) return 'not_found';
@@ -348,21 +369,24 @@ export async function handleResolveQueue(
     // Cloud Run may freeze the instance as soon as the response is committed.
     // Keep this bounded best-effort side effect inside the request lifetime so
     // a successful resolution does not silently lose its admin notification.
-    // Notification failure must never rewrite the already successful RPC receipt.
+    // The bound limits how long the caller waits; it cannot cancel a PostgREST
+    // request already in flight. Failure must never rewrite the successful RPC receipt.
     try {
-      const notificationOrgId = selectedOrgId ?? await getSelectedAnchorOrgId(parsed.data.selected_public_id);
-      if (notificationOrgId) {
-        await emitOrgAdminNotifications({
-          type: 'queue_run_completed',
-          organizationId: notificationOrgId,
-          payload: {
-            resolutionId: data,
-            externalFileId: parsed.data.external_file_id,
-            selectedPublicId: parsed.data.selected_public_id,
-            actorUserId,
-          },
-        });
-      }
+      await runQueueNotification(async () => {
+        const notificationOrgId = selectedOrgId ?? await getSelectedAnchorOrgId(parsed.data.selected_public_id);
+        if (notificationOrgId) {
+          await emitOrgAdminNotifications({
+            type: 'queue_run_completed',
+            organizationId: notificationOrgId,
+            payload: {
+              resolutionId: data,
+              externalFileId: parsed.data.external_file_id,
+              selectedPublicId: parsed.data.selected_public_id,
+              actorUserId,
+            },
+          });
+        }
+      });
     } catch (notificationError) {
       logger.warn({ error: notificationError }, 'queue/resolve notification dispatch failed');
     }
@@ -663,19 +687,26 @@ export async function handleRunOrgAnchorQueue(
       return;
     }
 
+    // Await the best-effort insert before committing the response so Cloud Run
+    // cannot freeze the instance between res.json() and dispatch. A stalled DB
+    // request is bounded and must not rewrite the successful queue receipt.
+    try {
+      await runQueueNotification(() => emitOrgAdminNotifications({
+        type: 'queue_run_completed',
+        organizationId: orgId,
+        payload: {
+          triggeredBy: userId,
+          trigger: 'manual',
+          processed: result.processed,
+          batchId: result.batchId,
+          txId: result.txId,
+          merkleRoot: result.merkleRoot,
+        },
+      }));
+    } catch (notificationError) {
+      logger.warn({ error: notificationError }, 'manual queue notification dispatch failed');
+    }
     res.json({ ok: true, ...result });
-    void emitOrgAdminNotifications({
-      type: 'queue_run_completed',
-      organizationId: orgId,
-      payload: {
-        triggeredBy: userId,
-        trigger: 'manual',
-        processed: result.processed,
-        batchId: result.batchId,
-        txId: result.txId,
-        merkleRoot: result.merkleRoot,
-      },
-    });
   } catch (err) {
     const finishedAt = new Date();
     await recordOrgQueueRunResult({

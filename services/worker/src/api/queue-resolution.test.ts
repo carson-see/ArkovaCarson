@@ -37,6 +37,7 @@ vi.mock('../jobs/org-queue-scheduler.js', () => ({
 import {
   handleResolveQueue,
   handleRunOrgAnchorQueue,
+  QUEUE_NOTIFICATION_TIMEOUT_MS,
   ResolveQueueInput,
   mapRpcErrorToStatus,
 } from './queue-resolution.js';
@@ -144,7 +145,10 @@ describe('handleResolveQueue', () => {
     fromMock.mockReset();
     emitOrgAdminNotificationsMock.mockReset();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('rejects invalid body with 400', async () => {
     const { res, status } = mockRes();
@@ -323,6 +327,46 @@ describe('handleResolveQueue', () => {
     expect(status).not.toHaveBeenCalled();
   });
 
+  it('bounds a stalled resolution notification and preserves the successful receipt', async () => {
+    vi.useFakeTimers();
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    const is = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn().mockReturnValue({ is });
+    fromMock.mockReturnValue({ select: vi.fn().mockReturnValue({ eq }) });
+    emitOrgAdminNotificationsMock.mockReturnValue(new Promise<void>(() => {}));
+    const { res, status, json } = mockRes();
+
+    const pending = handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1',
+    } }), res, 'user-1');
+    await vi.advanceTimersByTimeAsync(QUEUE_NOTIFICATION_TIMEOUT_MS);
+    await pending;
+
+    expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('bounds a stalled notification organization lookup after the RPC succeeds', async () => {
+    vi.useFakeTimers();
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const maybeSingle = vi.fn().mockReturnValue(new Promise(() => {}));
+    const is = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn().mockReturnValue({ is });
+    fromMock.mockReturnValue({ select: vi.fn().mockReturnValue({ eq }) });
+    const { res, status, json } = mockRes();
+
+    const pending = handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1',
+    } }), res, 'user-1');
+    await vi.advanceTimersByTimeAsync(QUEUE_NOTIFICATION_TIMEOUT_MS);
+    await pending;
+
+    expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
+    expect(status).not.toHaveBeenCalled();
+    expect(emitOrgAdminNotificationsMock).not.toHaveBeenCalled();
+  });
+
   it('keeps the successful receipt when the best-effort notification lookup throws', async () => {
     rpcMock.mockResolvedValue({ data: 'res-1', error: null });
     fromMock.mockImplementation(() => { throw new Error('lookup unavailable'); });
@@ -466,7 +510,10 @@ describe('handleRunOrgAnchorQueue', () => {
     recordOrgQueueRunResultMock.mockReset();
     emitOrgAdminNotificationsMock.mockReset();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('rejects callers without an organization (403)', async () => {
     installFromMock({ profiles: { data: { org_id: null, role: 'ORG_ADMIN' } } });
@@ -505,6 +552,41 @@ describe('handleRunOrgAnchorQueue', () => {
       org_id: 'org-1',
       target_id: 'org-1',
     });
+  });
+
+  it('waits for manual-run notification before response and bounds a stalled dispatch', async () => {
+    vi.useFakeTimers();
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'owner' } }],
+    });
+    processBatchAnchorsMock.mockResolvedValue(OWNER_OK);
+    emitOrgAdminNotificationsMock.mockReturnValue(new Promise<void>(() => {}));
+    const { res, status, json } = mockRes();
+
+    const pending = handleRunOrgAnchorQueue('user-1', mockReq(), res);
+    await vi.waitFor(() => expect(emitOrgAdminNotificationsMock).toHaveBeenCalledTimes(1));
+    expect(json).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(QUEUE_NOTIFICATION_TIMEOUT_MS);
+    await pending;
+
+    expect(json).toHaveBeenCalledWith({ ok: true, ...OWNER_OK });
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('keeps the successful manual-run receipt when notification dispatch rejects', async () => {
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'owner' } }],
+    });
+    processBatchAnchorsMock.mockResolvedValue(OWNER_OK);
+    emitOrgAdminNotificationsMock.mockRejectedValue(new Error('notification unavailable'));
+    const { res, status, json } = mockRes();
+
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(json).toHaveBeenCalledWith({ ok: true, ...OWNER_OK });
+    expect(status).not.toHaveBeenCalled();
   });
 
   it('admin of own org → 2xx', async () => {
