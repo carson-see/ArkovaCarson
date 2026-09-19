@@ -1637,3 +1637,7 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+## 2026-09-19 — 0481 UAT-14 media privacy
+
+0481 is additive and unapplied locally: private bucket, public-ID-bound object paths, active AAL2 owner/admin writes, current-pointer public reads, and v2 whitelisted public-profile RPCs. The native fixture is minimal PostgreSQL evidence, not hosted Storage/Auth proof.
+All four 0481 SECURITY DEFINER helpers explicitly revoke PUBLIC/anon/authenticated before narrow grants. Public personal signing and the v2 DTO both require public, active, non-deleted profiles; legacy base RPC behavior is not an authorization substitute.

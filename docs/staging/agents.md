@@ -109,3 +109,6 @@ denials. This remains local evidence; it is not hosted or soak evidence.
 ## 2026-09-14 — Staging bootstrap privilege correction
 
 `staging_lease.sql` resets inherited table privileges before granting only SELECT, INSERT and DELETE to service_role. RLS does not restrict TRUNCATE, so explicit grants are required even on forced-RLS staging tables. Bootstrap changes are staging-only operational DDL; verify the actual project and record the application without adding production migration-ledger rows. Existing audit evidence must remain intact.
+## 2026-09-19 — UAT-14 completion evidence
+
+`uat14-completion-20260919/` is a proposed T3 plan and local evidence only. Preserve the 30-second already-issued signed-URL residual disclosure and the existing always-public organization registry policy; no soak, deployment or hosted migration is claimed.

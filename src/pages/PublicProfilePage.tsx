@@ -16,6 +16,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { OrgVerifiedBadge } from '@/components/shared/VerifiedBadge';
 import { resolveSocialLinks } from '@/lib/socialLinks';
+import { QRCodeSVG } from 'qrcode.react';
+import { getAppBaseUrl, publicProfilePath } from '@/lib/routes';
+import { useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 
 function getInitials(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -36,6 +39,8 @@ function formatRole(role: string): string {
 export function PublicProfilePage() {
   const { profileId } = useParams<{ profileId: string }>();
   const { profile, loading, error, fetchProfile } = usePublicMemberProfile();
+  const avatarUrl = useProfileMediaUrl(profile?.avatar_storage_path, profile?.avatar_url);
+  const bannerUrl = useProfileMediaUrl(profile?.banner_storage_path);
 
   useEffect(() => {
     if (profileId) void fetchProfile(profileId);
@@ -73,6 +78,7 @@ export function PublicProfilePage() {
   }
 
   const links = profile.social_links ?? {};
+  const profileUrl = `${getAppBaseUrl()}${publicProfilePath(profile.public_id)}`;
 
   return (
     <div className="min-h-screen bg-background">
@@ -85,16 +91,18 @@ export function PublicProfilePage() {
           Back to Search
         </Link>
 
-        <div className="rounded-2xl border border-[#00d4ff]/10 bg-gradient-to-br from-[#0d141b] to-[#111a24] p-6 sm:p-8 mb-6">
+        <div className="overflow-hidden rounded-2xl border border-[#00d4ff]/10 bg-gradient-to-br from-[#0d141b] to-[#111a24] mb-6">
+          {bannerUrl && <img src={bannerUrl} referrerPolicy="no-referrer" alt="" className="h-32 sm:h-44 w-full object-cover" />}
+          <div className="p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6 text-center sm:text-left">
             <Avatar className="h-20 w-20 border border-[#00d4ff]/20">
-              <AvatarImage src={profile.avatar_url ?? undefined} />
+              <AvatarImage src={avatarUrl} referrerPolicy="no-referrer" />
               <AvatarFallback className="bg-[#192028] text-[#00d4ff] text-xl">
                 {getInitials(profile.display_name)}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
                 {profile.display_name}
               </h1>
               {profile.bio && (
@@ -118,6 +126,10 @@ export function PublicProfilePage() {
                   ))}
               </div>
             </div>
+            <div className="shrink-0 rounded-lg bg-white p-2" aria-label="Profile QR code">
+              <QRCodeSVG value={profileUrl} size={96} level="M" />
+            </div>
+          </div>
           </div>
         </div>
 

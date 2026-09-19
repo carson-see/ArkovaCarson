@@ -75,3 +75,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 ## PR #2619 generated notices refresh (2026-09-05)
 
 Regenerated `data/thirdPartyNotices.generated.json` with the installed xmldom 0.8.15 tree after incorporating PR #2493's license-body generator. The dependency is used by mammoth for on-device DOCX extraction, so verification covers actual document parsing as well as the rendered notice. No raw document bytes are sent to a backend.
+## 2026-09-19 — UAT-14 profile media
+
+Profile media uses private `profile-media` objects addressed by opaque public profile/org IDs. Decode and re-encode uploads before storage; unique object write precedes pointer commit, and old-object cleanup follows only a successful commit. Public personal reads must require the current pointer plus `is_public_profile`; never render raw storage paths as URLs.
+Signed media URLs refresh before their 30-second lease expires and fail back only to HTTPS or same-origin relative legacy URLs. Signing and cleanup failures must be caught: a cleanup failure never masks the primary pointer-commit error, and a broken rendered image is removed rather than retried indefinitely.

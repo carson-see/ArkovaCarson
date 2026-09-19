@@ -124,3 +124,7 @@ The exact documented revoke/re-enable containment SQL is rehearsed locally.
 RPC return values across both concurrent serialization orders, an idempotent
 retry and an initial zero-credit offboard. This regression failed on the prior
 0460 result shape before the SQL correction. No remote database is used.
+## 2026-09-19 — UAT-14 native profile-media fixture
+
+`uat14/native-pg-profile-media.sh` owns a unique loopback PostgreSQL database and exercises actual 0481 SQL against a minimal Auth/Storage-shaped schema. It does not establish hosted Supabase bucket behavior or whole-schema replay.
+The fixture also pins inactive/deleted/private v2 denial, active-only anonymous media reads, and the intended function ACL matrix with no PUBLIC execute grant.

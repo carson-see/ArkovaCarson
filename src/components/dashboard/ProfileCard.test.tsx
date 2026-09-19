@@ -11,6 +11,8 @@ const baseProfile = {
   email: 'verified@example.test',
   full_name: 'Verified User',
   avatar_url: null,
+  avatar_storage_path: null,
+  banner_storage_path: null,
   role: 'ORG_ADMIN',
   role_set_at: null,
   org_id: 'org-1',

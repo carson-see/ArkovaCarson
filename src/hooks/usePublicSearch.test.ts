@@ -399,6 +399,21 @@ describe('usePublicMemberProfile (SCRUM-1788)', () => {
     expect(result.current.profile?.organizations[0].display_name).toBe('Test University');
   });
 
+  it('unwraps the v2 member RPC envelope including opaque media paths', async () => {
+    mockRpc.mockResolvedValue({ data: [{ get_public_member_profile_v2: {
+      public_id: 'mem_v2', display_name: 'Member', avatar_url: null,
+      avatar_storage_path: 'users/mem_v2/avatar/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png',
+      banner_storage_path: null, bio: null, social_links: null,
+      created_at: '2026-01-15', organizations: [],
+    } }], error: null });
+    const { result } = renderHook(() => usePublicMemberProfile());
+
+    await act(async () => { await result.current.fetchProfile('mem_v2'); });
+
+    expect(result.current.profile?.public_id).toBe('mem_v2');
+    expect(result.current.profile?.avatar_storage_path).toContain('/avatar/');
+  });
+
   it('privacy gate: RPC returns error for non-public profiles', async () => {
     mockRpc.mockResolvedValue({
       data: [{ get_public_member_profile: { error: 'Profile not found' } }],
