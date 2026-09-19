@@ -74,7 +74,7 @@ function buildDummyFundingTx(valueSats: number): { txHex: string; txid: string }
   tx.version = 2;
   // Coinbase-like input (doesn't matter for our PSBT usage)
   tx.addInput(Buffer.alloc(32, 0), 0xffffffff);
-  tx.addOutput(output!, valueSats);
+  tx.addOutput(output!, BigInt(valueSats));
   return { txHex: tx.toHex(), txid: tx.getId() };
 }
 
@@ -241,7 +241,7 @@ describe('extractAnchorFingerprint', () => {
   const fpBytes = Buffer.from(FP, 'hex');
 
   const opReturnHex = (payload: Buffer): string =>
-    bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]).toString('hex');
+    Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload])).toString('hex');
 
   it('returns the fingerprint for a canonical ARKV anchor (prefix + 32-byte fp)', () => {
     const hex = opReturnHex(Buffer.concat([Buffer.from('ARKV'), fpBytes]));
@@ -263,12 +263,12 @@ describe('extractAnchorFingerprint', () => {
 
   it('rejects a multi-push OP_RETURN even if a push equals ARKV+fingerprint', () => {
     // OP_RETURN <junk> <ARKV+fp> decompiles to 3 chunks, not the canonical 2.
-    const hex = bitcoin.script
+    const hex = Buffer.from(bitcoin.script
       .compile([
         bitcoin.opcodes.OP_RETURN,
         Buffer.from('deadbeef', 'hex'),
         Buffer.concat([Buffer.from('ARKV'), fpBytes]),
-      ])
+      ]))
       .toString('hex');
     expect(extractAnchorFingerprint(hex)).toBeNull();
   });
@@ -340,7 +340,7 @@ describe('buildOpReturnTransaction', () => {
     expect(decompiled![0]).toBe(bitcoin.opcodes.OP_RETURN);
 
     // Check ARKV prefix in the data
-    const data = decompiled![1] as Buffer;
+    const data = Buffer.from(decompiled![1] as Uint8Array);
     expect(data.subarray(0, 4).toString()).toBe('ARKV');
   });
 
@@ -397,7 +397,7 @@ describe('buildOpReturnTransaction', () => {
     const decompiled = bitcoin.script.decompile(opReturnOutput.script);
     expect(decompiled).not.toBeNull();
 
-    const data = decompiled![1] as Buffer;
+    const data = Buffer.from(decompiled![1] as Uint8Array);
     // Total: ARKV (4) + fingerprint (32) + metadata hash (8) = 44 bytes
     expect(data.length).toBe(44);
     expect(data.subarray(0, 4).toString()).toBe('ARKV');
@@ -416,7 +416,7 @@ describe('buildOpReturnTransaction', () => {
     const result = await buildOpReturnTransaction(TEST_FINGERPRINT, makeUtxo(100000), testSigner);
     const tx = bitcoin.Transaction.fromHex(result.txHex);
     const decompiled = bitcoin.script.decompile(tx.outs[0].script);
-    const data = decompiled![1] as Buffer;
+    const data = Buffer.from(decompiled![1] as Uint8Array);
     expect(data.length).toBe(36);
   });
 });
@@ -1118,7 +1118,7 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     // so subarray(0,4) !== "ARKV". A structural decode must reject it.
     const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
     const forgedPayload = Buffer.concat([Buffer.from([0xab]), Buffer.from('ARKV'), fpBytes]);
-    const forgedScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, forgedPayload]);
+    const forgedScript = Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, forgedPayload]));
     const forgedHex = forgedScript.toString('hex');
 
     // Sanity: the forged hex really does contain the loose substring the old code matched.
@@ -1151,7 +1151,7 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     // discovered via the address transaction history.
     const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
     const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
-    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalScript = Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]));
     const canonicalHex = canonicalScript.toString('hex');
 
     const historicalTxid = 'd'.repeat(64);
@@ -1188,7 +1188,7 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
   it('accepts a genuine canonical OP_RETURN anchor found via tx-history', async () => {
     const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
     const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
-    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalScript = Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]));
     const canonicalHex = canonicalScript.toString('hex');
 
     const provider = createMockProvider({
@@ -1219,7 +1219,7 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
     const metaBytes = Buffer.from('0011223344556677', 'hex'); // 8 bytes
     const payload = Buffer.concat([Buffer.from('ARKV'), fpBytes, metaBytes]);
-    const script = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]);
+    const script = Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]));
 
     const provider = createMockProvider({
       listUnspent: vi.fn().mockResolvedValue([]),
@@ -1246,7 +1246,7 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     // Backward-compat: providers without history support still verify unspent anchors.
     const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
     const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
-    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalScript = Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]));
     const canonicalHex = canonicalScript.toString('hex');
 
     const provider = createMockProvider({
@@ -1279,7 +1279,7 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     // fall through to the legacy UTXO scan, which still verifies unspent anchors.
     const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
     const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
-    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalScript = Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]));
     const canonicalHex = canonicalScript.toString('hex');
 
     const provider = createMockProvider({
@@ -1363,7 +1363,7 @@ describe('S3-P0 — BitcoinChainClient.prepareFingerprintTx', () => {
     expect(opReturnOuts).toHaveLength(1);
 
     // Structural decode at canonical offset — same parser the verifier uses.
-    const committed = extractAnchorFingerprint(opReturnOuts[0].script.toString('hex'));
+    const committed = extractAnchorFingerprint(Buffer.from(opReturnOuts[0].script).toString('hex'));
     expect(committed).toBe(root);
 
     // Raw committed payload: "ARKV"(4) + root(32) = 36 ≤ 80 bytes, no version byte.
