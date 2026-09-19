@@ -182,9 +182,10 @@ test.describe('API Keys & Verification Flow', () => {
       await expectApiKeysPage(orgAdminPage);
 
       // De-race the suite's shared per-IP rate-limit bucket BEFORE starting
-      // the mutating flow (see waitForSharedRateLimitHeadroom above). 35 of
-      // the 60/window covers the whole flow (~18 increments) with margin.
-      await waitForSharedRateLimitHeadroom(orgAdminPage, 35);
+      // the mutating flow (see waitForSharedRateLimitHeadroom above). 45 of
+      // the 60/window covers the whole flow (~21 increments after SCRUM-5023
+      // added the extend step) with margin.
+      await waitForSharedRateLimitHeadroom(orgAdminPage, 45);
 
       // Open create dialog
       await orgAdminPage.getByRole('button', { name: /Create API Key/i }).click();
@@ -249,6 +250,40 @@ test.describe('API Keys & Verification Flow', () => {
         await expect(
           orgAdminPage.getByText('Never used').first()
         ).toBeVisible();
+
+        // SCRUM-5023: extend the expiry through the product path. This is the
+        // remedy that did not exist — the only previous fix for an expiring
+        // key was creating a new one, i.e. redistributing credentials to a
+        // partner. A component test cannot prove the PATCH round-trips.
+        const extendCard = orgAdminPage
+          .locator('div.shadow-card-rest')
+          .filter({ has: orgAdminPage.getByText(testKeyName, { exact: true }) })
+          .filter({ has: orgAdminPage.locator('button.text-destructive') });
+
+        const extendDialog = orgAdminPage.getByRole('dialog');
+        await expect(async () => {
+          await extendCard.getByRole('button', { name: /^Extend$/ }).click();
+          await expect(
+            extendDialog.getByRole('heading', { name: /Extend API Key Expiry/i }),
+          ).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 15000 });
+
+        // The dialog states the key's CURRENT expiry before offering presets.
+        // A key created without one says so.
+        await expect(extendDialog.getByTestId('extend-current-expiry')).toBeVisible();
+
+        await extendDialog.getByRole('button', { name: /^1 year$/ }).click();
+
+        // The key has no expiry today, so giving it one SHORTENS its life and
+        // the dialog must ask before sending `allow_shorten`.
+        await extendDialog.getByRole('button', { name: /^Yes, change it$/ }).click();
+
+        // A successful PATCH closes the dialog; a failure would keep it open
+        // with the scrubbed "It is unchanged" message.
+        await expect(
+          extendDialog.getByRole('heading', { name: /Extend API Key Expiry/i }),
+        ).toHaveCount(0, { timeout: 15000 });
+        await expect(orgAdminPage.getByText(/Failed to change the expiry/i)).toHaveCount(0);
 
         // FD-P7 (CC6.8): revoke the key through the product path. This flow
         // was unreachable before the fix — the server stripped `id` from

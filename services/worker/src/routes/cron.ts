@@ -43,6 +43,7 @@ import { runWebhookDlqReport } from '../jobs/webhook-dlq-report.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
 import { processPendingReports } from '../jobs/report.js';
 import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
+import { runApiKeyExpiryNoticeJob } from '../jobs/api-key-expiry-notice.js';
 import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from '../jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from '../jobs/federalRegisterFetcher.js';
@@ -939,6 +940,27 @@ cronRouter.post('/anchor-expiry-sweep', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Anchor expiry sweep failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-5023: API-key expiry notice. Warns an org's admins at T-7 and once
+// after a lapse. Flag-free but SAFE when no email provider is configured —
+// `runApiKeyExpiryNotice` returns `skipped: true` without touching the
+// database or the audit ledger, so an unconfigured environment does not
+// consume a key's one warning.
+//
+// 200 even on a partly-failed sweep: `failed` is a per-key count the body
+// carries, and a 500 would make Cloud Scheduler re-drive the whole window for
+// the sake of one bad row — re-sending to every key that already succeeded.
+// The audit-row dedupe would catch those duplicates, but relying on it to
+// clean up after an avoidable retry is the wrong order of defences.
+cronRouter.post('/api-key-expiry-notice', async (_req, res) => {
+  try {
+    const result = await runApiKeyExpiryNoticeJob();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'API key expiry notice failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
