@@ -45,10 +45,6 @@ CIRCUIT_NAME="extraction-proof"
 
 # Powers of Tau — circuit has ~500 constraints; 2^14 = 16384 is comfortable.
 PTAU_NAME="powersOfTau28_hez_final_14.ptau"
-# Polygon zkEVM mirror of the public hermez ceremony ptau. The original
-# hermez S3 bucket has been periodically returning 403; this GCS mirror is
-# the documented stable mirror for the snarkjs ecosystem.
-PTAU_URL="https://storage.googleapis.com/zkevm/ptau/${PTAU_NAME}"
 PTAU_SHA256="489be9e5ac65d524f7b1685baac8a183c6e77924fdb73d2b8105e335f277895d"
 PTAU_PATH="$ARTIFACTS_DIR/$PTAU_NAME"
 
@@ -129,11 +125,9 @@ if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
   printf '%s\n' "$CIRCOMLIB_VERSION" > "$CIRCOMLIB_VERSION_STAMP"
 fi
 
-echo "[build-circuit] Step 3/6: download Powers of Tau (if missing)"
-if [[ ! -f "$PTAU_PATH" ]]; then
-  echo "[build-circuit] downloading $PTAU_NAME (~35 MB) ..."
-  curl -fsSL --retry 5 --retry-delay 5 --max-time 1800 -o "$PTAU_PATH" "$PTAU_URL"
-fi
+echo "[build-circuit] Step 3/6: fetch Powers of Tau from Arkova mirror with upstream fallback"
+PTAU_NAME="$PTAU_NAME" PTAU_SHA256="$PTAU_SHA256" \
+  "$CIRCUITS_DIR/fetch-pinned-ptau.sh" "$PTAU_PATH"
 
 echo "[build-circuit] Step 4/6: verify Powers of Tau SHA-256"
 ACTUAL_SHA="$(shasum -a 256 "$PTAU_PATH" | awk '{print $1}')"
