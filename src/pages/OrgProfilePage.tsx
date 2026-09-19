@@ -432,14 +432,16 @@ export function OrgProfilePage() {
   // pending row created by the RPC alongside the stale one it doesn't touch.
   const handleResendInvitation = useCallback(async (invitation: OrgInvitation) => {
     if (!orgId) return;
-    await inviteMember({
+    const invited = await inviteMember({
       email: invitation.email,
       role: invitation.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INDIVIDUAL',
       orgId,
       orgName: organization?.display_name ?? 'Your Organization',
       inviterName: profile?.full_name ?? undefined,
     });
-    await refreshInvitations();
+    if (invited) {
+      await refreshInvitations();
+    }
   }, [inviteMember, orgId, organization?.display_name, profile?.full_name, refreshInvitations]);
 
   const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
