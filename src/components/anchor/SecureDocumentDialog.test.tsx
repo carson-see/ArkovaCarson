@@ -20,6 +20,7 @@ import {
   DESCRIPTION_LABELS,
   ANCHORING_STATUS_LABELS,
   CONFIRMATION_PROGRESS_LABELS,
+  TOAST,
 } from '@/lib/copy';
 import { detectFraudForDocument } from '@/lib/fraudDetection';
 import { supabase } from '@/lib/supabase';
@@ -943,6 +944,47 @@ describe('SecureDocumentDialog — Add to Queue / Secure Instantly selector (QUE
     const payload = JSON.parse(String(request?.body)) as { action?: string; metadata?: Record<string, unknown>; private_tags?: unknown };
     expect(payload).toMatchObject({ action: 'queue', metadata: { securing_path: 'queue' }, private_tags: { user: [], organization: [] } });
     expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.QUEUED_TOAST);
+  });
+
+  it('treats the canonical worker receipt as success when the optional record lookup is unavailable', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ public_id: 'p-created' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(supabase.from).mockImplementation(((table: string) => {
+      if (table === 'anchors') {
+        const query = {
+          eq: vi.fn(() => query),
+          maybeSingle: vi.fn(async () => ({ data: null, error: { message: 'read unavailable' } })),
+        };
+        return { select: vi.fn(() => query) };
+      }
+      return { select: createTemplateSelectMock() };
+    }) as unknown as typeof supabase.from);
+
+    await reachConfirmStep();
+    await act(async () => { screen.getByTestId('securing-path-queue').click(); });
+
+    expect(screen.queryByRole('button', { name: ANCHORING_STATUS_LABELS.VIEW_RECORD })).not.toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.QUEUED_TOAST);
+    expect(toast.error).not.toHaveBeenCalledWith(TOAST.ANCHOR_FAILED);
+  });
+
+  it('clears private classifications when retrying with a different document', async () => {
+    mockProfileOrgId.current = 'org-id';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'failed' }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await reachConfirmStep();
+    fireEvent.change(screen.getByLabelText(SECURE_QUEUE_LABELS.USER_TAGS), { target: { value: 'personal' } });
+    fireEvent.change(screen.getByLabelText(SECURE_QUEUE_LABELS.ORG_TAGS), { target: { value: 'audit' } });
+    await act(async () => { screen.getByTestId('securing-path-queue').click(); });
+    await act(async () => { screen.getByRole('button', { name: SECURE_DIALOG_LABELS.TRY_AGAIN }).click(); });
+
+    act(() => { lastFileUploadProps?.onFileSelect?.(new File(['new'], 'new.pdf'), 'new-fp'); });
+    await act(async () => { screen.getByTestId('secure-document-continue').click(); });
+    expect(screen.getByLabelText(SECURE_QUEUE_LABELS.USER_TAGS)).toHaveValue('');
+    expect(screen.getByLabelText(SECURE_QUEUE_LABELS.ORG_TAGS)).toHaveValue('');
   });
 
   it('routes an untagged selected child organization through the same canonical worker path', async () => {

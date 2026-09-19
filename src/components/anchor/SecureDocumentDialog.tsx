@@ -69,7 +69,7 @@ interface FileData {
 }
 
 interface CreatedAnchor {
-  id: string;
+  id: string | null;
   publicId: string;
   orgId: string | null;
   action: SecuringPath | 'attestation';
@@ -422,9 +422,18 @@ export function SecureDocumentDialog({
         if (!response.ok || !submitted.public_id) {
           throw new Error(TOAST.ANCHOR_FAILED);
         }
-        const { data: createdRow } = await supabase.from('anchors').select('id').eq('public_id', submitted.public_id).maybeSingle();
-        if (!createdRow?.id) throw new Error('Created document could not be resolved.');
-        setCreatedAnchor({ id: createdRow.id, publicId: submitted.public_id, orgId: submissionOrgId, action: path });
+        // The authenticated worker receipt is the creation authority. Resolving
+        // the private row id only enables the optional record-detail shortcut;
+        // a transient/RLS read failure must not turn a completed submission
+        // into a visible failure or invite a duplicate retry.
+        let createdId: string | null = null;
+        try {
+          const { data: createdRow } = await supabase.from('anchors').select('id').eq('public_id', submitted.public_id).maybeSingle();
+          createdId = createdRow?.id ?? null;
+        } catch {
+          // Public verification and durable status polling use public_id.
+        }
+        setCreatedAnchor({ id: createdId, publicId: submitted.public_id, orgId: submissionOrgId, action: path });
         toast.success(path === 'instant' ? SECURE_QUEUE_LABELS.INSTANT_STARTED_TOAST : SECURE_QUEUE_LABELS.QUEUED_TOAST);
         setStep('success');
         onSuccess?.();
@@ -652,11 +661,15 @@ export function SecureDocumentDialog({
     setFileData(null);
     setSelectedTemplate(null);
     setDescription('');
+    setUserTagsInput('');
+    setOrgTagsInput('');
+    setTagError(null);
     setError(null);
     setCreatedAnchor(null);
     setExtractedFields([]);
     setExtractionProgress(null);
     setTemplateResult(null);
+    setAttestationData(null);
     setBulkFiles([]);
     setMixedBatchFiles([]);
   }, []);
@@ -671,7 +684,7 @@ export function SecureDocumentDialog({
   }, [createdAnchor]);
 
   const handleViewRecord = useCallback(() => {
-    if (!createdAnchor) return;
+    if (!createdAnchor?.id) return;
     handleClose();
     navigate(recordDetailPath(createdAnchor.id));
   }, [createdAnchor, handleClose, navigate]);
@@ -1357,7 +1370,7 @@ export function SecureDocumentDialog({
                 )}
                 {ANCHORING_STATUS_LABELS.COPY_LINK}
               </Button>
-              {createdAnchor && (
+              {createdAnchor?.id && (
                 <Button
                   variant="outline"
                   onClick={handleViewRecord}
