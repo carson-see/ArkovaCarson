@@ -157,7 +157,7 @@ test.describe('API Keys & Verification Flow', () => {
       // Permissions checkboxes
       await expect(orgAdminPage.getByText('Permissions')).toBeVisible();
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Records' })).toBeVisible();
-      await expect(orgAdminPage.getByRole('checkbox', { name: 'Organisations' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Organisations', exact: true })).toBeVisible();
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Search' })).toBeVisible();
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Anchor writes' })).toBeVisible();
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Verify' })).toBeVisible();
