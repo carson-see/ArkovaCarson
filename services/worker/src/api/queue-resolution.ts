@@ -345,11 +345,13 @@ export async function handleResolveQueue(
       return;
     }
 
-    res.json({ resolution_id: data });
-    void (async () => {
-      try {
-        const notificationOrgId = selectedOrgId ?? await getSelectedAnchorOrgId(parsed.data.selected_public_id);
-        if (!notificationOrgId) return;
+    // Cloud Run may freeze the instance as soon as the response is committed.
+    // Keep this bounded best-effort side effect inside the request lifetime so
+    // a successful resolution does not silently lose its admin notification.
+    // Notification failure must never rewrite the already successful RPC receipt.
+    try {
+      const notificationOrgId = selectedOrgId ?? await getSelectedAnchorOrgId(parsed.data.selected_public_id);
+      if (notificationOrgId) {
         await emitOrgAdminNotifications({
           type: 'queue_run_completed',
           organizationId: notificationOrgId,
@@ -360,10 +362,11 @@ export async function handleResolveQueue(
             actorUserId,
           },
         });
-      } catch (notificationError) {
-        logger.warn({ error: notificationError }, 'queue/resolve notification dispatch failed');
       }
-    })();
+    } catch (notificationError) {
+      logger.warn({ error: notificationError }, 'queue/resolve notification dispatch failed');
+    }
+    res.json({ resolution_id: data });
   } catch (err) {
     logger.error({ error: err }, 'handleResolveQueue unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
