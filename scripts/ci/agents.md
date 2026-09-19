@@ -968,3 +968,7 @@ untrusted queue labels because the runner's queue head leaked into the child.
 All four failures reproduce under a queue-shaped runner environment. Explicit
 forged-queue negative cases still reject those labels; resolver authentication
 and all production gate behavior remain unchanged.
+
+## 2026-09-19 — load-harness artifact admission rejects interrupted salvage files (SCRUM-3444)
+
+`check-staging-evidence.ts` now treats an explicit `load-harness` claim as a byte-bound artifact claim: `Load/concurrency evidence:` must name a repository-local `artifact=docs/staging/.../load-*.json` and its exact `sha256=<64 lowercase hex>`. `load-harness-artifact.ts` resolves only a real non-symlinked file below the checkout, hashes the exact bytes before parsing, and rejects any artifact carrying the producer's `partial` interruption marker. Other load evidence forms remain unchanged. This closes the deferred consumer half of #2492: an interrupted salvage file remains useful diagnostically but cannot satisfy release evidence.
