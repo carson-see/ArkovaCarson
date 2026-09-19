@@ -38,6 +38,7 @@ import {
   handleSearchCredentials,
   handleNessieQuery,
   handleAnchorDocument,
+  handleGetSubmissionStatus,
   handleVerifyDocument,
   handleVerifyBatch,
   handleAgentSearch,
@@ -533,7 +534,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
         record_type: z.string().max(50).optional().describe('Record type (e.g., patent_grant, 10-K)'),
         source: z.string().max(50).optional().describe('Source (e.g., edgar, uspto)'),
         title: z.string().max(500).optional().describe('Document title'),
-        description: z.string().max(1000).optional().describe('Private description visible to the submitting account'),
+        description: z.string().max(1000).optional().describe('Public description included in verification responses'),
         source_url: z.string().url().max(2048).optional().describe('Original document URL'),
         action: z.enum(['queue', 'instant']).optional().describe('Queue for batch anchoring or spend one anchor credit to start now'),
         user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional().describe('Private user tags'),
@@ -548,6 +549,16 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
             config,
           );
         },
+        telemetry,
+      ),
+    );
+    tool(
+      'arkova_get_submission_status',
+      TOOL_DESC['arkova_get_submission_status'],
+      { public_id: publicIdSchema.describe('Arkova public identifier returned by submission') },
+      withTelemetry(
+        'arkova_get_submission_status',
+        async ({ public_id }) => handleGetSubmissionStatus({ public_id }, config),
         telemetry,
       ),
     );

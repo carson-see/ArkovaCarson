@@ -19,6 +19,7 @@ Python 3.10 or newer is supported.
 - `verify(public_id)`
 - `verify_fingerprint(fingerprint)`
 - `get_anchor(public_id)`
+- `get_anchor_submission_status(public_id)`
 - `list_orgs()`
 
 ## Quick start
@@ -55,6 +56,16 @@ with Arkova(api_key="ak_live_...") as arkova:
 
 The same fingerprint always returns the same `public_id` — anchoring
 identical content twice is a no-op.
+
+Use `get_anchor_submission_status(public_id)` for authenticated, caller-scoped queue or instant-processing state:
+
+```python
+with Arkova(api_key="ak_live_...") as arkova:
+    status = arkova.get_anchor_submission_status(receipt.public_id)
+    print(status.action, status.anchor_status, status.instant_status, status.retryable)
+```
+
+`AsyncArkova.get_anchor_submission_status(public_id)` provides the same contract asynchronously. Current servers include `action`, `credit_state`, `instant_status`, and `idempotent` on new receipts; the receipt model keeps these fields optional so retained responses from older deployments remain parseable. The dedicated status model is the strict source for the current durable state.
 
 ## Bulk-anchor documents (HAKI-REQ-02)
 

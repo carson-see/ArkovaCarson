@@ -587,3 +587,12 @@ positive access checks must pass before a negative isolation result is meaningfu
 The sign-out test uses its own real UI login and MFA enrollment, so signing out
 cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
 and `loginViaUi` retain their original authentication level.
+
+## 2026-09-19 — UAT-12 secure-dialog acceptance
+
+`secure-dialog-layout.spec.ts` verifies canonical self-service submission for
+untagged and tagged child-organization documents, exact private-tag partitions,
+instant/queue keyboard actionability, purchase/admin guidance, and durable
+NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
+only account and network boundaries; submissions are captured at the worker HTTP
+boundary and rearm must reuse the original fingerprint.

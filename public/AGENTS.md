@@ -150,3 +150,6 @@ nothing unless that exact string appears in a record.
 - Arkova never returns raw PII. Recipient identifiers are always hashed.
 - Documents never leave the holder's device. Only cryptographic fingerprints are stored.
 - The `jurisdiction` field is informational metadata — Arkova does not verify jurisdiction correctness.
+## UAT-12 submission state
+
+The write-gated MCP manifest advertises `arkova_get_submission_status` beside `arkova_anchor_document`. Submission descriptions are public verification metadata; private user and organization tags never appear in discovery responses.

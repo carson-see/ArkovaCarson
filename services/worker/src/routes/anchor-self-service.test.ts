@@ -5,11 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   profileOrg: null as string | null,
   membership: true,
-  captured: null as null | { orgId: string | null; body: Record<string, unknown> },
+  captured: null as null | { orgId: string | null; body: Record<string, unknown>; method: string; url: string },
 }));
 vi.mock('../api/v1/anchor-submit.js', () => ({
-  anchorSubmitRouter: (req: { apiKey?: { orgId: string | null }; body: Record<string, unknown> }, res: { json: (value: unknown) => void }) => {
-    state.captured = { orgId: req.apiKey?.orgId ?? null, body: req.body };
+  anchorSubmitRouter: (req: { apiKey?: { orgId: string | null }; body: Record<string, unknown>; method: string; url: string }, res: { json: (value: unknown) => void }) => {
+    state.captured = { orgId: req.apiKey?.orgId ?? null, body: req.body, method: req.method, url: req.url };
     res.json({ ok: true });
   },
 }));
@@ -40,7 +40,11 @@ describe('anchor self-service context bridge', () => {
     const body = { fingerprint: 'a'.repeat(64), action: 'instant', org_id: null, metadata: { ai_summary: 'safe', fraud_score: 0.1 }, private_tags: { user: ['tax'], organization: [] } };
     const response = await request(app()).post('/').send(body);
     expect(response.status).toBe(200);
-    expect(state.captured).toEqual({ orgId: null, body: { ...body, org_id: undefined } });
+    expect(state.captured).toMatchObject({
+      orgId: null,
+      body: { fingerprint: body.fingerprint, action: body.action, metadata: body.metadata, private_tags: body.private_tags },
+      method: 'POST',
+    });
     expect(state.captured?.body).not.toHaveProperty('org_id');
   });
 
@@ -51,5 +55,28 @@ describe('anchor self-service context bridge', () => {
     expect(response.status).toBe(200);
     expect(state.captured?.orgId).toBe(selected);
     expect(state.captured?.body.metadata).toEqual({ jurisdiction: 'MI' });
+  });
+
+  it('requires an explicit caller-owned scope for GET status and forwards the public path', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    const missing = await request(app()).get('/ARK-1/submission-status');
+    expect(missing.status).toBe(400);
+
+    const personal = await request(app()).get('/ARK-1/submission-status?scope=user');
+    expect(personal.status).toBe(200);
+    expect(state.captured).toMatchObject({ orgId: null, method: 'GET', url: '/ARK-1/submission-status?scope=user' });
+
+    const selected = '33333333-3333-4333-8333-333333333333';
+    const organization = await request(app()).get(`/ARK-1/submission-status?org_id=${selected}`);
+    expect(organization.status).toBe(200);
+    expect(state.captured).toMatchObject({ orgId: selected, method: 'GET' });
+  });
+
+  it('does not reveal a status across organization membership boundaries', async () => {
+    state.membership = false;
+    const selected = '33333333-3333-4333-8333-333333333333';
+    const response = await request(app()).get(`/ARK-1/submission-status?org_id=${selected}`);
+    expect(response.status).toBe(403);
+    expect(state.captured).toBeNull();
   });
 });

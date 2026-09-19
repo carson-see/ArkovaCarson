@@ -18,6 +18,7 @@ import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 // each materialising its own — see the constant's own header for why the
 // order is stated and the array is frozen.
 import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
+import { ANCHOR_CREDENTIAL_TYPES } from '../../lib/credential-evidence.js';
 
 const router = Router();
 
@@ -36,8 +37,8 @@ const ANCHOR_SUBMIT_REQUEST_BODY = {
         required: ['fingerprint'],
         properties: {
           fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
-          description: { type: 'string', maxLength: 1000, description: 'Private document description' },
-          credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
+          description: { type: 'string', maxLength: 1000, description: 'Public document description included in verification responses' },
+          credential_type: { type: 'string', enum: [...ANCHOR_CREDENTIAL_TYPES] },
           action: { type: 'string', enum: ['queue', 'instant'], default: 'queue', description: 'Queue for batch anchoring or reserve one anchor credit to start now' },
           private_tags: {
             type: 'object',
@@ -54,12 +55,137 @@ const ANCHOR_SUBMIT_REQUEST_BODY = {
   },
 } as const;
 
+const ANCHOR_RECEIPT_SCHEMA = {
+  type: 'object',
+  required: ['public_id', 'fingerprint', 'status', 'created_at', 'record_uri', 'action', 'credit_state', 'instant_status', 'idempotent'],
+  properties: {
+    public_id: { type: 'string' },
+    fingerprint: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+    status: { type: 'string' },
+    created_at: { type: 'string', format: 'date-time' },
+    record_uri: { type: 'string', format: 'uri' },
+    action: { type: 'string', enum: ['queue', 'instant'] },
+    credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true },
+    instant_status: { type: 'string', enum: ['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED'], nullable: true },
+    idempotent: { type: 'boolean' },
+  },
+} as const;
+
 const ANCHOR_SUBMIT_RESPONSES = {
-  '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
-  '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] }, action: { type: 'string', enum: ['queue', 'instant'] }, credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true }, instant_status: { type: 'string', nullable: true } } } } } },
+  '200': { description: 'Existing caller-owned submission (idempotent)', content: { 'application/json': { schema: ANCHOR_RECEIPT_SCHEMA } } },
+  '201': { description: 'Anchor created', content: { 'application/json': { schema: ANCHOR_RECEIPT_SCHEMA } } },
   '400': { $ref: '#/components/responses/BadRequest' },
   '401': { $ref: '#/components/responses/Unauthorized' },
   '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+  '403': {
+    description: 'The authenticated caller lacks anchor write scope, cannot act for the selected organization, or the selected organization is suspended.',
+    content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+  },
+  '409': {
+    description: 'The fingerprint already belongs to another scope for this actor, supplied private tags differ from the immutable tags on an idempotent submission, or anchor creation encountered a generic uniqueness conflict.',
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['error'],
+          properties: {
+            error: { type: 'string', enum: ['submission_metadata_conflict', 'fingerprint_conflict', 'anchor_creation_conflict'] },
+            message: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
+  '429': {
+    description: 'The route-wide request-rate limit was exceeded, or the exact organization exhausted its daily anchor-creation quota. X-Org-Quota-* headers are present only for the organization-quota variant.',
+    headers: {
+      'Retry-After': { schema: { type: 'integer', minimum: 1 }, description: 'Seconds until the active limit permits another request' },
+      'X-RateLimit-Limit': { schema: { type: 'integer' }, description: 'Active request or quota limit' },
+      'X-RateLimit-Remaining': { schema: { type: 'integer', enum: [0] }, description: 'Remaining capacity in the active limit window' },
+      'X-RateLimit-Reset': { schema: { type: 'integer' }, description: 'Active limit-window reset as Unix epoch seconds' },
+      'X-Org-Quota-Anchors-Limit': { schema: { type: 'integer' }, description: 'Daily anchor quota limit' },
+      'X-Org-Quota-Anchors-Remaining': { schema: { type: 'integer' }, description: 'Daily anchor quota remaining' },
+      'X-Org-Quota-Anchors-Reset': { schema: { type: 'string', format: 'date-time' }, description: 'Daily quota reset time' },
+      'X-Org-Quota-Anchors-Created-Limit': { schema: { type: 'integer' }, description: 'Compatibility alias for the daily anchor quota limit' },
+      'X-Org-Quota-Anchors-Created-Remaining': { schema: { type: 'integer' }, description: 'Compatibility alias for daily anchor quota remaining' },
+      'X-Org-Quota-Anchors-Created-Reset': { schema: { type: 'string', format: 'date-time' }, description: 'Compatibility alias for the daily quota reset time' },
+    },
+    content: {
+      'application/json': {
+        schema: {
+          oneOf: [
+            {
+              type: 'object',
+              required: ['error', 'retry_after'],
+              properties: {
+                error: { type: 'string', enum: ['Too many requests'] },
+                retry_after: { type: 'integer', minimum: 1 },
+              },
+            },
+            {
+              type: 'object',
+              required: ['error'],
+              properties: {
+                error: {
+                  type: 'object',
+                  required: ['code', 'message', 'quota_type', 'current', 'limit', 'reset_at'],
+                  properties: {
+                    code: { type: 'string', enum: ['ORG_QUOTA_EXCEEDED'] },
+                    message: { type: 'string' },
+                    quota_type: { type: 'string', enum: ['anchors_created'] },
+                    current: { type: 'integer', minimum: 0 },
+                    limit: { type: 'integer', minimum: 0 },
+                    reset_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+  '500': {
+    description: 'Anchor creation failed without exposing database or provider details.',
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['error'],
+          properties: {
+            error: { type: 'string', enum: ['anchor_creation_failed', 'Internal server error'] },
+            message: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
+  '503': {
+    description: 'Submission, organization, quota, metadata, or instant-processing state is temporarily unavailable.',
+    content: {
+      'application/json': {
+        schema: {
+          oneOf: [
+            { $ref: '#/components/schemas/ApiError' },
+            {
+              type: 'object',
+              required: ['error'],
+              properties: {
+                error: {
+                  type: 'object',
+                  required: ['code', 'message'],
+                  properties: {
+                    code: { type: 'string', enum: ['quota_check_failed'] },
+                    message: { type: 'string' },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
 } as const;
 
 /**
@@ -939,6 +1065,54 @@ export const openApiSpec: Record<string, any> = {
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: ANCHOR_SUBMIT_REQUEST_BODY,
         responses: ANCHOR_SUBMIT_RESPONSES,
+      },
+    },
+    '/anchor/{publicId}/submission-status': {
+      get: {
+        summary: 'Get the caller-scoped durable submission status',
+        description: 'Returns queue or instant processing and credit state for an anchor owned by this exact API-key actor and organization scope. Missing and cross-tenant records both return 404. Private tags, internal identifiers, debit reasons, and metadata are never returned.',
+        operationId: 'getAnchorSubmissionStatus',
+        tags: ['Anchoring'],
+        'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'publicId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Current durable submission status', content: { 'application/json': { schema: { type: 'object', required: ['public_id', 'action', 'anchor_status', 'credit_state', 'instant_status', 'retryable', 'updated_at'], properties: {
+            public_id: { type: 'string' },
+            action: { type: 'string', enum: ['queue', 'instant'] },
+            anchor_status: { type: 'string', enum: ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED', 'SUPERSEDED', 'PENDING_RESOLUTION'] },
+            credit_state: { type: 'string', enum: ['pending', 'spent', 'refunded'], nullable: true },
+            instant_status: { type: 'string', enum: ['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED'], nullable: true },
+            retryable: { type: 'boolean', description: 'True only when explicit instant resubmission is eligible to re-arm a never-debited NEEDS_CREDIT intent.' },
+            updated_at: { type: 'string', format: 'date-time' },
+          } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { description: 'Submission absent or outside the caller tenant' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/anchor-self-service/{publicId}/submission-status': {
+      get: {
+        summary: 'Get dashboard submission status for an explicit personal or organization scope',
+        description: 'JWT bridge to the canonical caller-scoped status lookup. Supply exactly one of org_id or scope=user. Organization membership is re-derived server-side; absent and cross-tenant submissions are not exposed.',
+        operationId: 'getAnchorSelfServiceSubmissionStatus',
+        tags: ['Anchoring'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'publicId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'org_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'scope', in: 'query', schema: { type: 'string', enum: ['user'] } },
+        ],
+        responses: {
+          '200': { description: 'Same bounded shape as the API-key submission-status route' },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { description: 'Submission absent or outside the selected scope' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
       },
     },
     '/anchor-credits/status': {

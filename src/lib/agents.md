@@ -1,5 +1,12 @@
 # agents.md — lib
 
+## 2026-09-19 — UAT-12 public-description and recovery copy
+
+`DESCRIPTION_LABELS` truthfully identifies the description as public verification
+content and matches the API's 1,000-character limit. `SECURE_QUEUE_LABELS` owns
+private-tag validation and recoverable capability-unavailable copy; keep these
+strings out of component JSX.
+
 ## Invitation list failure copy (2026-09-14)
 
 `PENDING_INVITATIONS_LABELS.LOAD_FAILED` is the curated worker-list loading failure used by the platform invitation hook; a rejected worker read does not fall back to an empty tenant query.
@@ -842,4 +849,3 @@ Two differences from the DocuSign module, both deliberate:
 
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
-

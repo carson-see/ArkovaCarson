@@ -10,8 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas, mockProcessAnchor } = vi.hoisted(() => {
+const { mockSelectChain, mockPrivateTagsQuery, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas, mockProcessAnchor } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
+  const mockPrivateTagsQuery = vi.fn();
   const mockInsertChain = { single: vi.fn() };
   const mockInsert = vi.fn((_value?: unknown) => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -29,7 +30,7 @@ const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mo
     enableProfessionalEducationSchemaReady: true,
     enableInstantSecure: true,
   };
-  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas, mockProcessAnchor };
+  return { mockSelectChain, mockPrivateTagsQuery, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas, mockProcessAnchor };
 });
 
 vi.mock('../../config.js', () => ({
@@ -39,14 +40,6 @@ vi.mock('../../config.js', () => ({
 }));
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
-
-vi.mock('../../middleware/perOrgRateLimit.js', () => ({
-  requireOrgQuota: (options: { getDelta?: (req: unknown) => number | Promise<number> }) =>
-    async (req: unknown, _res: unknown, next: () => void) => {
-      mockQuotaDeltas.push(options.getDelta ? await options.getDelta(req) : 1);
-      next();
-    },
-}));
 
 vi.mock('../../utils/jobQueue.js', () => ({
   submitJob: vi.fn().mockResolvedValue('job-1'),
@@ -64,7 +57,14 @@ vi.mock('../../utils/db.js', () => {
 
   return {
     db: {
-      from: vi.fn(() => ({
+      from: vi.fn((table: string) => table === 'anchor_private_tags' ? ({
+        select: vi.fn(() => {
+          const chain: Record<string, unknown> = {};
+          chain.eq = vi.fn(() => chain);
+          chain.then = (resolve: (value: unknown) => unknown) => resolve(mockPrivateTagsQuery());
+          return chain;
+        }),
+      }) : ({
         select: vi.fn(() => eqChain),
         insert: mockInsert,
         delete: vi.fn(() => ({ eq: mockDeleteEq })),
@@ -130,6 +130,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuotaDeltas.length = 0;
+    mockPrivateTagsQuery.mockReturnValue({ data: [], error: null });
     mockConfig.enableProfessionalEducationSchemaReady = true;
     mockConfig.enableInstantSecure = true;
     mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
@@ -145,11 +146,26 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     });
     mockProcessAnchor.mockResolvedValue(true);
     mockRpc.mockImplementation(async (fn: string) => {
-      if (fn === 'create_anchor_submission') return { data: {
-        success: true, id: 'row-1', public_id: 'ARK-2026-ABCD1234',
-        fingerprint: VALID_FINGERPRINT, status: 'PENDING', created_at: '2026-04-27T00:00:00Z',
-        credential_type: 'OTHER', metadata: { securing_path: 'queue' }, intent_id: null,
-      }, error: null };
+      if (fn === 'create_anchor_submission') {
+        const args = mockRpc.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+        const inserted = await mockInsert({
+          fingerprint: args.p_fingerprint,
+          public_id: args.p_public_id,
+          user_id: args.p_user_id,
+          org_id: args.p_org_id,
+          filename: args.p_filename,
+          file_size: args.p_file_size,
+          file_mime: args.p_file_mime,
+          credential_type: args.p_credential_type,
+          description: args.p_description,
+          metadata: args.p_metadata,
+          fingerprint_source: args.p_fingerprint_source,
+        }).select().single();
+        return {
+          data: inserted.data ? { ...inserted.data, success: true, intent_id: null } : null,
+          error: inserted.error,
+        };
+      }
       if (fn === 'enqueue_existing_anchor_instant_intent') return { data: { success: true, status: 'QUEUED', intent_id: 'intent-1' }, error: null };
       return { data: { success: true }, error: null };
     });
@@ -292,6 +308,54 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.status).toBe(200);
     expect(res.body.public_id).toBe('ARK-2026-EXISTING');
     expect(mockQuotaDeltas).toEqual([]);
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts omitted or normalized-equal private tags on an idempotent replay', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockPrivateTagsQuery.mockReturnValueOnce({ data: [
+      { scope: 'user', normalized_tag: 'contract' },
+      { scope: 'organization', normalized_tag: 'finance' },
+    ], error: null });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      private_tags: { user: ['Contract'], organization: ['FINANCE'] },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.idempotent).toBe(true);
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects differing private tags on an existing actor-and-tenant submission without writes', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockPrivateTagsQuery.mockReturnValueOnce({
+      data: [{ scope: 'user', normalized_tag: 'original' }], error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      action: 'instant',
+      private_tags: { user: ['replacement'], organization: [] },
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('submission_metadata_conflict');
+    expect(mockRpc).not.toHaveBeenCalledWith('retry_anchor_instant_intent', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
@@ -717,6 +781,52 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       );
     });
 
+    it('resolves a concurrent same-fingerprint insert race to an idempotent receipt', async () => {
+      mockSelectChain.maybeSingle
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: 'race-anchor', public_id: 'ARK-RACE', fingerprint: VALID_FINGERPRINT,
+            status: 'PENDING', created_at: '2026-09-19T00:00:00Z', metadata: { securing_path: 'queue' },
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: null });
+      mockInsertChain.single.mockResolvedValueOnce({ data: null, error: { code: '23505' } });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ public_id: 'ARK-RACE', action: 'queue', idempotent: true });
+    });
+
+    it('rejects differing tags when a concurrent same-scope fingerprint insert wins', async () => {
+      mockSelectChain.maybeSingle
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: 'race-anchor', public_id: 'ARK-RACE', fingerprint: VALID_FINGERPRINT,
+            status: 'PENDING', created_at: '2026-09-19T00:00:00Z', metadata: { securing_path: 'queue' },
+          },
+          error: null,
+        });
+      mockPrivateTagsQuery.mockReturnValueOnce({
+        data: [{ scope: 'user', normalized_tag: 'winner' }], error: null,
+      });
+      mockInsertChain.single.mockResolvedValueOnce({ data: null, error: { code: '23505' } });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        private_tags: { user: ['loser'], organization: [] },
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('submission_metadata_conflict');
+      expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+    });
+
     it('returns structured error on NOT NULL violation without leaking db_code', async () => {
       mockInsertChain.single.mockResolvedValueOnce({
         data: null,
@@ -755,6 +865,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
 describe('POST /api/v1/anchor — durable instant intent (SCRUM-5139)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuotaDeltas.length = 0;
     mockConfig.enableInstantSecure = true;
     mockConfig.enableProfessionalEducationSchemaReady = true;
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
@@ -798,9 +909,63 @@ describe('POST /api/v1/anchor — durable instant intent (SCRUM-5139)', () => {
   it('preserves personal scope in the durable submission contract', async () => {
     const res = await request(makeApp(['anchor:write'], null)).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
     expect(res.status).toBe(201);
+    expect(mockQuotaDeltas).toEqual([]);
     expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.objectContaining({
       p_user_id: 'user-1', p_org_id: null, p_action: 'instant',
     }));
+  });
+
+  it('maps a user-global cross-scope fingerprint collision without leaking the existing record', async () => {
+    mockRpc.mockResolvedValueOnce({ data: { success: false, error: 'duplicate' }, error: null });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: 'fingerprint_conflict',
+      message: 'This fingerprint already exists in another scope for this API-key actor.',
+    });
+  });
+
+  it('maps the canonical transaction quota denial without creating a receipt', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'quota_exceeded', limit: 100, current: 100 }, error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(429);
+    expect(res.body).toMatchObject({ error: {
+      code: 'ORG_QUOTA_EXCEEDED', quota_type: 'anchors_created', limit: 100, current: 101,
+    } });
+    expect(res.body).not.toHaveProperty('public_id');
+    expect(res.headers['x-org-quota-anchors-limit']).toBe('100');
+    expect(res.headers['x-org-quota-anchors-remaining']).toBe('0');
+    expect(res.headers['x-org-quota-anchors-created-limit']).toBe('100');
+    expect(res.headers['x-ratelimit-limit']).toBe('100');
+    expect(res.headers['x-ratelimit-remaining']).toBe('0');
+    expect(res.headers['retry-after']).toMatch(/^\d+$/);
+  });
+
+  it('emits the legacy quota headers from the canonical transaction result', async () => {
+    mockRpc.mockResolvedValueOnce({ data: {
+      success: true, id: 'row-1', public_id: 'ARK-1', fingerprint: VALID_FINGERPRINT,
+      status: 'PENDING', created_at: '2026-09-19T00:00:00Z', quota_limit: 100, quota_current: 12,
+    }, error: null });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(201);
+    expect(res.headers['x-org-quota-anchors-limit']).toBe('100');
+    expect(res.headers['x-org-quota-anchors-remaining']).toBe('88');
+    expect(res.headers['x-org-quota-anchors-created-limit']).toBe('100');
+  });
+
+  it('maps an unavailable organization to a bounded 503', async () => {
+    mockRpc.mockResolvedValueOnce({ data: { success: false, error: 'organization_unavailable' }, error: null });
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'organization_unavailable' });
   });
 });
 
@@ -841,8 +1006,8 @@ describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)'
   });
 
   function persistedMetadata(): Record<string, unknown> | undefined {
-    const insertArg = mockInsert.mock.calls[0]?.[0] as InsertCallArg | undefined;
-    return insertArg?.metadata;
+    const createCall = mockRpc.mock.calls.find(([fn]) => fn === 'create_anchor_submission');
+    return (createCall?.[1] as { p_metadata?: Record<string, unknown> } | undefined)?.p_metadata;
   }
 
   it.each(['issuer_anchored', 'source_signed'])(
@@ -855,7 +1020,7 @@ describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)'
       });
 
       expect(res.status).toBe(201);
-      expect(mockInsert).toHaveBeenCalledTimes(1);
+      expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.anything());
       // The claim never reaches the DB, so get_public_anchor can never serve it
       // and EvidenceLevelBadge can never render the issuer treatment.
       expect(persistedMetadata()).not.toHaveProperty('verification_level');
@@ -899,6 +1064,6 @@ describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)'
     expect(res.status).toBe(201);
     // Not `metadata: {}` — the column is left off so Postgres applies its NULL
     // default, matching the SCRUM-1732 no-metadata contract.
-    expect(mockInsert.mock.calls[0]?.[0]).toHaveProperty('metadata.securing_path', 'queue');
+    expect(persistedMetadata()).toHaveProperty('securing_path', 'queue');
   });
 });

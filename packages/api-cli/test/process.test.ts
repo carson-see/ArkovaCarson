@@ -9,6 +9,8 @@ describe('built arkova binary', () => {
     });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
-    expect(JSON.parse(result.stdout)).toMatchObject({ command: 'arkova', output: 'json' });
+    const help = JSON.parse(result.stdout) as { command: string; output: string; usage: string[] };
+    expect(help).toMatchObject({ command: 'arkova', output: 'json' });
+    expect(help.usage).toContain('arkova status <public-id>');
   });
 });

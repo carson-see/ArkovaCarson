@@ -20,6 +20,7 @@ import {
   handleNessieQuery,
   handleSearchCredentials,
   handleAnchorDocument,
+  handleGetSubmissionStatus,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -53,6 +54,75 @@ afterEach(() => {
 });
 
 describe('handleAnchorDocument submission action parity', () => {
+  it('routes a bare fingerprint through the canonical worker with the queue default', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ public_id: 'ark_queue', action: 'queue', idempotent: false }),
+    });
+
+    const result = await handleAnchorDocument({
+      content_hash: 'c'.repeat(64),
+      record_type: 'document',
+    }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://worker.test/api/v1/anchor');
+    expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
+      fingerprint: 'c'.repeat(64),
+      action: 'queue',
+      credential_type: 'OTHER',
+      metadata: { credential_type: 'OTHER' },
+    }));
+  });
+
+  it('preserves a canonical worker credential type', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ public_id: 'ark_patent' }) });
+
+    await handleAnchorDocument({
+      content_hash: 'e'.repeat(64),
+      record_type: 'PATENT',
+      source: 'mcp',
+      source_url: 'https://example.com/evidence',
+    }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
+      credential_type: 'PATENT',
+      metadata: {
+        credential_type: 'PATENT',
+        source_provider: 'mcp',
+        source_url: 'https://example.com/evidence',
+      },
+    }));
+  });
+
+  it('omits provider slugs and URLs the worker public-metadata validator rejects', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ public_id: 'ark_safe' }) });
+
+    await handleAnchorDocument({
+      content_hash: 'f'.repeat(64),
+      source: '1.foo',
+      source_url: 'http://127.0.0.1/private',
+    }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).metadata).toEqual({ credential_type: 'OTHER' });
+  });
+
   it('forwards instant selection and private tags through the canonical API-key route', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -93,6 +163,73 @@ describe('handleAnchorDocument submission action parity', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('require API-key authentication');
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for a bare fingerprint when the canonical worker path is unavailable', async () => {
+    const result = await handleAnchorDocument({ content_hash: 'd'.repeat(64) }, CONFIG);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('require API-key authentication');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleGetSubmissionStatus caller-scoped proxy', () => {
+  it('forwards the public id and caller API key without adding private context', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        public_id: 'ark_test',
+        action: 'instant',
+        anchor_status: 'PENDING',
+        credit_state: 'pending',
+        instant_status: 'NEEDS_CREDIT',
+        retryable: true,
+        updated_at: '2026-09-19T12:00:00.000Z',
+      }),
+    });
+
+    const result = await handleGetSubmissionStatus({ public_id: 'ark_test' }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test/',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/anchor/ark_test/submission-status',
+      { headers: { Accept: 'application/json', 'X-API-Key': 'ak_test_secret' } },
+    );
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      public_id: 'ark_test',
+      instant_status: 'NEEDS_CREDIT',
+      retryable: true,
+    });
+  });
+
+  it('fails closed without caller authentication', async () => {
+    const result = await handleGetSubmissionStatus({ public_id: 'ark_test' }, CONFIG);
+
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [404, { error: 'submission_not_found' }, 'submission_not_found'],
+    [503, { error: { code: 'db_error', message: 'secret internal detail' } }, 'HTTP 503'],
+  ])('returns a bounded error for upstream HTTP %s', async (status, body, expected) => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status, json: async () => body });
+
+    const result = await handleGetSubmissionStatus({ public_id: 'ark_test' }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(expected);
+    expect(result.content[0].text).not.toContain('secret internal detail');
+    expect(result.content[0].text).not.toContain('db_error');
   });
 });
 

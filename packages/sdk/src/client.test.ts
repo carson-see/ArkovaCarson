@@ -182,7 +182,7 @@ describe('anchor', () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({
       public_id: 'ARK-1', fingerprint: 'a'.repeat(64), status: 'PENDING', created_at: '2026-01-01T00:00:00Z',
-      action: 'instant', instant_status: 'QUEUED',
+      action: 'instant', credit_state: 'pending', instant_status: 'QUEUED', idempotent: true,
     }) });
     const result = await client.anchor('data', {
       description: 'Quarterly agreement', action: 'instant',
@@ -194,6 +194,36 @@ describe('anchor', () => {
       private_tags: { user: ['legal'], organization: ['q3'] },
     });
     expect(result.instantStatus).toBe('QUEUED');
+    expect(result.creditState).toBe('pending');
+    expect(result.idempotent).toBe(true);
+  });
+
+  it('reads and maps caller-scoped durable submission status', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      public_id: 'ARK-1', action: 'instant', anchor_status: 'PENDING', credit_state: 'pending',
+      instant_status: 'NEEDS_CREDIT', retryable: true, updated_at: '2026-09-19T00:00:00Z',
+    }) });
+    await expect(client.getAnchorSubmissionStatus('ARK-1')).resolves.toEqual({
+      publicId: 'ARK-1', action: 'instant', anchorStatus: 'PENDING', creditState: 'pending',
+      instantStatus: 'NEEDS_CREDIT', retryable: true, updatedAt: '2026-09-19T00:00:00Z',
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/anchor/ARK-1/submission-status'),
+      expect.any(Object),
+    );
+  });
+
+  it('fails closed on an unknown persisted submission status', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      public_id: 'ARK-1', action: 'instant', anchor_status: 'SURPRISE', credit_state: 'pending',
+      instant_status: 'NEEDS_CREDIT', retryable: false, updated_at: '2026-09-19T00:00:00Z',
+    }) });
+
+    await expect(client.getAnchorSubmissionStatus('ARK-1')).rejects.toMatchObject({
+      statusCode: 502, code: 'invalid_response',
+    });
   });
 });
 

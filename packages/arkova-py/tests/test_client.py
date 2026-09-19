@@ -716,6 +716,56 @@ def test_anchor_sends_description_tags_and_instant_action() -> None:
     assert receipt.instant_status == "QUEUED"
 
 
+def test_get_anchor_submission_status_is_typed_and_caller_scoped() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return json_response(
+            {
+                "public_id": "ARK-1",
+                "action": "instant",
+                "anchor_status": "PENDING",
+                "credit_state": "pending",
+                "instant_status": "NEEDS_CREDIT",
+                "retryable": True,
+                "updated_at": "2026-09-19T00:00:00Z",
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        status = client.get_anchor_submission_status("ARK-1")
+    assert seen == ["/v1/anchor/ARK-1/submission-status"]
+    assert status.instant_status == "NEEDS_CREDIT"
+    assert status.retryable is True
+
+
+def test_async_get_anchor_submission_status_is_typed_and_fails_closed_on_unknown_state() -> None:
+    payload = {
+        "public_id": "ARK-ASYNC",
+        "action": "instant",
+        "anchor_status": "PENDING",
+        "credit_state": "pending",
+        "instant_status": "NEEDS_CREDIT",
+        "retryable": True,
+        "updated_at": "2026-09-19T00:00:00Z",
+    }
+
+    async def run(response_payload: dict[str, object]):
+        async with AsyncArkova(
+            api_key="ak_test",
+            transport=httpx.MockTransport(lambda _request: json_response(response_payload)),
+        ) as client:
+            return await client.get_anchor_submission_status("ARK-ASYNC")
+
+    status = asyncio.run(run(payload))
+    assert status.public_id == "ARK-ASYNC"
+    assert status.instant_status == "NEEDS_CREDIT"
+
+    with pytest.raises(ArkovaError, match="unexpected response shape"):
+        asyncio.run(run({**payload, "instant_status": "SURPRISE"}))
+
+
 def test_anchor_rejects_neither_fingerprint_nor_data_without_network_call() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("no network call expected")

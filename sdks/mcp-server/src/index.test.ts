@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 describe('Tool Definitions', () => {
-  it('should define exactly the 7 registered tools', () => {
+  it('should define exactly the registered tools', () => {
     // Exact-name ratchet: adding or removing a tool must update this list
     // deliberately. The 4 nessie_-prefixed tools (NCE-19) were removed
     // 2026-09-02 — three 401'd for every real caller (the worker's
@@ -25,6 +25,7 @@ describe('Tool Definitions', () => {
     // sdks/mcp-server/agents.md.
     expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
       'arkova_submit_anchor',
+      'arkova_get_submission_status',
       'arkova_verify_anchor',
       'arkova_anchor_status',
       'arkova_search_anchors',
@@ -58,6 +59,38 @@ describe('Tool Definitions', () => {
       action: 'instant',
       private_tags: { user: ['tax'], organization: ['audit'] },
     });
+  });
+
+  it('reads bounded durable submission status from the canonical route', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ public_id: 'ARK-1', action: 'instant', instant_status: 'NEEDS_CREDIT' }),
+    });
+    const result = await handleToolCall('arkova_get_submission_status', { public_id: 'ARK-1' });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/anchor/ARK-1/submission-status'),
+      expect.any(Object),
+    );
+    expect(result.content[0]?.text).toContain('NEEDS_CREDIT');
+  });
+
+  it.each([
+    [404, { error: 'submission_not_found' }, 'submission_not_found'],
+    [503, { error: { code: 'db_error', message: 'secret internal detail' } }, 'HTTP 503'],
+  ])('bounds submission-status upstream HTTP %s errors', async (status, body, expected) => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status,
+      json: () => Promise.resolve(body),
+    });
+
+    const result = await handleToolCall('arkova_get_submission_status', { public_id: 'ARK-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain(expected);
+    expect(result.content[0]?.text).not.toContain('secret internal detail');
+    expect(result.content[0]?.text).not.toContain('db_error');
   });
 
   it('should have valid input schemas', () => {

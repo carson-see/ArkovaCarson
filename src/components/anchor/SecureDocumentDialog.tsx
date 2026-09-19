@@ -36,7 +36,6 @@ import { AIFieldSuggestions } from './AIFieldSuggestions';
 import { TemplateReviewPanel } from './TemplateReviewPanel';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
-import { logAuditEvent } from '@/lib/auditLog';
 import { runExtraction, fetchTemplateReconstruction, type ExtractionField, type ExtractionFailureReason, type ExtractionProgress, type TemplateReconstructionResult } from '@/lib/aiExtraction';
 import { detectFraudForDocument, fraudResultToMetadata } from '@/lib/fraudDetection';
 import { applyTemplate } from '@/lib/templateMapper';
@@ -44,6 +43,8 @@ import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useSecuringCapability } from '@/hooks/useSecuringCapability';
+import { commaAwareTagOptions, parsePrivateTags, usePrivateTagSuggestions } from '@/hooks/usePrivateTagSuggestions';
+import { useAnchorSubmissionStatus } from '@/hooks/useAnchorSubmissionStatus';
 import { exposedSecuringPaths, type SecuringPath } from '@/lib/queueContract';
 import { toast } from 'sonner';
 import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, EXTRACTION_FAILURE_REASON_COPY, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS, SECURING_CHOICE_LABELS, SECURING_CHOICE_HINTS, SECURE_QUEUE_LABELS } from '@/lib/copy';
@@ -70,6 +71,8 @@ interface FileData {
 interface CreatedAnchor {
   id: string;
   publicId: string;
+  orgId: string | null;
+  action: SecuringPath | 'attestation';
 }
 
 export function SecureDocumentDialog({
@@ -94,7 +97,8 @@ export function SecureDocumentDialog({
   // Capability and exact selected credit pool come from the authenticated
   // worker status endpoint. exposedSecuringPaths() is the frozen
   // queueContract.ts helper every surface uses so exposure logic never drifts.
-  const { capability } = useSecuringCapability(secureOrgId);
+  const { capability, error: capabilityError, refresh: refreshCapability } = useSecuringCapability(secureOrgId);
+  const { suggestions: tagSuggestions } = usePrivateTagSuggestions(secureOrgId);
   const exposedPaths = exposedSecuringPaths(capability);
 
   const [step, setStep] = useState<Step>('upload');
@@ -106,7 +110,9 @@ export function SecureDocumentDialog({
   const [description, setDescription] = useState('');
   const [userTagsInput, setUserTagsInput] = useState('');
   const [orgTagsInput, setOrgTagsInput] = useState('');
-  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [rearmBusy, setRearmBusy] = useState(false);
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [mixedBatchFiles, setMixedBatchFiles] = useState<File[]>([]);
 
@@ -131,6 +137,26 @@ export function SecureDocumentDialog({
 
   // Template reconstruction state (populated async after extraction)
   const [templateResult, setTemplateResult] = useState<TemplateReconstructionResult | null>(null);
+  const submissionState = useAnchorSubmissionStatus(
+    createdAnchor?.action === 'attestation' ? null : createdAnchor?.publicId ?? null,
+    createdAnchor?.orgId ?? null,
+  );
+  const isInstantSubmission = createdAnchor?.action === 'instant';
+  // Query errors may retain stale React Query data. Never present that stale
+  // state as authoritative; the known submitted action is captured locally,
+  // while the durable state remains explicitly unavailable until refresh.
+  const durableInstantStatus = isInstantSubmission
+    ? (submissionState.error ? null : submissionState.status?.instantStatus ?? null)
+    : undefined;
+  const instantSuccessBody = durableInstantStatus === 'HELD'
+    ? SECURE_QUEUE_LABELS.INSTANT_HELD_BODY
+    : durableInstantStatus === 'NEEDS_CREDIT'
+      ? SECURE_QUEUE_LABELS.INSTANT_NEEDS_CREDIT_BODY
+      : durableInstantStatus === 'FAILED'
+        ? SECURE_QUEUE_LABELS.INSTANT_FAILED_BODY
+        : durableInstantStatus === null
+          ? SECURE_QUEUE_LABELS.INSTANT_STATUS_UNKNOWN_BODY
+          : SECURE_QUEUE_LABELS.INSTANT_SAVED_BODY;
 
   // Check AI extraction flag on mount
   useEffect(() => {
@@ -138,20 +164,6 @@ export function SecureDocumentDialog({
       isAIExtractionEnabled().then(setAiEnabled).catch(() => setAiEnabled(false));
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!open || !user) return;
-    // RLS scopes these rows to this user and their exact organization; tags
-    // live outside the public anchor metadata projection.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    void (supabase as any).from('anchor_private_tags').select('tag').order('created_at', { ascending: false }).limit(50)
-      .then(({ data }: { data?: Array<{ tag: string }> }) => {
-        const tags = (data ?? [])
-          .map((row) => row.tag)
-          .filter((tag): tag is string => typeof tag === 'string');
-        setTagSuggestions([...new Set(tags)]);
-      }, () => setTagSuggestions([]));
-  }, [open, user?.id]);
 
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
@@ -236,7 +248,7 @@ export function SecureDocumentDialog({
       }
 
       const result = await response.json();
-      setCreatedAnchor({ id: result.attestation_id, publicId: result.public_id });
+      setCreatedAnchor({ id: result.attestation_id, publicId: result.public_id, orgId: secureOrgId, action: 'attestation' });
       toast.success('Attestation created successfully');
       setStep('success');
       onSuccess?.();
@@ -311,7 +323,7 @@ export function SecureDocumentDialog({
     }
   }, [open, initialCredentialType, selectedTemplate, autoSelectTemplate]);
 
-  const handleConfirm = useCallback(async (fieldsOverride?: ExtractionField[], path: SecuringPath = 'queue') => {
+  const handleConfirm = useCallback(async (fieldsOverride?: ExtractionField[], path: SecuringPath = 'queue', submissionOrgId = secureOrgId) => {
     if (!fileData || !user) return;
 
     setStep('processing');
@@ -336,12 +348,12 @@ export function SecureDocumentDialog({
           return acc;
         }, {});
 
-      const validated = validateAnchorCreate({
+      validateAnchorCreate({
         fingerprint: fileData.fingerprint,
         filename: fileData.file.name,
         file_size: fileData.file.size,
         file_mime: fileData.file.type || null,
-        org_id: secureOrgId,
+        org_id: submissionOrgId,
         // R19 (CTO ruling 2026-07-28): this flow always hashes real file
         // bytes client-side via generateFingerprint (Constitution 1.6) —
         // document-derived by construction.
@@ -377,13 +389,20 @@ export function SecureDocumentDialog({
       });
       Object.assign(metadata, fraudResultToMetadata(fraudResult));
 
-      const parseTags = (value: string) => [...new Set(value.split(',').map((tag) => tag.trim()).filter(Boolean))].slice(0, 10);
-      const userTags = parseTags(userTagsInput);
-      const organizationTags = parseTags(orgTagsInput);
-      const useAtomicWorkerPath = path === 'instant' || userTags.length > 0 || organizationTags.length > 0;
+      const parsedUserTags = parsePrivateTags(userTagsInput);
+      const parsedOrganizationTags = parsePrivateTags(orgTagsInput);
+      if (!parsedUserTags.ok || !parsedOrganizationTags.ok) {
+        const reason = !parsedUserTags.ok ? parsedUserTags.reason : !parsedOrganizationTags.ok ? parsedOrganizationTags.reason : null;
+        setTagError(reason === 'too_long' ? SECURE_QUEUE_LABELS.TAG_TOO_LONG : SECURE_QUEUE_LABELS.TOO_MANY_TAGS);
+        setStep('confirm');
+        return;
+      }
+      setTagError(null);
 
-      if (useAtomicWorkerPath) {
-        const response = await fetch(`${WORKER_URL}/api/v1/anchor-self-service`, {
+      // Every single-document action crosses the authenticated worker bridge.
+      // This preserves one authorization/idempotency path for personal, org,
+      // child-org, tagged, and untagged submissions alike.
+      const response = await fetch(`${WORKER_URL}/api/v1/anchor-self-service`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
           body: JSON.stringify({
@@ -393,74 +412,30 @@ export function SecureDocumentDialog({
             file_mime: fileData.file.type || undefined,
             credential_type: selectedTemplate?.credential_type,
             description: description.trim() || undefined,
-            org_id: secureOrgId,
+            org_id: submissionOrgId,
             metadata,
             action: path,
-            private_tags: { user: userTags, organization: organizationTags },
+            private_tags: { user: parsedUserTags.tags, organization: parsedOrganizationTags.tags },
           }),
         });
-        const submitted = await response.json().catch(() => ({})) as { public_id?: string; message?: string; error?: string | { message?: string } };
+        const submitted = await response.json().catch(() => ({})) as { public_id?: string };
         if (!response.ok || !submitted.public_id) {
-          const message = typeof submitted.error === 'string' ? submitted.error : submitted.error?.message;
-          throw new Error(submitted.message ?? message ?? 'Failed to secure document.');
+          throw new Error(TOAST.ANCHOR_FAILED);
         }
         const { data: createdRow } = await supabase.from('anchors').select('id').eq('public_id', submitted.public_id).maybeSingle();
         if (!createdRow?.id) throw new Error('Created document could not be resolved.');
-        setCreatedAnchor({ id: createdRow.id, publicId: submitted.public_id });
+        setCreatedAnchor({ id: createdRow.id, publicId: submitted.public_id, orgId: submissionOrgId, action: path });
         toast.success(path === 'instant' ? SECURE_QUEUE_LABELS.INSTANT_STARTED_TOAST : SECURE_QUEUE_LABELS.QUEUED_TOAST);
         setStep('success');
         onSuccess?.();
-        return;
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- validated spread includes credential types that narrow type rejects
-      const { data: inserted, error: insertError } = await (supabase as any)
-        .from('anchors')
-        .insert({
-          ...validated,
-          user_id: user.id,
-          ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-        })
-        .select('id, public_id')
-        .single();
-
-      if (insertError) throw insertError;
-
-      setCreatedAnchor({
-        id: inserted.id,
-        // public_id is auto-generated by trigger (migration 0037) — always non-null after insert
-        publicId: inserted.public_id!,
-      });
-
-      logAuditEvent({
-        eventType: 'ANCHOR_CREATED',
-        eventCategory: 'ANCHOR',
-        targetType: 'anchor',
-        targetId: inserted.id,
-        orgId: secureOrgId ?? undefined,
-        details: `Secured document "${fileData.file.name}"`,
-      });
-
-      toast.success(SECURE_QUEUE_LABELS.QUEUED_TOAST);
-      setStep('success');
-      onSuccess?.();
     } catch (err) {
       if (err instanceof Error && err.name === 'ZodError') {
         const zodErr = err as import('zod').ZodError;
         setError(zodErr.issues.map((i) => i.message).join('; '));
       } else {
-        // Extract message from Error instances, Supabase error objects, or unknown types
-        const msg = err instanceof Error
-          ? err.message
-          : (typeof err === 'object' && err !== null && 'message' in err)
-            ? String(err.message)
-            : 'Failed to secure document. Please try again.';
-        // Detect duplicate fingerprint constraint violation
-        if (msg.includes('idx_anchors_user_fingerprint_unique') || msg.includes('duplicate key')) {
-          setError('This document has already been secured. Each document can only be anchored once.');
-        } else {
-          setError(msg || 'Failed to secure document. Please try again.');
-        }
+        // Never surface a worker/Postgres error body. Canonical idempotent
+        // submissions return the existing record rather than a duplicate error.
+        setError(TOAST.ANCHOR_FAILED);
       }
       console.error('[SecureDocumentDialog] Securing failed:', err);
       toast.error(TOAST.ANCHOR_FAILED);
@@ -599,6 +574,9 @@ export function SecureDocumentDialog({
     setDescription('');
     setUserTagsInput('');
     setOrgTagsInput('');
+    setTagError(null);
+    setPurchaseBusy(false);
+    setRearmBusy(false);
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
@@ -624,13 +602,44 @@ export function SecureDocumentDialog({
   }, [capability, handleConfirm]);
 
   const handlePurchaseCredit = useCallback(async () => {
+    if (purchaseBusy) return;
+    setPurchaseBusy(true);
+    let checkout: Window | null = null;
     try {
+      checkout = window.open('', '_blank');
+      if (!checkout) {
+        toast.error(SECURE_QUEUE_LABELS.POPUP_BLOCKED);
+        return;
+      }
+      checkout.opener = null;
       const url = await workerPostForUrl('/api/v1/anchor-credits/purchase', { quantity: 1, org_id: secureOrgId });
-      window.location.assign(url);
-    } catch (purchaseError) {
-      toast.error(purchaseError instanceof Error ? purchaseError.message : SECURE_QUEUE_LABELS.PURCHASE_FAILED);
+      checkout.location.href = url;
+    } catch {
+      checkout?.close();
+      toast.error(SECURE_QUEUE_LABELS.PURCHASE_FAILED);
+    } finally {
+      setPurchaseBusy(false);
     }
-  }, [secureOrgId]);
+  }, [purchaseBusy, secureOrgId]);
+
+  const handleRearmInstant = useCallback(async () => {
+    if (rearmBusy) return;
+    setRearmBusy(true);
+    try {
+      if (!createdAnchor || createdAnchor.orgId !== secureOrgId) {
+        toast.error(SECURE_QUEUE_LABELS.AVAILABILITY_ERROR);
+        return;
+      }
+      const refreshed = await refreshCapability();
+      if (refreshed.error || !refreshed.data?.canSecureInstantly || refreshed.data.creditBalance < refreshed.data.instantSecureCost) {
+        toast.error(refreshed.data?.purchaseGuidance ?? SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
+        return;
+      }
+      await handleConfirm(undefined, 'instant', createdAnchor.orgId);
+    } finally {
+      setRearmBusy(false);
+    }
+  }, [createdAnchor, handleConfirm, rearmBusy, refreshCapability, secureOrgId]);
 
   const handleDialogOpenChange = useCallback((nextOpen: boolean) => {
     if (!nextOpen) {
@@ -1010,7 +1019,7 @@ export function SecureDocumentDialog({
                   id="anchor-description"
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   placeholder={DESCRIPTION_LABELS.FIELD_PLACEHOLDER}
-                  maxLength={500}
+                  maxLength={1000}
                   rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -1025,11 +1034,11 @@ export function SecureDocumentDialog({
                   {SECURE_QUEUE_LABELS.USER_TAGS}
                   <input
                     className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    list="anchor-tag-suggestions"
+                    list="anchor-user-tag-suggestions"
                     maxLength={650}
                     placeholder={SECURE_QUEUE_LABELS.TAGS_PLACEHOLDER}
                     value={userTagsInput}
-                    onChange={(event) => setUserTagsInput(event.target.value)}
+                    onChange={(event) => { setUserTagsInput(event.target.value); setTagError(null); }}
                   />
                 </label>
                 {secureOrgId && (
@@ -1037,18 +1046,22 @@ export function SecureDocumentDialog({
                     {SECURE_QUEUE_LABELS.ORG_TAGS}
                     <input
                       className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      list="anchor-tag-suggestions"
+                      list="anchor-org-tag-suggestions"
                       maxLength={650}
                       placeholder={SECURE_QUEUE_LABELS.TAGS_PLACEHOLDER}
                       value={orgTagsInput}
-                      onChange={(event) => setOrgTagsInput(event.target.value)}
+                      onChange={(event) => { setOrgTagsInput(event.target.value); setTagError(null); }}
                     />
                   </label>
                 )}
-                <datalist id="anchor-tag-suggestions">
-                  {tagSuggestions.map((tag) => <option key={tag} value={tag} />)}
+                <datalist id="anchor-user-tag-suggestions">
+                  {commaAwareTagOptions(userTagsInput, tagSuggestions.user).map((tag) => <option key={tag} value={tag} />)}
+                </datalist>
+                <datalist id="anchor-org-tag-suggestions">
+                  {commaAwareTagOptions(orgTagsInput, tagSuggestions.organization).map((tag) => <option key={tag} value={tag} />)}
                 </datalist>
               </div>
+              {tagError && <p role="alert" className="text-xs text-destructive">{tagError}</p>}
 
               {/* QUEUE-01 / SCRUM-2894 (L2-A1) — securing-path hints. The
                   "Secure Instantly" hint only renders when the capability
@@ -1059,11 +1072,12 @@ export function SecureDocumentDialog({
                 {exposedPaths.includes('instant') && <p>{SECURING_CHOICE_HINTS.instant}</p>}
                 {exposedPaths.includes('instant') && capability.creditBalance < capability.instantSecureCost && (
                   capability.canPurchase ? (
-                    <Button type="button" variant="link" className="h-auto p-0 text-xs" onClick={() => void handlePurchaseCredit()}>
-                      {SECURE_QUEUE_LABELS.BUY_ONE_CREDIT}
+                    <Button type="button" variant="link" className="h-auto p-0 text-xs" disabled={purchaseBusy} onClick={() => void handlePurchaseCredit()}>
+                      {purchaseBusy ? SECURE_QUEUE_LABELS.PURCHASE_STARTING : SECURE_QUEUE_LABELS.BUY_ONE_CREDIT}
                     </Button>
                   ) : <p>{capability.purchaseGuidance}</p>
                 )}
+                {capabilityError && <p role="alert">{SECURE_QUEUE_LABELS.AVAILABILITY_ERROR}</p>}
               </div>
 
               <Alert>
@@ -1093,12 +1107,51 @@ export function SecureDocumentDialog({
                   <CheckCircle className="h-8 w-8 text-green-500" />
                 </div>
                 <h4 className="text-lg font-semibold">
-                  {ANCHORING_STATUS_LABELS.SUCCESS_TITLE}
+                  {isInstantSubmission
+                    ? SECURE_QUEUE_LABELS.INSTANT_SAVED_TITLE
+                    : ANCHORING_STATUS_LABELS.SUCCESS_TITLE}
                 </h4>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {ANCHORING_STATUS_LABELS.SUCCESS_PROCESSING}
+                  {isInstantSubmission
+                    ? instantSuccessBody
+                    : ANCHORING_STATUS_LABELS.SUCCESS_PROCESSING}
                 </p>
               </div>
+
+              {isInstantSubmission && (
+                <div className="rounded-lg border p-3 space-y-2" data-testid="instant-submission-status">
+                  <p className="text-sm font-medium">
+                    {durableInstantStatus
+                      ? SECURE_QUEUE_LABELS.INSTANT_STATUS[durableInstantStatus]
+                      : SECURE_QUEUE_LABELS.STATUS_ERROR}
+                  </p>
+                  {!durableInstantStatus && (
+                    <Button type="button" size="sm" variant="outline" onClick={() => void submissionState.refresh()}>
+                      {SECURE_DIALOG_LABELS.TRY_AGAIN}
+                    </Button>
+                  )}
+                  {durableInstantStatus === 'NEEDS_CREDIT' && (
+                    capability.canPurchase ? (
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="outline" disabled={purchaseBusy} onClick={() => void handlePurchaseCredit()}>
+                          {purchaseBusy ? SECURE_QUEUE_LABELS.PURCHASE_STARTING : SECURE_QUEUE_LABELS.BUY_ONE_CREDIT}
+                        </Button>
+                        {submissionState.status?.retryable && (
+                          <Button type="button" size="sm" disabled={rearmBusy} onClick={() => void handleRearmInstant()}>
+                            {rearmBusy ? SECURE_QUEUE_LABELS.REARMING : SECURE_QUEUE_LABELS.REARM_INSTANT}
+                          </Button>
+                        )}
+                      </div>
+                    ) : <p className="text-xs text-muted-foreground">{capability.purchaseGuidance}</p>
+                  )}
+                </div>
+              )}
+              {submissionState.error && !isInstantSubmission && <p role="alert" className="text-xs text-muted-foreground">{SECURE_QUEUE_LABELS.STATUS_ERROR}</p>}
+              {submissionState.error && !isInstantSubmission && (
+                <Button type="button" size="sm" variant="outline" onClick={() => void submissionState.refresh()}>
+                  {SECURE_DIALOG_LABELS.TRY_AGAIN}
+                </Button>
+              )}
 
               {/* AI-generated tags */}
               {templateResult?.tags && templateResult.tags.length > 0 && (
@@ -1122,7 +1175,7 @@ export function SecureDocumentDialog({
               )}
 
               {/* Confirmation progress notice */}
-              <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+              {!isInstantSubmission && createdAnchor?.action !== 'attestation' && <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
                 <Clock className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -1132,7 +1185,7 @@ export function SecureDocumentDialog({
                     {CONFIRMATION_PROGRESS_LABELS.NOTIFICATION_NOTE}
                   </p>
                 </div>
-              </div>
+              </div>}
 
               {/* Verification link */}
               {createdAnchor && (

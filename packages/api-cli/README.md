@@ -9,7 +9,7 @@ Build and run locally:
 ```sh
 npm --prefix packages/sdk run build
 npm --prefix packages/api-cli run build
-ARKOVA_API_KEY=ak_example node packages/api-cli/dist/src/cli.js health
+ARKOVA_API_KEY=ak_example node packages/api-cli/dist/cli.js health
 ```
 
 Every successful command writes one JSON value to stdout. Usage and API errors
@@ -23,6 +23,7 @@ private tags are sent to the API. File contents are not uploaded.
 
 ```sh
 arkova anchor ./agreement.pdf --action instant --description "Signed agreement" --tag legal
+arkova status ARK-2026-EXAMPLE
 arkova verify ARK-2026-001
 arkova probe ARK-2026-001 --org-id 00000000-0000-0000-0000-000000000000
 arkova folder list --scope ORG --org-id 00000000-0000-0000-0000-000000000000

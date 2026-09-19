@@ -93,6 +93,8 @@ export const anchorDocumentSchema = z
   })
   .strict();
 
+export const submissionStatusSchema = z.object({ public_id: publicIdSchema }).strict();
+
 export const verifyDocumentSchema = z
   .object({
     content_hash: contentHashSchema,
@@ -149,6 +151,7 @@ export const MCP_TOOL_SCHEMAS = {
   arkova_search_anchors: searchCredentialsSchema,
   nessie_query: nessieQuerySchema,
   arkova_anchor_document: anchorDocumentSchema,
+  arkova_get_submission_status: submissionStatusSchema,
   arkova_verify_document: verifyDocumentSchema,
   arkova_verify_batch: verifyBatchSchema,
   arkova_search: agentSearchSchema,

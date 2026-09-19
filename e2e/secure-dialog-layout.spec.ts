@@ -3,25 +3,17 @@
  * Proves client layout and actions; no database write, provider, or anchoring proof.
  * Run with -c e2e/secure-dialog-layout.config.ts; no seeded account is needed.
  */
-import { test, expect, type Locator } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { ANCHOR_ID, assertLayout, CHILD_ORG_ID, LONG_NAME, openLayoutFixture } from './helpers/secure-dialog-layout';
 
 test.use({ storageState: { cookies: [], origins: [] } });
-
-async function setReactField(locator: Locator, value: string) {
-  await locator.evaluate((element, nextValue) => {
-    const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(element, nextValue);
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-  }, value);
-}
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 }, { width: 1280, height: 480 }, { width: 375, height: 480 }]) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport });
 
     test('single-document upload, review, confirm and success fit', async ({ page }, testInfo) => {
-      await openLayoutFixture(page);
+      const { httpRequests } = await openLayoutFixture(page);
       await assertLayout(page, testInfo, 'upload');
       await page.locator('input[type="file"]').setInputFiles({ name: LONG_NAME, mimeType: 'application/pdf', buffer: Buffer.from('Layout fixture document') });
       await expect(page.getByTestId('secure-document-continue')).toBeEnabled();
@@ -42,9 +34,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await page.getByTestId('securing-path-queue').click();
       await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
       await assertLayout(page, testInfo, 'success');
-      const writes = await page.evaluate(() => window.__layout.requests.filter(request => request.kind === 'anchors'));
+      const writes = httpRequests.filter(request => request.kind === 'POST /api/v1/anchor-self-service');
       expect(writes).toHaveLength(1);
-      expect(writes[0].payload).toMatchObject({ filename: LONG_NAME, fingerprint_source: 'document_bytes', description: 'Layout fixture description', metadata: { securing_path: 'queue' } });
+      expect(writes[0].payload).toMatchObject({ filename: LONG_NAME, fingerprint_source: 'document_bytes', description: 'Layout fixture description', action: 'queue', metadata: { securing_path: 'queue' } });
       await page.getByRole('button', { name: 'Done', exact: true }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
     });
@@ -166,7 +158,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await expect(page.getByTestId('securing-path-queue')).toBeFocused();
       await page.keyboard.press('Shift+Tab');
       await expect(page.getByTestId('securing-path-instant')).toBeFocused();
-      await page.getByTestId('securing-path-instant').dispatchEvent('click');
+      await page.keyboard.press('Enter');
       await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
       const writes = httpRequests.filter(request => request.kind === 'POST /api/v1/anchor-self-service');
       expect(writes).toHaveLength(1);
@@ -186,15 +178,15 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
         const page = await context.newPage();
         const { httpRequests } = await openLayoutFixture(page, 'selected-child');
         await page.locator('input[type="file"]').setInputFiles({ name: LONG_NAME, mimeType: 'application/pdf', buffer: Buffer.from('UAT12 selected child fixture') });
-        await page.getByTestId('secure-document-continue').dispatchEvent('click');
-        await page.getByTestId('extraction-review-continue').dispatchEvent('click');
-        await setReactField(page.locator('#anchor-description'), 'Quarterly compliance evidence');
+        await page.getByTestId('secure-document-continue').click();
+        await page.getByTestId('extraction-review-continue').click();
+        await page.locator('#anchor-description').fill('Quarterly compliance evidence');
         if (tagged) {
-          await setReactField(page.getByLabel('Private tags'), 'legal, quarterly');
-          await setReactField(page.getByLabel('Organization tags'), 'audit');
+          await page.getByLabel('Private tags').fill('legal, quarterly');
+          await page.getByLabel('Organization tags').fill('audit');
           await assertLayout(page, testInfo, 'uat12-selected-child-tagged');
         }
-        await page.getByTestId('securing-path-queue').dispatchEvent('click');
+        await page.getByTestId('securing-path-queue').click();
         await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
         const browserRequests = await page.evaluate(() => window.__layout.requests);
         await context.close();
@@ -203,10 +195,10 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
 
       const plain = await submit(false);
       const tagged = await submit(true);
-      const direct = plain.find(request => request.kind === 'anchors')?.payload;
+      const plainAtomic = plain.find(request => request.kind === 'POST /api/v1/anchor-self-service')?.payload;
       const atomic = tagged.find(request => request.kind === 'POST /api/v1/anchor-self-service')?.payload;
-      expect(direct).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: expect.any(String), securing_path: 'queue' } });
-      expect(atomic).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: direct?.metadata && (direct.metadata as Record<string, unknown>).field0, securing_path: 'queue' }, private_tags: { user: ['legal', 'quarterly'], organization: ['audit'] } });
+      expect(plainAtomic).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: expect.any(String), securing_path: 'queue' }, private_tags: { user: [], organization: [] } });
+      expect(atomic).toMatchObject({ org_id: CHILD_ORG_ID, description: 'Quarterly compliance evidence', metadata: { field0: plainAtomic?.metadata && (plainAtomic.metadata as Record<string, unknown>).field0, securing_path: 'queue' }, private_tags: { user: ['legal', 'quarterly'], organization: ['audit'] } });
       expect(tagged.find(request => request.kind === 'POST /api/v1/anchor-self-service')?.authorization).toContain('Bearer eyJ');
       expect(tagged.find(request => request.kind === 'anchor-id-resolution')?.payload).toEqual({ id: ANCHOR_ID });
     });
@@ -216,8 +208,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       const buyer = await buyerContext.newPage();
       await openLayoutFixture(buyer, 'personal-zero');
       await buyer.locator('input[type="file"]').setInputFiles({ name: 'personal.pdf', mimeType: 'application/pdf', buffer: Buffer.from('personal') });
-      await buyer.getByTestId('secure-document-continue').dispatchEvent('click');
-      await expect(buyer.getByRole('button', { name: 'Buy 1 credit for $2' })).toBeVisible();
+      await buyer.getByTestId('secure-document-continue').click();
+      const buyCredit = buyer.getByRole('button', { name: 'Buy 1 credit for $2' });
+      await expect(buyCredit).toBeVisible();
+      const popupPromise = buyer.waitForEvent('popup');
+      await buyCredit.click();
+      const checkout = await popupPromise;
+      await expect(checkout).toHaveURL(/checkout=1/);
+      await checkout.close();
       await assertLayout(buyer, testInfo, 'uat12-personal-purchase');
       await buyerContext.close();
 
@@ -225,11 +223,61 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       const member = await memberContext.newPage();
       await openLayoutFixture(member, 'member-zero');
       await member.locator('input[type="file"]').setInputFiles({ name: 'member.pdf', mimeType: 'application/pdf', buffer: Buffer.from('member') });
-      await member.getByTestId('secure-document-continue').dispatchEvent('click');
+      await member.getByTestId('secure-document-continue').click();
       await expect(member.getByText('Ask an organization administrator to purchase credits.')).toBeVisible();
       await expect(member.getByRole('button', { name: 'Buy 1 credit for $2' })).toHaveCount(0);
       await assertLayout(member, testInfo, 'uat12-member-guidance');
       await memberContext.close();
+    });
+
+    test('durable instant status is truthful and rearm is explicit and single-flight', async ({ browser }, testInfo) => {
+      const heldContext = await browser.newContext({ viewport });
+      const held = await heldContext.newPage();
+      await openLayoutFixture(held, 'status-held');
+      await held.locator('input[type="file"]').setInputFiles({ name: 'held.pdf', mimeType: 'application/pdf', buffer: Buffer.from('held') });
+      await held.getByTestId('secure-document-continue').click();
+      await held.getByTestId('securing-path-instant').click();
+      await expect(held.getByTestId('instant-submission-status')).toContainText('on hold while network evidence is checked');
+      await expect(held.getByText('The request is on hold for reconciliation. No network receipt or completion time is promised.')).toBeVisible();
+      await expect(held.getByText(/you.ll see the network receipt shortly/i)).toHaveCount(0);
+      await expect(held.getByText(/permanently verified/i)).toHaveCount(0);
+      await expect(held.getByRole('button', { name: 'Try instant securing again' })).toHaveCount(0);
+      await assertLayout(held, testInfo, 'uat12-instant-held');
+      await heldContext.close();
+
+      for (const state of [
+        { scenario: 'status-failed', body: 'The document was saved, but instant securing stopped safely. This does not confirm network submission.', artifact: 'uat12-instant-failed' },
+        { scenario: 'status-no-intent', body: 'The document was saved, but its network-submission state is unavailable. Refresh the status before acting.', artifact: 'uat12-instant-status-unavailable' },
+        { scenario: 'status-loading', body: 'The document was saved, but its network-submission state is unavailable. Refresh the status before acting.', artifact: 'uat12-instant-status-loading' },
+      ]) {
+        const context = await browser.newContext({ viewport });
+        const page = await context.newPage();
+        await openLayoutFixture(page, state.scenario);
+        await page.locator('input[type="file"]').setInputFiles({ name: `${state.scenario}.pdf`, mimeType: 'application/pdf', buffer: Buffer.from(state.scenario) });
+        await page.getByTestId('secure-document-continue').click();
+        await page.getByTestId('securing-path-instant').click();
+        await expect(page.getByText(state.body)).toBeVisible();
+        await expect(page.getByText(/you.ll see the network receipt shortly/i)).toHaveCount(0);
+        await expect(page.getByText(/permanently verified/i)).toHaveCount(0);
+        await assertLayout(page, testInfo, state.artifact);
+        await context.close();
+      }
+
+      const retryContext = await browser.newContext({ viewport });
+      const retry = await retryContext.newPage();
+      const { httpRequests } = await openLayoutFixture(retry, 'needs-credit');
+      await retry.locator('input[type="file"]').setInputFiles({ name: 'retry.pdf', mimeType: 'application/pdf', buffer: Buffer.from('same-fingerprint') });
+      await retry.getByTestId('secure-document-continue').click();
+      await retry.getByTestId('securing-path-instant').click();
+      const rearm = retry.getByRole('button', { name: 'Try instant securing again' });
+      await expect(rearm).toBeVisible();
+      await rearm.dblclick();
+      await expect(retry.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+      const submissions = httpRequests.filter(request => request.kind === 'POST /api/v1/anchor-self-service');
+      expect(submissions).toHaveLength(2);
+      expect(submissions[0]?.payload?.fingerprint).toBe(submissions[1]?.payload?.fingerprint);
+      expect(submissions[1]?.payload?.action).toBe('instant');
+      await retryContext.close();
     });
   });
 }

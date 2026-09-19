@@ -5,7 +5,7 @@
  * is what MCP clients — and human operators deciding whether to install
  * the connector — read BEFORE ever calling `tools/list` against the live
  * server. It drifted badly: the live server (services/edge/src/mcp-tools.ts,
- * wired into services/edge/src/mcp-server.ts) registers 16 tools, but the
+ * wired into services/edge/src/mcp-server.ts) registers 17 tools, but the
  * manifest advertised only 2 (`arkova_search`, `arkova_get_anchor`). An agent or founder
  * reading the manifest had no way to discover arkova_verify_batch, nessie_query,
  * arkova_anchor_document, or any of the other 12 real tools.
@@ -61,11 +61,11 @@ const SERVER_TOOL_NAMES = TOOL_DEFINITIONS.map((t) => t.name);
 describe('MCP discovery manifest parity (L2-A6)', () => {
   const manifest = loadManifest();
 
-  it('server registers exactly 16 tools (sanity check on the fixture assumption)', () => {
+  it('server registers exactly 17 tools (sanity check on the fixture assumption)', () => {
     // Not a manifest assertion — a tripwire so this test file itself gets
     // revisited if TOOL_DEFINITIONS grows/shrinks materially, since the
-    // PR body and description text below reference "16" explicitly.
-    expect(SERVER_TOOL_NAMES.length).toBe(16);
+    // PR body and description text below reference "17" explicitly.
+    expect(SERVER_TOOL_NAMES.length).toBe(17);
   });
 
   it('has a non-empty tools array', () => {
@@ -85,7 +85,7 @@ describe('MCP discovery manifest parity (L2-A6)', () => {
     expect(extra).toEqual([]);
   });
 
-  it('advertises the exact real tool count — 2-of-16 regression tripwire', () => {
+  it('advertises the exact real tool count — regression tripwire', () => {
     expect(manifest.tools.length).toBe(SERVER_TOOL_NAMES.length);
   });
 
