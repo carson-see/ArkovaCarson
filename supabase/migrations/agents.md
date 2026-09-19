@@ -1,5 +1,9 @@
 # supabase/migrations/agents.md
 
+## 0469 — inbound webhook DLQ resolution audit
+
+Adds nullable `resolved_note` (1–500 characters when present) and `resolved_by` to `webhook_dlq`. Existing unresolved and historical rows remain valid. The worker writes these fields only in the same guarded update that first sets `resolved_at`; retrying resolution does not replace the original audit record.
+
 _Last updated: 2026-08-01 (rewritten: 15 unordered `## Recent migrations` sections replaced by one sorted table)._
 
 This directory starts with the Path C baseline,

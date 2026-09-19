@@ -155,14 +155,14 @@ describe('SCRUM-4514: GET /admin/webhook-dlq (list/counts)', () => {
 
 describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', () => {
   /** A tiny in-memory `webhook_dlq` stand-in shared across chained mock calls. */
-  function makeTable(rows: Array<{ id: string; resolved_at: string | null }>) {
+  function makeTable(rows: Array<{ id: string; resolved_at: string | null; resolved_note?: string; resolved_by?: string }>) {
     function chainFor() {
       return {
-        update: (patch: { resolved_at: string }) => ({
+        update: (patch: { resolved_at: string; resolved_note: string; resolved_by: string }) => ({
           in: (_col: string, ids: string[]) => ({
             is: () => {
               const justResolved = rows.filter((r) => ids.includes(r.id) && r.resolved_at === null);
-              for (const r of justResolved) r.resolved_at = patch.resolved_at;
+              for (const r of justResolved) Object.assign(r, patch);
               return { select: () => ({ data: justResolved.map((r) => ({ id: r.id })), error: null }) };
             },
           }),
@@ -181,7 +181,7 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
   }
 
   it('resolves unresolved rows and returns resolved count, already_resolved 0', async () => {
-    const rows = [
+    const rows: Array<{ id: string; resolved_at: string | null; resolved_note?: string; resolved_by?: string }> = [
       { id: ID_1, resolved_at: null },
       { id: ID_2, resolved_at: null },
     ];
@@ -193,6 +193,7 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ resolved: 2, already_resolved: 0 });
     expect(rows.every((r) => r.resolved_at !== null)).toBe(true);
+    expect(rows.every((r) => r.resolved_note === NOTE && r.resolved_by === ADMIN)).toBe(true);
   });
 
   it('idempotency: calling resolve twice on the same ids reports already_resolved on the second call, never double-counts', async () => {
