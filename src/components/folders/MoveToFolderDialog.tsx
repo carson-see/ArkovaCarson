@@ -26,7 +26,7 @@ interface MoveToFolderDialogProps {
   onOpenChange: (open: boolean) => void;
   folders: Folder[];
   currentFolderId: string | null;
-  onSelect: (folderId: string | null) => Promise<void>;
+  onSelect: (folderId: string | null) => Promise<void | boolean>;
 }
 
 export function MoveToFolderDialog({
@@ -47,8 +47,8 @@ export function MoveToFolderDialog({
     if (pendingId !== undefined) return;
     setPendingId(folderId);
     try {
-      await onSelect(folderId);
-      onOpenChange(false);
+      const completed = await onSelect(folderId);
+      if (completed !== false) onOpenChange(false);
     } finally {
       setPendingId(undefined);
     }

@@ -6,7 +6,7 @@
  * Replaces the old single-org OrganizationPage for multi-org support.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Bell, Building2, ListChecks, Settings, Plus, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
@@ -25,6 +25,9 @@ import { OrgRegistryTable, MembersTable, PendingInvitationsList, IssueCredential
 import { SecureDocumentDialog } from '@/components/anchor';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
 import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
+import { descendantFolderIds, useOrgProfileFolders } from '@/hooks/useOrgProfileFolders';
+import type { Folder } from '@/hooks/useFolders';
+import { FolderSidebar, FolderFormDialog, DeleteFolderDialog, MoveToFolderDialog, type FolderSelection } from '@/components/folders';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,7 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, PENDING_INVITATIONS_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
@@ -50,6 +53,25 @@ import type { Database } from '@/types/database.types';
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
 type OrgMemberRole = 'owner' | 'admin' | 'member';
+type FolderDialogState = { mode: 'create'; parentFolderId?: string } | { mode: 'rename'; folder: Folder };
+
+export function safeOrgExternalUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function retainFailedMoveIds(
+  selectedIds: string[],
+  failures: Array<{ anchor_id: string }>,
+): string[] {
+  const failedIds = new Set(failures.map((failure) => failure.anchor_id));
+  return selectedIds.filter((id) => failedIds.has(id));
+}
 
 /**
  * Shared tab-trigger styling. Extracted when the fourth tab (Affiliates) was
@@ -62,6 +84,11 @@ const TAB_TRIGGER_CLASS =
   'data-[state=active]:bg-transparent px-3 md:px-4 py-3 text-sm font-medium whitespace-nowrap';
 
 export function OrgProfilePage() {
+  const { orgId } = useParams<{ orgId: string }>();
+  return <OrgProfilePageInner key={orgId ?? 'no-org'} />;
+}
+
+function OrgProfilePageInner() {
   const navigate = useNavigate();
   const { orgId } = useParams<{ orgId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -123,8 +150,60 @@ export function OrgProfilePage() {
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [folderSelection, setFolderSelection] = useState<FolderSelection>('ALL');
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
+  const [deleteFolderTarget, setDeleteFolderTarget] = useState<Folder | null>(null);
+  const [moveRecordIds, setMoveRecordIds] = useState<string[]>([]);
   const [affiliationDialogOpen, setAffiliationDialogOpen] = useState(false);
   const [subOrgRefreshKey, setSubOrgRefreshKey] = useState(0);
+  const folderAuthorized = !roleLoading && (!!userRole || platformAdmin);
+  const orgFolders = useOrgProfileFolders(orgId ?? null, user?.id ?? null, folderAuthorized, isAdmin);
+  const currentOrgIdRef = useRef(orgId);
+  const folderFilter = folderSelection === 'ALL'
+    ? undefined
+    : folderSelection === 'UNFILED'
+      ? null
+      : descendantFolderIds(orgFolders.folders, folderSelection);
+
+  useEffect(() => {
+    currentOrgIdRef.current = orgId;
+    // Route tenant changes must not retain a folder id or pending mutation dialog.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFolderSelection('ALL');
+    setFolderDialog(null);
+    setDeleteFolderTarget(null);
+    setMoveRecordIds([]);
+  }, [orgId]);
+
+  const handleFolderSubmit = useCallback(async (name: string) => {
+    if (!folderDialog) return;
+    const mutationOrgId = orgId;
+    if (folderDialog.mode === 'create') {
+      await orgFolders.createFolder(name, folderDialog.parentFolderId ?? null);
+    } else {
+      await orgFolders.renameFolder(folderDialog.folder.id, name);
+    }
+    if (currentOrgIdRef.current !== mutationOrgId) return;
+  }, [folderDialog, orgFolders, orgId]);
+
+  const handleDeleteFolder = useCallback(async () => {
+    if (!deleteFolderTarget) return;
+    const mutationOrgId = orgId;
+    await orgFolders.deleteFolder(deleteFolderTarget.id);
+    if (currentOrgIdRef.current !== mutationOrgId) return;
+    setFolderSelection((current) => current === deleteFolderTarget.id ? 'ALL' : current);
+    setRefreshKey((value) => value + 1);
+  }, [deleteFolderTarget, orgFolders, orgId]);
+
+  const handleMoveRecords = useCallback(async (folderId: string | null) => {
+    const mutationOrgId = orgId;
+    const result = await orgFolders.moveRecords(moveRecordIds, folderId);
+    if (currentOrgIdRef.current !== mutationOrgId) return false;
+    if (result.failed.length > 0) toast.warning(`${result.failed.length} record(s) could not be moved.`);
+    setMoveRecordIds((current) => retainFailedMoveIds(current, result.failed));
+    setRefreshKey((value) => value + 1);
+    return result.failed.length === 0;
+  }, [moveRecordIds, orgFolders, orgId]);
   /**
    * Counts reported by ManageSubOrgs, or `null` while unknown / after a failed
    * load. Founder feedback 2026-09-13: a parent admin with an affiliation
@@ -545,24 +624,26 @@ export function OrgProfilePage() {
                 <ScrollText className="mr-2 h-4 w-4" />
                 Rules
               </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.ANCHOR_QUEUE)}>
-                <ListChecks className="mr-2 h-4 w-4" />
-                Queue
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => navigate(ROUTES.ANCHOR_QUEUE)}
-                aria-label="Open queue notifications"
-                className="relative"
-              >
-                <Bell className="h-4 w-4" />
-                {unreadNotifications > 0 && (
-                  <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
-                    {unreadNotifications > 99 ? '99+' : unreadNotifications}
-                  </span>
-                )}
-              </Button>
+              {isAdmin && <>
+                <Button variant="outline" size="sm" onClick={() => navigate(`${ROUTES.ANCHOR_QUEUE}?org_id=${encodeURIComponent(orgId ?? '')}`)}>
+                  <ListChecks className="mr-2 h-4 w-4" />
+                  Queue
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => navigate(`${ROUTES.ANCHOR_QUEUE}?org_id=${encodeURIComponent(orgId ?? '')}`)}
+                  aria-label="Open queue notifications"
+                  className="relative"
+                >
+                  <Bell className="h-4 w-4" />
+                  {unreadNotifications > 0 && (
+                    <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                      {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                    </span>
+                  )}
+                </Button>
+              </>}
               <Button variant="outline" size="sm" onClick={() => navigate(issuerRegistryPath(orgId))}>
                 <ExternalLink className="mr-2 h-4 w-4" />
                 View Public Page
@@ -605,6 +686,19 @@ export function OrgProfilePage() {
                 {ORG_PAGE_LABELS.FOUNDED} {orgFoundedDisplay}
               </span>
             )}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+            {([
+              [PROFILE_LABELS.socialLinks.website.label, safeOrgExternalUrl((organization as Record<string, unknown> | null)?.website_url)],
+              [PROFILE_LABELS.socialLinks.linkedin.label, safeOrgExternalUrl((organization as Record<string, unknown> | null)?.linkedin_url)],
+              [PROFILE_LABELS.socialLinks.twitter.label, safeOrgExternalUrl((organization as Record<string, unknown> | null)?.twitter_url)],
+            ] as const).map(([label, href]) => href && (
+              <a key={label} href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                <Link2 className="h-3.5 w-3.5" />
+                {label}
+              </a>
+            ))}
           </div>
 
           {/* Stats row — LinkedIn-style follower/connection counts */}
@@ -701,14 +795,33 @@ export function OrgProfilePage() {
               export are admin-only. A non-admin member is scoped to their OWN
               rows (by user_id) so a coworker's records never leak. RLS tightening
               is deferred to STEP 2 (T3), post-soak. */}
-          <OrgRegistryTable
-            key={refreshKey}
-            orgId={orgId}
-            isAdmin={isAdmin}
-            currentUserId={user?.id}
-            onViewAnchor={handleViewAnchor}
-            onRevokeAnchor={isAdmin ? handleRevokeAnchor : undefined}
-          />
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+            <aside className="shrink-0 lg:w-60">
+              <FolderSidebar
+                folders={orgFolders.folders}
+                loading={orgFolders.loading}
+                selected={folderSelection}
+                onSelect={setFolderSelection}
+                canManage={isAdmin}
+                canCreateOrg={isAdmin}
+                onNewFolder={(parentFolderId) => setFolderDialog({ mode: 'create', parentFolderId })}
+                onRename={(folder) => setFolderDialog({ mode: 'rename', folder })}
+                onDelete={setDeleteFolderTarget}
+              />
+            </aside>
+            <div className="min-w-0 flex-1">
+              <OrgRegistryTable
+                key={`${orgId ?? 'no-org'}:${user?.id ?? 'no-user'}:${isAdmin ? 'admin' : 'member'}:${refreshKey}`}
+                orgId={orgId}
+                isAdmin={isAdmin}
+                currentUserId={user?.id}
+                folderFilter={folderFilter}
+                onMoveRecords={isAdmin ? setMoveRecordIds : undefined}
+                onViewAnchor={handleViewAnchor}
+                onRevokeAnchor={isAdmin ? handleRevokeAnchor : undefined}
+              />
+            </div>
+          </div>
         </TabsContent>
 
         {/* People Tab */}
@@ -1099,6 +1212,36 @@ export function OrgProfilePage() {
         )}
         </Tabs>
       </Card>
+
+      <FolderFormDialog
+        key={`folder-form:${orgId ?? 'no-org'}:${user?.id ?? 'no-user'}`}
+        open={folderDialog !== null}
+        onOpenChange={(open) => {
+          if (!open && currentOrgIdRef.current === orgId) setFolderDialog(null);
+        }}
+        mode={folderDialog?.mode ?? 'create'}
+        initialName={folderDialog?.mode === 'rename' ? folderDialog.folder.name : ''}
+        onSubmit={handleFolderSubmit}
+      />
+      <DeleteFolderDialog
+        key={`folder-delete:${orgId ?? 'no-org'}:${user?.id ?? 'no-user'}`}
+        open={deleteFolderTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && currentOrgIdRef.current === orgId) setDeleteFolderTarget(null);
+        }}
+        folderName={deleteFolderTarget?.name ?? ''}
+        onConfirm={handleDeleteFolder}
+      />
+      <MoveToFolderDialog
+        key={`folder-move:${orgId ?? 'no-org'}:${user?.id ?? 'no-user'}`}
+        open={moveRecordIds.length > 0}
+        onOpenChange={(open) => {
+          if (!open && currentOrgIdRef.current === orgId) setMoveRecordIds([]);
+        }}
+        folders={orgFolders.folders}
+        currentFolderId={null}
+        onSelect={handleMoveRecords}
+      />
 
       {/* Dialogs */}
       <IssueCredentialForm

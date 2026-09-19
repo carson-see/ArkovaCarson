@@ -41,6 +41,14 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OrgProfilePage } from './OrgProfilePage';
+
+vi.mock('@/hooks/useOrgProfileFolders', () => ({
+  descendantFolderIds: () => [],
+  useOrgProfileFolders: () => ({
+    folders: [], loading: false, createFolder: vi.fn(), renameFolder: vi.fn(),
+    deleteFolder: vi.fn(), moveRecords: vi.fn(),
+  }),
+}));
 import { SUB_ORG_LABELS } from '@/lib/copy';
 import { toast } from 'sonner';
 

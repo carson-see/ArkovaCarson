@@ -71,3 +71,7 @@ only the hook's own file. This folder is the missing consumer, wired into
   `src/pages/agents.md` and `src/hooks/agents.md` for the consumer-side notes.
 
 - 2026-09-14 SCRUM-5142: `FolderSidebar` renders same-owner nested trees and connector-managed destinations. Parent selection is passed to the canonical create API; database cycle/owner guards remain authoritative.
+## 2026-09-19 — organization member read-only mode
+
+`FolderSidebar.canManage=false` retains folder navigation/filtering while hiding create, subfolder, rename, and delete controls. OrgProfile uses this for ordinary members; worker endpoints remain the write authority.
+`MoveToFolderDialog.onSelect` may resolve `false` for a partial bulk move; in that case the dialog remains open so failed selections are not silently discarded.

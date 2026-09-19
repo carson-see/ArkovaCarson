@@ -4,6 +4,8 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 
 ## Files
 
+- **`uat19-completion-20260919/PLAN.md`** — proposed, not-started T3 plan for exact-organization dashboard and queue completion, including native authorization/concurrency, desktop/mobile integration and explicit draft-versus-release gates.
+
 - **`uat12-completion-20260919/PLAN.md`** — proposed, not-started T3 plan and premortem for the UAT-12 completion follow-up. Keeps draft preparation distinct from release and prior PR2966 evidence; requires native quota/accounting contention, exact-scope privacy and desktop/mobile recovery checks.
 - **`uat12-completion-20260919/screenshots/`** — mocked-boundary desktop/mobile HELD and initial unavailable-status screenshots from the final local UAT-12 browser run; not hosted or network-completion evidence. Included in reused Draft PR2966, with its merge hold retained.
 

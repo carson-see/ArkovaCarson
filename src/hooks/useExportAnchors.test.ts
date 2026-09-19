@@ -55,9 +55,7 @@ describe('useExportAnchors', () => {
     mockSelect.mockReturnValue({
       eq: mockEq,
     });
-    mockEq.mockReturnValue({
-      is: mockIs,
-    });
+    mockEq.mockReturnValue({ eq: mockEq, is: mockIs });
     mockIs.mockReturnValue({
       order: mockOrder,
     });
@@ -141,7 +139,7 @@ describe('useExportAnchors', () => {
   // export their OWN records, never the whole organization's. The export query
   // must be scoped by user_id (mirrors the useAnchors INDIVIDUAL path), NOT by
   // org_id, so a coworker's filenames/fingerprints/metadata can never be pulled.
-  it('scopes a non-admin export to user_id, never org-wide', async () => {
+  it('scopes a non-admin export to the exact org and user_id', async () => {
     mockLimit.mockResolvedValue({ data: mockAnchorData, error: null });
 
     const { result } = renderHook(() => useExportAnchors());
@@ -157,8 +155,7 @@ describe('useExportAnchors', () => {
     expect(success!).toBe(true);
     // Scoped to the caller's own rows...
     expect(mockEq).toHaveBeenCalledWith('user_id', 'user-abc');
-    // ...and NEVER to the whole org.
-    expect(mockEq).not.toHaveBeenCalledWith('org_id', 'org-123');
+    expect(mockEq).toHaveBeenCalledWith('org_id', 'org-123');
   });
 
   // SCRUM-3010 STEP 1: fail closed. A non-admin with no resolved user id must

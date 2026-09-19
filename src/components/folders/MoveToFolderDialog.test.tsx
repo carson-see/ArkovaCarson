@@ -57,6 +57,20 @@ describe('MoveToFolderDialog', () => {
     });
   });
 
+  it('keeps the dialog open when a partial move reports incomplete', async () => {
+    const onOpenChange = vi.fn();
+    const onSelect = vi.fn().mockResolvedValue(false);
+    render(<MoveToFolderDialog
+      {...defaultProps}
+      onOpenChange={onOpenChange}
+      onSelect={onSelect}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Invoices/ }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('folder-1'));
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   it('shows an empty state with no folders yet', () => {
     render(<MoveToFolderDialog {...defaultProps} folders={[]} />);
 

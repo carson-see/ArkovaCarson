@@ -186,6 +186,53 @@ describe('handleResolveQueue', () => {
     );
   });
 
+  it('rejects an explicit organization that does not match the selected public anchor', async () => {
+    const anchorMaybeSingle = vi.fn().mockResolvedValue({
+      data: { org_id: '22222222-2222-4222-8222-222222222222', metadata: { external_file_id: 'drive-123' } },
+      error: null,
+    });
+    const builder: Record<string, unknown> = {};
+    for (const method of ['select', 'eq', 'is']) builder[method] = vi.fn(() => builder);
+    builder.maybeSingle = anchorMaybeSingle;
+    const profileBuilder: Record<string, unknown> = {};
+    for (const method of ['select', 'eq']) profileBuilder[method] = vi.fn(() => profileBuilder);
+    profileBuilder.maybeSingle = vi.fn().mockResolvedValue({ data: { is_platform_admin: true }, error: null });
+    fromMock.mockReturnValueOnce(profileBuilder).mockReturnValueOnce(builder);
+
+    const { res, status } = mockRes();
+    await handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123',
+      selected_public_id: 'pid_acmemsa1',
+      org_id: '11111111-1111-4111-8111-111111111111',
+    } }), res, 'user-1');
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an explicit collision key that does not match selected anchor metadata', async () => {
+    const builder: Record<string, unknown> = {};
+    for (const method of ['select', 'eq', 'is']) builder[method] = vi.fn(() => builder);
+    builder.maybeSingle = vi.fn().mockResolvedValue({
+      data: { org_id: '11111111-1111-4111-8111-111111111111', metadata: { external_file_id: 'other-file' } },
+      error: null,
+    });
+    const profileBuilder: Record<string, unknown> = {};
+    for (const method of ['select', 'eq']) profileBuilder[method] = vi.fn(() => profileBuilder);
+    profileBuilder.maybeSingle = vi.fn().mockResolvedValue({ data: { is_platform_admin: true }, error: null });
+    fromMock.mockReturnValueOnce(profileBuilder).mockReturnValueOnce(builder);
+
+    const { res, status } = mockRes();
+    await handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123',
+      selected_public_id: 'pid_acmemsa1',
+      org_id: '11111111-1111-4111-8111-111111111111',
+    } }), res, 'user-1');
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
   it('returns resolution_id on success', async () => {
     rpcMock.mockResolvedValue({ data: 'res-1', error: null });
     const { res, json } = mockRes();
@@ -205,7 +252,8 @@ describe('handleResolveQueue', () => {
   it('notifies admins for the selected anchor organization (looked up via public_id)', async () => {
     rpcMock.mockResolvedValue({ data: 'res-1', error: null });
     const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
-    const eq = vi.fn().mockReturnValue({ maybeSingle });
+    const is = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn().mockReturnValue({ is });
     const select = vi.fn().mockReturnValue({ eq });
     fromMock.mockReturnValue({ select });
 
@@ -224,7 +272,7 @@ describe('handleResolveQueue', () => {
     expect(fromMock).toHaveBeenCalledWith('anchors');
     // The lookup must filter by public_id, not the internal id (defense in depth).
     expect(eq).toHaveBeenCalledWith('public_id', 'pid_acmemsa1');
-    expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
+    await vi.waitFor(() => expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
       type: 'queue_run_completed',
       organizationId: 'org-1',
       payload: expect.objectContaining({
@@ -232,7 +280,21 @@ describe('handleResolveQueue', () => {
         actorUserId: 'user-1',
         selectedPublicId: 'pid_acmemsa1',
       }),
-    });
+    }));
+  });
+
+  it('keeps the successful receipt when the best-effort notification lookup throws', async () => {
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    fromMock.mockImplementation(() => { throw new Error('lookup unavailable'); });
+    const { res, status, json } = mockRes();
+
+    await handleResolveQueue(mockReq({ body: {
+      external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1',
+    } }), res, 'user-1');
+    await vi.waitFor(() => expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' }));
+
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(status).not.toHaveBeenCalled();
   });
 
   it('maps RPC 403 for insufficient privileges', async () => {
@@ -440,6 +502,22 @@ describe('handleRunOrgAnchorQueue', () => {
       force: true,
       orgId: '11111111-1111-4111-8111-111111111111',
     });
+  });
+
+  it('allows an approved-parent admin even when a stale profile primary equals the target', async () => {
+    const targetOrg = '11111111-1111-4111-8111-111111111111';
+    installFromMock({
+      profiles: { data: { org_id: targetOrg, role: 'ORG_ADMIN', is_platform_admin: false } },
+      org_members: [{ data: { role: 'member' } }, { data: { role: 'admin' } }],
+      organizations: { data: { parent_org_id: 'parent-org', parent_approval_status: 'APPROVED' } },
+    });
+    processBatchAnchorsMock.mockResolvedValue(OWNER_OK);
+
+    const { res, status } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { org_id: targetOrg } }), res);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith({ force: true, orgId: targetOrg });
   });
 
   it('plain member → 403, no run', async () => {
