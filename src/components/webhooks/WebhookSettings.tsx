@@ -256,7 +256,7 @@ export function WebhookSettings({
               Receive notifications when events occur in your organization
             </CardDescription>
             <a
-              href="https://api.arkova.ai/docs"
+              href="https://api.arkova.ai/api/docs/spec.json"
               target="_blank"
               rel="noreferrer"
               className="text-sm text-primary underline-offset-4 hover:underline"
