@@ -78,23 +78,46 @@ describe('arkova API CLI', () => {
     });
   });
 
-  it('uses exact folder list, create, and bulk move contracts', async () => {
+  it('uses exact folder CRUD, nesting, connector, and bulk move contracts', async () => {
     const api = client();
     vi.mocked(api.request)
       .mockResolvedValueOnce({ folders: [] })
       .mockResolvedValueOnce({ folder: { id: 'folder-1' } })
+      .mockResolvedValueOnce({ folder: { id: 'folder-1', name: 'Renamed' } })
+      .mockResolvedValueOnce({ folder: { id: 'folder-1', parent_folder_id: null } })
+      .mockResolvedValueOnce({ folder: { id: 'folder-1', connector_provider: 'google_drive' } })
+      .mockResolvedValueOnce({ folder: { id: 'folder-1', connector_provider: null } })
+      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ moved: ['record-1'], failed: [] });
     const output = io();
 
     expect(await main(['folder', 'list', '--scope', 'ORG', '--org-id', 'org-1'], output.value, { client: api })).toBe(0);
     expect(await main(['folder', 'create', '--name', 'Cases', '--scope', 'ORG', '--org-id', 'org-1'], output.value, { client: api })).toBe(0);
+    expect(await main(['folder', 'update', 'folder-1', '--name', 'Renamed'], output.value, { client: api })).toBe(0);
+    expect(await main(['folder', 'update', 'folder-1', '--root'], output.value, { client: api })).toBe(0);
+    expect(await main(['folder', 'connector', 'folder-1', '--provider', 'google_drive', '--source-id', 'drive-folder', '--connection-id', 'connection-1'], output.value, { client: api })).toBe(0);
+    expect(await main(['folder', 'connector', 'folder-1', '--clear'], output.value, { client: api })).toBe(0);
+    expect(await main(['folder', 'delete', 'folder-1'], output.value, { client: api })).toBe(0);
     expect(await main(['folder', 'move', '--record-id', 'record-1', '--folder-id', 'folder-1'], output.value, { client: api })).toBe(0);
 
     expect(api.request).toHaveBeenNthCalledWith(1, '/api/v1/folders?owner_scope=ORG&org_id=org-1');
     expect(api.request).toHaveBeenNthCalledWith(2, '/api/v1/folders', {
       method: 'POST', body: JSON.stringify({ name: 'Cases', owner_scope: 'ORG', org_id: 'org-1' }),
     });
-    expect(api.request).toHaveBeenNthCalledWith(3, '/api/v1/folders/bulk-move', {
+    expect(api.request).toHaveBeenNthCalledWith(3, '/api/v1/folders/folder-1', {
+      method: 'PATCH', body: JSON.stringify({ name: 'Renamed' }),
+    });
+    expect(api.request).toHaveBeenNthCalledWith(4, '/api/v1/folders/folder-1', {
+      method: 'PATCH', body: JSON.stringify({ parent_folder_id: null }),
+    });
+    expect(api.request).toHaveBeenNthCalledWith(5, '/api/v1/folders/folder-1/connector', {
+      method: 'PUT', body: JSON.stringify({ provider: 'google_drive', source_id: 'drive-folder', connection_id: 'connection-1' }),
+    });
+    expect(api.request).toHaveBeenNthCalledWith(6, '/api/v1/folders/folder-1/connector', {
+      method: 'PUT', body: JSON.stringify({ provider: null, source_id: null, connection_id: null }),
+    });
+    expect(api.request).toHaveBeenNthCalledWith(7, '/api/v1/folders/folder-1', { method: 'DELETE' });
+    expect(api.request).toHaveBeenNthCalledWith(8, '/api/v1/folders/bulk-move', {
       method: 'POST', body: JSON.stringify({ record_public_ids: ['record-1'], folder_id: 'folder-1' }),
     });
   });

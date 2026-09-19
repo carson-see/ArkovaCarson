@@ -166,8 +166,9 @@ export function recordDetailPath(id: string): string {
 }
 
 /** Build a member detail URL for a given member ID */
-export function memberDetailPath(memberId: string): string {
-  return `/organization/member/${memberId}`;
+export function memberDetailPath(memberId: string, orgId?: string): string {
+  const path = `/organization/member/${memberId}`;
+  return orgId ? `${path}?org_id=${encodeURIComponent(orgId)}` : path;
 }
 
 /** Build a public member profile URL for a public profile ID */

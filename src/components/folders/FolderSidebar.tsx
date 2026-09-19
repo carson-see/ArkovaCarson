@@ -30,8 +30,10 @@ interface FolderSidebarProps {
   loading: boolean;
   selected: FolderSelection;
   onSelect: (selection: FolderSelection) => void;
-  onNewFolder: (parentFolderId?: string, ownerScope?: 'USER' | 'ORG') => void;
+  onNewFolder: (parentFolderId?: string, ownerScope?: 'USER' | 'ORG', contextual?: boolean) => void;
   canCreateOrg?: boolean;
+  canManage?: boolean;
+  canCreateContextual?: boolean;
   onRename: (folder: Folder) => void;
   onDelete: (folder: Folder) => void;
 }
@@ -43,17 +45,19 @@ export function FolderSidebar({
   onSelect,
   onNewFolder,
   canCreateOrg = false,
+  canManage = true,
+  canCreateContextual = false,
   onRename,
   onDelete,
 }: Readonly<FolderSidebarProps>) {
   const ordered = flattenFolders(folders);
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+    <div className="min-w-0 flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-1">
+        <h2 className="mr-auto text-sm font-semibold text-muted-foreground uppercase tracking-wide">
           {FOLDER_LABELS.NAV_TITLE}
         </h2>
-        <Button
+        {canManage && <Button
           variant="ghost"
           size="sm"
           onClick={() => onNewFolder()}
@@ -61,8 +65,13 @@ export function FolderSidebar({
         >
           <Plus className="h-4 w-4 mr-1" />
           {FOLDER_LABELS.NEW_FOLDER}
-        </Button>
-        {canCreateOrg && (
+        </Button>}
+        {canManage && canCreateContextual && (
+          <Button title={FOLDER_LABELS.PRIVACY_CONTEXT} variant="ghost" size="sm" onClick={() => onNewFolder(undefined, 'USER', true)}>
+            <Plus className="h-4 w-4 mr-1" /> {FOLDER_LABELS.CONTEXT_PRIVATE}
+          </Button>
+        )}
+        {canManage && canCreateOrg && (
           <Button variant="ghost" size="sm" onClick={() => onNewFolder(undefined, 'ORG')}>
             <Plus className="h-4 w-4 mr-1" /> Org
           </Button>
@@ -105,7 +114,7 @@ export function FolderSidebar({
                 style={{ paddingLeft: `${8 + depth * 16}px` }}
               />
               {folder.connectorProvider && <Plug className="h-3.5 w-3.5 text-muted-foreground" aria-label={`${folder.connectorProvider} destination`} />}
-              <DropdownMenu>
+              {canManage && <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
@@ -133,7 +142,7 @@ export function FolderSidebar({
                     {FOLDER_LABELS.DELETE_TITLE}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </DropdownMenu>}
             </div>
           ))
         )}

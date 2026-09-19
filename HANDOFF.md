@@ -14,6 +14,56 @@
 
 ## Now
 
+### UAT-19 completion preparation — exact-org review follow-up
+
+- Canonical tracking: [SCRUM-5268](https://arkova.atlassian.net/browse/SCRUM-5268)
+  and [Confluence153256009](https://arkova.atlassian.net/wiki/spaces/A/pages/153256009).
+  This candidate remains draft preparation, not staging/release completion.
+- Exact-org folders, registry/export and queue operations now preserve secondary
+  membership authority without stale primary-profile escalation. Review fixes
+  cover partial moves, stale reads/mutations, notification failure after a durable
+  response, queue polling versus mutation completion and no-primary-org access.
+- Additive0477 serializes logical collision sets, rechecks authority after waits,
+  supports same-selection replay and rejects competing terminal selections.
+  Local native checks include unrelated-set progress while another set is locked.
+- [Proposed T3 plan](docs/staging/uat19-completion-20260919/PLAN.md) is independently
+  premortemed; browser fixtures mock authentication/network and Secure dialog
+  internals. No hosted configuration, deployment, payment, email or soak occurred.
+- Founder cap is30 open PRs including drafts and parallel Sol implementation is
+  authorized. Root owns integration, independent verification and held-Draft
+  publication; historical parent evidence does not qualify this new runtime.
+
+### UAT-24 completion follow-up — active preparation
+
+- Founder continuation covers UAT-24, UAT-19, UAT-16, UAT-14 and UAT-15; the
+  latest direction authorizes multiple tickets in parallel with isolated Sol
+  agent lanes and independent CTO verification. Integrations stay serialized.
+  The latest
+  cap is **30 total open PRs including drafts**, superseding older limits below.
+- Isolated branch `cto/uat24-completion-20260919` starts from release-owned
+  PR2968 at `ec108c4220787876494c61a9b04c3cc25212de4b`; preserve that branch and
+  its hold. Preparation requires a reviewed/debugged held Draft, proportional
+  tests, a premortemed soak plan and verified external tracking updates.
+- Direct authenticated folder RLS exposed globally personal folders to platform
+  administrators even though the service RPC denied that path. Additive 0480
+  narrows only the personal SELECT policy. Native role-based allow/deny and
+  cycle tests pass locally; no hosted application or production claim.
+- Publication inventory found release-owned parent2968 advanced to
+  `5a9c3b392a53ccb405de7d8f2db65c88a7acfef3`, including contractual-cap0475.
+  Our unpublished privacy migration was renumbered0480; parent0475 is untouched.
+  Integration and repeated combined verification are required before publication.
+- Selected-organization UI, partial-move recovery, Python omitted/null patch
+  behavior, mutation retries and API/CLI contract parity are being corrected.
+  Full UAT acceptance and independent final review remain pending.
+- [Proposed T3 plan](docs/staging/uat24-completion-20260919/PLAN.md) is not a soak
+  receipt. No shared rig, production database, provider account, release queue
+  or running observer is modified. Historical parent-head exceptions do not
+  qualify these new corrections.
+- Canonical status: [SCRUM-5142](https://arkova.atlassian.net/browse/SCRUM-5142),
+  [story documentation](https://arkova.atlassian.net/wiki/spaces/A/pages/148307969),
+  and [master bugs](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
+  The story remains In Progress; release completion is not claimed.
+
 ### 2026-09-19 — UAT-12 completion follow-up preparation
 
 - **Publication authority:** Carson explicitly authorized reuse of existing

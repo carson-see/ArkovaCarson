@@ -4,7 +4,8 @@
  * Reads /api/queue/pending, groups PENDING_RESOLUTION anchors by
  * external_file_id, and POSTs /api/queue/resolve when an admin picks a winner.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AppShell } from '@/components/layout';
 import { useVisibilityPolling } from '@/hooks/useVisibilityPolling';
 import { OrgRequiredGate } from '@/components/auth/OrgRequiredGate';
@@ -58,6 +59,7 @@ interface OrgRoleReader {
 }
 
 const POLL_INTERVAL_MS = 30_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function groupByExternal(rows: PendingAnchor[]): Group[] {
   const byKey = new Map<string, PendingAnchor[]>();
@@ -160,7 +162,7 @@ function canRunAnchoringJob(profileRole?: string | null, isPlatformAdmin?: boole
   );
 }
 
-function QueueInner() {
+function QueueInner({ selectedOrgId = null }: Readonly<{ selectedOrgId?: string | null }>) {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const [loading, setLoading] = useState(true);
@@ -175,11 +177,40 @@ function QueueInner() {
   const [orgRole, setOrgRole] = useState<string | null>(null);
   const [focusIdx, setFocusIdx] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
+  const effectiveOrgId = selectedOrgId ?? profile?.org_id ?? null;
+  const scopeKey = `${user?.id ?? 'no-user'}:${effectiveOrgId ?? 'no-org'}`;
+  const scopeKeyRef = useRef(scopeKey);
+  const listRequestRef = useRef(0);
+  const scopeGenerationRef = useRef(0);
+
+  useEffect(() => {
+    scopeKeyRef.current = scopeKey;
+    scopeGenerationRef.current += 1;
+  }, [scopeKey]);
+
+  useEffect(() => {
+    listRequestRef.current += 1;
+    // Tenant changes must synchronously invalidate every prior-tenant view and action.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRows([]);
+    setError(null);
+    setLoading(true);
+    setDialogGroup(null);
+    setSelectedPublicId(null);
+    setRunMessage(null);
+    setSubmitting(false);
+    setRunning(false);
+  }, [scopeKey]);
 
   const fetchPending = useCallback(async () => {
+    const requestId = ++listRequestRef.current;
+    const requestScopeKey = scopeKey;
     setError(null);
     try {
-      const res = await workerFetch('/api/queue/pending?limit=100', { method: 'GET' });
+      const path = selectedOrgId
+        ? `/api/queue/pending?limit=100&org_id=${encodeURIComponent(selectedOrgId)}`
+        : '/api/queue/pending?limit=100';
+      const res = await workerFetch(path, { method: 'GET' });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
           error?: { message?: string };
@@ -191,20 +222,31 @@ function QueueInner() {
       // Preserve reference when payload is unchanged — keeps the grouping
       // memo stable across 30s poll ticks on an idle queue, which is the
       // common case at 10K DAU.
+      if (requestId !== listRequestRef.current || requestScopeKey !== scopeKeyRef.current) return;
       setRows((prev) => (rowsEqual(prev, items) ? prev : items));
     } catch (err) {
+      if (requestId !== listRequestRef.current || requestScopeKey !== scopeKeyRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to fetch queue');
     } finally {
-      setLoading(false);
+      if (requestId === listRequestRef.current && requestScopeKey === scopeKeyRef.current) setLoading(false);
     }
-  }, []);
+  }, [scopeKey, selectedOrgId]);
 
-  useVisibilityPolling(fetchPending, POLL_INTERVAL_MS);
+  useEffect(() => {
+    // Route-scoped queries must refetch immediately rather than wait for the polling interval.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchPending();
+  }, [fetchPending]);
+  useVisibilityPolling(fetchPending, POLL_INTERVAL_MS, { immediate: false });
 
   useEffect(() => {
     let cancelled = false;
+    // Never retain a prior tenant's role while the exact-scope lookup is pending.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOrgRole(null);
     async function loadOrgRole() {
-      if (!user?.id || !profile?.org_id) {
+      const roleOrgId = effectiveOrgId;
+      if (!user?.id || !roleOrgId) {
         setOrgRole(null);
         return;
       }
@@ -213,7 +255,7 @@ function QueueInner() {
           .from('org_members')
           .select('role')
           .eq('user_id', user.id)
-          .eq('org_id', profile.org_id)
+          .eq('org_id', roleOrgId)
           .maybeSingle();
         if (!cancelled) {
           setOrgRole(roleError ? null : ((data as { role?: string } | null)?.role ?? null));
@@ -226,7 +268,7 @@ function QueueInner() {
     return () => {
       cancelled = true;
     };
-  }, [profile?.org_id, user?.id]);
+  }, [effectiveOrgId, user?.id]);
 
   const groups = useMemo(() => groupByExternal(rows), [rows]);
   const clampedFocus = Math.min(Math.max(focusIdx, 0), Math.max(0, groups.length - 1));
@@ -248,6 +290,8 @@ function QueueInner() {
 
   async function resolve(): Promise<void> {
     if (!dialogGroup || !selectedPublicId) return;
+    const requestOrgId = selectedOrgId;
+    const requestGeneration = scopeGenerationRef.current;
     setSubmitting(true);
     setError(null);
     try {
@@ -257,6 +301,7 @@ function QueueInner() {
           external_file_id: dialogGroup.external_file_id,
           selected_public_id: selectedPublicId,
           reason: reason.trim() || undefined,
+          ...(requestOrgId ? { org_id: requestOrgId } : {}),
         }),
       });
       if (!res.ok) {
@@ -265,21 +310,28 @@ function QueueInner() {
         };
         throw new Error(body.error?.message ?? `Resolve failed (${res.status})`);
       }
+      if (requestGeneration !== scopeGenerationRef.current) return;
       setDialogGroup(null);
       await fetchPending();
     } catch (err) {
+      if (requestGeneration !== scopeGenerationRef.current) return;
       setError(err instanceof Error ? err.message : 'Resolve failed');
     } finally {
-      setSubmitting(false);
+      if (requestGeneration === scopeGenerationRef.current) setSubmitting(false);
     }
   }
 
   async function runQueue(): Promise<void> {
+    const requestOrgId = selectedOrgId;
+    const requestGeneration = scopeGenerationRef.current;
     setRunning(true);
     setError(null);
     setRunMessage(null);
     try {
-      const res = await workerFetch('/api/queue/run', { method: 'POST' }, 120_000);
+      const res = await workerFetch('/api/queue/run', {
+        method: 'POST',
+        ...(requestOrgId ? { body: JSON.stringify({ org_id: requestOrgId }) } : {}),
+      }, 120_000);
       const body = (await res.json().catch(() => ({}))) as {
         processed?: number;
         batchId?: string | null;
@@ -296,18 +348,24 @@ function QueueInner() {
         const batchPart = body.batchId ? ` in ${body.batchId}` : '';
         message = `Run complete. ${processed} anchor${suffix} submitted${batchPart}.`;
       }
+      if (requestGeneration !== scopeGenerationRef.current) return;
       setRunMessage(message);
       await fetchPending();
     } catch (err) {
+      if (requestGeneration !== scopeGenerationRef.current) return;
       setError(err instanceof Error ? err.message : 'Run failed');
     } finally {
-      setRunning(false);
+      if (requestGeneration === scopeGenerationRef.current) setRunning(false);
     }
   }
 
   const pendingCount = rows.length;
   const oldestAge = groups[0] ? formatAge(groups[0].oldest.created_at) : null;
-  const canRunQueue = canRunAnchoringJob(profile?.role, profile?.is_platform_admin, orgRole);
+  const canRunQueue = canRunAnchoringJob(
+    selectedOrgId ? null : profile?.role,
+    profile?.is_platform_admin,
+    orgRole,
+  );
 
   return (
     <AppShell
@@ -520,6 +578,18 @@ function QueueInner() {
 }
 
 export function AnchorQueuePage() {
+  const [searchParams] = useSearchParams();
+  const hasExplicitOrg = searchParams.has('org_id');
+  const explicitOrgId = searchParams.get('org_id');
+  if (hasExplicitOrg && (!explicitOrgId || !UUID_PATTERN.test(explicitOrgId))) {
+    return (
+      <Alert variant="destructive" className="m-4" role="alert">
+        <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+        <AlertDescription>Choose a valid organization before opening the queue.</AlertDescription>
+      </Alert>
+    );
+  }
+  if (explicitOrgId) return <QueueInner selectedOrgId={explicitOrgId} />;
   return (
     <OrgRequiredGate
       title="Queue needs an organization"

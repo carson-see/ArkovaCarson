@@ -47,6 +47,11 @@ export interface BulkMoveResult {
   eventOrgId?: string | null;
   folderPublicId?: string | null;
 }
+export interface FolderMemberContext {
+  id: string; email: string; full_name: string | null; avatar_url: string | null;
+  role: 'ORG_ADMIN' | 'INDIVIDUAL'; created_at: string; org_id: string;
+  membership_role: 'owner' | 'admin' | 'member';
+}
 
 export function remapPublicIdMoveResult(
   requested: string[], resolved: Array<{ id: string; public_id: string }>,
@@ -88,6 +93,8 @@ export interface FolderApiDeps {
   canAdminOrgExact(input: FolderActor & { orgId: string }): Promise<boolean>;
   isPlatformAdmin(input: FolderActor): Promise<boolean>;
   canUsePersonalContext(input: FolderActor & { ownerUserId: string; orgId: string }): Promise<boolean>;
+  getMemberContext(input: FolderActor & { ownerUserId: string; orgId: string }): Promise<FolderMemberContext | null>;
+  listMemberContexts(input: FolderActor & { orgId: string }): Promise<FolderMemberContext[]>;
   emitFolderEvent(eventType: FolderEventType, orgId: string | null, payload: Record<string, unknown>): Promise<void>;
 }
 
@@ -99,6 +106,8 @@ const ListQuery = z.object({
   org_id: Uuid.optional(),
   context_org_id: Uuid.optional(),
 }).strict();
+const MemberContextQuery = z.object({ owner_user_id: Uuid, context_org_id: Uuid }).strict();
+const MemberContextsQuery = z.object({ context_org_id: Uuid }).strict();
 const CreateBody = z.object({
   name: z.string().trim().min(1).max(100),
   owner_scope: OwnerScope,
@@ -218,6 +227,33 @@ export function createFoldersRouter(deps: FolderApiDeps): Router {
     if (!authorized.ok) return res.status(403).json({ error: authorized.code });
     const folders = await deps.listFolders({ ...auth, ownerScope, ...authorized });
     return res.json({ folders });
+  });
+
+  router.get('/member-context', async (req, res) => {
+    const parsed = MemberContextQuery.safeParse(req.query);
+    if (!parsed.success) return badRequest(res, parsed);
+    const auth = actor(req)!;
+    if (!auth.actorUserId || auth.apiKeyId) return res.status(403).json({ error: 'folder_scope_forbidden' });
+    const authorized = await deps.isPlatformAdmin(auth) || await deps.canAdminOrg({
+      ...auth, orgId: parsed.data.context_org_id,
+    });
+    if (!authorized) return res.status(403).json({ error: 'folder_scope_forbidden' });
+    const member = await deps.getMemberContext({
+      ...auth, ownerUserId: parsed.data.owner_user_id, orgId: parsed.data.context_org_id,
+    });
+    if (!member) return res.status(404).json({ error: 'member_not_found' });
+    return res.json({ member });
+  });
+
+  router.get('/member-contexts', async (req, res) => {
+    const parsed = MemberContextsQuery.safeParse(req.query);
+    if (!parsed.success) return badRequest(res, parsed);
+    const auth = actor(req)!;
+    if (!auth.actorUserId || auth.apiKeyId) return res.status(403).json({ error: 'folder_scope_forbidden' });
+    if (!(await deps.isPlatformAdmin(auth) || await deps.canAdminOrg({ ...auth, orgId: parsed.data.context_org_id }))) {
+      return res.status(403).json({ error: 'folder_scope_forbidden' });
+    }
+    return res.json({ members: await deps.listMemberContexts({ ...auth, orgId: parsed.data.context_org_id }) });
   });
 
   router.post('/', async (req, res) => {

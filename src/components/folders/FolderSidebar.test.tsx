@@ -90,4 +90,12 @@ describe('FolderSidebar', () => {
     await user.click(await screen.findByText('Delete Folder'));
     expect(defaultProps.onDelete).toHaveBeenCalledWith(folders[1]);
   });
+
+  it('keeps folder navigation but hides every mutation control for members', () => {
+    render(<FolderSidebar {...defaultProps} canManage={false} canCreateOrg />);
+    expect(screen.getByRole('button', { name: 'Invoices' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New Folder' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Invoices actions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Org' })).not.toBeInTheDocument();
+  });
 });

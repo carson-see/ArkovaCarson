@@ -101,7 +101,7 @@ describe('bin invocation via a real npm-style symlink', () => {
     expect(client.getServerVersion()?.name).toBe('arkova-mcp-server');
 
     const { tools } = await client.listTools();
-    expect(tools.length).toBe(7);
+    expect(tools.length).toBe(9);
   }, 15_000);
 
   it('warns to stderr (not a crash) when ARKOVA_API_KEY is unset, through the same symlinked entry point', async () => {

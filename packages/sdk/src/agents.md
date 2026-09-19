@@ -117,6 +117,7 @@ unreachable today, so no delivery of it has occurred — see
 ## 2026-09-14 — SCRUM-5142 folders
 
 `ArkovaClient.folders` mirrors the canonical worker REST surface: list/create/update/bindConnector/delete/moveRecords. Keep bulk moves capped by the server contract and preserve per-row failures.
+The folder contract suite must cover omission-safe rename, explicit root reparent, connector binding/clear, deletion, and both bulk identifier modes.
 ## 2026-09-19 — remaining webhook types mirrored
 
 `WebhookEventType` includes `job.completed` plus the four registered compliance contracts. The exhaustive client-test pin and repository drift gate keep the SDK union aligned with the worker allowlist; this is a source change for the next artifact freeze and does not claim a package release.

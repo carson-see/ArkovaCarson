@@ -1641,3 +1641,28 @@ service-role paths remain unchanged.
 
 0481 is additive and unapplied locally: private bucket, public-ID-bound object paths, active AAL2 owner/admin writes, current-pointer public reads, and v2 whitelisted public-profile RPCs. The native fixture is minimal PostgreSQL evidence, not hosted Storage/Auth proof.
 All four 0481 SECURITY DEFINER helpers explicitly revoke PUBLIC/anon/authenticated before narrow grants. Public personal signing and the v2 DTO both require public, active, non-deleted profiles; legacy base RPC behavior is not an authorization substitute.
+| `0477` | `0477_uat19_queue_resolve_authorization.sql` | SCRUM-5268 / UAT-19 | PRE-PUBLICATION | Replaces only the service-role four-argument `resolve_anchor_queue_by_public_id` body. Tenant and collision scope come from the selected public anchor; authorization is exact `org_members` owner/admin, platform admin, or exact owner/admin of one APPROVED direct parent (no profile-role fallback or recursive ancestry). A tenant+collision advisory transaction lock precedes deterministic row locks, so different-winner races cannot deadlock; the durable receipt is rechecked under lock. ACL/signature stay service-role-only/unchanged. Native proof: `scripts/uat19/native-pg-queue-resolution.sh`. |
+
+## 2026-09-19 — UAT-24 global-personal folder privacy (0480)
+
+`0480_uat24_global_personal_folder_privacy.sql` is an additive correction to
+0462/0464. It narrows only `folders_select_user`: platform administrators and
+approved ancestor administrators can read another user's personal folder only
+when `context_org_id IS NOT NULL`; a globally personal row remains visible only
+to its owner. No insert/update/delete policy or worker RPC changes. The native
+UAT-24 harness executes the effective 0462 + 0464 + 0480 stack under forced RLS
+and proves owner, platform-context, ancestor-context, peer-denial, global
+privacy, and NULL-identity behavior. File-only, not applied to any hosted DB.
+## 2026-09-19 — 0475 atomic contractual anchor-cap conservation
+
+`0475_atomic_contractual_anchor_cap.sql` compensates for the final-slot race
+between the worker's contractual-cap precheck and the canonical anchor-create
+RPC. It preserves 0474's separate tier daily counter, but locks the owning
+`org_credits` row and checks the active-anchor lifetime cap before inserting.
+The active-anchor read is capped at `anchor_quota` rows, and lock acquisition
+has a five-second deadline so a contended credit row cannot pin a request until
+the broader statement timeout.
+The initial review incorrectly equated matching old production/B4 RPC hashes
+with canonical 0474. Both were still on the older 0461-era body. Migration 0475
+is based on immutable 0474 file SHA256 `00a15bd4...e6e64bb`; B4 first received
+0474 during qualification, and production application remained pending.

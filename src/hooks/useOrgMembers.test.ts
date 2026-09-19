@@ -1,4 +1,3 @@
-/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
 /* eslint-disable arkova/no-mock-echo -- Integration test: verifies data flows through hook/component to rendered output */
 /**
  * useOrgMembers Hook Tests
@@ -10,27 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { createQueryWrapper } from '@/tests/queryTestUtils';
 
-const mockOrder = vi.hoisted(() => vi.fn());
-const mockLimit = vi.hoisted(() => vi.fn());
-const mockEq = vi.hoisted(() => vi.fn());
-const mockSelect = vi.hoisted(() => vi.fn());
-const mockFrom = vi.hoisted(() => vi.fn());
-
-vi.mock('@/lib/supabase', () => ({
-  supabase: {
-    from: mockFrom,
-  },
-}));
+const workerFetch = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/workerClient', () => ({ workerFetch }));
 
 import { useOrgMembers } from './useOrgMembers';
 
 describe('useOrgMembers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFrom.mockReturnValue({ select: mockSelect });
-    mockSelect.mockReturnValue({ eq: mockEq });
-    mockEq.mockReturnValue({ order: mockOrder });
-    mockOrder.mockReturnValue({ limit: mockLimit });
   });
 
   it('returns empty members and stops loading when no orgId', async () => {
@@ -47,7 +33,7 @@ describe('useOrgMembers', () => {
   it('fetches and maps members from profiles table', async () => {
     const mockProfiles = [
       {
-        id: 'u1',
+        id: '22222222-2222-4222-8222-222222222222',
         email: 'alice@test.com',
         full_name: 'Alice',
         avatar_url: null,
@@ -56,9 +42,9 @@ describe('useOrgMembers', () => {
       },
     ];
 
-    mockLimit.mockResolvedValue({ data: mockProfiles, error: null });
+    workerFetch.mockResolvedValue(new Response(JSON.stringify({ members: mockProfiles.map((row) => ({ ...row, org_id: '11111111-1111-4111-8111-111111111111', membership_role: 'admin' })) }), { status: 200 }));
 
-    const { result } = renderHook(() => useOrgMembers('org-1'), { wrapper: createQueryWrapper() });
+    const { result } = renderHook(() => useOrgMembers('11111111-1111-4111-8111-111111111111'), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -66,7 +52,7 @@ describe('useOrgMembers', () => {
 
     expect(result.current.members).toHaveLength(1);
     expect(result.current.members[0]).toEqual({
-      id: 'u1',
+      id: '22222222-2222-4222-8222-222222222222',
       email: 'alice@test.com',
       fullName: 'Alice',
       avatarUrl: null,
@@ -77,10 +63,7 @@ describe('useOrgMembers', () => {
   });
 
   it('sets error when query fails', async () => {
-    mockLimit.mockResolvedValue({
-      data: null,
-      error: { message: 'Permission denied' },
-    });
+    workerFetch.mockResolvedValue(new Response('{}', { status: 403 }));
 
     const { result } = renderHook(() => useOrgMembers('org-1'), { wrapper: createQueryWrapper() });
 
@@ -88,7 +71,7 @@ describe('useOrgMembers', () => {
       expect(result.current.loading).toBe(false);
     });
 
-    expect(result.current.error).toBe('Permission denied');
+    expect(result.current.error).toBe('member_list_failed');
     expect(result.current.members).toEqual([]);
   });
 });

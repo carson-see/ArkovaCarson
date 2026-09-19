@@ -20,3 +20,4 @@ Playwright test fixtures providing authenticated page contexts and Supabase help
 - Never hardcode credentials; use env vars (`E2E_SUPABASE_URL`, etc.).
 - All E2E specs should import from `./index.ts`, not individual fixture files.
 - Auth uses pre-saved storageState (no per-test login flows).
+- `uat19-org-profile.html` / `.tsx` mount the real OrgProfilePage for loopback-only UAT-19 browser geometry. Playwright replaces authentication/data/integration boundaries, while the real route page, OrgRegistryTable, route-scoped folder hook and FolderSidebar execute unchanged. This is UI behavior evidence, not hosted authorization or database proof.

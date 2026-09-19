@@ -12,7 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
 
 const profilesMaybeSingle = vi.fn();
+const membersMaybeSingle = vi.fn();
+const organizationsMaybeSingle = vi.fn();
 const anchorsList = vi.fn();
+const anchorsIs = vi.fn();
 
 vi.mock('../config.js', () => ({ config: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -23,24 +26,26 @@ vi.mock('../utils/db.js', () => {
   const profilesChain = {
     select: () => ({ eq: () => ({ maybeSingle: () => profilesMaybeSingle() }) }),
   };
+  const membersChain = {
+    select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => membersMaybeSingle() }) }) }),
+  };
+  const organizationsChain = {
+    select: () => ({ eq: () => ({ maybeSingle: () => organizationsMaybeSingle() }) }),
+  };
   // The collision endpoint queries:
   //   anchors.select(...).eq('org_id', orgId).eq('status', 'PENDING_RESOLUTION')
   //         .eq('metadata->>external_file_id', x).order(created_at).limit(N)
-  const anchorsChain = {
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          eq: () => ({
-            order: () => ({ limit: () => anchorsList() }),
-          }),
-        }),
-      }),
-    }),
-  };
+  const anchorsBuilder: Record<string, unknown> = {};
+  anchorsBuilder.eq = () => anchorsBuilder;
+  anchorsBuilder.is = (...args: unknown[]) => { anchorsIs(...args); return anchorsBuilder; };
+  anchorsBuilder.order = () => ({ limit: () => anchorsList() });
+  const anchorsChain = { select: () => anchorsBuilder };
   return {
     db: {
       from: (table: string) => {
         if (table === 'profiles') return profilesChain;
+        if (table === 'org_members') return membersChain;
+        if (table === 'organizations') return organizationsChain;
         if (table === 'anchors') return anchorsChain;
         throw new Error(`unexpected table: ${table}`);
       },
@@ -63,13 +68,17 @@ function buildRes() {
   return { res, status, json, get body() { return body; }, get statusCode() { return statusCode; } };
 }
 
-function buildReq(externalFileId: string): Request {
-  return { params: { externalFileId }, query: {}, headers: {}, body: {} } as unknown as Request;
+function buildReq(externalFileId: string, orgId?: string): Request {
+  return { params: { externalFileId }, query: orgId ? { org_id: orgId } : {}, headers: {}, body: {} } as unknown as Request;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  profilesMaybeSingle.mockResolvedValue({ data: { org_id: ORG_ID }, error: null });
+  profilesMaybeSingle.mockResolvedValue({
+    data: { org_id: ORG_ID, role: 'ORG_MEMBER', is_platform_admin: false }, error: null,
+  });
+  membersMaybeSingle.mockResolvedValue({ data: { role: 'admin' }, error: null });
+  organizationsMaybeSingle.mockResolvedValue({ data: { parent_org_id: null, parent_approval_status: null }, error: null });
   anchorsList.mockResolvedValue({ data: [], error: null });
 });
 
@@ -115,6 +124,15 @@ describe('handleCollisionContext (SCRUM-1150)', () => {
     expect(ctx.status).toHaveBeenCalledWith(400);
   });
 
+  it('denies a selected organization where the caller has only member access', async () => {
+    const selectedOrg = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    membersMaybeSingle.mockResolvedValueOnce({ data: { role: 'member' }, error: null });
+    const ctx = buildRes();
+    await handleCollisionContext(USER_ID, buildReq('drive-123', selectedOrg), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(403);
+    expect(anchorsList).not.toHaveBeenCalled();
+  });
+
   it('returns empty candidates + null suggestion when no collision exists', async () => {
     const ctx = buildRes();
     await handleCollisionContext(USER_ID, buildReq('drive-no-collision'), ctx.res);
@@ -122,6 +140,7 @@ describe('handleCollisionContext (SCRUM-1150)', () => {
     expect(body.external_file_id).toBe('drive-no-collision');
     expect(body.candidates).toEqual([]);
     expect(body.suggested_terminal_public_id).toBeNull();
+    expect(anchorsIs).toHaveBeenCalledWith('deleted_at', null);
   });
 
   it('returns candidates with public_id, source vendor, timestamps, and suggested terminal', async () => {

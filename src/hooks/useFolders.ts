@@ -5,7 +5,7 @@ import { queryKeys } from '@/lib/queryClient';
 import { FOLDER_LABELS } from '@/lib/copy';
 import { workerFetch } from '@/lib/workerClient';
 import { useAuth } from './useAuth';
-import { useProfile } from './useProfile';
+import { useActiveOrg } from './useActiveOrg';
 
 export interface Folder {
   id: string;
@@ -49,7 +49,7 @@ async function fetchFolders(orgId: string | null): Promise<Folder[]> {
   return bodies.flatMap((body) => body.folders.map(mapFolder));
 }
 
-interface CreateFolderOptions { ownerScope?: 'USER' | 'ORG'; parentFolderId?: string | null }
+interface CreateFolderOptions { ownerScope?: 'USER' | 'ORG'; parentFolderId?: string | null; contextOrgId?: string | null }
 
 interface UseFoldersReturn {
   folders: Folder[];
@@ -64,23 +64,25 @@ interface UseFoldersReturn {
 
 export function useFolders(): UseFoldersReturn {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { orgId, loading: orgLoading } = useActiveOrg();
   const qc = useQueryClient();
-  const orgId = profile?.org_id ?? null;
   const key = queryKeys.folders(user?.id ?? '', orgId);
   const { data: folders = [], isLoading, error: queryError } = useQuery({
-    queryKey: key, queryFn: () => fetchFolders(orgId), enabled: !!user,
+    queryKey: key, queryFn: () => fetchFolders(orgId), enabled: !!user && !orgLoading,
   });
   const invalidate = useCallback(() => { void qc.invalidateQueries({ queryKey: key }); }, [qc, key]);
 
   const createMutation = useMutation({
     mutationFn: async ({ name, options }: { name: string; options?: CreateFolderOptions }) => {
+      if (orgLoading) throw new Error(FOLDER_LABELS.ERR_CREATE);
+      const requestOrgId = orgId;
       const ownerScope = options?.ownerScope ?? 'USER';
+      if (ownerScope === 'ORG' && !requestOrgId) throw new Error(FOLDER_LABELS.ERR_CREATE);
       const response = await workerFetch('/api/v1/folders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(), owner_scope: ownerScope,
-          ...(ownerScope === 'ORG' ? { org_id: orgId } : { context_org_id: orgId }),
+          ...(ownerScope === 'ORG' ? { org_id: requestOrgId } : { context_org_id: options?.contextOrgId ?? null }),
           parent_folder_id: options?.parentFolderId ?? null,
         }),
       });
@@ -112,17 +114,18 @@ export function useFolders(): UseFoldersReturn {
   });
 
   async function assignRecords(anchorIds: string[], folderId: string | null) {
-    const result = await assignMutation.mutateAsync({ anchorIds, folderId });
-    if (result.failed.length === anchorIds.length) throw new Error(FOLDER_LABELS.ERR_ASSIGN);
-    return result;
+    return assignMutation.mutateAsync({ anchorIds, folderId });
   }
   return {
-    folders, loading: isLoading,
+    folders, loading: orgLoading || isLoading,
     error: queryError ? (queryError as Error).message || FOLDER_LABELS.ERR_CREATE : null,
     createFolder: (name, options) => createMutation.mutateAsync({ name, options }),
     renameFolder: (id, name) => renameMutation.mutateAsync({ id, name }),
     deleteFolder: (id) => deleteMutation.mutateAsync(id),
-    assignRecord: async (anchorId, folderId) => { await assignRecords([anchorId], folderId); },
+    assignRecord: async (anchorId, folderId) => {
+      const result = await assignRecords([anchorId], folderId);
+      if (result.failed.length > 0) throw new Error(FOLDER_LABELS.ERR_ASSIGN);
+    },
     assignRecords,
   };
 }

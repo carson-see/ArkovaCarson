@@ -24,7 +24,7 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { recordOrgQueueRunResult } from '../jobs/org-queue-scheduler.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
-import { getCallerProfile, getCallerProfileResult, isCallerOrgAdminResult } from './_org-auth.js';
+import { getCallerProfile, getCallerProfileResult } from './_org-auth.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
 
@@ -50,8 +50,11 @@ export const ResolveQueueInput = z
     external_file_id: z.string().trim().min(1).max(255),
     selected_public_id: z.string().trim().min(1).max(50),
     reason: z.string().trim().max(2000).optional(),
+    org_id: z.string().uuid().optional(),
   })
   .strict();
+
+const QueueOrgId = z.string().uuid();
 
 function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'conflict' | 'internal' {
   if (status === 403) return 'forbidden';
@@ -103,10 +106,9 @@ function pendingResolutionInternalError(res: Response, logCtx: Record<string, un
  * `adminRouter` carries no authorization middleware of its own (only CORS,
  * logging and a rate limiter), so the gate has to live here.
  *
- * The admin decision is delegated to the canonical `_org-auth.ts` resolver used
- * by `handleRunOrgAnchorQueue` below and by the `requireOrgAdmin` middleware —
- * NOT a third, private role predicate. Its `*Result` contract is what keeps a
- * transient `org_members`/`profiles` fault from being served as a 403.
+ * The admin decision is based on authoritative exact-org membership (or the
+ * explicit platform-admin flag). Stale profile role/org fields never restore a
+ * revoked membership. Operational lookup failures remain distinct from 403s.
  */
 export async function handleListPendingResolution(
   req: Request,
@@ -120,6 +122,14 @@ export async function handleListPendingResolution(
 
   if (!callerUserId) {
     res.status(401).json({ error: { code: 'authentication_required', message: 'Authentication required' } });
+    return;
+  }
+
+  const requestedOrg = req.query.org_id === undefined
+    ? { success: true as const, data: undefined }
+    : QueueOrgId.safeParse(req.query.org_id);
+  if (!requestedOrg.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'org_id must be a valid UUID' } });
     return;
   }
 
@@ -141,30 +151,33 @@ export async function handleListPendingResolution(
     // Deliberately still a 200 and NOT the 403 below: there is no org, so there
     // is nothing to disclose, and the Review Queue page's empty state is the
     // honest rendering of "you are not in an organization yet".
-    if (!profile?.org_id) {
+    if (!profile?.org_id && requestedOrg.data === undefined) {
+      res.json({ items: [], count: 0 });
+      return;
+    }
+
+    const targetOrgId = requestedOrg.data ?? profile?.org_id;
+    if (!targetOrgId) {
       res.json({ items: [], count: 0 });
       return;
     }
 
     // SCRUM-3569: ORG_ADMIN gate, BEFORE the read. Precedence comes from the
-    // canonical resolver (`org_members` owner/admin → profile ORG_ADMIN of THIS
-    // org → platform admin) — the same signal `AnchorQueuePage.tsx`'s
+    // canonical queue resolver (exact `org_members` owner/admin → platform
+    // admin) — the same signal `AnchorQueuePage.tsx`'s
     // `canRunAnchoringJob()` already uses client-side to decide who may act on
     // the queue. An operational lookup failure is a 500, never a masked 403.
-    const { value: isAdmin, error: adminLookupError } = await isCallerOrgAdminResult(
-      callerUserId,
-      profile.org_id,
-      profile,
+    const authorization = await authorizeManualRun(
+      callerUserId, targetOrgId, profile,
     );
-    if (adminLookupError) {
+    if (!authorization.ok && authorization.status === 500) {
       pendingResolutionInternalError(
-        res,
-        { userId: callerUserId, orgId: profile.org_id },
+        res, { userId: callerUserId, orgId: targetOrgId },
         'queue/pending: admin lookup failed',
       );
       return;
     }
-    if (!isAdmin) {
+    if (!authorization.ok) {
       // §1.3: `AnchorQueuePage.tsx` renders `body.error.message` verbatim via
       // `setError(...)`, so this worker-assembled string IS user-facing copy.
       res.status(403).json({
@@ -183,7 +196,7 @@ export async function handleListPendingResolution(
     const { data: rows, error: rowsError } = await db
       .from('anchors')
       .select('public_id, metadata, filename, fingerprint, created_at')
-      .eq('org_id', profile.org_id)
+      .eq('org_id', targetOrgId)
       .eq('status', 'PENDING_RESOLUTION')
       .is('deleted_at', null)
       .not('public_id', 'is', null)
@@ -273,6 +286,42 @@ export async function handleResolveQueue(
   }
 
   try {
+    let selectedOrgId: string | null = null;
+    if (parsed.data.org_id) {
+      const profile = await getCallerProfile(actorUserId);
+      const auth = await authorizeManualRun(actorUserId, parsed.data.org_id, profile);
+      if (!auth.ok) {
+        res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+        return;
+      }
+      const { data: selected, error: selectedError } = await db
+        .from('anchors')
+        .select('org_id, metadata')
+        .eq('public_id', parsed.data.selected_public_id)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (selectedError) {
+        logger.warn({ error: selectedError }, 'queue/resolve selected anchor lookup failed');
+        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+        return;
+      }
+      selectedOrgId = (selected as { org_id?: string | null } | null)?.org_id ?? null;
+      const selectedExternalId = metadataString(
+        (selected as { metadata?: unknown } | null)?.metadata,
+        'external_file_id',
+      );
+      if (!selectedOrgId) {
+        res.status(404).json({ error: { code: 'not_found', message: 'Selected anchor not found' } });
+        return;
+      }
+      if (selectedOrgId !== parsed.data.org_id || selectedExternalId !== parsed.data.external_file_id) {
+        res.status(409).json({
+          error: { code: 'conflict', message: 'Selected anchor does not match the requested organization and collision set' },
+        });
+        return;
+      }
+    }
+
     const { data, error } = await callRpc<string>(db, 'resolve_anchor_queue_by_public_id', {
       p_external_file_id: parsed.data.external_file_id,
       p_selected_public_id: parsed.data.selected_public_id,
@@ -297,21 +346,24 @@ export async function handleResolveQueue(
     }
 
     res.json({ resolution_id: data });
-    const notificationOrgId = actorUserId
-      ? await getSelectedAnchorOrgId(parsed.data.selected_public_id)
-      : null;
-    if (notificationOrgId) {
-      void emitOrgAdminNotifications({
-        type: 'queue_run_completed',
-        organizationId: notificationOrgId,
-        payload: {
-          resolutionId: data,
-          externalFileId: parsed.data.external_file_id,
-          selectedPublicId: parsed.data.selected_public_id,
-          actorUserId,
-        },
-      });
-    }
+    void (async () => {
+      try {
+        const notificationOrgId = selectedOrgId ?? await getSelectedAnchorOrgId(parsed.data.selected_public_id);
+        if (!notificationOrgId) return;
+        await emitOrgAdminNotifications({
+          type: 'queue_run_completed',
+          organizationId: notificationOrgId,
+          payload: {
+            resolutionId: data,
+            externalFileId: parsed.data.external_file_id,
+            selectedPublicId: parsed.data.selected_public_id,
+            actorUserId,
+          },
+        });
+      } catch (notificationError) {
+        logger.warn({ error: notificationError }, 'queue/resolve notification dispatch failed');
+      }
+    })();
   } catch (err) {
     logger.error({ error: err }, 'handleResolveQueue unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
@@ -336,38 +388,51 @@ type RunAuthOutcome =
   | { ok: true; orgId: string; relationship: 'self' | 'sub_org' }
   | { ok: false; status: 401 | 403 | 500; code: 'authentication_required' | 'forbidden' | 'internal'; message: string };
 
+async function exactOrgAdminResult(
+  userId: string,
+  orgId: string,
+  profile: Awaited<ReturnType<typeof getCallerProfile>>,
+): Promise<{ value: boolean; error: boolean }> {
+  if (profile?.is_platform_admin === true) return { value: true, error: false };
+  const { data, error } = await db
+    .from('org_members')
+    .select('role')
+    .eq('user_id', userId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ error, userId, orgId }, 'queue authorization membership lookup failed');
+    return { value: false, error: true };
+  }
+  const role = (data as { role?: string } | null)?.role;
+  return {
+    value: role === 'owner' || role === 'admin',
+    error: false,
+  };
+}
+
 /**
  * Authorize a manual queue run for `targetOrgId` by `userId`, owner-inclusively.
  *
- * Uses the canonical `_org-auth` resolver (`isCallerOrgAdminResult`) — NO direct
- * `org_members` membership probe in this handler. A caller may run:
- *   1. their OWN org's queue if they are owner/admin (or ORG_ADMIN/platform) of it; OR
+ * Uses an exact `org_members` owner/admin probe (or platform-admin flag). A
+ * stale profile-level role is deliberately not authoritative. A caller may run:
+ *   1. a target org's queue if they are its exact owner/admin (or platform admin); OR
  *   2. an APPROVED sub-org's queue if they are owner/admin of that sub-org's
  *      PARENT org (parent admins administer their affiliates).
  * Fails closed: an operational lookup error surfaces as 500, a true negative 403.
  */
-async function authorizeManualRun(
+export async function authorizeManualRun(
   userId: string,
-  callerOrgId: string,
   targetOrgId: string,
   preloadedProfile: Awaited<ReturnType<typeof getCallerProfile>>,
 ): Promise<RunAuthOutcome> {
-  // Direct path: caller administers their OWN org itself (owner-inclusive).
-  // Defense-in-depth: gate the self/admin shortcut on targetOrgId===callerOrgId
-  // so the profile-level ORG_ADMIN fallback inside isCallerOrgAdminResult can
-  // NEVER authorize an arbitrary target org via this path — an unrelated target
-  // must go through the explicit approved-sub-org path below or be denied. (The
-  // _org-auth helper is also org-scoped now; this is the belt-and-suspenders.)
-  if (targetOrgId === callerOrgId) {
-    const direct = await isCallerOrgAdminResult(userId, targetOrgId, preloadedProfile);
-    if (direct.value) return { ok: true, orgId: targetOrgId, relationship: 'self' };
-    if (direct.error) {
-      return { ok: false, status: 500, code: 'internal', message: 'Internal server error' };
-    }
+  const direct = await exactOrgAdminResult(userId, targetOrgId, preloadedProfile);
+  if (direct.value) return { ok: true, orgId: targetOrgId, relationship: 'self' };
+  if (direct.error) {
+    return { ok: false, status: 500, code: 'internal', message: 'Internal server error' };
   }
-
-  // Sub-org path: target is an APPROVED affiliate of the caller's own org, and
-  // the caller administers that parent org.
+  // Sub-org path: target is an APPROVED affiliate and the caller administers
+  // that exact direct parent org.
   const { data: targetOrg, error: targetErr } = await db
     .from('organizations')
     .select('parent_org_id, parent_approval_status')
@@ -379,10 +444,8 @@ async function authorizeManualRun(
   }
   const parentOrgId = (targetOrg as { parent_org_id?: string | null } | null)?.parent_org_id ?? null;
   const approval = (targetOrg as { parent_approval_status?: string | null } | null)?.parent_approval_status ?? null;
-  if (parentOrgId && parentOrgId === callerOrgId && approval === 'APPROVED') {
-    // parentOrgId === callerOrgId here, so the preloaded profile (for callerOrgId)
-    // is the correct one to reuse — avoids a redundant profiles round-trip.
-    const parent = await isCallerOrgAdminResult(userId, parentOrgId, preloadedProfile);
+  if (parentOrgId && approval === 'APPROVED') {
+    const parent = await exactOrgAdminResult(userId, parentOrgId, preloadedProfile);
     if (parent.value) return { ok: true, orgId: targetOrgId, relationship: 'sub_org' };
     if (parent.error) {
       return { ok: false, status: 500, code: 'internal', message: 'Internal server error' };
@@ -495,7 +558,7 @@ export async function handleRunOrgAnchorQueue(
 
   const profile = await getCallerProfile(userId);
   const callerOrgId = profile?.org_id ?? null;
-  if (!callerOrgId) {
+  if (!callerOrgId && parsed.data.org_id === undefined) {
     res.status(403).json({
       error: { code: 'forbidden', message: 'No organization on profile' },
     });
@@ -503,7 +566,11 @@ export async function handleRunOrgAnchorQueue(
   }
 
   const targetOrgId = parsed.data.org_id ?? callerOrgId;
-  const auth = await authorizeManualRun(userId, callerOrgId, targetOrgId, profile);
+  if (!targetOrgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization selected' } });
+    return;
+  }
+  const auth = await authorizeManualRun(userId, targetOrgId, profile);
   if (!auth.ok) {
     res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
     return;
@@ -639,6 +706,7 @@ async function getSelectedAnchorOrgId(publicId: string): Promise<string | null> 
     .from('anchors')
     .select('org_id')
     .eq('public_id', publicId)
+    .is('deleted_at', null)
     .maybeSingle();
 
   if (error) {
