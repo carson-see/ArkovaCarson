@@ -32,7 +32,7 @@ export function ApiKeySettingsPage() {
   // for every individual-tier visit.
   const isIndividual = !profileLoading && profile !== null && !profile.org_id;
   const orgScoped = !profileLoading && !!profile?.org_id;
-  const { keys, loading: keysLoading, error: keysError, createKey, revokeKey, deleteKey } = useApiKeys({ enabled: orgScoped });
+  const { keys, loading: keysLoading, error: keysError, createKey, revokeKey, extendKey, deleteKey } = useApiKeys({ enabled: orgScoped });
   const { usage, loading: usageLoading, error: usageError } = useApiUsage({ enabled: orgScoped });
 
   const handleSignOut = async () => {
@@ -88,6 +88,7 @@ export function ApiKeySettingsPage() {
               onCreate={createKey}
               onRevoke={revokeKey}
               onDelete={deleteKey}
+              onExtend={extendKey}
               loading={keysLoading}
               fetchError={keysError}
             />

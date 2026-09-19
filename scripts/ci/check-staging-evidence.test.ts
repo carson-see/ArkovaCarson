@@ -248,6 +248,14 @@ describe('check-staging-evidence', () => {
   });
 
   describe('requiredTierFor', () => {
+    it('keeps protected-main admission tooling at T0', () => {
+      expect(requiredTierFor([
+        'scripts/ci/main-push-admission.ts',
+        'scripts/ci/main-push-admission.test.ts',
+        'scripts/ci/run-main-t0-validation.ts',
+      ]).tier).toBe('T0');
+    });
+
     it('returns T0 for docs-only changes', () => {
       expect(requiredTierFor(['docs/staging/README.md']).tier).toBe('T0');
     });
