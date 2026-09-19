@@ -365,7 +365,7 @@ export async function handleManageFolders(input: ManageFoldersInput, config: Sup
         ...(config.callerAuthorization ? { Authorization: config.callerAuthorization } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      redirect: 'error',
+      redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok && response.status !== 207) {
@@ -1301,7 +1301,8 @@ async function searchAgentOrgs(
   const matches: Array<Record<string, unknown>> = [];
   const seenPublicIds = new Set<string>();
 
-  for (let offset = 0; matches.length < limit; offset += pageSize) {
+  let offset = 0;
+  while (matches.length < limit) {
     const params = new URLSearchParams({
       user_id: `eq.${config.userId}`,
       select: 'role,organizations(public_id,display_name,description,domain,website_url,verification_status)',
@@ -1337,6 +1338,7 @@ async function searchAgentOrgs(
     }
 
     if (memberships.length < pageSize) break;
+    offset += pageSize;
   }
 
   return matches.map((org) => ({
@@ -1818,10 +1820,16 @@ async function authenticatedWorkerJson(
   try {
     const response = await fetch(`${base}${path}`, {
       ...init,
-      redirect: 'error',
+      redirect: 'manual',
       headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },
       signal: controller.signal,
     });
+    // Cloudflare Workers supports `manual`, not Node's `error`, for redirect
+    // handling. Return the original 3xx untouched so callers fail closed and
+    // the verified credential is never replayed to Location.
+    if (response.status >= 300 && response.status < 400) {
+      return { response, body: null };
+    }
     let body: Record<string, unknown> | null = null;
     try {
       body = await response.json() as Record<string, unknown>;
