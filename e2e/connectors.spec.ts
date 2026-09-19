@@ -81,14 +81,14 @@ test.describe('Connectors page', () => {
     await orgAdminPage.getByRole('checkbox', { name: 'Signed contracts' }).click();
     await orgAdminPage.getByRole('button', { name: 'Use these folders' }).click();
 
-    await expect(orgAdminPage.getByText('Signed contracts', { exact: true })).toBeVisible();
+    await expect(orgAdminPage.locator('#main-content').getByText('Signed contracts', { exact: true })).toBeVisible();
     await orgAdminPage.getByLabel('Secure it immediately').click();
 
     await orgAdminPage.getByRole('button', { name: 'Save' }).click();
     await expect(orgAdminPage.getByText('Settings saved. New documents will follow this setting.')).toBeVisible();
 
     await orgAdminPage.reload();
-    await expect(orgAdminPage.getByText('Signed contracts', { exact: true })).toBeVisible();
+    await expect(orgAdminPage.locator('#main-content').getByText('Signed contracts', { exact: true })).toBeVisible();
     await expect(orgAdminPage.getByLabel('Secure it immediately')).toBeChecked();
   });
 
