@@ -473,14 +473,14 @@ export async function buildOpReturnTransaction(
     sequence: RBF_SEQUENCE,
     witnessUtxo: {
       script: p2wpkh.output!,
-      value: utxo.valueSats,
+      value: BigInt(utxo.valueSats),
     },
   });
 
   // Add OP_RETURN output (value = 0)
   psbt.addOutput({
     script: opReturnScript,
-    value: 0,
+    value: 0n,
   });
 
   // Add change output if above dust (P2WPKH SegWit)
@@ -497,7 +497,7 @@ export async function buildOpReturnTransaction(
 
     psbt.addOutput({
       address,
-      value: finalChange,
+      value: BigInt(finalChange),
     });
   } else {
     logger.warn(
@@ -592,19 +592,19 @@ export async function buildMultiInputOpReturnTransaction(
       sequence: RBF_SEQUENCE,
       witnessUtxo: {
         script: p2wpkh.output!,
-        value: utxo.valueSats,
+        value: BigInt(utxo.valueSats),
       },
     });
   }
 
   // OP_RETURN output
-  psbt.addOutput({ script: opReturnScript, value: 0 });
+  psbt.addOutput({ script: opReturnScript, value: 0n });
 
   // Change output if above dust
   if (hasChange && finalChange >= DUST_THRESHOLD) {
     const { address } = bitcoin.payments.p2wpkh({ pubkey: publicKey, network });
     if (!address) throw new Error('Failed to derive change address');
-    psbt.addOutput({ address, value: finalChange });
+    psbt.addOutput({ address, value: BigInt(finalChange) });
   }
 
   // Sign all inputs
