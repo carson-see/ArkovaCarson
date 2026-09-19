@@ -15,6 +15,21 @@ Every prior `needs` edge remains and each job keeps its established display
 name. `scripts/ci/ci-draft-admission.test.ts` pins triggers, scenarios, gating,
 and the complete pre-admission DAG.
 
+## 2026-09-19 — protected-main T0 pushes use focused validation
+
+`ci.yml` reuses `requiredTierFor` for pushes to `main`. A supported T0-only
+docs/test/CI-policy push runs `Protected Main Focused Validation` plus the
+unchanged `Secret Scanning` security job instead
+of starting the runtime, browser, scanner, and build matrix. The focused job
+parses every workflow, checks governance pointers, typechecks/builds the root,
+lints shipped copy, runs the complete `scripts/ci` contract suite for CI-policy
+changes, and executes directly changed root/worker/shell tests. Worker tests use
+worker-local dependencies and also run worker typecheck/build deploy parity.
+Runtime/deploy/migration paths, Supabase-backed RLS/infra tests, unsupported T0 paths,
+deletions, renames, missing objects, non-ancestor ranges, malformed SHAs, and
+empty diffs all run the full matrix. PRs, Mergify candidates, staging/develop
+pushes, and manual dispatch remain full-matrix under their prior rules.
+
 ## PR #2940 — Edge deploy follows the installed Wrangler version
 
 Both edge dry-run and production deploy invoke `./node_modules/.bin/wrangler`
