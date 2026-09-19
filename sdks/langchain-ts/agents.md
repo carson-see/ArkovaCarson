@@ -1,6 +1,6 @@
 # sdks/langchain-ts/agents.md
 
-`@arkova/langchain` — LangChain tool wrappers for the Arkova record verification API. This is the maintained package; `sdks/langchain/` (no `package.json`, never wired up for publishing) is an earlier, superseded draft with a smaller tool set — see its `src/agents.md`.
+`@arkova/langchain` — zero-dependency, LangChain-style callable tools for the Arkova record verification API. This is the maintained package; `sdks/langchain/` (no `package.json`, never wired up for publishing) is an earlier, superseded draft with a smaller tool set — see its `src/agents.md`.
 
 ## Structure
 - **`src/index.ts`** — barrel export + tool classes (`ArkovaVerifyTool`, `ArkovaAnchorStatusTool`, `ArkovaSearchTool`, `ArkovaAttestTool`, `ArkovaBatchVerifyTool`, `ArkovaVerifySignatureTool`, `getArkovaTools`).
@@ -36,6 +36,12 @@ helper, the phrase, and the constant are duplicated here deliberately rather tha
 - `readErrorBody()` uses `try`/`catch`, not `res.json().catch()`, so a synchronously-throwing or
   absent `json()` cannot escape as a tool crash.
 
+Suite for this package is 32 tests after release qualification. Run it from
+this package directory so its local config and pinned dev toolchain are used.
+
+Historical pre-qualification note retained verbatim for append-only policy; the
+2026-09-19 section below supersedes its counts and toolchain state:
+
 Suite for this package is 31 tests; `npx vitest run --root sdks` from the repo root covers both
 packages (80 tests).
 
@@ -43,3 +49,17 @@ packages (80 tests).
 `tsconfig.json(5,25): TS5107 moduleResolution=node10 is deprecated`. It comes from the committed
 `tsconfig.json` (last touched in PR #761) meeting the newer TypeScript resolved from the repo root
 — this package declares no devDependencies of its own. Unrelated to this change and left alone.
+
+## 2026-09-19 — first-public-release qualification
+
+- The package now owns its TypeScript/Vitest dev toolchain, lockfile and local
+  Vitest config, and declares ESM so its emitted `dist/index.js` loads on the
+  advertised Node 18 floor.
+- Every API request rejects redirects before sending the custom `X-API-Key`;
+  the regression was observed red before the shared fetch helper was fixed.
+- README compatibility language is deliberately narrow: these are
+  zero-dependency callable tool objects, not `@langchain/core` subclasses.
+- `ArkovaVerifyTool.valid` derives only from the verification API's authoritative
+  `verified` boolean. `SUBMITTED`, `PENDING`, revoked, and unknown states fail
+  closed; the complete API response is preserved so status and proof evidence
+  remain available to the caller.
