@@ -1782,11 +1782,10 @@ export async function handleAnchorDocument(
 export async function handleImportRows(input: ImportRowsInput, config: SupabaseConfig): Promise<ToolResult> {
   if (!config.workerBaseUrl || !config.callerApiKey) return errorResult('Row import requires API-key authentication and the Arkova API endpoint.');
   try {
-    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}/api/v1/anchor/import`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': config.callerApiKey },
+    const { response, body } = await authenticatedWorkerJson(config, '/api/v1/anchor/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: input.action, rows: input.rows, ...(input.description ? { description: input.description } : {}), ...((input.user_tags?.length || input.organization_tags?.length) ? { private_tags: { user: input.user_tags ?? [], organization: input.organization_tags ?? [] } } : {}) }),
     });
-    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {
       const code = typeof body?.error === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(body.error) ? body.error : `HTTP ${response.status}`;
       return errorResult(`Row import failed: ${code}`);

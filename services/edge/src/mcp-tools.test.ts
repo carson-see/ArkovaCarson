@@ -69,7 +69,8 @@ describe('handleImportRows', () => {
     expect(result.isError).not.toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith('https://worker.example/api/v1/anchor/import', expect.objectContaining({
-      method: 'POST', headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
+      method: 'POST', redirect: 'error', headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
+      signal: expect.any(AbortSignal),
     }));
   });
 
