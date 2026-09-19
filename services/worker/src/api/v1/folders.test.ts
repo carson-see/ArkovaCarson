@@ -49,6 +49,11 @@ function deps(overrides: Partial<FolderApiDeps> = {}): FolderApiDeps {
     canAdminOrgExact: vi.fn().mockResolvedValue(true),
     isPlatformAdmin: vi.fn().mockResolvedValue(false),
     canUsePersonalContext: vi.fn().mockResolvedValue(true),
+    getMemberContext: vi.fn().mockResolvedValue({
+      id: ANCHOR_A, email: 'member@example.com', full_name: 'Member', avatar_url: null,
+      role: 'INDIVIDUAL', created_at: '2026-01-01T00:00:00Z', org_id: ORG, membership_role: 'member',
+    }),
+    listMemberContexts: vi.fn().mockResolvedValue([]),
     emitFolderEvent: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -58,8 +63,12 @@ describe('UAT-24 folders API', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('requires either a verified user or an API key', async () => {
-    const res = await request(app(deps(), {})).get('/folders');
+    const d = deps();
+    const res = await request(app(d, {})).get('/folders');
     expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'authentication_required' });
+    expect(d.listFolders).not.toHaveBeenCalled();
+    expect(JSON.stringify(res.body)).not.toContain('FLD-');
   });
 
   it('lists a user personal scope for a JWT caller', async () => {
@@ -175,6 +184,33 @@ describe('UAT-24 folders API', () => {
     expect(res.status).toBe(200);
   });
 
+  it('returns a server-derived exact member context to an authorized admin', async () => {
+    const d = deps({ canAdminOrg: vi.fn().mockResolvedValue(true) });
+    const res = await request(app(d)).get(`/folders/member-context?owner_user_id=${ANCHOR_A}&context_org_id=${ORG}`);
+    expect(res.status).toBe(200);
+    expect(res.body.member).toMatchObject({ id: ANCHOR_A, org_id: ORG, membership_role: 'member' });
+    expect(d.getMemberContext).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: ANCHOR_A, orgId: ORG }));
+  });
+
+  it('lists only the canonical exact-membership roster for an authorized admin', async () => {
+    const listMemberContexts = vi.fn().mockResolvedValue([{
+      id: ANCHOR_A, email: 'member@example.com', full_name: null, avatar_url: null,
+      role: 'INDIVIDUAL', created_at: '2026-01-01T00:00:00Z', org_id: ORG, membership_role: 'member',
+    }]);
+    const d = deps({ canAdminOrg: vi.fn().mockResolvedValue(true), listMemberContexts });
+    const res = await request(app(d)).get(`/folders/member-contexts?context_org_id=${ORG}`);
+    expect(res.status).toBe(200);
+    expect(res.body.members).toHaveLength(1);
+    expect(listMemberContexts).toHaveBeenCalledWith(expect.objectContaining({ orgId: ORG }));
+  });
+
+  it('does not enumerate a member to an unauthorized or API-key caller', async () => {
+    const denied = deps({ canAdminOrg: vi.fn().mockResolvedValue(false) });
+    expect((await request(app(denied)).get(`/folders/member-context?owner_user_id=${ANCHOR_A}&context_org_id=${OTHER_ORG}`)).status).toBe(403);
+    expect(denied.getMemberContext).not.toHaveBeenCalled();
+    expect((await request(app(deps(), { orgId: ORG })).get(`/folders/member-context?owner_user_id=${ANCHOR_A}&context_org_id=${ORG}`)).status).toBe(403);
+  });
+
   it('does not treat platform read authority as exact-org write authority', async () => {
     const d = deps({
       isPlatformAdmin: vi.fn().mockResolvedValue(true),
@@ -273,7 +309,14 @@ describe('UAT-24 folders API', () => {
     const d = deps();
     const res = await request(app(d)).post('/folders').send({ name: 'Legal', owner_scope: 'USER' });
     expect(res.status).toBe(201);
-    expect(d.emitFolderEvent).toHaveBeenCalledWith('folder.created', null, expect.objectContaining({ folder_public_id: 'FLD-LEGAL0000000001' }));
+    expect(d.emitFolderEvent).toHaveBeenCalledWith('folder.created', null, {
+      folder_public_id: 'FLD-LEGAL0000000001', owner_scope: 'USER',
+    });
+    const payload = vi.mocked(d.emitFolderEvent).mock.calls[0][2];
+    expect(payload).not.toHaveProperty('user_id');
+    expect(payload).not.toHaveProperty('org_id');
+    expect(payload).not.toHaveProperty('connector_source_id');
+    expect(payload).not.toHaveProperty('connector_connection_id');
   });
 
   it('maps adapter conflicts to a stable JSON error', async () => {

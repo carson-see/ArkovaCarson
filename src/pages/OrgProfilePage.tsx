@@ -847,6 +847,7 @@ function OrgProfilePageInner() {
             )}
           </div>
           <MembersTable
+            orgId={orgId ?? undefined}
             members={members}
             loading={membersLoading}
             currentUserId={user?.id}

@@ -309,6 +309,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.public_id).toBe('ARK-2026-EXISTING');
     expect(mockQuotaDeltas).toEqual([]);
     expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('create_anchor_submission', expect.anything());
   });
 
   it('accepts omitted or normalized-equal private tags on an idempotent replay', async () => {
@@ -945,6 +946,44 @@ describe('POST /api/v1/anchor — durable instant intent (SCRUM-5139)', () => {
     expect(res.headers['x-ratelimit-limit']).toBe('100');
     expect(res.headers['x-ratelimit-remaining']).toBe('0');
     expect(res.headers['retry-after']).toMatch(/^\d+$/);
+  });
+
+  it('maps an atomic contractual-cap denial to the established partner response', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'contractual_quota_exceeded', limit: 2, current: 2 }, error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(402);
+    expect(res.type).toBe('application/problem+json');
+    expect(res.body).toEqual({
+      type: 'https://arkova.ai/errors/quota-exhausted',
+      title: 'Anchor quota exhausted',
+      status: 402,
+      error: 'quota_exhausted',
+      message: 'This sandbox org has used all 2 of its allotted anchors. Contact Arkova for a top-up.',
+      used: 2,
+      quota: 2,
+    });
+  });
+
+  it('fails closed with the established unavailable response when the contractual denial is malformed', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'contractual_quota_exceeded', limit: null, current: null }, error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(503);
+    expect(res.type).toBe('application/problem+json');
+    expect(res.body).toEqual({
+      type: 'https://arkova.ai/errors/quota-check-unavailable',
+      title: 'Anchor quota check unavailable',
+      status: 503,
+      error: 'quota_check_unavailable',
+      message: 'Anchor capacity could not be verified. Retry the request.',
+    });
   });
 
   it('emits the legacy quota headers from the canonical transaction result', async () => {

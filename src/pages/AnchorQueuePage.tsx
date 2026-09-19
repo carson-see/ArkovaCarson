@@ -59,6 +59,7 @@ interface OrgRoleReader {
 }
 
 const POLL_INTERVAL_MS = 30_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function groupByExternal(rows: PendingAnchor[]): Group[] {
   const byKey = new Map<string, PendingAnchor[]>();
@@ -161,8 +162,7 @@ function canRunAnchoringJob(profileRole?: string | null, isPlatformAdmin?: boole
   );
 }
 
-function QueueInner() {
-  const [searchParams] = useSearchParams();
+function QueueInner({ selectedOrgId = null }: Readonly<{ selectedOrgId?: string | null }>) {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const [loading, setLoading] = useState(true);
@@ -177,13 +177,14 @@ function QueueInner() {
   const [orgRole, setOrgRole] = useState<string | null>(null);
   const [focusIdx, setFocusIdx] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
-  const selectedOrgId = searchParams.get('org_id');
+  const effectiveOrgId = selectedOrgId ?? profile?.org_id ?? null;
+  const scopeKey = `${user?.id ?? 'no-user'}:${effectiveOrgId ?? 'no-org'}`;
   const listRequestRef = useRef(0);
   const scopeGenerationRef = useRef(0);
 
   useEffect(() => {
     scopeGenerationRef.current += 1;
-  }, [profile?.org_id, selectedOrgId, user?.id]);
+  }, [scopeKey]);
 
   useEffect(() => {
     listRequestRef.current += 1;
@@ -197,7 +198,7 @@ function QueueInner() {
     setRunMessage(null);
     setSubmitting(false);
     setRunning(false);
-  }, [selectedOrgId]);
+  }, [scopeKey]);
 
   const fetchPending = useCallback(async () => {
     const requestId = ++listRequestRef.current;
@@ -226,7 +227,7 @@ function QueueInner() {
     } finally {
       if (requestId === listRequestRef.current) setLoading(false);
     }
-  }, [selectedOrgId]);
+  }, [scopeKey, selectedOrgId]);
 
   useEffect(() => {
     // Route-scoped queries must refetch immediately rather than wait for the polling interval.
@@ -241,7 +242,7 @@ function QueueInner() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOrgRole(null);
     async function loadOrgRole() {
-      const roleOrgId = selectedOrgId ?? profile?.org_id;
+      const roleOrgId = effectiveOrgId;
       if (!user?.id || !roleOrgId) {
         setOrgRole(null);
         return;
@@ -264,7 +265,7 @@ function QueueInner() {
     return () => {
       cancelled = true;
     };
-  }, [profile?.org_id, selectedOrgId, user?.id]);
+  }, [effectiveOrgId, user?.id]);
 
   const groups = useMemo(() => groupByExternal(rows), [rows]);
   const clampedFocus = Math.min(Math.max(focusIdx, 0), Math.max(0, groups.length - 1));
@@ -575,7 +576,17 @@ function QueueInner() {
 
 export function AnchorQueuePage() {
   const [searchParams] = useSearchParams();
-  if (searchParams.has('org_id')) return <QueueInner />;
+  const hasExplicitOrg = searchParams.has('org_id');
+  const explicitOrgId = searchParams.get('org_id');
+  if (hasExplicitOrg && (!explicitOrgId || !UUID_PATTERN.test(explicitOrgId))) {
+    return (
+      <Alert variant="destructive" className="m-4" role="alert">
+        <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+        <AlertDescription>Choose a valid organization before opening the queue.</AlertDescription>
+      </Alert>
+    );
+  }
+  if (explicitOrgId) return <QueueInner selectedOrgId={explicitOrgId} />;
   return (
     <OrgRequiredGate
       title="Queue needs an organization"

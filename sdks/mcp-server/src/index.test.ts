@@ -54,6 +54,22 @@ describe('Tool Definitions', () => {
     expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
       body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
     }));
+
+    for (const [args, method, suffix, body] of [
+      [{ action: 'create', name: 'Cases', owner_scope: 'ORG', org_id: 'aaaaaaaa-0000-4000-8000-000000000001' }, 'POST', '/api/v1/folders',
+        { name: 'Cases', owner_scope: 'ORG', org_id: 'aaaaaaaa-0000-4000-8000-000000000001' }],
+      [{ action: 'update', folder_id: 'aaaaaaaa-0000-4000-8000-000000000002', parent_folder_id: '' }, 'PATCH', '/api/v1/folders/aaaaaaaa-0000-4000-8000-000000000002',
+        { parent_folder_id: null }],
+      [{ action: 'bind_connector', folder_id: 'aaaaaaaa-0000-4000-8000-000000000002', provider: 'docusign', source_id: 'source', connection_id: 'aaaaaaaa-0000-4000-8000-000000000003' }, 'PUT', '/api/v1/folders/aaaaaaaa-0000-4000-8000-000000000002/connector',
+        { provider: 'docusign', source_id: 'source', connection_id: 'aaaaaaaa-0000-4000-8000-000000000003' }],
+      [{ action: 'delete', folder_id: 'aaaaaaaa-0000-4000-8000-000000000002' }, 'DELETE', '/api/v1/folders/aaaaaaaa-0000-4000-8000-000000000002', undefined],
+    ] as const) {
+      mockFetch.mockResolvedValueOnce(new Response(method === 'DELETE' ? null : JSON.stringify({ folder: {} }), { status: method === 'DELETE' ? 204 : 200 }));
+      await handleToolCall('arkova_manage_folders', args);
+      expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining(suffix), expect.objectContaining({
+        method, ...(body ? { body: JSON.stringify(body) } : {}),
+      }));
+    }
   });
 
   it('submits queue/instant choice and private tags to the canonical anchor route', async () => {

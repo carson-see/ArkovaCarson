@@ -20,6 +20,7 @@ function query(data: unknown) {
   chain.eq = vi.fn(() => chain);
   chain.in = vi.fn(() => chain);
   chain.limit = vi.fn(() => chain);
+  chain.order = vi.fn(() => chain);
   chain.single = vi.fn(async () => ({ data, error: null }));
   chain.maybeSingle = vi.fn(async () => ({ data, error: null }));
   return chain;
@@ -41,6 +42,38 @@ function appFor(profile: { is_platform_admin: boolean } | null, rpcData: unknown
 }
 
 describe('SCRUM-5252 production folder adapter', () => {
+  it('derives secondary member context from org_members rather than profile primary org', async () => {
+    const profile = { id: TARGET, email: 'member@example.com', full_name: 'Member', avatar_url: null,
+      role: 'INDIVIDUAL', created_at: '2026-01-01T00:00:00Z', org_id: 'primary-org' };
+    const from = vi.fn((table: string) => table === 'org_members' ? query({ role: 'member' }) : query(profile));
+    const member = await createDefaultFolderApiDeps({ from, rpc: vi.fn() } as never).getMemberContext({
+      actorUserId: PLATFORM, apiKeyId: null, apiOrgId: null, apiPrincipalUserId: null,
+      ownerUserId: TARGET, orgId: ORG,
+    });
+    expect(member).toMatchObject({ id: TARGET, org_id: ORG, membership_role: 'member' });
+  });
+
+  it('does not resurrect a stale primary profile after membership removal', async () => {
+    const profile = { id: TARGET, email: 'member@example.com', full_name: null, avatar_url: null,
+      role: 'ORG_ADMIN', created_at: '2026-01-01T00:00:00Z', org_id: ORG };
+    const from = vi.fn((table: string) => table === 'org_members' ? query(null) : query(profile));
+    const member = await createDefaultFolderApiDeps({ from, rpc: vi.fn() } as never).getMemberContext({
+      actorUserId: PLATFORM, apiKeyId: null, apiOrgId: null, apiPrincipalUserId: null,
+      ownerUserId: TARGET, orgId: ORG,
+    });
+    expect(member).toBeNull();
+  });
+
+  it('derives the displayed role from the exact membership', async () => {
+    const profile = { id: TARGET, email: 'member@example.com', full_name: null, avatar_url: null,
+      role: 'INDIVIDUAL', created_at: '2026-01-01T00:00:00Z', org_id: 'other' };
+    const from = vi.fn((table: string) => table === 'org_members' ? query({ role: 'admin' }) : query(profile));
+    const member = await createDefaultFolderApiDeps({ from, rpc: vi.fn() } as never).getMemberContext({
+      actorUserId: PLATFORM, apiKeyId: null, apiOrgId: null, apiPrincipalUserId: null,
+      ownerUserId: TARGET, orgId: ORG,
+    });
+    expect(member?.role).toBe('ORG_ADMIN');
+  });
   it('verifies the exact JWT actor platform flag and reaches the service RPC', async () => {
     const { server, from, rpc } = appFor({ is_platform_admin: true });
     const response = await request(server).get(

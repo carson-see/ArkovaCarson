@@ -79,6 +79,7 @@ import { credentialsCtdlRegistryAnchorRouter } from './credentials-ctdl-registry
 import { webhooksRouter } from './webhooks.js';
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
 import { foldersRouter } from './folders-deps.js';
+import { requireFolderAuth } from './folder-auth.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
 import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
@@ -276,24 +277,6 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   req.authUserId = userId;
   req.hmacSecret = hmacSecret;
   next();
-}
-
-function requireFolderAuth(req: Request, res: Response, next: NextFunction): void {
-  const scope = req.method === 'GET' || req.method === 'HEAD' ? 'anchor:read' : 'anchor:write';
-  const checkKeyThenContinue = () => {
-    if (req.apiKey) requireScope(scope)(req, res, next);
-    else next();
-  };
-  const bearer = req.headers.authorization;
-  if (bearer?.startsWith('Bearer ') && !bearer.startsWith('Bearer ak_')) {
-    void requireAuth(req, res, checkKeyThenContinue);
-    return;
-  }
-  if (req.apiKey) {
-    requireScope(scope)(req, res, next);
-    return;
-  }
-  res.status(401).json({ error: 'authentication_required' });
 }
 
 // ─── Batch rate limiter (Constitution 1.10: 10 req/min) ───

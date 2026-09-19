@@ -119,6 +119,17 @@ describe('AnchorQueuePage', () => {
     expect(workerFetchMock).not.toHaveBeenCalled();
   });
 
+  it.each(['', 'not-a-uuid'])(
+    'denies an invalid explicit organization scope without falling back (%s)',
+    async (orgId) => {
+      window.history.pushState({}, '', `/organization/queue?org_id=${orgId}`);
+      renderPage();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Choose a valid organization before opening the queue.');
+      expect(workerFetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it('groups pending anchors by external_file_id', async () => {
     workerFetchMock.mockResolvedValueOnce(
       new Response(
@@ -375,5 +386,30 @@ describe('AnchorQueuePage', () => {
     await Promise.resolve();
     expect(screen.queryByTestId('queue-group-old-file')).not.toBeInTheDocument();
     expect(screen.getByTestId('queue-group-new-file')).toBeInTheDocument();
+  });
+
+  it('clears and refetches when the primary organization changes without a route query', async () => {
+    let resolveOld!: (response: Response) => void;
+    const oldResponse = new Promise<Response>((resolve) => { resolveOld = resolve; });
+    workerFetchMock
+      .mockReturnValueOnce(oldResponse)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{
+        public_id: 'new-item', external_file_id: 'new-file', filename: 'new.pdf',
+        fingerprint: 'new', created_at: '2026-09-19T00:00:00Z', sibling_count: 0,
+      }] }), { status: 200 }));
+
+    const page = renderPage();
+    await waitFor(() => expect(workerFetchMock).toHaveBeenCalledTimes(1));
+    profileState.orgId = 'org-2';
+    page.rerender(<BrowserRouter><AnchorQueuePage /></BrowserRouter>);
+
+    await waitFor(() => expect(workerFetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId('queue-group-new-file')).toBeInTheDocument();
+    resolveOld(new Response(JSON.stringify({ items: [{
+      public_id: 'old-item', external_file_id: 'old-file', filename: 'old.pdf',
+      fingerprint: 'old', created_at: '2026-09-18T00:00:00Z', sibling_count: 0,
+    }] }), { status: 200 }));
+    await Promise.resolve();
+    expect(screen.queryByTestId('queue-group-old-file')).not.toBeInTheDocument();
   });
 });

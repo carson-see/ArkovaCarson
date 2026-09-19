@@ -21,7 +21,11 @@ import {
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
+import {
+  ensureAnchorQuotaAvailable,
+  writeQuotaCheckUnavailable,
+  writeQuotaExhausted,
+} from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { submitJob } from '../../utils/jobQueue.js';
@@ -383,10 +387,9 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       }
     }
 
-    // SCRUM-1740 — sandbox anchor quota gate. No-op for prod orgs
-    // (anchor_quota is NULL). Sandbox orgs with is_test=true and a
-    // configured cap get a 402 quota_exhausted problem+json response when
-    // they hit their limit. Re-submissions of an existing fingerprint
+    // SCRUM-1740 — contractual anchor quota gate. An explicit enforced cap
+    // returns 402 at the limit; a config or usage read fault returns retryable
+    // 503 rather than bypassing the cap. Re-submissions of an existing fingerprint
     // already short-circuited at the dedup-check above, so partners can
     // re-anchor without consuming quota.
     if (orgId && !(await ensureAnchorQuotaAvailable(db, orgId, res))) {
@@ -435,6 +438,14 @@ async function handleAnchorSubmit(req: Request, res: Response) {
           resetValue: resetAt.toISOString(), retryAfter,
           resetEpochSeconds: Math.floor(resetAt.getTime() / 1000),
         });
+        return;
+      }
+      if (!insertError && anchor.error === 'contractual_quota_exceeded') {
+        if (typeof anchor.limit !== 'number' || typeof anchor.current !== 'number') {
+          writeQuotaCheckUnavailable(res);
+          return;
+        }
+        writeQuotaExhausted(res, anchor.current, anchor.limit);
         return;
       }
       if (!insertError && anchor.error === 'organization_unavailable') {

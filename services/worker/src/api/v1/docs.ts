@@ -2306,6 +2306,29 @@ export const openApiSpec: Record<string, any> = {
         responses: { '201': { description: 'Folder created', content: { 'application/json': { schema: { type: 'object', properties: { folder: { $ref: '#/components/schemas/Folder' } } } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' } },
       },
     },
+    '/folders/member-context': {
+      get: {
+        summary: 'Read an authorized organization member context', operationId: 'getFolderMemberContext', tags: ['Folders'],
+        security: [{ SupabaseJWT: [] }],
+        description: 'Internal dashboard drill-down. Requires an AAL2 user session and exact or approved-ancestor organization administration. API keys are rejected. Membership is derived from org_members; a profiles.org_id value alone never grants access.',
+        parameters: [
+          { name: 'owner_user_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } },
+          { name: 'context_org_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } },
+        ],
+        responses: {
+          '200': { description: 'Bounded member identity in the requested membership context' },
+          '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' },
+        },
+      },
+    },
+    '/folders/member-contexts': {
+      get: { summary: 'List authorized organization member contexts', operationId: 'listFolderMemberContexts', tags: ['Folders'],
+        security: [{ SupabaseJWT: [] }], description: 'Internal AAL2 dashboard roster derived from exact org_members rows. API keys are rejected.',
+        parameters: [{ name: 'context_org_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '200': { description: 'Bounded exact-membership roster' }, '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' } } },
+    },
     '/folders/{folderId}': {
       patch: {
         summary: 'Rename or reparent a folder', operationId: 'updateFolder', tags: ['Folders'],
@@ -2465,8 +2488,14 @@ export const openApiSpec: Record<string, any> = {
       },
       FolderMoveResult: {
         type: 'object', required: ['moved', 'failed'], properties: {
-          moved: { type: 'array', items: { type: 'string', format: 'uuid' } },
-          failed: { type: 'array', items: { type: 'object', required: ['anchor_id', 'code'], properties: { anchor_id: { type: 'string', format: 'uuid' }, code: { type: 'string' } } } },
+          moved: { type: 'array', items: { oneOf: [
+            { type: 'string', format: 'uuid' }, { type: 'string', pattern: '^ARK-' },
+          ] } },
+          failed: { type: 'array', items: { type: 'object', required: ['anchor_id', 'code'], properties: {
+            anchor_id: { oneOf: [
+              { type: 'string', format: 'uuid' }, { type: 'string', pattern: '^ARK-' },
+            ] }, code: { type: 'string' },
+          } } },
         },
       },
       VerificationResult: {

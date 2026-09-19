@@ -10,7 +10,7 @@
  * Submits to POST /api/rules. After save the admin lands on the list page
  * where they can flip `enabled` on manually (SEC-02 defense).
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, CheckCircle, Plus, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '@/components/layout';
@@ -31,12 +31,14 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useFolders, type Folder } from '@/hooks/useFolders';
+import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
 import {
   RULE_ACTION_COPY,
   RULE_TRIGGER_COPY,
   RULE_WIZARD_LABELS as W,
+  RULE_FOLDER_LABELS,
 } from '@/lib/copy';
 import {
   validateWizardConfigs,
@@ -47,6 +49,27 @@ import { RuleSimulatorPanel } from '@/components/rules/RuleSimulatorPanel';
 
 const TRIGGER_COPY = RULE_TRIGGER_COPY;
 const ACTION_COPY = RULE_ACTION_COPY;
+
+const CONNECTOR_LABELS: Record<NonNullable<Folder['connectorProvider']>, string> = {
+  google_drive: 'Google Drive',
+  docusign: 'DocuSign',
+};
+
+export function folderDestinationLabel(folder: Folder, folders: Folder[]): string {
+  const byId = new Map(folders.map((candidate) => [candidate.id, candidate]));
+  const names = [folder.name];
+  const visited = new Set([folder.id]);
+  let parentId = folder.parentFolderId;
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) break;
+    names.unshift(parent.name);
+    parentId = parent.parentFolderId;
+  }
+  const provider = folder.connectorProvider ? ` · ${CONNECTOR_LABELS[folder.connectorProvider]}` : '';
+  return `${names.join(' / ')}${provider}`;
+}
 
 interface DriveFolderConfig {
   type: 'drive_folder';
@@ -80,13 +103,22 @@ const EMPTY: WizardState = {
 export function RuleBuilderPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const { orgId, loading: orgLoading } = useActiveOrg();
   const { folders } = useFolders();
   const navigate = useNavigate();
   const [state, setState] = useState<WizardState>(EMPTY);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const orgId = profile?.org_id ?? null;
+  const activeOrgRef = useRef(orgId);
+  useEffect(() => {
+    const changed = activeOrgRef.current !== orgId;
+    activeOrgRef.current = orgId;
+    if (changed) {
+      setState(EMPTY);
+      setError(null);
+    }
+  }, [orgId]);
 
   function update<K extends keyof WizardState>(key: K, value: WizardState[K]) {
     setState((prev) => ({ ...prev, [key]: value }));
@@ -132,7 +164,7 @@ export function RuleBuilderPage() {
   }
 
   async function handleSave() {
-    if (!orgId) {
+    if (orgLoading || !orgId) {
       setError(W.ERR_NO_ORG);
       return;
     }
@@ -155,12 +187,13 @@ export function RuleBuilderPage() {
     }
     setSubmitting(true);
     setError(null);
+    const requestOrgId = orgId;
     try {
       const res = await workerFetch('/api/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          org_id: orgId,
+          org_id: requestOrgId,
           name: state.name.trim(),
           description: state.description.trim() || undefined,
           trigger_type: state.trigger_type,
@@ -173,6 +206,10 @@ export function RuleBuilderPage() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error?.message ?? `Save failed (${res.status})`);
+      }
+      if (activeOrgRef.current !== requestOrgId) {
+        setError(W.ERR_NO_ORG);
+        return;
       }
       navigate(ROUTES.RULES);
     } catch (err) {
@@ -564,14 +601,17 @@ function StepAction({ state, update, patch, folders }: StepProps & { folders: Fo
           >
             <SelectTrigger id="destination-folder"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="AUTO">Auto-sort by connector source</SelectItem>
-              {folders.filter((folder) => folder.ownerScope === 'ORG').map((folder) => (
-                <SelectItem key={folder.id} value={folder.id}>{folder.name}</SelectItem>
+              <SelectItem value="AUTO">{RULE_FOLDER_LABELS.AUTO}</SelectItem>
+              {folders.filter((folder) => folder.ownerScope === 'ORG')
+                .map((folder) => ({ folder, label: folderDestinationLabel(folder, folders) }))
+                .sort((a, b) => a.label.localeCompare(b.label))
+                .map(({ folder, label }) => (
+                <SelectItem key={folder.id} value={folder.id}>{label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            Auto-sort creates or reuses a connector-bound folder. Choose a folder to route every matching record there.
+            {RULE_FOLDER_LABELS.AUTO_HELP}
           </p>
         </div>
       )}

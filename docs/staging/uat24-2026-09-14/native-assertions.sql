@@ -54,6 +54,54 @@ DO $$ DECLARE n int; BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'personal principal key cannot reach its global folder'; END IF;
 END $$;
 
+-- 0480 direct-RLS parity: platform and approved ancestor administrators can
+-- read only explicitly contextual personal trees. The owner retains both;
+-- ordinary peers and identity-less sessions retain neither.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.role','authenticated',false);
+SELECT set_config('request.jwt.claims','{"role":"authenticated","aal":"aal2"}',false);
+SELECT set_config('request.jwt.claim.sub','99999999-0000-4000-8000-000000000009',false);
+DO $$ DECLARE contextual int; global_private int; BEGIN
+  SELECT count(*) FILTER (WHERE context_org_id IS NOT NULL),
+         count(*) FILTER (WHERE context_org_id IS NULL)
+    INTO contextual, global_private
+    FROM public.folders
+   WHERE user_id='22222222-0000-4000-8000-000000000002';
+  IF contextual <> 1 OR global_private <> 0 THEN
+    RAISE EXCEPTION 'platform direct RLS personal privacy mismatch';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claim.sub','22222222-0000-4000-8000-000000000002',false);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM public.folders
+       WHERE user_id='22222222-0000-4000-8000-000000000002') <> 2 THEN
+    RAISE EXCEPTION 'personal owner lost own folder tree';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claim.sub','11111111-0000-4000-8000-000000000001',false);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM public.folders
+       WHERE user_id='22222222-0000-4000-8000-000000000002') <> 1 THEN
+    RAISE EXCEPTION 'approved ancestor contextual visibility mismatch';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claim.sub','33333333-0000-4000-8000-000000000003',false);
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM public.folders
+              WHERE user_id='22222222-0000-4000-8000-000000000002') THEN
+    RAISE EXCEPTION 'ordinary peer reached personal folder tree';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claim.sub','',false);
+SELECT set_config('request.jwt.claims','',false);
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM public.folders) THEN
+    RAISE EXCEPTION 'identity-less authenticated session reached folders';
+  END IF;
+END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.role','service_role',false);
+
 -- SCRUM-5252: platform authority is read-only and applies only to verified
 -- JWT actors. Global personal folders remain private through the REST/RPC
 -- contract, and an API key org remains the upper bound.

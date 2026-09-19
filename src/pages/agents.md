@@ -874,3 +874,4 @@ The public gateway serves the machine-readable reference at `/api/docs/spec.json
 ## 2026-09-19 — UAT-19 exact-org dashboard and queue
 
 `OrgProfilePage` is the route-org shell: it passes the route org to Secure Document, registry, queue, and the additive `useOrgProfileFolders` wrapper. It renders safe HTTPS-only organization social links and composes folder filtering/management into Home. `AnchorQueuePage` carries `org_id` through list/run/resolve, queries the exact membership role, clears tenant-bound state on route changes, and ignores stale responses. Never fall back from a route org to the profile/active org.
+The queue scope key includes authenticated user and effective organization, so primary-organization changes also invalidate list requests and clear rows. An explicit empty or malformed `org_id` is visibly denied rather than falling back.

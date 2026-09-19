@@ -604,3 +604,9 @@ Integration and enabled-rule inventories now use shared scanAllPages with comple
 ## 2026-09-19 — UAT-19 exact-organization queue context
 
 Queue list, run, collision context, and resolve accept an optional selected `org_id` and authorize against exact authoritative `org_members` owner/admin state (plus platform admin), with one approved direct-parent path. Stale `profiles.role/org_id` never restores revoked access. Resolve preflights the selected `public_id` against both tenant and `external_file_id`; migration 0477 repeats the authority and locking boundary. Keep omitted `org_id` compatibility for primary-context callers, but route-scoped UI callers must send it.
+## 2026-09-19 — atomic contractual anchor-cap denial
+
+The canonical create RPC can now return `contractual_quota_exceeded` after its
+transactional final-slot decision. `v1/anchor-submit.ts` maps it back to the
+existing partner-facing 402 `quota_exhausted` problem response. The distinct
+`quota_exceeded` result remains the tier daily limit and keeps its 429 response.

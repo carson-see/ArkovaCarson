@@ -75,3 +75,5 @@ only the hook's own file. This folder is the missing consumer, wired into
 
 `FolderSidebar.canManage=false` retains folder navigation/filtering while hiding create, subfolder, rename, and delete controls. OrgProfile uses this for ordinary members; worker endpoints remain the write authority.
 `MoveToFolderDialog.onSelect` may resolve `false` for a partial bulk move; in that case the dialog remains open so failed selections are not silently discarded.
+An explicit `false` renders the same bounded retry alert as a rejected promise; neither path closes the dialog or exposes raw server errors.
+Rejected moves are contained in the dialog with generic existing error copy and an explicit retry; raw server errors are not rendered. The UAT-24 contextual-create control remains subject to UAT-19's read-only manager gate.

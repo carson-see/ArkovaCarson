@@ -1577,6 +1577,33 @@ describe('arkova_manage_folders', () => {
     }));
   });
 
+  it('forwards create, reparent, connector binding/clear, and delete without changing outputs', async () => {
+    const config = { ...CONFIG, workerBaseUrl: 'https://worker.test', callerApiKey: 'ak_test_caller' };
+    const folderId = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const connectionId = 'aaaaaaaa-0000-4000-8000-000000000002';
+    const cases = [
+      [{ action: 'create', name: 'Cases', owner_scope: 'ORG' }, 'POST', '/api/v1/folders',
+        { name: 'Cases', owner_scope: 'ORG' }],
+      [{ action: 'update', folder_id: folderId, parent_folder_id: null }, 'PATCH', `/api/v1/folders/${folderId}`,
+        { parent_folder_id: null }],
+      [{ action: 'bind_connector', folder_id: folderId, provider: 'google_drive', source_id: 'drive-folder', connection_id: connectionId },
+        'PUT', `/api/v1/folders/${folderId}/connector`,
+        { provider: 'google_drive', source_id: 'drive-folder', connection_id: connectionId }],
+      [{ action: 'bind_connector', folder_id: folderId, provider: null, source_id: null, connection_id: null },
+        'PUT', `/api/v1/folders/${folderId}/connector`, { provider: null, source_id: null, connection_id: null }],
+      [{ action: 'delete', folder_id: folderId }, 'DELETE', `/api/v1/folders/${folderId}`, undefined],
+    ] as const;
+    for (const [input, method, path, body] of cases) {
+      mockFetch.mockResolvedValueOnce(new Response(method === 'DELETE' ? null : JSON.stringify({ folder: { public_id: 'FLD-1' } }),
+        { status: method === 'DELETE' ? 204 : 200 }));
+      const result = await handleManageFolders(input, config);
+      expect(result.isError).toBeFalsy();
+      expect(mockFetch).toHaveBeenLastCalledWith(`https://worker.test${path}`, expect.objectContaining({
+        method, ...(body ? { body: JSON.stringify(body) } : {}),
+      }));
+    }
+  });
+
   it('rejects ambiguous bulk id lists before a worker call', async () => {
     const result = await handleManageFolders(
       { action: 'bulk_move', anchor_ids: ['aaaaaaaa-0000-4000-8000-000000000001'],
