@@ -1453,6 +1453,10 @@ cronRouter.post('/recover-broadcasts', async (_req, res) => {
         { recovered: result.recovered, passes: result.passes },
         'Stuck-broadcast recovery finished INCOMPLETE — stuck anchors may remain',
       );
+      // Cloud Scheduler retries non-2xx responses. Returning 200 here records
+      // an incomplete recovery as success while stuck anchors may remain.
+      res.status(503).json(result);
+      return;
     }
     res.json(result);
   } catch (error) {
