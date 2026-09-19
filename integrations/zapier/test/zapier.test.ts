@@ -213,6 +213,13 @@ describe('Constants', () => {
       'compliance.document_expiring',
       'attestation.created',
       'attestation.revoked',
+      'suborg.created',
+      'suborg.approved',
+      'suborg.revoked',
+      'suborg.credits_allocated',
+      'suborg.credits_reclaimed',
+      'suborg.suspended',
+      'suborg.offboarded',
     ]);
   });
 });
