@@ -158,7 +158,6 @@ export async function processAttestationAnchoring(
           status: 'ACTIVE',
           chain_tx_id: txId,
           chain_timestamp: now,
-          fingerprint: att.fingerprint,
         });
       } catch (webhookError) {
         logger.warn({ attestationId: att.id, error: webhookError }, 'Failed to dispatch attestation webhook');

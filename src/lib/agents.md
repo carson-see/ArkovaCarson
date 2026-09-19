@@ -776,6 +776,33 @@ Field, section and proof-line helpers reserve page space before painting. Wrappe
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.
 
+## 2026-09-12 SCRUM-5024 — `referralCapture.ts` (new): partner `?ref=` capture
+
+Module-scope capture, run by a side-effect import from `main.tsx` (the same
+placement `oauthConfirmation.ts` uses) so it executes before React renders and
+before the router reads the URL. Removing that import silently disables every
+partner referral attribution — there is no second capture point.
+
+- `?ref=` is normalised (`trim().toUpperCase()`) then validated against
+  `REFERRAL_CODE_RE`, which spells the alphabet out
+  (`^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$`) to mirror the database's
+  `referral_codes_code_format` CHECK exactly. **Do not "simplify" this to
+  `[A-Z2-9]`** — that admits `I`, `L` and `O`, which the CHECK rejects, so a
+  code would validate here and be a guaranteed `unknown_code` at the RPC.
+- Parked in `localStorage` under `arkova.referral` with a 30-day TTL, via the
+  shared `safeStorage.ts` helpers (this repo's vitest `localStorage` throws on
+  every call, so the guard is exercised on every local run).
+- `readReferralCode(now = Date.now())` takes the clock as a parameter: the
+  caller samples it at the decision point rather than this module capturing a
+  module-scope timestamp that would be stale for the whole session. A malformed
+  or expired entry is REMOVED on read, not left to be re-parsed forever.
+- The `?ref` parameter is stripped with `history.replaceState` whether or not it
+  was valid, so it cannot ride into a bookmark or the next Referer header.
+- **Accepted loss, recorded rather than hidden:** `localStorage` is per-device.
+  A visitor who clicks the partner link on a laptop and finishes signup from an
+  emailed link on their phone is recorded as unreferred. `sessionStorage` would
+  lose it far more often; a server-side cookie is a larger privacy surface than
+  a referral code justifies. There is no recovery path.
 ## 2026-09-12 — `apiScopes.ts` mirrors `ORG_API_SCOPES` BY NAME (SCRUM-3971)
 
 `orgs:manage` was added to the worker vocabulary in a new exported
@@ -843,3 +870,9 @@ Two differences from the DocuSign module, both deliberate:
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
 
+
+## 2026-09-19 — Finality webhook copy
+
+`WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and
+attestation-active events; the registration-drift gate binds this map to the
+worker registry.

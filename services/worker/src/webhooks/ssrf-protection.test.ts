@@ -109,3 +109,6 @@ describe('isPrivateUrl (INJ-02 SSRF protection)', () => {
     });
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));

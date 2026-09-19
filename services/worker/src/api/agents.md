@@ -568,6 +568,21 @@ organizations.
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
 
+## 2026-09-12 SCRUM-5024 — `admin-provisioning.ts`: optional `referral_code`
+
+`CreateOrganizationSchema` gained an OPTIONAL `referral_code`, validated against
+the same class as the database's `referral_codes_code_format` CHECK — spelled
+out as `[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}`, not `[A-Z2-9]`, which would admit
+`I`, `L` and `O` and validate codes the CHECK guarantees to reject.
+
+Attribution runs AFTER `admin_provision_organization` returns, never inside it:
+threading it through would put two unrelated facts under one idempotency key.
+`attributeReferral()` never throws and never fails the provisioning — the
+organization already exists by then, and a mistyped code is not a reason to
+leave an operator with a half-created partner. Every outcome is logged (info on
+success, **error** on every non-applied branch, including `rpc_failed` and
+`threw`) and reported additively on the result as `referral_applied` +
+`referral_reason`. Both fields are absent when no code was supplied.
 ## 2026-09-12 SCRUM-4986 / SCRUM-4991 — revoke requires ORG_ADMIN in the worker; invitation double-accept is a no-op
 
 - **`anchor-revoke.ts`** selected `memberships.role` and never read it, so any ORG_MEMBER could call
@@ -580,3 +595,9 @@ The helper uses a direct PENDING comparison and has no test-only export. Behavio
   promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
   23505 on that insert is now treated as success (the membership exists). Any other insert error
   still throws and triggers the new-account rollback.
+
+## 2026-09-14 — PR #2937 multi-account Drive health review
+
+Drive OAuth permits multiple active account IDs in an organization; connect does not retire older accounts and renewal processes each active row. The provider health card must evaluate every active Google row and retain any failure, using renewal, cursor, fetch-job and processing precedence, then connection timestamp and stable row ID for a deterministic explanation. Revoked accounts cannot hide active health; only an all-revoked set is disconnected. Expiry, renewal timestamp and sanitized account label come from that same explanation row. Order reversal and mixed healthy/failed/revoked regression cases exercise the API output. The separate disconnect multi-account cleanup mismatch is logged for follow-up and is outside this repair.
+
+Integration and enabled-rule inventories now use shared scanAllPages with complete-page validation, total ordering, a five-second abort signal and row/page budgets. An error or incomplete inventory returns503 rather than a partial healthy response. Cursor health shares the pure driveFolderIds binding parser with the actual runner: an enabled rule with empty configuration is not a watched folder; later configured rows are scanned too.

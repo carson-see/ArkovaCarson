@@ -100,6 +100,9 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0436` | `0436_scrum4035_oauth_email_confirmation.sql` | SCRUM-4035 / UAT-03 | **no — candidate only** | New OAuth mailbox confirmation, restricted pending role and service-only challenge completion. Prefix verified against main/prod 0419 and all open-PR migrations through 0435 on 2026-09-05. Rollout remains disabled until hook and all consumers are verified. |
 | `0443` | `0443_backfill_anchor_proof_block_height.sql` | #2825 / SCRUM-4879; original #2782 / SCRUM-3953 | **no — production held; applied to Owie staging** | Existing reserved prefix, moved intact to `release/scrum-3953-proof-history-0443`. Data-only correction of confirmed proof height/time for matching block identities. Exact SQL SHA-256 `b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`; no renumbering or SQL edit. Production completion requires protected repair, corrected-producer drain, final reconciliation and actual application/ledger proof; see [release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161). Older next-prefix statements below record authorship history; this prefix is unavailable. |
 | `0445` | `0445_connector_artifact_materialize_link_atomic.sql` | #2570 / SCRUM-3882 | **no — local candidate only** | Atomic service-only connector anchor creation/reuse and freshness-guarded artifact link. Prevents a broadcaster observing a stale unlinked PENDING anchor. Numeric inventory verified 2026-09-10: main 0440; open PRs 0441/0442; #2572 reserves 0443/0444. Historical unpublished 0437 is intentionally not reused. Local PostgreSQL concurrency/ACL/rollback proof required; full stack T3 staging and production apply remain release gates. |
+| `0455` | `0455_scrum5024_partner_referral_attribution.sql` | SCRUM-5024 (branch `feat/scrum-5024-partner-referral-attribution`) | **no — file only, pre-soak, NOT applied to prod or any rig** | Partner referral codes and organization attribution. Two new tables (`referral_codes`, `organization_referrals`), both `ENABLE` + `FORCE ROW LEVEL SECURITY`, SELECT-only policies via the existing `get_user_org_ids()` / `is_current_user_platform_admin()` helpers, and NO write policy for any role — writes are the four SECURITY DEFINER RPCs or `service_role`. **Disclosure boundary, deliberate:** only the REFERRER can read `organization_referrals`; there is no policy matching `referred_org_id`, and `COMMENT ON TABLE` records that the asymmetry is the design. `organization.referred` is audited against the REFERRER's `org_id` for the same reason. **No DDL on `organizations`** — both tables take foreign keys INTO it, so the ShareRowExclusiveLock is bounded by the file-level `SET LOCAL lock_timeout = '5s'`. `audit_events` category `ORG` is already allowed by `0309`, so no constraint change. Prefix derived 2026-09-12 from `max(main head 0450, open-PR claims 0443/0451/0452/0453, 0454 reserved by SCRUM-3972 in flight) + 1`. Tier T3. Rollback in the file header (drops attribution data — export first). **Superseded in part by `0456` — apply both or neither.** |
+| `0456` | `0456_scrum5024_referral_rpc_tenant_authority.sql` | SCRUM-5024 CTO review (branch `feat/scrum-5024-partner-referral-attribution`) | **no — file only, pre-soak, NOT applied to prod or any rig** | Compensating migration for `0455`: replaces the `record_org_referral` and `get_org_referrals` bodies only. Adds the missing tenant-authority guard on `record_org_referral` (SECURITY DEFINER + EXECUTE to `authenticated` meant the body was the only check, and there wasn't one), files `organization.referred` with a NULL actor so the actor-scoped `audit_events_select` policy cannot hand the referred user the referrer's raw org uuid, bounds the audited code to 32 characters against `audit_events_details_length`, and replaces both `NOT IN (SELECT get_user_org_ids())` membership tests with a NULL-safe `NOT EXISTS`. No table DDL, no data change, no hot-table lock. Prefix derived 2026-09-12: `max(main head 0450, open-PR claims 0451/0452/0453, 0454 reserved by SCRUM-3972, 0455 this branch) + 1`. Same T3 soak as `0455`. **Next author claims `0457` — re-derive, do not trust this line.** |
+| `0457` | `0457_scrum5024_referral_mfa_policies.sql` | #2905 / SCRUM-5024 | **no — local candidate only** | Adds 0451’s restrictive MFA predicate to both referral tables created by0455, without changing data or tenant permissions. The real CI MFA census found two missing policies. Prefix verified against all20 open non-queue PR file lists on2026-09-14; highest claim0456. Requires live rollback/reapply and T3 qualification before production. |
 | `0448` | `0448_computeid_agent_key_transition_atomic.sql` | #2668 / SCRUM-4535 / SCRUM-4536 | **no — local candidate only** | Service-only agent-row lock and full-snapshot CAS commit ComputeID status/metadata and key enforcement together. Closes the lost restore retry and delayed restore after revoke. Prefix re-derived 2026-09-10 from main, all open PRs, and #2572's local 0446/0447 reservations; coordinated with both parallel agents. Flag remains off. No production apply or soak completion claimed. |
 | `0453` | `0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql` | SCRUM-3971 | **no — file-only, pre-soak, applied NOWHERE** | **Lets an organization API key administer its sub-organizations.** Three things in one file because `scripts/ci/check-api-scope-vocabulary.ts` reads the LATEST migration naming EACH of `api_keys_scopes_known_values` and `agents_allowed_scopes_known_values` — splitting them leaves one constraint on an older file and reds the gate. (1) `organizations.public_id` NOT NULL with a collision-safe DEFAULT `generate_unique_org_public_id()`; the key surface addresses affiliates only by public id, so a NULL is a row the API can neither name nor return. **The DEFAULT is load-bearing and was found by measurement, not prediction:** NOT NULL with no default makes `public_id` REQUIRED in the generated `organizations.Insert` type and reds `src/hooks/useOnboarding.ts:161`/`:217` with TS2345. The new generator keeps the re-draw loop the BEFORE INSERT trigger provided and is SECURITY DEFINER so its uniqueness probe is not RLS-filtered the way the trigger's is. (2) Both scope CHECKs 20 -> 21 values (`orgs:manage`) via `ADD CONSTRAINT ... NOT VALID` + `VALIDATE CONSTRAINT`, so the AccessExclusive window excludes the scan; without this an `orgs:manage` key is UNWRITABLE and the feature ships with no way to mint a key for it. Prod read-only census 2026-09-12 (`vzwyaatejekddvltxyye`): every active key's `scopes` is a subset of the current 20 values, so VALIDATE cannot fail on existing data; 16 organizations, 0 with NULL `public_id`. (3) `_suborg_api_key_authorized(uuid, uuid)` plus three DISTINCTLY NAMED `*_as_api_key` RPCs — NOT overloads, because PostgREST resolves overloads by argument NAMES and a same-arity sibling differing only in the identity argument is an ambiguity waiting for the first caller that omits an optional one. Bodies are 0444's/0450's verbatim (each function's own `FOR UPDATE` placement — lock-then-authority in `suspend_suborg`, authority-then-lock in `allocate_credits_to_sub_org`, both faithful to 0444; LEAST/GREATEST credit-row lock order) except: the authority predicate; `audit_events.actor_id` NULL with the actor in `details` (that column is `REFERENCES profiles(id)`, so an api_key id is an FK violation and a user id is a false claim about who acted); and `org_credit_allocations.granted_by` / `organizations.suspended_by` stamped with the key's `api_keys.created_by` — both are FK-bound to `auth.users` and `granted_by` is NOT NULL, so there is no other legal value; it is PROVENANCE, never authority. Service-role-only grants with anon/authenticated REVOKEd BY NAME (`REVOKE FROM PUBLIC` alone does not undo the baseline's `ALTER DEFAULT PRIVILEGES`). `SET LOCAL lock_timeout = '5s'` ahead of the `organizations` DDL; `NOTIFY pgrst`. Both `database.types.ts` copies HAND-WRITTEN, not regenerated — no rig, prod or local stack was reachable in the authoring session; run `npm run gen:types` once at apply time as a canonical check. Ratchet: `src/tests/sec-0453-suborg-api-key-authority.test.ts` (46 content-guard assertions that run everywhere, plus a `RUN_LIVE_RLS=1` block that was NOT executed). Tier T3. Runnable ROLLBACK in the file header — it re-adds both CHECKs `NOT VALID` on purpose, because an `orgs:manage` key may still exist after a rollback and VALIDATE would fail on it. **Prefix derivation (2026-09-12):** main head `0450`; `gh pr list --state open --json files` shows `0451` (#2832), `0452` (#2831), `0443` (#2825); a scan of every `refs/remotes/origin` ref shows no `0453`. **Next author claims `0454` — re-derive, do not trust this line.** |
 | `0451` | `0451_uat04_mandatory_mfa.sql` | UAT-04 | **no — local candidate only** | All human product authority requires mailbox proof then AAL2. Composes the Auth token hook, contains legacy AAL1 JWTs through pre-request and restrictive RLS, and leaves machine credentials separate. Hosted hook activation plus server-time OAuth policy activation are release steps. New public/storage RLS tables and Realtime publications must add the restrictive MFA policy in their own migration. |
@@ -1425,6 +1428,109 @@ corrected producer deployment and old-work drainage, final reconciliation,
 actual unchanged 0443 outcome and canonical numeric ledger readback. Runtime
 delivery alone does not close the broader SCRUM-3953 historical defect.
 
+## Recent migrations (SCRUM-5024)
+
+`0455_scrum5024_partner_referral_attribution.sql` — partner referral codes and
+organization attribution. Placed at the end of this file deliberately, not
+blindly: the surrounding titled blocks run in ascending PR order and this is the
+newest work, so the end IS the ordered position. The heading is `SCRUM-5024`
+rather than `PR #NNNN` because this branch ships without a PR (founder
+directive, 2026-09-12); `check-agents-md-migration-collision.ts` only requires
+the heading be unique in the file, which it is.
+
+**What the migration owns.** `referral_codes` (one ACTIVE row per organization,
+enforced by the partial unique index `referral_codes_one_active_per_org`) and
+`organization_referrals` (`referred_org_id` is the PRIMARY KEY, so "an
+organization is referred at most once, forever" is a constraint rather than a
+read-then-write race). Four SECURITY DEFINER functions, each
+`SET search_path = public` and `SET lock_timeout = '5s'`:
+`generate_referral_code()` (service_role only — a code oracle callable by any
+signed-in user is reconnaissance on the code space), `ensure_org_referral_code`
+(idempotent mint, `service_role OR is_org_admin_of`), `record_org_referral`
+(TOTAL jsonb verdict: `no_code` / `unknown_code` / `self_referral` /
+`already_attributed` / `recorded`; never raises for a bad code because every
+caller runs after the organization already exists), and `get_org_referrals`
+(the referrer's read, projecting four fields).
+
+**Two things a later change must not quietly undo.** (1) There is no SELECT
+policy on `organization_referrals` matching `referred_org_id` — the referred
+organization is not told it was attributed, and the `organization.referred`
+audit row is filed against the REFERRER's `org_id` for the same reason. (2) The
+code alphabet excludes `I`, `L`, `O`, `0` and `1`; a client regex written
+`[A-Z2-9]` would admit three of those and park codes the CHECK guarantees to
+reject, so every mirror spells the alphabet out.
+
+Not applied to prod or to any rig. No soak run in the authoring session. Tier
+T3: 48 h soak, multiple trigger cycles, clean-mirror or isolated staging, per
+CLAUDE.md §1.12 — none of that is asserted here.
+
+## Recent migrations (SCRUM-5024 CTO review)
+
+`0456_scrum5024_referral_rpc_tenant_authority.sql` — replaces two function
+bodies from `0455`. Same branch, same T3 soak, no table DDL, no data change.
+It is a compensating migration and not an edit to `0455` because a migration is
+immutable once written (CLAUDE.md §1.2), and `.claude/hooks/check-constitution-on-edit.sh`
+enforces that unconditionally.
+
+**What it closes.** (1) `record_org_referral` had NO authority check on
+`p_org_id` while granting EXECUTE to `authenticated` — and it is SECURITY
+DEFINER, so its body is the only check that runs. Any signed-in user holding an
+organization's uuid could permanently attribute that organization to their own
+ACTIVE code (`referred_org_id` is the PRIMARY KEY, first write wins, no revoke
+surface) and could write `organization.referral_code_invalid` rows, with
+caller-supplied text, into a different tenant's audit stream. Membership of
+`p_org_id`, or `service_role`, is now required. (2) `organization.referred` was
+filed with `actor_id = auth.uid()`, which on the signup path is a member of the
+REFERRED organization — and `audit_events_select` is `USING (actor_id = (SELECT
+auth.uid()))` with `GRANT SELECT ... TO authenticated`, so that user could read
+back the referrer's raw org uuid and defeat the disclosure boundary through the
+audit table. The row now carries a NULL actor and stays keyed to the referrer's
+`org_id`. (3) The audited code is bounded to 32 characters —
+`audit_events_details_length` CHECKs `<= 10000`, so an oversized `p_code` made a
+function contracted never to raise, raise. (4) Both membership tests use a
+NULL-safe `NOT EXISTS` rather than `NOT IN (SELECT ...)`, which evaluates to
+NULL — and therefore fails OPEN — if the set ever contains one. (5) A
+non-service caller may only assert `p_source = 'signup'` — see below.
+
+**Two corrections to `0455`'s own header, recorded here because that file is
+immutable.**
+
+* `0455:149-152` says "FORCE ROW LEVEL SECURITY means even the table owner is
+  subject to the policies, so the absence of a write policy is a real
+  prohibition". The write prohibition that actually holds is the absence of an
+  INSERT/UPDATE **grant** to `authenticated` (`0455:162-172`). FORCE RLS is not
+  what stops a browser write, and it is not what lets the RPCs write either:
+  they insert into these tables as the definer and succeed only because that
+  role has `BYPASSRLS`. `0404`'s header documents the opposite case empirically
+  (owner + FORCE RLS + no matching policy reads zero rows) and explicitly
+  refuses to assume the migration role has `BYPASSRLS`. **Soak consequence:** a
+  rig whose migration role lacks `BYPASSRLS` will fail the FIRST mint and the
+  FIRST attribution with an RLS violation, not at some later edge — exercise
+  both on the rig before reading anything else as green.
+* `0455:402-406` says `organization.referred` belongs in "the partner's own
+  audit export". True of `org_id`, but no user-facing org-scoped audit read
+  exists today; the partner reads referrals through `get_org_referrals`, and
+  that audit row is reachable only by a `service_role` export filtered on
+  `org_id`.
+
+**(5) Caller-asserted `p_source` — closed, folded into `0456` (not chained as
+`0457`, per CTO decision).** A non-service caller could otherwise label its own
+organization's attribution `admin_provisioning` or `api`, so `source` was
+evidence of what the caller claimed, not of which surface observed it. A
+non-service caller may now only assert `p_source = 'signup'`; any other value
+from a non-service role raises `insufficient_privilege`, joining the other
+authority checks in `record_org_referral`. Ratcheted by
+`src/tests/scrum5024-referral-rpc-tenant-authority.test.ts` ("restricts
+non-service callers to p_source = signup").
+
+**Next author claims `0457` — re-derive, do not trust this line.**
+## Recent migrations (PR #TBD — SCRUM-3972)
+
+| Prefix | File | Story | Applied to prod | Notes |
+|---|---|---|---|---|
+| `0454` | `0454_scrum3972_webhook_endpoint_scope.sql` | SCRUM-3972 | no — local candidate only | Adds `webhook_endpoints.scope text NOT NULL DEFAULT 'self' CHECK IN ('self','self_and_descendants')` and a partial index `(org_id, scope) WHERE is_active`. Behaviour-preserving by construction: DEFAULT 'self' matches what every one of the 4 active prod endpoints already does (read-only verified this session: they subscribe only to `anchor.secured` / `anchor.revoked` / `anchor.expired`), so applying this migration alone changes zero deliveries. The column is read by the fan-out added in `services/worker/src/webhooks/suborg-fanout.ts`, itself dark behind `ENABLE_SUBORG_WEBHOOK_FANOUT` (`config.ts`, `boolFlag(false)`) — a founder decision, not a deploy decision, because it reverses decision D2 (`orgSubOrgs.ts` — a parent sees what its affiliates SPEND, never what they secured). NO RLS change: `webhook_endpoints` already carries `FORCE ROW LEVEL SECURITY` with four org-scoped policies, and `scope` is an ordinary non-privileged attribute of a row the caller already owns — it selects which events that row receives, it does not widen which rows the caller may see or write; the file header states this in full. `create_webhook_endpoint` is DROPped and recreated with an added `p_scope DEFAULT 'self'` parameter (CLAUDE.md §6 — a DEFAULT-only overload is ambiguous to PostgREST), so a deployed frontend calling the two-argument named form still resolves unchanged. `SET LOCAL lock_timeout = '5s'` bounds the DDL even though `webhook_endpoints` is not one of the three HOT_TABLES (`organizations`, `anchors`, `profiles`) that CLAUDE.md §1.2 requires it for. The events allow-list CHECK on `events` is deliberately DEFERRED to a follow-up ticket (couples with SCRUM-3982's registry entries). Runnable `-- ROLLBACK:` in the file header drops the column, the index, the CHECK, and reverts `create_webhook_endpoint` to its pre-0454 two-argument form. Number derived 2026-09-12: prod ledger head and every open PR at the time of derivation topped out at `0453` (SCRUM-3971, PR #2844), and no open PR or agents.md reservation claims `0454`. `0455` is separately reserved for SCRUM-5024 (release-coordinator assignment, not yet a filed migration as of this derivation) — **next author claims `0456` — re-derive, do not trust this line.** |
+
+Land order note (also in the PR body): this branch was built AFTER SCRUM-3971's branch was pushed and re-derives its `orgSubOrgs.ts` call sites against `origin/main`, not against 3971's branch — no PR stacking. SCRUM-3982 (`fix/scrum-3982-webhook-banned-fields`) independently appends `attestation.created` / `attestation.revoked` to `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` at the same insertion point (after `compliance.document_expiring`) that this PR appends the seven `suborg.*` schemas; declared land order is 3982 → 3972, so whichever merges second re-orders both the map and the six mirror surfaces in one union resolution. No live soak is running on either branch, so that base-merge cost is free (CLAUDE.md §1.13).
 
 ## Recent migrations (PR #2825)
 
@@ -1509,3 +1615,11 @@ balance read; the existing public offboard HTTP shape stays unchanged.
 The native harness asserts exact balances across both serialization orders and
 zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
 for the final C3 source review and fresh qualification.
+
+## 2026-09-19 — Referral RPC empty-claims guard (0466)
+
+Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both
+referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
+claims are absent; every service-role comparison must coalesce that result to
+`false` so PL/pgSQL authority guards fail closed. Normal authenticated and
+service-role paths remain unchanged.

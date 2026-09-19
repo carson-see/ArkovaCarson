@@ -41,6 +41,7 @@ import {
 } from '../../../integrations/connectors/drive-changes-runner.js';
 import { createDefaultKmsClient } from '../../../integrations/oauth/crypto.js';
 import { parseDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
+import { reportDriveProcessingFailure } from '../../../integrations/connectors/drive-connect-health.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -270,8 +271,19 @@ router.post('/', async (req: Request, res: Response) => {
       { error: err, channelId, orgId: lookup.org_id, integrationId: lookup.integration_id },
       'drive webhook: runDriveChanges failed — 200 ack so Drive does not retry-storm',
     );
-    // 200 ack anyway — Drive's retry would just repeat the same failure;
-    // operator alert via Sentry is the appropriate escalation path.
+    // 200 ack anyway — Drive's retry would just repeat the same failure.
+    // P0-2 (2026-09-14 hardening audit): this used to be a log-only dead
+    // end. Route to Sentry — the catch-all for any failure inside
+    // runDriveChanges/processDriveChanges that wasn't already reported by a
+    // richer-context call site upstream (loadWatchedFolderIds,
+    // drive-changes-processor.ts's changes.list / per-change catches). The
+    // dedup marker in reportDriveProcessingFailure makes this a no-op when
+    // an inner site already reported the same error instance.
+    reportDriveProcessingFailure(err, {
+      stage: 'webhook_run_changes',
+      orgId: lookup.org_id,
+      integrationId: lookup.integration_id,
+    });
   }
 
   return res.status(200).end();

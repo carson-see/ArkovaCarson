@@ -22,6 +22,7 @@
  */
 import { z } from 'zod';
 import { boundedErrorDetail } from '../../utils/byte-safety.js';
+import { BodyReadTimeoutError, readJsonBounded } from '../../utils/body-read-timeout.js';
 
 const DRIVE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DRIVE_OAUTH_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
@@ -97,6 +98,53 @@ export class DriveApiError extends Error {
     this.name = 'DriveApiError';
     this.status = status;
     if (detail !== undefined) this.detail = detail;
+  }
+}
+
+/**
+ * Deadline for every Drive API response-body read (F-D0-5,
+ * memory/feedback_bounded_body_reads.md). Matches the Adobe Sign connector.
+ *
+ * `AbortSignal.timeout(...)` on the REQUEST does not cover the body read that
+ * follows — that is a separate await with no timer, and undici's default
+ * `bodyTimeout` fires only on total silence, so a Google endpoint that sends
+ * headers and then trickles parks the caller indefinitely. Two Drive readers
+ * here (`refreshAccessToken`, `listChanges`) run inside `withRunLease`-held
+ * cron runs, which is the exact shape that disabled SUBMITTED→SECURED
+ * promotion for every tenant for 35+ minutes on 2026-08-12.
+ */
+export const DRIVE_BODY_READ_TIMEOUT_MS = 10_000;
+
+/**
+ * `await res.json()` with a deadline, in the shape every Drive caller wants.
+ *
+ * Replaces the file's former `await res.json().catch(() => null)`:
+ *   - a PARKED body becomes a distinct {@link DriveApiError} 408 — bounded,
+ *     and visibly different from a slow-but-alive Drive,
+ *   - a malformed / non-JSON body still degrades to `null`, preserving the
+ *     previous behavior at every call site (the caller's own `!res.ok` /
+ *     missing-field check is what then produces the real error).
+ *
+ * §1.6A / §1.4: `label` is a stable OPERATION name, never a Drive URL. The
+ * bounded reader embeds its `url` argument verbatim in the message it throws,
+ * and that text flows to logs, Sentry and `job_queue.last_error` — a Drive URL
+ * carries fileIds, driveIds and (on some paths) query-bound identifiers. The
+ * 408 is likewise constructed with status + message only and NO `detail`,
+ * because a parked body has by definition not been read.
+ */
+async function readDriveJson(
+  res: { json(): Promise<unknown>; body?: { cancel?: (reason?: unknown) => Promise<unknown> } | null },
+  label: string,
+): Promise<unknown> {
+  try {
+    return await readJsonBounded(res, label, DRIVE_BODY_READ_TIMEOUT_MS);
+  } catch (error) {
+    if (error instanceof BodyReadTimeoutError) {
+      throw new DriveApiError(`${label} response body timed out`, 408);
+    }
+    // Malformed / empty / non-JSON body — same degradation as the previous
+    // `.catch(() => null)`.
+    return null;
   }
 }
 
@@ -196,7 +244,7 @@ export async function exchangeCode(args: {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
-  const json = await res.json().catch(() => null);
+  const json = await readDriveJson(res, 'Drive token exchange');
   if (!res.ok) {
     // Non-document path: Google token endpoint returns safe OAuth error JSON.
     throw new DriveApiError('Drive token exchange failed', res.status, boundedErrorDetail(json));
@@ -225,7 +273,7 @@ export async function refreshAccessToken(args: {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
-  const json = await res.json().catch(() => null);
+  const json = await readDriveJson(res, 'Drive token refresh');
   if (!res.ok) {
     // Non-document path: Google token refresh returns safe OAuth error JSON.
     throw new DriveApiError('Drive token refresh failed', res.status, boundedErrorDetail(json));
@@ -258,7 +306,9 @@ export async function createChangesWatch(args: {
   const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
-  const startJson = (await startRes.json().catch(() => null)) as { startPageToken?: string } | null;
+  const startJson = (await readDriveJson(startRes, 'Drive changes.startPageToken')) as {
+    startPageToken?: string;
+  } | null;
   if (!startRes.ok || !startJson?.startPageToken) {
     // Non-document path: changes/startPageToken returns small API JSON.
     throw new DriveApiError('Drive startPageToken failed', startRes.status, boundedErrorDetail(startJson));
@@ -285,7 +335,7 @@ export async function createChangesWatch(args: {
       body: JSON.stringify(watchBody),
     },
   );
-  const json = (await res.json().catch(() => null)) as {
+  const json = (await readDriveJson(res, 'Drive changes.watch')) as {
     resourceId?: string;
     expiration?: string;
   } | null;
@@ -323,7 +373,7 @@ export async function stopDriveChannel(args: {
   });
   if (!res.ok) {
     // Non-document path: channels.stop error body is safe Google API JSON.
-    const json = await res.json().catch(() => null);
+    const json = await readDriveJson(res, 'Drive channels.stop');
     throw new DriveApiError('Drive channels.stop failed', res.status, boundedErrorDetail(json));
   }
 }
@@ -342,7 +392,7 @@ export async function revokeOAuthToken(args: {
   });
   if (!res.ok) {
     // Non-document path: token revoke error body is safe OAuth API JSON.
-    const json = await res.json().catch(() => null);
+    const json = await readDriveJson(res, 'Drive token revoke');
     throw new DriveApiError('Drive token revoke failed', res.status, boundedErrorDetail(json));
   }
 }
@@ -358,7 +408,7 @@ export async function getFileMetadata(args: {
   const res = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
-  const json = (await res.json().catch(() => null)) as {
+  const json = (await readDriveJson(res, 'Drive files.get')) as {
     id?: string;
     name?: string;
     parents?: string[];
@@ -447,7 +497,7 @@ export async function listChanges(args: {
   const res = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
-  const json = await res.json().catch(() => null);
+  const json = await readDriveJson(res, 'Drive changes.list');
   if (!res.ok) {
     // Non-document path: changes.list returns a metadata-only feed (fields mask
     // pulls file id/parents/revision/actor — no bytes); bounded+scrubbed detail.
@@ -600,7 +650,15 @@ export async function getSharedDriveName(args: {
   const res = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
-  const json = (await res.json().catch(() => null)) as { name?: string } | null;
+  // Documented contract: fall back to the ID on ANY failure — including a
+  // body-read timeout, which readDriveJson surfaces as a 408. A shared-drive
+  // display name is cosmetic; it must never fail (or park) a connector flow.
+  let json: { name?: string } | null;
+  try {
+    json = (await readDriveJson(res, 'Drive drives.get')) as { name?: string } | null;
+  } catch {
+    return args.driveId;
+  }
   if (!res.ok || !json?.name) return args.driveId;
   return json.name;
 }

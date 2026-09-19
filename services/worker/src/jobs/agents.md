@@ -1952,3 +1952,8 @@ Read before changing it:
 `publicRecordAnchor.ts`'s `buildPipelineAnchorInsert` has always built its RPC element with `...(description ? { description } : {})` — this file's JS side never dropped the field. The bug was entirely in `public.batch_insert_anchors` (migration `0370`/SCRUM-3031's redefinition never read `elem->>'description'`), fixed by migration `0458` (threads it through the input CTE and the INSERT column list/matching SELECT only — every other line of 0370's dedup-lookup fix is unchanged). 40,059 openalex/federal_register anchors created since 2026-08-17 landed with `description IS NULL` as a result; the text is still recoverable from the linked `public_records.metadata` row and is backfilled out-of-band by `scripts/ops/repair-pipeline-anchor-descriptions.ts` (not run against any remote database by this change — dry-run only, local stack unavailable in this worktree).
 
 New test `__tests__/publicRecordAnchor-description-rpc-argument.test.ts` pins the JS-side half of the contract (the RPC element carries `description` when the record has source text, and omits the key — not `null` — when it does not). It intentionally mocks `client.rpc(...)`; the persistence half (does the RPC actually store what it's sent) is proven against real Postgres in `tests/rls/scrum-5120-batch-insert-anchors-description.test.ts`, per `tests/rls/agents.md`'s rule that a mock may stand in for a collaborator but never for the invariant under test.
+## 2026-09-19 — Public-only finality webhooks (SCRUM-5063)
+
+The revocation and attestation anchoring jobs emit registered finality events
+using public resource ids and chain receipt fields only. Never restore
+`anchor_id`, `attestation_id`, or `fingerprint` to either payload.
