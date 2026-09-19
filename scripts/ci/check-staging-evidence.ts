@@ -35,6 +35,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, posix, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 import { evaluateNoResoakDecision, loadNoResoakDecision } from './lib/founder-no-resoak.js';
+import { validateLoadHarnessArtifactReference } from './load-harness-artifact.js';
 import {
   REPO,
   getBaseRef,
@@ -1843,7 +1844,7 @@ function isSpecificLoadEvidence(value: string): boolean {
     || NUMERIC_REQUEST_RE.test(value);
 }
 
-function validateLoadConcurrencyEvidence(body: string): string | null {
+export function validateLoadConcurrencyEvidence(body: string, repoRoot = process.cwd()): string | null {
   const field = 'Load/concurrency evidence:';
   const filled = validateFilledEvidenceField(body, field);
   if (filled !== null) return filled;
@@ -1858,6 +1859,8 @@ function validateLoadConcurrencyEvidence(body: string): string | null {
   if (isGenericHealthOnlyEvidence(value)) {
     return `${field} must exercise the changed behavior under load; generic \`/health\` coverage is only supporting worker-health evidence.`;
   }
+  const artifactError = validateLoadHarnessArtifactReference(value, repoRoot);
+  if (artifactError !== null) return artifactError;
   return isSpecificLoadEvidence(value)
     ? null
     : `${field} must name load/concurrency proof for the changed behavior (for example tests/load, k6 VUs, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence).`;
@@ -3351,6 +3354,11 @@ const STAGING_TOOLING_ALLOW = [
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+  /^scripts\/ci\/load-harness-artifact(\.test)?\.ts$/,
+  // Protected-main admission and its focused runner execute only in CI. Keep
+  // this exact family T0 so a future safety fix to the admission policy does
+  // not demand a staging soak for code that never enters a deployed artifact.
+  /^scripts\/ci\/(?:main-push-admission(?:\.test)?|run-main-t0-validation)\.ts$/,
   // SCRUM-3026: sanctioned re-trigger helper — mints a fresh PR event
   // (tree-identical empty commit + push, optional PR-body head-SHA bump via
   // `gh pr edit`) so event-driven CI gates re-evaluate CURRENT PR state

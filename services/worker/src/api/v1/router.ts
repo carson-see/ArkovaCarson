@@ -57,6 +57,7 @@ import { nessieCapabilityGate } from '../../middleware/nessieCapabilityGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
+import { referralsRouter } from './referrals.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { anchorBulkRouter } from './anchor-bulk.js';
@@ -780,5 +781,20 @@ router.use('/ferpa', requireAuth, requireScopeAnyAuth('compliance:read'), aiRate
 router.use('/directory-opt-out', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, directoryOptOutRouter);
 router.use('/hipaa/audit', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, hipaaAuditRouter);
 router.use('/emergency-access', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, emergencyAccessRouter);
+
+// ─── Partner referrals — SCRUM-5024 ───
+// `requireScope` is a capability gate, NOT authentication: it passes an
+// anonymous caller straight through (apiKeyAuth.ts). The 401 is enforced in the
+// handler, which also derives the organization from `req.apiKey.orgId` rather
+// than from anything the caller supplies. `read:orgs` already exists in
+// apiScopes.ts — no scope-vocabulary change.
+//
+// Mounted AFTER the FERPA/HIPAA block, not inside it: the long comment above
+// those four lines documents THEIR `requireScopeAnyAuth` ordering contract, and
+// a mount wedged between that comment and the lines it describes reads as if
+// the contract applied here. Still far from `/organizations/sub-orgs`
+// (SCRUM-3971, mounted ~line 510), so the merge surface between the two is
+// unchanged.
+router.use('/referrals', requireScope('read:orgs'), referralsRouter);
 
 export { router as apiV1Router };

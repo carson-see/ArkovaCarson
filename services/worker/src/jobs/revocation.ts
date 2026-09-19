@@ -135,12 +135,10 @@ export async function processRevocation(anchorId: string): Promise<boolean> {
     }
 
     // Dispatch webhook — non-fatal
-    if (anchorRecord.org_id) {
+    if (anchorRecord.org_id && anchorRecord.public_id) {
       try {
         await dispatchWebhookEvent(anchorRecord.org_id, 'anchor.revocation_anchored', anchorId, {
-          anchor_id: anchorId,
-          public_id: anchorRecord.public_id ?? null,
-          fingerprint: anchorRecord.fingerprint,
+          public_id: anchorRecord.public_id,
           status: 'REVOKED',
           revocation_tx_id: receipt.receiptId,
           revocation_block_height: receipt.blockHeight,
