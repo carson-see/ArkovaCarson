@@ -31,6 +31,15 @@ function run(f: ReturnType<typeof fixture>, mirror: string, upstream: string) {
 }
 
 describe('pinned ptau fetch', () => {
+  it('keeps redirects on HTTPS and never invokes an install-on-demand package runner', () => {
+    const fetchSource = readFileSync(script, 'utf8');
+    const buildSource = readFileSync(join(import.meta.dirname, '../../services/worker/circuits/build.sh'), 'utf8');
+    expect(fetchSource).toContain("--proto '=https' --proto-redir '=https'");
+    expect(buildSource).toContain("--proto '=https' --proto-redir '=https'");
+    expect(buildSource).toContain('node_modules/.bin/snarkjs');
+    expect(buildSource).not.toMatch(/\bnpx\b/);
+  });
+
   it('uses the Arkova mirror when it returns the pinned bytes', () => {
     const f = fixture();
     const { destination, result } = run(f, `file://${f.good}`, 'fail://upstream');

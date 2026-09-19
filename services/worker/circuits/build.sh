@@ -29,7 +29,7 @@
 #
 # Required tools:
 #   - circom >= 2.1.0  (https://github.com/iden3/circom/releases)
-#   - npx snarkjs       (already in services/worker/package.json)
+#   - pinned snarkjs binary from services/worker/node_modules
 #   - curl, shasum, tar
 #
 # Usage:
@@ -109,7 +109,7 @@ if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
   TARBALL="$ARTIFACTS_DIR/circomlib-${CIRCOMLIB_VERSION}.tar.gz"
   if [[ ! -f "$TARBALL" ]]; then
     echo "[build-circuit] downloading circomlib ${CIRCOMLIB_VERSION} ..."
-    curl -fsSL --retry 5 --retry-delay 5 --max-time 300 -o "$TARBALL" "$CIRCOMLIB_TARBALL_URL"
+    curl --proto '=https' --proto-redir '=https' -fsSL --retry 5 --retry-delay 5 --max-time 300 -o "$TARBALL" "$CIRCOMLIB_TARBALL_URL"
   fi
   ACTUAL_CL_SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
   if [[ "$ACTUAL_CL_SHA" != "$CIRCOMLIB_SHA256" ]]; then
@@ -152,13 +152,18 @@ circom "${CIRCUIT_NAME}.circom" \
 
 # PLONK setup: deterministic given (r1cs, ptau).
 cd "$ARTIFACTS_DIR"
-npx --yes snarkjs plonk setup \
+SNARKJS_BIN="$CIRCUITS_DIR/../node_modules/.bin/snarkjs"
+if [[ ! -x "$SNARKJS_BIN" ]]; then
+  echo "[build-circuit] ERROR: pinned snarkjs binary missing; run npm ci in services/worker" >&2
+  exit 1
+fi
+"$SNARKJS_BIN" plonk setup \
   "${CIRCUIT_NAME}.r1cs" \
   "$PTAU_NAME" \
   "${CIRCUIT_NAME}_final.zkey"
 
 # Export verification key (deterministic from zkey).
-npx --yes snarkjs zkey export verificationkey \
+"$SNARKJS_BIN" zkey export verificationkey \
   "${CIRCUIT_NAME}_final.zkey" \
   verification_key.json
 

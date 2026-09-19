@@ -13,7 +13,8 @@ destination="${1:?usage: fetch-pinned-ptau.sh DESTINATION}"
 mkdir -p "$(dirname "$destination")"
 
 sha256_of() {
-  shasum -a 256 "$1" | awk '{print $1}'
+  local input_path="${1:?sha256_of requires a path}"
+  shasum -a 256 "$input_path" | awk '{print $1}'
 }
 
 if [[ -f "$destination" ]] && [[ "$(sha256_of "$destination")" == "$PTAU_SHA256" ]]; then
@@ -32,7 +33,7 @@ trap 'rm -f "$temporary"' EXIT
 for url in "$PTAU_MIRROR_URL" "$PTAU_UPSTREAM_URL"; do
   : > "$temporary"
   echo "[build-circuit] downloading $PTAU_NAME from $url"
-  if ! curl -fsSL --retry 5 --retry-delay 5 --max-time 1800 -o "$temporary" "$url"; then
+  if ! curl --proto '=https' --proto-redir '=https' -fsSL --retry 5 --retry-delay 5 --max-time 1800 -o "$temporary" "$url"; then
     echo "[build-circuit] source unavailable; trying next pinned source" >&2
     continue
   fi
