@@ -8,8 +8,10 @@ const migration = readFileSync(
 );
 
 describe('0475 atomic contractual anchor cap', () => {
-  it('is a compensating definition based on the exact applied 0474 body', () => {
-    expect(migration).toMatch(/production pg_get_functiondef MD5 4b73e7b8252fec8da79994f651df147e/i);
+  it('is a compensating definition based on the immutable canonical 0474 file', () => {
+    expect(migration).toMatch(/0474 migration file, SHA256[\s\S]*00a15bd4a90e3003a93d0b3645b73d4aafa7cdd9bafc5561c61d07a92e6e64bb/i);
+    expect(migration).toMatch(/Production still had the older 0461-era RPC/i);
+    expect(migration).not.toMatch(/production pg_get_functiondef MD5 4b73e7b8252fec8da79994f651df147e/i);
     expect(migration).toMatch(/Rollback: restore the complete create_anchor_submission definition from 0474/i);
   });
 

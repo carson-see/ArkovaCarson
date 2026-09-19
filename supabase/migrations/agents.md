@@ -1646,5 +1646,7 @@ RPC. It preserves 0474's separate tier daily counter, but locks the owning
 The active-anchor read is capped at `anchor_quota` rows, and lock acquisition
 has a five-second deadline so a contended credit row cannot pin a request until
 the broader statement timeout.
-Production already has the exact 0474 function body (MD5 recorded in 0475), so
-0474 remains immutable and rollback restores that definition.
+The initial review incorrectly equated matching old production/B4 RPC hashes
+with canonical 0474. Both were still on the older 0461-era body. Migration 0475
+is based on immutable 0474 file SHA256 `00a15bd4...e6e64bb`; B4 first received
+0474 during qualification, and production application remained pending.
