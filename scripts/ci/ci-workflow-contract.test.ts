@@ -831,3 +831,16 @@ describe("Zapier required clean-build contract", () => {
     }
   });
 });
+
+describe("production dependency audit input", () => {
+  it("audits both committed lock graphs instead of a platform-specific installed tree", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const commands = workflow.match(/^\s*run:.*npm audit[^\n]*/gmu) ?? [];
+    expect(commands).toHaveLength(2);
+    for (const command of commands) {
+      expect(command).toContain("--package-lock-only");
+      expect(command).toContain("--audit-level=critical");
+      expect(command).toContain("--omit=dev");
+    }
+  });
+});

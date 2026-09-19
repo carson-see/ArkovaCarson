@@ -351,14 +351,17 @@ jobs:
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9
         #   Client-side only, user-supplied files. Tracked for replacement post-launch.
-        run: npm audit --audit-level=critical --omit=dev
+        # Audit the committed dependency graph instead of the platform-specific
+        # node_modules tree. Optional native packages can be extraneous on one
+        # runner and make npm's retiring quick-audit endpoint reject the tree.
+        run: npm audit --package-lock-only --audit-level=critical --omit=dev
 
       - name: Run npm audit (worker production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - snarkjs -> bfj -> jsonpath -> underscore <=1.13.7: GHSA-qpx9-hpmf-5gmw
         #   DoS vuln, not exploitable server-side. Tracked for replacement.
         working-directory: services/worker
-        run: npm ci --ignore-scripts && npm audit --audit-level=critical --omit=dev
+        run: npm ci --ignore-scripts && npm audit --package-lock-only --audit-level=critical --omit=dev
 
   # Third-party notices freshness (see scripts/ci/check-third-party-notices-fresh.ts).
   #
