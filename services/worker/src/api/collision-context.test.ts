@@ -139,10 +139,18 @@ describe('handleCollisionContext (SCRUM-1150)', () => {
     expect(ctx.status).toHaveBeenCalledWith(403);
   });
 
-  it('400s when externalFileId param is missing/empty', async () => {
+  it.each(['', '   ', 'x'.repeat(256)])('400s before querying for an invalid externalFileId', async (externalFileId) => {
     const ctx = buildRes();
-    await handleCollisionContext(USER_ID, buildReq(''), ctx.res);
+    await handleCollisionContext(USER_ID, buildReq(externalFileId), ctx.res);
     expect(ctx.status).toHaveBeenCalledWith(400);
+    expect(anchorsList).not.toHaveBeenCalled();
+  });
+
+  it('accepts the shared resolution contract maximum of 255 characters', async () => {
+    const ctx = buildRes();
+    await handleCollisionContext(USER_ID, buildReq('x'.repeat(255)), ctx.res);
+    expect(ctx.statusCode).toBe(200);
+    expect(anchorsList).toHaveBeenCalledOnce();
   });
 
   it('returns empty candidates + null suggestion when no collision exists', async () => {

@@ -19,6 +19,7 @@ import { logger } from '../utils/logger.js';
 import { getCallerOrgIdResult, isCallerOrgAdminResult } from './_org-auth.js';
 
 const MAX_CANDIDATES = 25;
+const MAX_EXTERNAL_FILE_ID_LENGTH = 255;
 
 export interface CollisionCandidate {
   public_id: string;
@@ -114,9 +115,12 @@ export async function handleCollisionContext(
     return;
   }
   const externalFileId = String(req.params.externalFileId ?? '').trim();
-  if (!externalFileId) {
+  if (!externalFileId || externalFileId.length > MAX_EXTERNAL_FILE_ID_LENGTH) {
     res.status(400).json({
-      error: { code: 'invalid_request', message: 'externalFileId required' },
+      error: {
+        code: 'invalid_request',
+        message: `externalFileId must contain 1-${MAX_EXTERNAL_FILE_ID_LENGTH} characters`,
+      },
     });
     return;
   }
