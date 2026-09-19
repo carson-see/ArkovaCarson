@@ -16,7 +16,7 @@
 import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { getCallerOrgId } from './_org-auth.js';
+import { getCallerOrgIdResult, isCallerOrgAdminResult } from './_org-auth.js';
 
 const MAX_CANDIDATES = 25;
 
@@ -87,9 +87,30 @@ export async function handleCollisionContext(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const orgId = await getCallerOrgId(userId);
+  const identity = await getCallerOrgIdResult(userId);
+  if (identity.error) {
+    res.status(500).json({
+      error: { code: 'lookup_failed', message: 'Unable to verify caller organization' },
+    });
+    return;
+  }
+  const orgId = identity.value;
   if (!orgId) {
     res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
+  const authority = await isCallerOrgAdminResult(userId, orgId);
+  if (authority.error) {
+    res.status(500).json({
+      error: { code: 'lookup_failed', message: 'Unable to verify caller authority' },
+    });
+    return;
+  }
+  if (!authority.value) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Organization administrator access required' },
+    });
     return;
   }
   const externalFileId = String(req.params.externalFileId ?? '').trim();
