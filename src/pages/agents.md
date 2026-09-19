@@ -863,3 +863,8 @@ While `useActiveOrg` is loading, the page renders a spinner rather than passing
 organization", which would flash at a user who has one.
 
 `SettingsPage.tsx` gained the fourth link in the organization card.
+## 2026-09-19 — Developer integration claims
+
+`DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Keep install commands version-neutral and link to package registries for live release status so coordinated publications do not immediately stale the page. Never describe a release candidate as published. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.
+
+The public gateway serves the machine-readable reference at `/api/docs/spec.json`; `/api/docs` returns 404 and must not be used for documentation buttons. Sandbox verification search uses `GET /api/v1/verify/search` and must describe the returned `search_mode` (`semantic_vector` or `lexical_substring`) rather than promise semantic execution.

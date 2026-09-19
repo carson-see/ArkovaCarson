@@ -1946,3 +1946,9 @@ Read before changing it:
 - **An all-authentication-failure run THROWS** (CTO ruling 2026-09-12). A Sentry message alone was not enough: the route answered 200, so `withCronMonitoring` reported an OK check-in and the monitor said the safety net was healthy while a rotated key meant it verified nothing. The throw becomes a 500 and the check-in goes to `error`. Partial auth failures do not qualify — one bad passport is not a rotated key.
 - **`COMPUTEID_RECHECK_CRON`** is the single source for the schedule: the `withCronMonitoring` slug's declared crontab and the schedule quoted in `cloud-scheduler.sh`'s `NOT_SCHEDULED` reason, bound together by a test. Nothing bound the literal before, so Sentry's monitor could have drifted from the gcloud binding silently.
 - **Correction to the rationale, not the schedule.** `17 * * * *` stays, but the reason given for it was false: SCRUM-4475 replaced the global bucket, so the `:00` pile-up is **not** currently costing other jobs 429s. Spreading off `:00` is prevention, not a fix for a live incident. Corrected in all four places that repeated the claim.
+
+## 2026-09-19 — Public-only finality webhooks (SCRUM-5063)
+
+The revocation and attestation anchoring jobs emit registered finality events
+using public resource ids and chain receipt fields only. Never restore
+`anchor_id`, `attestation_id`, or `fingerprint` to either payload.
