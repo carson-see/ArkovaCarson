@@ -1827,6 +1827,15 @@ jobs:
         run: npm run test:e2e:people-layout
         timeout-minutes: 5
 
+      - name: Upload People mobile layout evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.e2e-changed.outputs.changed == 'true'
+        with:
+          name: uat22-people-layout-evidence
+          path: output/playwright/uat22-people-layout/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: E2E skipped (no app-affecting changes)
         if: steps.e2e-changed.outputs.changed != 'true'
         run: echo "No src/worker/e2e/supabase/config changes detected — Playwright suite skipped; reporting green."
