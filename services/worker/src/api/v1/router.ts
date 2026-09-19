@@ -171,7 +171,7 @@ const API_EXPOSED_HEADERS = [
   'Retry-After',
 ].join(', ');
 
-router.use((req: Request, res: Response, next: NextFunction) => {
+export function apiV1CorsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers.origin;
   if (API_CORS_ORIGINS.includes('*') || (origin && API_CORS_ORIGINS.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
@@ -185,7 +185,11 @@ router.use((req: Request, res: Response, next: NextFunction) => {
     return;
   }
   next();
-});
+}
+
+// Preserve the router as a self-contained export for tests and consumers that
+// mount apiV1Router directly instead of using the production index.ts stack.
+router.use(apiV1CorsMiddleware);
 
 // ─── API spec discoverability (Link header per RFC 8631) ───
 router.use((_req: Request, res: Response, next: NextFunction) => {

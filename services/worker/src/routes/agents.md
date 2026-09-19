@@ -1,5 +1,15 @@
 # services/worker/src/routes/agents.md
 
+## 2026-09-19 — global CORS must preserve the v1 header contract
+
+`index.ts` mounts `corsMiddleware` before `/api/v1`, so the global middleware must defer the exact
+`/api/v1` boundary and legacy `/v1` alias to the v1 router's shared CORS owner. That owner carries
+API-key/idempotency headers, PUT, and its own production origin policy; duplicating any subset
+globally makes the contracts drift. Non-v1 browser routes keep their narrower historical header
+list, and `/api/v10` or `/v10` are not treated as v1.
+The integration regression belongs in `index.test.ts` so a unit test of the v1 router alone cannot
+miss mount-order preemption.
+
 ## UAT-22 invitation GET route (2026-09-14)
 
 `GET /api/admin/organizations/:id/invitations` sits behind the structural `/admin` gate and forwards the authenticated actor to the independently authorized list handler. Route regressions cover missing auth, non-admin denial and selected-org dispatch.
