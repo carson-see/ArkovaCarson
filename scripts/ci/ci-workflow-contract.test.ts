@@ -367,7 +367,7 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
       /working-directory:\s*packages\/arkova-py/u,
     );
     expect(job, "the job must execute the suite, not merely install it").toMatch(
-      /run:\s*pytest\b/u,
+      /run:\s*uv run --locked --no-sync --no-build pytest\b/u,
     );
   });
 
@@ -375,16 +375,46 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
     // publish-python-sdk.yml gates the PyPI upload on `ruff check src tests`.
     // A finding that only surfaces there blocks a release instead of a review —
     // exactly the ordering that let 2.2.0 ship unchecked.
-    expect(pythonJob()).toMatch(/run:\s*ruff check src tests/u);
+    expect(pythonJob()).toMatch(/run:\s*uv run --locked --no-sync --no-build ruff check src tests/u);
   });
 
-  it("installs the dev extras, which is where pytest and the pinned ruff live", () => {
+  it("installs every extra from the committed lock with an exact uv toolchain", () => {
     const job = pythonJob();
-    expect(job).toMatch(/pip install [^\n]*-e "\.\[dev\]"/u);
-    expect(
-      job.match(/--only-binary=:all:/gu)?.length,
-      "both pip installs must reject source-distribution fallback",
-    ).toBe(2);
+    expect(job).toMatch(/astral-sh\/setup-uv@[a-f0-9]{40}/u);
+    expect(job).toMatch(/version:\s*["']0\.10\.3["']/u);
+    expect(job).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
+    expect(job).toMatch(/uv run --locked --no-sync --no-build python -m build --wheel --no-isolation/u);
+    expect(job).toMatch(/printf '%s --hash=sha256:%s\\n'/u);
+    expect(job).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build --require-hashes --requirement/u);
+    expect(job).not.toMatch(/python -m pip/u);
+  });
+
+  it("keeps CI and publication on the same locked Python commands", () => {
+    const publish = readFileSync(
+      resolve(REPO, ".github/workflows/publish-python-sdk.yml"),
+      "utf8",
+    );
+    for (const workflow of [pythonJob(), publish]) {
+      expect(workflow).toContain("astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4");
+      expect(workflow).toMatch(/version:\s*["']0\.10\.3["']/u);
+      expect(workflow).toMatch(/cache-dependency-glob:\s*packages\/arkova-py\/uv\.lock/u);
+      expect(workflow).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
+      expect(workflow).toMatch(/printf '%s --hash=sha256:%s\\n'/u);
+      expect(workflow).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build --require-hashes --requirement/u);
+      expect(workflow).toMatch(/ARKOVA_TEST_INSTALLED_WHEEL:\s*["']1["']/u);
+      expect(workflow).toMatch(/uv run --locked --no-sync --no-build pytest/u);
+      expect(workflow).toMatch(/uv run --locked --no-sync --no-build ruff check src tests/u);
+      expect(workflow).not.toContain("--editable");
+      const uvRuns = workflow.match(/uv run[^\n]*/gu) ?? [];
+      expect(uvRuns.length).toBeGreaterThan(0);
+      expect(uvRuns.every((command) => command.includes("--no-build"))).toBe(true);
+      const buildIndex = workflow.indexOf("python -m build");
+      const installIndex = workflow.indexOf("uv pip install");
+      expect(buildIndex).toBeGreaterThan(-1);
+      expect(installIndex).toBeGreaterThan(buildIndex);
+      expect(workflow.match(/python -m build/gu)).toHaveLength(1);
+    }
+    expect(publish).toMatch(/uv run --locked --no-sync --no-build python -m build --no-isolation/u);
   });
 
   it("matches the publish workflow's interpreter", () => {
@@ -451,6 +481,12 @@ describe("changedFiles diff anchoring neutralizes the frozen event base (FD-GATE
     // only correct because it consumes the anchored changedFiles.
     const source = readFileSync(resolve(REPO, "scripts/ci/compute-merge-authority.ts"), "utf8");
     expect(source).toMatch(/import \{[^}]*\bchangedFiles\b[^}]*\} from '\.\/lib\/ciContext\.js'/u);
+  });
+
+  it("evidence-identity fetches full history before computing its authority-snapshot file set", () => {
+    const workflow = readFileSync(resolve(REPO, ".github/workflows/ci.yml"), "utf8");
+    const job = workflow.split(/^  evidence-identity:\n/mu)[1]?.split(/^  [a-z][a-z0-9_-]*:\n/mu)[0] ?? "";
+    expect(job).toMatch(/actions\/checkout@[0-9a-f]+[^\n]*\n\s+if:[^\n]*\n\s+with:\n(?:\s+#.*\n)*\s+fetch-depth: 0/u);
   });
 });
 
