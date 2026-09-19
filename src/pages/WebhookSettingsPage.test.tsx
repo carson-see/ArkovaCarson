@@ -229,9 +229,13 @@ describe('WebhookSettingsPage', () => {
       await userEvent.click(submitButton);
 
       await waitFor(() => {
+        // SCRUM-3972: `p_scope` is passed on every create, at its default when
+        // the admin does not choose otherwise, so the endpoint's scope is set
+        // in the same INSERT as the row rather than by a follow-up write.
         expect(mockRpc).toHaveBeenCalledWith('create_webhook_endpoint', {
           p_url: 'https://new-endpoint.com/hooks',
           p_events: ['anchor.secured', 'anchor.revoked'],
+          p_scope: 'self',
         });
       });
     });
