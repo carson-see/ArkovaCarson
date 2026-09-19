@@ -38,7 +38,18 @@ export type WebhookEventType =
   | 'attestation.created'
   | 'attestation.revoked'
   | 'anchor.revocation_anchored'
-  | 'attestation.active';
+  | 'attestation.active'
+  // SCRUM-3972 — affiliated-organization lifecycle, emitted on the PARENT
+  // organization's id (and, for the four that change an affiliate's budget or
+  // tenancy, on the affiliate's id too). Public slugs only: `public_id` is the
+  // affiliate, `parent_public_id` the parent.
+  | 'suborg.created'
+  | 'suborg.approved'
+  | 'suborg.revoked'
+  | 'suborg.credits_allocated'
+  | 'suborg.credits_reclaimed'
+  | 'suborg.suspended'
+  | 'suborg.offboarded';
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {

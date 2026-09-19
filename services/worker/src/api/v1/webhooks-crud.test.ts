@@ -317,3 +317,45 @@ describe('webhook signing secret generation', () => {
     expect(secrets.size).toBe(100);
   });
 });
+
+// ─── SCRUM-3972: delivery scope ────────────────────────────────────────────
+
+describe('webhook endpoint scope (SCRUM-3972)', () => {
+  const base = { url: 'https://example.test/hook', events: ['anchor.secured'] };
+
+  it('defaults a created endpoint to self, preserving pre-0454 behaviour', () => {
+    const result = CreateWebhookSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.scope).toBe('self');
+  });
+
+  it('accepts exactly the values the DB CHECK allows', () => {
+    // CONSTRAINT webhook_endpoints_scope_known_values
+    //   CHECK (scope IN ('self', 'self_and_descendants'))
+    for (const scope of ['self', 'self_and_descendants']) {
+      expect(CreateWebhookSchema.safeParse({ ...base, scope }).success, scope).toBe(true);
+      expect(UpdateWebhookSchema.safeParse({ scope }).success, scope).toBe(true);
+    }
+  });
+
+  it('rejects any value the database would refuse', () => {
+    for (const scope of ['all', 'descendants', 'SELF', '', null, 1]) {
+      expect(CreateWebhookSchema.safeParse({ ...base, scope }).success, String(scope)).toBe(false);
+      expect(UpdateWebhookSchema.safeParse({ scope }).success, String(scope)).toBe(false);
+    }
+  });
+
+  it('leaves an omitted scope absent on PATCH rather than resetting it to self', () => {
+    // A default here would silently reset every endpoint's scope on an
+    // unrelated description edit.
+    const result = UpdateWebhookSchema.safeParse({ description: 'renamed' });
+    expect(result.success).toBe(true);
+    if (result.success) expect('scope' in result.data).toBe(false);
+  });
+
+  it('accepts a PATCH that changes only the scope', () => {
+    // Without `scope` in the at-least-one-field refinement this 400s, so an
+    // admin could never move an existing endpoint onto the new behaviour.
+    expect(UpdateWebhookSchema.safeParse({ scope: 'self_and_descendants' }).success).toBe(true);
+  });
+});

@@ -615,6 +615,23 @@ export const WEBHOOK_LABELS = {
   TEST_PING_ERROR: "Couldn't send the test event. Please try again.",
   TEST_PING_INACTIVE: 'Enable this endpoint before sending a test event.',
 
+  // ── SCRUM-3972: delivery scope ────────────────────────────────────────────
+  // CLAUDE.md §1.3: user-visible copy says "affiliated organization", never
+  // "sub-org". The availability note is written in the FUTURE tense on purpose
+  // (builder contract §7) — the cross-organization delivery is behind a
+  // server-side gate that is currently off, so the option stores a preference
+  // today and starts delivering once that gate opens.
+  SCOPE_LABEL: 'Which organizations’ events',
+  SCOPE_SELF: 'This organization only',
+  SCOPE_SELF_DESC: 'Receive events for records and activity belonging to this organization. This is the default and matches how every existing endpoint behaves.',
+  SCOPE_SELF_AND_DESCENDANTS: 'This organization and its direct affiliated organizations',
+  // CTO review 2026-09-12: "direct" is load-bearing, not decoration. Affiliation
+  // chains deeper than one level are reachable (proved in
+  // machines/subOrgWebhookFanout.machine.ts) and this option does NOT include
+  // them, so the copy must not imply a whole subtree.
+  SCOPE_SELF_AND_DESCENDANTS_DESC: 'Also receive events belonging to organizations directly affiliated to this one, once their affiliation is approved. Organizations further down a chain are not included, an affiliation that is suspended stops, and affiliated organizations never receive this organization’s events.',
+  SCOPE_PENDING_NOTE: 'Delivery of affiliated organizations’ events will begin once Arkova enables it; until then this endpoint receives this organization’s events only.',
+
   // ── WH-03 (SCRUM-2398): delivery history + failed deliveries ─────────────
   DELIVERIES_TITLE: 'Delivery History',
   DELIVERIES_DESC: 'Recent event notifications sent to your endpoints. Only delivery details are shown — never document contents.',
@@ -699,6 +716,13 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
   'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
   'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
+  'suborg.created': 'A parent organization created an affiliated organization.',
+  'suborg.approved': 'A parent organization approved an affiliated organization.',
+  'suborg.revoked': 'A parent organization revoked an affiliation.',
+  'suborg.credits_allocated': 'A parent organization allocated credits to an affiliated organization.',
+  'suborg.credits_reclaimed': 'A parent organization reclaimed credits from an affiliated organization.',
+  'suborg.suspended': 'An affiliated organization was suspended by its parent organization.',
+  'suborg.offboarded': 'An affiliated organization was offboarded — credits returned and the organization suspended.',
 };
 
 // =============================================================================
