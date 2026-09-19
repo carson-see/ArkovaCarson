@@ -7,7 +7,7 @@ set -euo pipefail
 : "${DATABASE_URL:?disposable PostgreSQL DATABASE_URL required}"
 : "${TEST_ORG_ID:?existing disposable fixture organization UUID required}"
 test_now="${TEST_NOW:-2026-09-19T13:00:00Z}"
-root_dir="$(cd "$(dirname "$0")/../../../.." && pwd)"
+root_dir="$(cd "$(dirname "$0")/../../.." && pwd)"
 assert_sql="$root_dir/services/worker/src/ai/ai-credit-concurrency.native.test.sql"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
