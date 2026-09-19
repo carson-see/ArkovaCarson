@@ -38,4 +38,19 @@ describe('useAnchorSubmissionStatus', () => {
     expect(result.current.error).toBe('Could not load securing status');
     expect(result.current.status).toBeNull();
   });
+
+  it.each([403, 404])('does not retry or poll a terminal %s response', async (status) => {
+    workerFetch.mockResolvedValue({ ok: false, status });
+    const { result } = renderHook(() => useAnchorSubmissionStatus('ARK-1', null), { wrapper: createQueryWrapper() });
+    await waitFor(() => expect(result.current.error).toBe('Could not load securing status'));
+    await new Promise((resolve) => setTimeout(resolve, 3_100));
+    expect(workerFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds retries for a transient server failure', async () => {
+    workerFetch.mockResolvedValue({ ok: false, status: 503 });
+    const { result } = renderHook(() => useAnchorSubmissionStatus('ARK-1', null), { wrapper: createQueryWrapper() });
+    await waitFor(() => expect(result.current.error).toBe('Could not load securing status'), { timeout: 5_000 });
+    expect(workerFetch).toHaveBeenCalledTimes(3);
+  });
 });
