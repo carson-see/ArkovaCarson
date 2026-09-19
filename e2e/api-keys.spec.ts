@@ -160,7 +160,12 @@ test.describe('API Keys & Verification Flow', () => {
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Organisations', exact: true })).toBeVisible();
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Search' })).toBeVisible();
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Anchor writes' })).toBeVisible();
-      await expect(orgAdminPage.getByRole('checkbox', { name: 'Rules admin' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Verify' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Batch' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Usage' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Webhook management' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Agent management' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Rules admin' })).toHaveCount(0);
 
       // Expiry field
       await expect(orgAdminPage.getByLabel(/Expires In/i)).toBeVisible();

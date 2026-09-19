@@ -14,6 +14,7 @@ import { buildVerificationResult, EMPTY_API_RICH_FIELDS, type PublicIdLookup, ty
 import { incrementUsage } from '../../middleware/usageTracking.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 import type { VerificationResult } from './verify.js';
+import { webhookPublicReference } from '../../webhooks/public-reference.js';
 
 /** Job retention period — 7 days for all tiers (IDEM-4/DX-5) */
 export const JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -229,11 +230,13 @@ async function processAsyncJob(jobId: string, publicIds: string[], orgId?: strin
       // event. It can now — an unregistered type or a banned field is a
       // rejection — and an unhandled rejection in a fire-and-forget dispatch
       // takes the worker down, not the batch job.
-      void dispatchWebhookEvent(orgId, 'job.completed', jobId, {
-        job_id: jobId,
+      const jobRef = webhookPublicReference('job', jobId);
+      void dispatchWebhookEvent(orgId, 'job.completed', `job-completed-${jobRef}`, {
+        job_ref: jobRef,
         status: 'complete',
         total: publicIds.length,
         result_count: results.length,
+        error_code: null,
       }).catch((err: unknown) =>
         logger.warn({ error: err, jobId }, 'job.completed webhook dispatch failed'),
       );
@@ -253,12 +256,13 @@ async function processAsyncJob(jobId: string, publicIds: string[], orgId?: strin
 
     // WEBHOOK-1: Dispatch job.completed event (failed)
     if (orgId) {
-      void dispatchWebhookEvent(orgId, 'job.completed', jobId, {
-        job_id: jobId,
+      const jobRef = webhookPublicReference('job', jobId);
+      void dispatchWebhookEvent(orgId, 'job.completed', `job-completed-${jobRef}`, {
+        job_ref: jobRef,
         status: 'failed',
         total: publicIds.length,
         result_count: 0,
-        error: err instanceof Error ? err.message : 'Unknown error',
+        error_code: 'processing_failed',
       }).catch((dispatchErr: unknown) =>
         logger.warn({ error: dispatchErr, jobId }, 'job.completed webhook dispatch failed'),
       );

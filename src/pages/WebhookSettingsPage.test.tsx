@@ -207,6 +207,27 @@ describe('WebhookSettingsPage', () => {
       const spinner = container.querySelector('.animate-spin');
       expect(spinner).toBeInTheDocument();
     });
+
+    it('surfaces endpoint fetch errors', async () => {
+      mockFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({
+              data: null,
+              error: { message: 'Permission denied' },
+            }),
+          }),
+        }),
+      });
+
+      renderPage();
+
+      expect(
+        await screen.findByText(/Unable to load webhook endpoints/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Please refresh and try again/)).toBeInTheDocument();
+      expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
+    });
   });
 
   // =========================================================================
@@ -229,9 +250,13 @@ describe('WebhookSettingsPage', () => {
       await userEvent.click(submitButton);
 
       await waitFor(() => {
+        // SCRUM-3972: `p_scope` is passed on every create, at its default when
+        // the admin does not choose otherwise, so the endpoint's scope is set
+        // in the same INSERT as the row rather than by a follow-up write.
         expect(mockRpc).toHaveBeenCalledWith('create_webhook_endpoint', {
           p_url: 'https://new-endpoint.com/hooks',
           p_events: ['anchor.secured', 'anchor.revoked'],
+          p_scope: 'self',
         });
       });
     });

@@ -870,3 +870,9 @@ Two differences from the DocuSign module, both deliberate:
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
 
+
+## 2026-09-19 — Finality webhook copy
+
+`WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and
+attestation-active events; the registration-drift gate binds this map to the
+worker registry.

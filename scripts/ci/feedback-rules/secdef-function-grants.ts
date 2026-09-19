@@ -61,6 +61,7 @@
  * Override: PR label `secdef-grants-skip`.
  */
 
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { hasLabel } from '../lib/ciContext.js';
@@ -109,6 +110,12 @@ export const DELIBERATELY_PUBLIC = new Set([
  * caller-identity scoping.
  */
 export const DELIBERATELY_AUTHENTICATED = new Set([
+  // SCRUM-3972: WebhookSettingsPage.tsx calls the authenticated RPC. Prod's
+  // two-argument definition grants authenticated EXECUTE; 0454 retains that
+  // auth.uid()/home-org/ORG_ADMIN boundary and closes anon (both live ACLs
+  // verified 2026-09-14). The exact immutable definition is pinned below so
+  // this exception cannot authorize a changed body or another overload.
+  'public.create_webhook_endpoint',
   // src/hooks/useEntitlements.ts — usage widget calls this as the signed-in
   // user; the hook falls back to 0 on error, so revoking fails SILENTLY.
   // 0392 added the NULL-identity self-only guard that makes the grant safe.
@@ -127,6 +134,13 @@ export const DELIBERATELY_AUTHENTICATED = new Set([
   'public.record_org_referral',
   'public.get_org_referrals',
 ]);
+
+// 0454 is already applied on staging and must remain byte-identical. A future
+// definition requires its own security review; a same-name grant is insufficient.
+const WEBHOOK_CREATION_AUTH_PIN = {
+  file: '0454_scrum3972_webhook_endpoint_scope.sql',
+  sha256: '965be3884f775ef4875daf27d20e04d8886a0a2833223bcccacc571d069fd2a8',
+};
 
 export interface SecdefFunction {
   file: string;
@@ -554,7 +568,12 @@ export function findViolations(
     for (const fn of parseSecurityDefinerFunctions(file, sql)) {
       if (allowed.has(`${fn.schema}.${fn.name}`)) continue;
       // Authenticated-axis exemption only — the anon axis stays mandatory.
-      const authExempt = authExemptSet.has(`${fn.schema}.${fn.name}`);
+      const qualifiedName = `${fn.schema}.${fn.name}`;
+      const reviewedDefinition = qualifiedName !== 'public.create_webhook_endpoint' || (
+        file === WEBHOOK_CREATION_AUTH_PIN.file &&
+        createHash('sha256').update(sql).digest('hex') === WEBHOOK_CREATION_AUTH_PIN.sha256
+      );
+      const authExempt = authExemptSet.has(qualifiedName) && reviewedDefinition;
       if (hasExplicitRevoke(sql, fn.schema, fn.name, authExempt)) continue;
       // Baseline-only carve-out: a generated dump cannot revoke inline, so a
       // compliant revoke in a later migration counts. Numbered migrations get
