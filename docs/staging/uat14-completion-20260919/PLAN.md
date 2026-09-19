@@ -1,6 +1,6 @@
 # UAT-14 completion and T3 soak plan
 
-Draft follow-up to base `ec108c4220787876494c61a9b04c3cc25212de4b`; final candidate/base SHAs must be rebound after parent integration. Tracking: [SCRUM-5274](https://arkova.atlassian.net/browse/SCRUM-5274), [canonical page](https://arkova.atlassian.net/wiki/spaces/A/pages/153223204). No merge, deployment, hosted migration, configuration change, or soak has occurred. Root alone owns publication under the 30-open-PR cap.
+Draft follow-up integrated on published UAT-19 `a73f7dd4cf9ca6536f181b0d133860d03d0bb39a` (held Draft #3024), which includes reviewed UAT-24 `62afcd3557ff593098ac9f84b358bc7ced450641`. The initial discovery base was `ec108c4220787876494c61a9b04c3cc25212de4b`; it is not the final publication base. The PR body binds the final candidate SHA after corrective verification. Tracking: [SCRUM-5274](https://arkova.atlassian.net/browse/SCRUM-5274), [canonical page](https://arkova.atlassian.net/wiki/spaces/A/pages/153223204). No main-branch merge, deployment, hosted migration, configuration change, or soak has occurred. Root alone owns publication under the 30-open-PR cap.
 
 ## Candidate contract
 
@@ -32,6 +32,8 @@ Pause candidate media writes and settle in-flight uploads. Roll back UI/RPC call
 - Public bucket or leaked internal UUID defeats the privacy model: abort on any public bucket read, private/deleted profile signature, non-current-object anonymous signature, or UUID in public media paths.
 - Client MIME lies or unsafe dimensions survive: abort on SVG, decode failure, over-4096 dimension, over-16M-pixel or post-sanitize over-2MB acceptance. Browser decoder resource safety remains a separate observed limit, not a guarantee from a check after decoding.
 - Upload ordering loses the last good image: abort if an old object is removed before pointer commit, a failed commit retains its new object, or cleanup touches a different owner/kind.
+- Two tabs replace the same old pointer: require exactly one expected-pointer update to win, with the loser preserving the winner and removing only its own new object. Exercise both null and populated starting pointers. Direct clients that bypass the supported compare-and-set flow remain outside this browser contract.
+- Storage resolves with an error instead of rejecting: verify both result shapes for new-object and old-object cleanup; surface warnings without replacing the original commit error or undoing a committed pointer. Resolve candidate-created orphans before a cycle can qualify.
 - Scope changes surface stale success: abort if completion from an old user/org changes or toasts in the new scope.
 - Toggle appears private while a fresh URL remains mintable: abort immediately; the documented 30-second lifetime applies only to already-issued signatures.
 - QR points at preview/localhost or wrong identity: abort unless decoded QR equals the canonical public route for that DTO.

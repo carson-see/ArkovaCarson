@@ -21,6 +21,35 @@ remote publication was performed by this lane.
 - Focused `npx eslint --max-warnings 0` across changed UAT-14 hooks, media helpers, tests, Settings, and organization profile — passed.
 - `git diff --check` — passed.
 
+## Root final independent verification
+
+Root reviewed the integrated UAT-19/UAT-24 union and reproduced the failure
+paths before publication. Corrective commits through
+`5e470cb36a1eb262421afb7960f07484a478779a` address silent zero-row profile
+updates, expected-old-pointer CAS for user/org replacement, both resolved and
+rejected Storage cleanup errors, same-file retry and unsafe relative fallbacks.
+The CAS test uses controlled outcomes for two competing replacements; it is not
+a hosted Storage transaction or native concurrency test.
+
+Root reran the 13-file command above with `--maxWorkers=2`: **189 tests PASS**.
+Build TypeScript and zero-warning focused ESLint passed. Native profile-media
+and inherited UAT-24 runners passed, including actual anonymous v2 reads,
+private/inactive/deleted denials, exact per-function grants and no implicit
+PUBLIC execute. Security/migration checks passed **57/57**. Browser **6/6**
+passed; doc pointers (1,832), migration-prefix, hot-table DDL and copy gates
+passed with no new violations. Historical baselines are not new waivers.
+
+Root visually inspected mobile Settings, desktop organization editor and mobile
+public profile artifacts. Root also decoded the two mobile screenshot QR codes
+using local macOS Vision: `https://app.arkova.ai/profile/person-public` and
+`https://app.arkova.ai/issuer/33333333-3333-4333-8333-333333333333`, matching
+the canonical personal and organization routes rather than localhost/preview.
+A second Sol reviewer independently reviewed media
+ACLs, cleanup/concurrency behavior and the proposed soak plan. This is AI-team
+code review, not human release approval. The PLAN is bound to exact published
+parent `a73f7dd4cf9ca6536f181b0d133860d03d0bb39a`; the PR body records the
+final evidence-only commit SHA. No actual soak has started.
+
 ## Browser boundary and artifact limits
 
 The editor tests render the production Settings and organization-profile
