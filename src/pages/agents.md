@@ -845,3 +845,7 @@ Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Atte
 ## PR #2782 — proof download block identity
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
+
+## 2026-09-19 — Developer integration claims
+
+`DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Package badges name only versions already visible in the public registries; never describe a coordinated but unpublished release as available. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.

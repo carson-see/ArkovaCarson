@@ -1,7 +1,7 @@
 /**
  * API Sandbox — Interactive API Testing Playground
  *
- * Allows developers to test Arkova Verification API endpoints directly
+ * Allows developers to test a curated set of API endpoints directly
  * in the browser. Supports API Key and x402 payment authentication.
  * Synthetic Sentinel design system.
  */
@@ -54,11 +54,6 @@ const searchTypeOptions: NonNullable<EndpointParam['options']> = [
   { label: 'Documents', value: 'document' },
 ];
 
-const nessieModeOptions: NonNullable<EndpointParam['options']> = [
-  { label: 'Retrieval', value: 'retrieval' },
-  { label: 'Context', value: 'context' },
-];
-
 function textParam(name: string, label: string, placeholder: string, required = false): EndpointParam {
   return { name, label, type: 'text', placeholder, required };
 }
@@ -97,7 +92,7 @@ function apiKeySearchEndpoint(
 }
 
 const ENDPOINTS: EndpointDef[] = [
-  endpoint('GET', 'verify', '/api/v1/verify/:publicId', 'Verify Record', VERIFY_PRICE, 'Verify a record by its public ID and receive full cryptographic proof.', [
+  endpoint('GET', 'verify', '/api/v1/verify/:publicId', 'Verify Record', VERIFY_PRICE, 'Verify a record by public ID and receive its current status plus available proof fields.', [
     textParam('publicId', 'Public ID', 'abc123-def456', true),
   ]),
   endpoint('POST', 'verify-batch', '/api/v1/verify/batch', 'Batch Verification', '$0.002/item', 'Verify multiple records in a single request. Up to 100 items per batch.', [
@@ -130,10 +125,6 @@ const ENDPOINTS: EndpointDef[] = [
   ]),
   endpoint('POST', 'ai-search', '/api/v1/ai/search', 'AI Semantic Search', AI_PRICE, 'Semantic search across the record registry using natural language queries.', [
     textParam('query', 'Search Query', 'accredited nursing programs in California', true),
-  ]),
-  endpoint('GET', 'nessie', '/api/v1/nessie/query', 'AI Assistant Query', AI_PRICE, 'Query the Arkova AI assistant for record intelligence and regulatory insights.', [
-    textParam('query', 'Query', 'What are the accreditation requirements for nursing schools?', true),
-    selectParam('mode', 'Mode', nessieModeOptions),
   ]),
 ];
 

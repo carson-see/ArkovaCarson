@@ -21,39 +21,31 @@ const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs`;
 const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
 
 const CURL_LINES = [
-  { num: '1', parts: [{ text: 'curl', cls: 'text-[#a8e8ff]' }, { text: ' -X POST', cls: 'text-[#dce3ed]' }] },
-  { num: '2', parts: [{ text: `  ${PUBLIC_API_URL}/api/v1/verify`, cls: 'text-[#bbc9cf]' }] },
+  { num: '1', parts: [{ text: 'curl', cls: 'text-[#a8e8ff]' }, { text: ' -X GET', cls: 'text-[#dce3ed]' }] },
+  { num: '2', parts: [{ text: `  ${PUBLIC_API_URL}/api/v1/verify/ARK-2026-001`, cls: 'text-[#bbc9cf]' }] },
   { num: '3', parts: [{ text: '  -H "Authorization: Bearer ', cls: 'text-[#bbc9cf]' }, { text: 'YOUR_API_KEY', cls: 'text-[#00d4ff]' }, { text: '"', cls: 'text-[#bbc9cf]' }] },
-  { num: '4', parts: [{ text: '  -H "Content-Type: application/json"', cls: 'text-[#bbc9cf]' }] },
-  { num: '5', parts: [{ text: "  -d '{", cls: 'text-[#bbc9cf]' }] },
-  { num: '6', parts: [{ text: '    ', cls: '' }, { text: '"public_id"', cls: 'text-[#5fd6eb]' }, { text: ': ', cls: 'text-[#bbc9cf]' }, { text: '"abc123-def456"', cls: 'text-[#00d4ff]' }, { text: ',', cls: 'text-[#bbc9cf]' }] },
-  { num: '7', parts: [{ text: '    ', cls: '' }, { text: '"ai_metadata"', cls: 'text-[#5fd6eb]' }, { text: ': ', cls: 'text-[#bbc9cf]' }, { text: 'true', cls: 'text-[#00d4ff]' }] },
-  { num: '8', parts: [{ text: "  }'", cls: 'text-[#bbc9cf]' }] },
 ];
 
-const CURL_RAW = `curl -X POST \\
-  ${PUBLIC_API_URL}/api/v1/verify \\
-  -H "Authorization: Bearer YOUR_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "public_id": "abc123-def456",
-    "ai_metadata": true
-  }'`;
+const CURL_RAW = [
+  'curl -X GET \\',
+  `  ${PUBLIC_API_URL}/api/v1/verify/ARK-2026-001 \\`,
+  '  -H "Authorization: Bearer YOUR_API_KEY"',
+].join('\n');
 
 const SDK_EXAMPLES = {
   curl: `curl -X GET \\
-  ${PUBLIC_API_URL}/api/v1/verify/abc123-def456 \\
+  ${PUBLIC_API_URL}/api/v1/verify/ARK-2026-001 \\
   -H "Authorization: Bearer YOUR_API_KEY"`,
   typescript: `import { Arkova } from 'arkova';
 
 const client = new Arkova({ apiKey: 'YOUR_API_KEY' });
-const result = await client.verify('abc123-def456');
-console.log(result.status); // 'ACTIVE'`,
+const result = await client.verify('ARK-2026-001');
+console.log(result.verified, result.status);`,
   python: `from arkova import Arkova
 
 client = Arkova(api_key="YOUR_API_KEY")
-result = client.verify("abc123-def456")
-print(result.status)  # "ACTIVE"`,
+result = client.verify("ARK-2026-001")
+print(result.verified, result.status)`,
 };
 
 /**
@@ -181,7 +173,7 @@ export function DevelopersPage() {
               </span>
             </h1>
             <p className="max-w-2xl text-[#bbc9cf] text-lg md:text-xl leading-relaxed mb-10">
-              Engineered for high-trust environments. Implement programmatic verification and AI-powered metadata extraction with cryptographic certainty.
+              Engineered for high-trust environments. Verify anchored records, search the public registry, and connect applications or agents through documented APIs.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Link
@@ -224,7 +216,7 @@ export function DevelopersPage() {
               </div>
               <h3 className="text-xl font-bold mb-4">Verify Records</h3>
               <p className="text-[#bbc9cf] text-sm leading-relaxed">
-                Instant, high-fidelity verification of credentials against permanent cryptographic records. One API call returns full proof details.
+                Look up an anchored record by public ID. Responses report the current record and network-anchor status, with proof fields when available.
               </p>
             </div>
             <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
@@ -233,7 +225,7 @@ export function DevelopersPage() {
               </div>
               <h3 className="text-xl font-bold mb-4">Batch Verification</h3>
               <p className="text-[#bbc9cf] text-sm leading-relaxed">
-                Scalable architecture for high-throughput environments. Verify up to 100 credentials per request with async job polling.
+                Verify up to 100 public IDs in one request and receive either inline results or an asynchronous job to poll.
               </p>
             </div>
             <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
@@ -242,7 +234,7 @@ export function DevelopersPage() {
               </div>
               <h3 className="text-xl font-bold mb-4">AI Intelligence</h3>
               <p className="text-[#bbc9cf] text-sm leading-relaxed">
-                Context-aware metadata extraction that transforms documents into structured credential data. Semantic search and integrity scoring.
+                Search organizations, records, fingerprints, and documents through the API v2 endpoints documented in the live OpenAPI reference.
               </p>
             </div>
           </div>
@@ -256,8 +248,8 @@ export function DevelopersPage() {
               <div className="space-y-12">
                 {[
                   { step: '1', title: 'Create an Organization Account', desc: 'Sign up and select the Organization role during onboarding. API keys require an Organization account — Individual accounts cannot create API keys.' },
-                  { step: '2', title: 'Generate API Keys', desc: 'Navigate to Settings → API Keys in the dashboard. Keys use Bearer authentication with HMAC-SHA256 security.' },
-                  { step: '3', title: 'Execute Verification', desc: 'Send your first verification request and receive real-time cryptographic proof.' },
+                  { step: '2', title: 'Generate API Keys', desc: 'Navigate to Settings → API Keys in the dashboard. REST API requests use Authorization: Bearer <api_key>. Copy each key when it is created because the secret is shown once.' },
+                  { step: '3', title: 'Execute Verification', desc: 'Send a GET request to /api/v1/verify/:publicId and inspect the record status and any available proof fields.' },
                 ].map((s) => (
                   <div key={s.step} className="flex gap-6">
                     <div className="flex-none w-10 h-10 rounded-full bg-[#2e353d] border border-[#00d4ff]/30 flex items-center justify-center text-[#a8e8ff] font-bold">
@@ -342,17 +334,22 @@ export function DevelopersPage() {
             <div className="relative z-10">
               <div className="inline-block px-3 py-1 bg-[#00d4ff]/10 border border-[#00d4ff]/30 rounded-lg mb-6">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-[#a8e8ff]">
-                  Beta Feature
+                  Hosted MCP recommended
                 </span>
               </div>
               <h2 className="text-3xl font-black tracking-tight mb-4">MCP Server for AI Agents</h2>
               <p className="text-[#bbc9cf] mb-10 max-w-xl">
-                Empower your AI agents with direct access to Arkova&apos;s verification suite through the Model Context Protocol.
+                Connect MCP-compatible agents to the hosted Streamable HTTP endpoint at https://edge.arkova.ai/mcp. Send an Arkova API key in X-API-Key; the hosted service does not currently provide an OAuth authorization-code flow.
               </p>
+              <div className="mb-6 rounded-lg border border-[#3c494e]/20 bg-[#192028] p-5 text-sm text-[#bbc9cf]">
+                <p><strong className="text-[#dce3ed]">Hosted:</strong> no install; discover the current catalog with <code className="text-[#a8e8ff]">tools/list</code>.</p>
+                <p className="mt-2"><strong className="text-[#dce3ed]">Local stdio:</strong> <code className="text-[#a8e8ff]">npx -y arkova-mcp-server</code>. The published 2.2.0 package is a legacy surface with a smaller, independently maintained tool set.</p>
+                <p className="mt-2 font-mono text-xs text-[#00d4ff]">npm: arkova-mcp-server@2.2.0</p>
+              </div>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
                   <code className="font-mono text-[#a8e8ff] font-bold block mb-2">arkova_verify_anchor</code>
-                  <p className="text-xs text-[#bbc9cf]">Verify any record by its public ID and receive full cryptographic proof.</p>
+                  <p className="text-xs text-[#bbc9cf]">Verify a record by public ID and receive its current status plus available proof fields.</p>
                 </div>
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
                   <code className="font-mono text-[#a8e8ff] font-bold block mb-2">arkova_search_anchors</code>
@@ -458,6 +455,7 @@ export function DevelopersPage() {
               <span className="w-1.5 h-6 bg-[#00d4ff]" />
               SDK Examples
             </h2>
+            <p className="-mt-6 mb-8 text-sm text-[#bbc9cf]">Currently published: <code className="text-[#a8e8ff]">npm: arkova@2.2.0</code> · <code className="text-[#a8e8ff]">PyPI: arkova 2.3.0</code>. The API CLI is not yet published.</p>
             <div className="bg-[#080f16] rounded-xl border border-[#3c494e]/15 overflow-hidden shadow-2xl">
               <div className="flex items-center justify-between px-4 py-3 bg-[#2e353d]/50 border-b border-[#3c494e]/10">
                 <div className="flex gap-1">
@@ -503,7 +501,7 @@ export function DevelopersPage() {
             </div>
             <h2 className="text-3xl font-black tracking-tight mb-4">Try the API</h2>
             <p className="text-[#bbc9cf] mb-8 max-w-lg mx-auto">
-              Test every endpoint interactively. Configure parameters, send requests, and inspect responses — all from your browser.
+              Test a curated set of API endpoints. Configure parameters, send requests, and inspect responses from your browser.
             </p>
             <Link
               to={ROUTES.API_SANDBOX}
@@ -573,7 +571,7 @@ export function DevelopersPage() {
                   <h3 className="text-lg font-bold">Authentication & Errors</h3>
                 </div>
                 <div className="space-y-3 text-sm text-[#bbc9cf]">
-                  <p>All requests use <code className="text-[#a8e8ff]">Authorization: Bearer &lt;api_key&gt;</code></p>
+                  <p>Protected REST requests use <code className="text-[#a8e8ff]">Authorization: Bearer &lt;api_key&gt;</code>; public verification reads may be used without a key.</p>
                   <div className="space-y-1.5 font-mono text-xs">
                     <div className="flex gap-3"><span className="text-emerald-400">200</span> <span>Success</span></div>
                     <div className="flex gap-3"><span className="text-amber-400">400</span> <span>Validation error (see <code>details</code> array)</span></div>

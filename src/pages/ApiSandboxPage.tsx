@@ -79,7 +79,7 @@ export function ApiSandboxPage() {
               </span>
             </h1>
             <p className="text-[#bbc9cf] text-lg max-w-2xl">
-              Test Arkova API endpoints in real time. Select an endpoint, configure parameters, and execute requests directly from your browser.
+              Test a curated set of Arkova API endpoints. Select an endpoint, configure parameters, and inspect the response directly in your browser. Use the live OpenAPI reference for the complete surface.
             </p>
           </div>
 

@@ -66,3 +66,24 @@ describe('DevelopersPage PRICING_TABLE — R-1 claims ratchet', () => {
     expect(pricingTableSource()).toContain('/ai/search');
   });
 });
+
+describe('DevelopersPage integration claims', () => {
+  it('uses the served GET verification route in the primary example', () => {
+    expect(SOURCE).toContain('/api/v1/verify/ARK-2026-001');
+    expect(SOURCE).not.toContain('/api/v1/verify \\\\');
+    expect(SOURCE).not.toContain('"ai_metadata"');
+  });
+
+  it('distinguishes REST and hosted MCP authentication', () => {
+    expect(SOURCE).toContain('Authorization: Bearer');
+    expect(SOURCE).toContain('X-API-Key');
+    expect(SOURCE).toContain('https://edge.arkova.ai/mcp');
+  });
+
+  it('does not advertise unreleased package versions as published', () => {
+    expect(SOURCE).toContain('npm: arkova@2.2.0');
+    expect(SOURCE).toContain('PyPI: arkova 2.3.0');
+    expect(SOURCE).toContain('npm: arkova-mcp-server@2.2.0');
+    expect(SOURCE).not.toContain('arkova@3.0.0');
+  });
+});
