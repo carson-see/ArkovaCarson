@@ -368,6 +368,128 @@ export const AttestationRevokedPayloadSchema = z
   .strict();
 
 /**
+ * SCRUM-3972 — affiliated-organization ("sub-org") lifecycle events.
+ *
+ * These describe the PARENT organization's own affiliation actions and are
+ * dispatched on the PARENT's org id, so a default `scope: 'self'` endpoint
+ * receives them with no new configuration. Four of them
+ * (`suborg.credits_allocated`, `suborg.credits_reclaimed`, `suborg.suspended`,
+ * `suborg.offboarded`) are ALSO dispatched on the CHILD's org id, because the
+ * child needs to learn that its budget moved or its tenancy was suspended and
+ * it cannot see the parent's feed. They are NOT behind
+ * `ENABLE_SUBORG_WEBHOOK_FANOUT` — that flag gates the separate cross-org
+ * fan-out of `anchor.*` events, which is a different boundary.
+ *
+ * WHAT THESE MAY NOT CARRY, and why each exclusion is deliberate:
+ *   - no `org_id` / `parent_org_id` / `child_org_id` / `user_id` (CLAUDE.md §6
+ *     — internal UUIDs). The two organizations are named by their
+ *     `public_id`s and nothing else. `.strict()` is what makes that true at
+ *     runtime, not this comment.
+ *   - no `admin_email`. The existing sub-org REST surface accepts an
+ *     `adminEmail` on create; that is a natural person's address and a webhook
+ *     is an egress to a third-party URL. It never leaves.
+ *   - no `domain`. The affiliate's domain is identifying metadata the parent
+ *     supplied inbound; echoing it outbound to an arbitrary endpoint adds an
+ *     identity signal the event does not need.
+ *
+ * `display_name` IS carried: it is the organization's own chosen public label
+ * (the same string the verification surface renders), and without it the event
+ * is an opaque slug a human operator cannot act on.
+ *
+ * `parent_approval_status` mirrors the DB CHECK
+ * `organizations_parent_approval_status_check` exactly — NULL, 'PENDING',
+ * 'APPROVED' or 'REVOKED' — so the payload can never assert a status the
+ * database would refuse to store.
+ */
+/**
+ * Longest note the offboard route can compose: the `'offboarding: '` prefix
+ * (13 chars) plus `OffboardSchema.reason`'s own `max(500)`. Derived, not
+ * guessed — `payload-schemas.test.ts` pins the arithmetic.
+ */
+export const SUBORG_NOTE_MAX = 513;
+
+const SUBORG_BASE_FIELDS = {
+  /** The affiliated (child) organization's public slug. Also the resource key. */
+  public_id: z.string().min(1).max(64),
+  display_name: z.string().min(1).max(255),
+  /** The parent organization's public slug. Mandatory: these events are, by
+   *  construction, about a relationship, and a one-sided payload cannot be
+   *  reconciled by a consumer that administers several parents. */
+  parent_public_id: z.string().min(1).max(64),
+  parent_approval_status: z.enum(['PENDING', 'APPROVED', 'REVOKED']).nullable(),
+  /** When the transition happened, server clock, UTC (CLAUDE.md §1.5). */
+  occurred_at: isoTimestamp,
+} as const;
+
+export const SubOrgCreatedPayloadSchema = z.object({ ...SUBORG_BASE_FIELDS }).strict();
+export const SubOrgApprovedPayloadSchema = z.object({ ...SUBORG_BASE_FIELDS }).strict();
+export const SubOrgRevokedPayloadSchema = z.object({ ...SUBORG_BASE_FIELDS }).strict();
+
+/**
+ * Credit movement between a parent and an affiliate. `amount` is the signed
+ * delta applied to the CHILD: positive on `suborg.credits_allocated`, negative
+ * on `suborg.credits_reclaimed`. The two balances are the post-transaction
+ * values the RPC returned, so a consumer never has to infer them by
+ * subtraction from a balance it may not have seen.
+ */
+const SUBORG_CREDIT_FIELDS = {
+  ...SUBORG_BASE_FIELDS,
+  amount: z.number().int(),
+  parent_balance: z.number().int().nonnegative(),
+  child_balance: z.number().int().nonnegative(),
+  /**
+   * Operator note recorded with the movement. Free text, bounded.
+   *
+   * CTO review 2026-09-12: the bound is `SUBORG_NOTE_MAX`, not 500. The
+   * offboard route accepts `reason` at up to 500 characters and composes the
+   * note as `'offboarding: ' + reason` — 13 characters longer. At 500 the
+   * composed note is 513, which a 500 bound rejected; since
+   * `dispatchWebhookEvent` THROWS on schema rejection, a maximal-length reason
+   * silently cost the whole `suborg.credits_reclaimed` event.
+   */
+  note: z.string().max(SUBORG_NOTE_MAX).nullable().optional(),
+} as const;
+
+export const SubOrgCreditsAllocatedPayloadSchema = z
+  .object({
+    ...SUBORG_CREDIT_FIELDS,
+    // An "allocation" that moves nothing, or moves credits the other way, is a
+    // reclaim mislabelled. Reject it at the schema rather than let a consumer
+    // reconcile a lie.
+    amount: z.number().int().positive(),
+  })
+  .strict();
+
+export const SubOrgCreditsReclaimedPayloadSchema = z
+  .object({
+    ...SUBORG_CREDIT_FIELDS,
+    amount: z.number().int().negative(),
+  })
+  .strict();
+
+export const SubOrgSuspendedPayloadSchema = z
+  .object({
+    ...SUBORG_BASE_FIELDS,
+    /** Operator-supplied reason for the suspension. Free text, bounded. */
+    reason: z.string().max(500).nullable().optional(),
+  })
+  .strict();
+
+/**
+ * The composite offboarding operation completed: credits reclaimed (if any),
+ * then the affiliate suspended. `reclaimed` is the non-negative number of
+ * credits that returned to the parent in THIS operation — 0 when the affiliate
+ * held none, which is a real and common outcome, not a missing value.
+ */
+export const SubOrgOffboardedPayloadSchema = z
+  .object({
+    ...SUBORG_BASE_FIELDS,
+    reason: z.string().max(500).nullable().optional(),
+    reclaimed: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
  */
@@ -384,6 +506,20 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'compliance.document_expiring': ComplianceDocumentExpiringPayloadSchema,
   'attestation.created': AttestationCreatedPayloadSchema,
   'attestation.revoked': AttestationRevokedPayloadSchema,
+  // SCRUM-3972 — appended AFTER compliance.document_expiring. Declaration
+  // order here is the canonical order every mirror surface is compared
+  // against by scripts/ci/check-webhook-event-registration-drift.ts.
+  // SCRUM-3982 (branch fix/scrum-3982-webhook-banned-fields) appends
+  // attestation.created / attestation.revoked at this same point; declared
+  // land order is 3982 -> 3972, so whoever merges SECOND re-orders both this
+  // map and the six mirrors in one union resolution.
+  'suborg.created': SubOrgCreatedPayloadSchema,
+  'suborg.approved': SubOrgApprovedPayloadSchema,
+  'suborg.revoked': SubOrgRevokedPayloadSchema,
+  'suborg.credits_allocated': SubOrgCreditsAllocatedPayloadSchema,
+  'suborg.credits_reclaimed': SubOrgCreditsReclaimedPayloadSchema,
+  'suborg.suspended': SubOrgSuspendedPayloadSchema,
+  'suborg.offboarded': SubOrgOffboardedPayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
@@ -399,6 +535,13 @@ export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChan
 export type ComplianceDocumentExpiringPayload = z.infer<typeof ComplianceDocumentExpiringPayloadSchema>;
 export type AttestationCreatedPayload = z.infer<typeof AttestationCreatedPayloadSchema>;
 export type AttestationRevokedPayload = z.infer<typeof AttestationRevokedPayloadSchema>;
+export type SubOrgCreatedPayload = z.infer<typeof SubOrgCreatedPayloadSchema>;
+export type SubOrgApprovedPayload = z.infer<typeof SubOrgApprovedPayloadSchema>;
+export type SubOrgRevokedPayload = z.infer<typeof SubOrgRevokedPayloadSchema>;
+export type SubOrgCreditsAllocatedPayload = z.infer<typeof SubOrgCreditsAllocatedPayloadSchema>;
+export type SubOrgCreditsReclaimedPayload = z.infer<typeof SubOrgCreditsReclaimedPayloadSchema>;
+export type SubOrgSuspendedPayload = z.infer<typeof SubOrgSuspendedPayloadSchema>;
+export type SubOrgOffboardedPayload = z.infer<typeof SubOrgOffboardedPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
   constructor(

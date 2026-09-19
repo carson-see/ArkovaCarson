@@ -194,3 +194,6 @@ describe('sendVerificationPing — pinned egress (SCRUM-4983)', () => {
     expect(dispatch.mock.calls[0][1]).toBe('https://hooks.example.com/in');
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));

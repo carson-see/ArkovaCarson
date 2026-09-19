@@ -864,9 +864,14 @@ describe('deliverToEndpoint', () => {
     setupDbRouting();
 
     // Must not throw — dispatch fans out best-effort.
+    // SCRUM-3972 changed the return from `void` to a WebhookDispatchResult so
+    // non-throwing failures (an endpoint-lookup error, a parent-lookup error)
+    // become countable instead of log-only. The property this case asserts is
+    // unchanged — no throw escapes — and the result additionally records that
+    // the ONE endpoint was attempted.
     await expect(
       dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-outage-001', MOCK_PAYLOAD_DATA),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: true, ownEndpointCount: 1, descendantEndpointCount: 0 });
 
     // No HTTP delivery (log row never committed).
     expect(mockFetch).not.toHaveBeenCalled();
@@ -2199,3 +2204,6 @@ describe('processWebhookRetries refuses stored payloads with banned fields (SCRU
     expect(refusalLogs).toHaveLength(1);
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));
