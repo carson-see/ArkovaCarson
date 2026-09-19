@@ -98,6 +98,10 @@ describe('WebhookEventCatalog', () => {
     'credential.issued',
     'credential.status_changed',
     'compliance.document_expiring',
+    'job.completed',
+    'compliance.certificate_expiring',
+    'compliance.anchor_delayed',
+    'compliance.timestamp_coverage_low',
     // SCRUM-3982: emit point verified — `dispatchWebhookEvent(profile.org_id,
     // 'attestation.created', ...)` in services/worker/src/api/v1/attestations.ts,
     // and the `profiles` lookup above it really does select `org_id`, so the
@@ -106,6 +110,8 @@ describe('WebhookEventCatalog', () => {
     // selects only `id, status, attester_user_id`, so that dispatch has never
     // fired. Registered and subscribable, not live.
     'attestation.created',
+    'anchor.revocation_anchored',
+    'attestation.active',
   ]);
 
   it('claims live only for events with a real emit point', () => {

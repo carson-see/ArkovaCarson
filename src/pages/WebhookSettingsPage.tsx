@@ -45,6 +45,7 @@ export function WebhookSettingsPage() {
   const navigate = useNavigate();
   const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const handleSignOut = async () => {
     await signOut();
@@ -97,12 +98,17 @@ export function WebhookSettingsPage() {
   async function fetchEndpoints() {
     if (!orgId) return;
     setLoading(true);
-    const { data } = await supabase
+    setFetchError(null);
+    const { data, error } = await supabase
       .from('webhook_endpoints')
       .select('id, url, events, is_active, created_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
-    setEndpoints((data as WebhookEndpoint[]) ?? []);
+    if (error) {
+      setFetchError('Please refresh and try again.');
+    } else {
+      setEndpoints((data as WebhookEndpoint[]) ?? []);
+    }
     setLoading(false);
   }
 
@@ -114,13 +120,18 @@ export function WebhookSettingsPage() {
 
     async function load() {
       setLoading(true);
-      const { data } = await supabase
+      setFetchError(null);
+      const { data, error } = await supabase
         .from('webhook_endpoints')
         .select('id, url, events, is_active, created_at')
         .eq('org_id', currentOrgId)
         .order('created_at', { ascending: false });
       if (!cancelled) {
-        setEndpoints((data as WebhookEndpoint[]) ?? []);
+        if (error) {
+          setFetchError('Please refresh and try again.');
+        } else {
+          setEndpoints((data as WebhookEndpoint[]) ?? []);
+        }
         setLoading(false);
       }
     }
@@ -195,6 +206,8 @@ export function WebhookSettingsPage() {
           onToggle={handleToggle}
           onTestPing={handleTestPing}
           loading={loading}
+          fetchError={fetchError}
+          onRetry={() => void fetchEndpoints()}
         />
         <WebhookDeliveryLog
           deliveries={deliveries}

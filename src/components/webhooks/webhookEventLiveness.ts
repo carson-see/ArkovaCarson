@@ -109,6 +109,11 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: true,
     fields: ['public_id', 'status', 'expires_at', 'days_remaining', 'warning_level', 'credential_type?', 'label?', 'org_public_id?'],
   },
+  'job.completed': { live: true, fields: ['job_ref', 'status', 'total', 'result_count', 'error_code'] },
+  'compliance.certificate_expiring': { live: true, fields: ['certificate_ref', 'expires_at', 'warning_level', 'days_remaining'] },
+  'compliance.anchor_delayed': { live: true, fields: ['pending_count', 'oldest_pending_since', 'threshold_minutes'] },
+  'compliance.signature_revoked': { live: false, fields: ['public_id', 'revocation_reason', 'revoked_at'] },
+  'compliance.timestamp_coverage_low': { live: true, fields: ['coverage_pct', 'threshold_pct', 'total_signatures', 'timestamped_signatures', 'period_days'] },
   // SCRUM-3982: `live: true` — POST /api/v1/attestations really dispatches
   // this (services/worker/src/api/v1/attestations.ts:472), and the org id its
   // guard reads IS selected. Fields mirror AttestationCreatedPayloadSchema
@@ -131,5 +136,13 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
   'attestation.revoked': {
     live: false,
     fields: ['public_id', 'status', 'revocation_reason', 'revoked_at', 'attestation_type?', 'org_public_id?'],
+  },
+  'anchor.revocation_anchored': {
+    live: true,
+    fields: ['public_id', 'status', 'revocation_tx_id', 'revocation_block_height', 'original_chain_tx_id', 'org_public_id?'],
+  },
+  'attestation.active': {
+    live: true,
+    fields: ['public_id', 'attestation_type', 'status', 'chain_tx_id', 'chain_timestamp', 'org_public_id?'],
   },
 };

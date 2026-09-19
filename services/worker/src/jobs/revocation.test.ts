@@ -357,9 +357,13 @@ describe('processRevocation', () => {
       'anchor.revocation_anchored',
       'anchor-uuid-1',
       expect.objectContaining({
+        public_id: MOCK_ANCHOR.public_id,
         revocation_tx_id: MOCK_RECEIPT.receiptId,
       }),
     );
+    const payload = mockDispatchWebhookEvent.mock.calls[0]?.[3];
+    expect(payload).not.toHaveProperty('anchor_id');
+    expect(payload).not.toHaveProperty('fingerprint');
   });
 
   it('returns false and logs error when chain submission fails', async () => {
@@ -374,6 +378,15 @@ describe('processRevocation', () => {
 
   it('skips webhook dispatch when org_id is null', async () => {
     mockAnchorsSelectResult.data = { ...MOCK_ANCHOR, org_id: null };
+    mockAnchorsSelectResult.error = null;
+
+    await processRevocation('anchor-uuid-1');
+
+    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it('skips webhook dispatch when no public anchor id is available', async () => {
+    mockAnchorsSelectResult.data = { ...MOCK_ANCHOR, public_id: null };
     mockAnchorsSelectResult.error = null;
 
     await processRevocation('anchor-uuid-1');

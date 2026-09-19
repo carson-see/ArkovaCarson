@@ -56,6 +56,16 @@ describe('WebhookSettings', () => {
   // =========================================================================
 
   describe('endpoint list rendering', () => {
+    it('links endpoint editing guidance to the published API specification', () => {
+      render(<WebhookSettings {...defaultProps} />);
+
+      expect(
+        screen.getByRole('link', {
+          name: 'Update endpoint URLs and event subscriptions with the webhook API',
+        }),
+      ).toHaveAttribute('href', 'https://api.arkova.ai/api/docs/spec.json');
+    });
+
     it('renders all endpoints with URLs and event badges', () => {
       render(<WebhookSettings {...defaultProps} />);
 
@@ -96,6 +106,35 @@ describe('WebhookSettings', () => {
 
       const spinner = container.querySelector('.animate-spin');
       expect(spinner).toBeInTheDocument();
+    });
+
+    it('shows endpoint fetch failures instead of an empty-state success', () => {
+      render(
+        <WebhookSettings
+          {...defaultProps}
+          endpoints={[]}
+          fetchError="Permission denied"
+        />,
+      );
+
+      expect(screen.getByText(/Unable to load webhook endpoints/)).toBeInTheDocument();
+      expect(screen.getByText(/Permission denied/)).toBeInTheDocument();
+      expect(screen.queryByText('No webhook endpoints configured')).not.toBeInTheDocument();
+    });
+
+    it('offers a retry after an endpoint fetch failure', async () => {
+      const onRetry = vi.fn();
+      render(
+        <WebhookSettings
+          {...defaultProps}
+          endpoints={[]}
+          fetchError="Please refresh and try again."
+          onRetry={onRetry}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      expect(onRetry).toHaveBeenCalledOnce();
     });
   });
 
@@ -573,12 +612,19 @@ describe('WebhookSettings', () => {
         // BUG-002: registered in the worker allowlist so the expiry-alert cron's
         // dispatch can actually reach a subscriber.
         'compliance.document_expiring',
+        'job.completed',
+        'compliance.certificate_expiring',
+        'compliance.anchor_delayed',
+        'compliance.signature_revoked',
+        'compliance.timestamp_coverage_low',
         // SCRUM-3982: both were dispatched from
         // services/worker/src/api/v1/attestations.ts while unregistered, so no
         // endpoint could subscribe AND the payload skipped schema validation
         // (attestation.created was shipping the document fingerprint, §1.6).
         'attestation.created',
         'attestation.revoked',
+        'anchor.revocation_anchored',
+        'attestation.active',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);
@@ -633,6 +679,23 @@ describe('WebhookSettings', () => {
       expect(checkbox.closest('label')?.textContent).toContain(
         WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX,
       );
+      expect(checkbox).toBeDisabled();
+    });
+
+    it('allows subscriptions only to events with a live producer', async () => {
+      render(<WebhookSettings {...defaultProps} />);
+      await userEvent.click(screen.getByText('Add Endpoint'));
+
+      for (const event of AVAILABLE_EVENTS) {
+        const checkbox = screen.getByLabelText(
+          new RegExp(event.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        );
+        if (CATALOG_DATA[event.id]?.live) {
+          expect(checkbox, event.id).toBeEnabled();
+        } else {
+          expect(checkbox, event.id).toBeDisabled();
+        }
+      }
     });
   });
 });

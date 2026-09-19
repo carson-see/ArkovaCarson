@@ -159,3 +159,8 @@ retries.
 `attestation.revoked` is typed and subscribable but its worker producer is not
 reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
+
+## 2026-09-19 — Finality webhook event types
+
+The SDK webhook union includes `anchor.revocation_anchored` and
+`attestation.active`, matching the worker registry.

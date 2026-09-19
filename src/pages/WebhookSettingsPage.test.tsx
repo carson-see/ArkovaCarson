@@ -207,6 +207,27 @@ describe('WebhookSettingsPage', () => {
       const spinner = container.querySelector('.animate-spin');
       expect(spinner).toBeInTheDocument();
     });
+
+    it('surfaces endpoint fetch errors', async () => {
+      mockFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({
+              data: null,
+              error: { message: 'Permission denied' },
+            }),
+          }),
+        }),
+      });
+
+      renderPage();
+
+      expect(
+        await screen.findByText(/Unable to load webhook endpoints/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Please refresh and try again/)).toBeInTheDocument();
+      expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
+    });
   });
 
   // =========================================================================
