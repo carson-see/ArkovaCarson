@@ -32,3 +32,7 @@
 - Vite 8's configured `minify: 'esbuild'` path requires its optional `esbuild`
   peer to be installed explicitly. Pin `esbuild` in devDependencies and the
   lockfile; a clean checkout without it fails before emitting any bundle.
+- The default verification origin is the stable public gateway `https://api.arkova.ai`
+  across manual mounting, the web component, and report-block rendering. Keep the
+  three behavioral regressions aligned; `apiBaseUrl` remains an explicit override
+  for staging and local development.
