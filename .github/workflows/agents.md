@@ -1,5 +1,9 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-19 — SCRUM-5253 People mobile layout regression
+
+The E2E job runs `npm run test:e2e:people-layout` after the shared Chromium suite whenever the existing app-affecting change detector enables E2E. The standalone config owns a local Vite server and synthetic HTTP boundaries, so it is intentionally ignored by the shared Playwright config; this explicit CI step is its durable invocation.
+
 ## PR #2940 — Edge deploy follows the installed Wrangler version
 
 Both edge dry-run and production deploy invoke `./node_modules/.bin/wrangler`
