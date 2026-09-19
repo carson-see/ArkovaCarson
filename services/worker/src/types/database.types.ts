@@ -4333,6 +4333,7 @@ export type Database = {
         Row: {
           anchor_quota: number | null
           balance: number
+          cap_enforced: boolean
           created_at: string
           cycle_end: string
           cycle_start: string
@@ -4345,6 +4346,7 @@ export type Database = {
         Insert: {
           anchor_quota?: number | null
           balance?: number
+          cap_enforced?: boolean
           created_at?: string
           cycle_end?: string
           cycle_start?: string
@@ -4357,6 +4359,7 @@ export type Database = {
         Update: {
           anchor_quota?: number | null
           balance?: number
+          cap_enforced?: boolean
           created_at?: string
           cycle_end?: string
           cycle_start?: string
