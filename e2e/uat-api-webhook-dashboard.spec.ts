@@ -175,6 +175,21 @@ for (const viewport of [
         page.getByRole("checkbox", { name: /Attestation Active/i }),
       ).toBeEnabled();
       await expect(
+        page.getByRole("checkbox", { name: /Batch Verification Completed/i }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("checkbox", { name: /Signing Certificate Expiring/i }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("checkbox", { name: /Securing Delayed/i }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("checkbox", { name: /Timestamp Coverage Low/i }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("checkbox", { name: /Signature Revoked/i }),
+      ).toBeDisabled();
+      await expect(
         page.getByRole("checkbox", { name: /Record Verified/i }),
       ).toBeDisabled();
       await expect(
