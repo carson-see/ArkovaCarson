@@ -66,3 +66,9 @@ the `/records/:id` sub-route, Documents does NOT double-highlight on
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 Breadcrumb label for /settings/credential-templates now "Document Templates" (via copy.ts NAV_POLISH_LABELS). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-09-12 SCRUM-5024 — Breadcrumbs: `/settings/referrals`
+
+`Breadcrumbs.tsx` maps `ROUTES.SETTINGS_REFERRALS` to
+Settings > `NAV_POLISH_LABELS.BREADCRUMB_REFERRALS`, alongside the existing
+API-keys / webhooks / templates settings sub-pages.

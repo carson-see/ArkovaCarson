@@ -16,9 +16,9 @@
 
 ### 2026-09-19 — UAT-17 stacked follow-up prepared locally; no soak or PR yet
 
-- UAT-17 follow-up work is local on `cto/uat17-completion-20260919`, stacked on existing PR #2964 head `8c1561f6fff5080d8ebc7cf1b6cc28f88ea491d6`. Runtime head is pending root review/commit. No rig was provisioned, migration applied, email sent, deployment made, or soak clock started.
+- UAT-17 follow-up work is local on `cto/uat17-completion-20260919`, stacked on refreshed existing PR #2964 head `9fb3c5760815ff9460bf67402bed17113eb7166e`. Runtime head is pending root review/commit. No rig was provisioned, migration applied, email sent, deployment made, or soak clock started.
 - Founder authorized exactly one new UAT-17 draft PR, subject to a live count below the hard cap of 25 total open PRs including drafts. Root owns the count check and publication; this note is not independent authorization.
-- Planning-only T3 procedure: `docs/staging/uat17-completion-20260919/PLAN.md`. It requires an isolated/exclusive clean rig, a fresh 25h/300-cycle window, real hosted 900s/90s Auth readback and one approved non-production mailbox probe. Prior PR #2964 soak evidence does not qualify the new 0470 head.
+- Planning-only T3 procedure: `docs/staging/uat17-completion-20260919/PLAN.md`. It requires an isolated/exclusive clean rig, a fresh 25h/301-cycle window, real hosted 900s/90s Auth readback and one approved non-production mailbox probe. Prior PR #2964 soak evidence does not qualify the new 0470 head.
 - Local checks include isolated native PostgreSQL and 1280/375 standalone browser evidence. The browser member fixture has no authenticated session and is not worker/SQL/hosted proof.
 
 ### 2026-09-14T12:24Z — Train B5c sealed (#2841 #2909), rig 1

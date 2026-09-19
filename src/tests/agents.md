@@ -199,3 +199,10 @@ and all production gate behavior remain unchanged.
 # UAT-17
 
 `uat17-verified-domain-member-add-migration.test.ts` pins verified-only, ambiguity-fail-closed domain association and service-only atomic member-add invariants.
+
+## 2026-09-19 — Referral RPC nullable-role ratchet
+
+`scrum5024-referral-rpc-tenant-authority.test.ts` reads the effective last
+migration definition and requires both referral SECURITY DEFINER RPCs to
+coalesce a missing caller role to non-service. The live PostgreSQL counterpart
+is `tests/rls/referral-rpc-empty-claims.test.ts`.

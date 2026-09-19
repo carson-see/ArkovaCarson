@@ -84,12 +84,17 @@ export interface AnchorExpirySweepDb {
   selectExpiringSecured(cursor?: ExpiringAnchorCursor): Promise<ExpiringSecuredAnchor[]>;
   casUpdateToExpired(anchorId: string, expiredAtIso: string): Promise<boolean>;
   insertAuditEvent(row: Record<string, unknown>): Promise<void>;
+  // SCRUM-3972: the real `dispatchWebhookEvent` now returns a
+  // WebhookDispatchResult. This port does not consume it (the sweep's own
+  // success signal is "did it throw"), so the return is widened to `unknown`
+  // rather than restated — a port that named the concrete result type would
+  // have to change every time that type does.
   dispatchWebhookEvent(
     orgId: string,
     eventType: string,
     eventId: string,
     data: Record<string, unknown>,
-  ): Promise<void>;
+  ): Promise<unknown>;
 }
 
 export interface AnchorExpirySweepResult {
@@ -447,7 +452,7 @@ export function makeAnchorExpirySweepDb(deps: {
     eventType: string,
     eventId: string,
     data: Record<string, unknown>,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 }): AnchorExpirySweepDb {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = deps.db as any;

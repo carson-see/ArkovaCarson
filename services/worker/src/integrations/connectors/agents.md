@@ -352,3 +352,7 @@ is what failed, the log reports `remainingSuperseded: 'unknown'` — reporting `
 ## PR #2474 release review — 2026-09-05
 
 Signer status values are restricted to documented DocuSign recipient status codes; signed_at accepts only numeric ISO datetimes, including fractional seconds, offsets and timezone-less vendor values. This closes PII persistence through correctly named status/timestamp fields. Regression tests reject email/name text in both fields. Recipient status reference: https://developers.docusign.com/docs/esign-rest-api/esign101/concepts/recipients/status-codes/
+
+## 2026-09-14 — PR #2937 shared Drive folder-binding contract
+
+The side-effect-free drive-folder-bindings.ts extracts non-empty legacy folder_id and drive_folders[].folder_id values. Both loadWatchedFolderIds and connector-health use it, so an enabled rule with no actual folder cannot create a cursor-stale warning while the runner intentionally skips processing. The runtime runner keeps the same org-wide rule selection and returned folder union; health separately performs a bounded complete inventory scan and reports503 when it cannot complete.

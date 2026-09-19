@@ -418,3 +418,6 @@ describe('DH-12: Dead Letter Queue', () => {
     expect(updateEq).not.toHaveBeenCalled();
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));

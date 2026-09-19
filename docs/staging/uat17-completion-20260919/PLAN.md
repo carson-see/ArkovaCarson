@@ -5,7 +5,7 @@ Status: planning only. No rig has been provisioned, no candidate deployed, no so
 ## Candidate and authority
 
 - Story: SCRUM-5145; Confluence specification/evidence: page 148340737.
-- Stack dependency/base: existing PR #2964 head `8c1561f6fff5080d8ebc7cf1b6cc28f88ea491d6` (`cto/uat17-email-20260914`). The new follow-up draft must target that branch so it does not duplicate PR #2964.
+- Stack dependency/base: refreshed existing PR #2964 head `9fb3c5760815ff9460bf67402bed17113eb7166e` (`cto/uat17-email-20260914`). The new follow-up draft must target that branch so it does not duplicate PR #2964.
 - Follow-up head: `PENDING` until root commits and pushes the independently reviewed local tree. Before admission, bind every deployment and evidence artifact to the full 40-character head read back from the remote draft PR, not merely a local branch SHA.
 - Authorization: founder permits exactly one new draft PR for UAT-17 while the repository remains below the hard cap of 25 total open PRs, including drafts. Root owns the final live-count check and PR creation. Keep the PR Draft and `do-not-merge` until separate release authority and all qualification gates are satisfied. This plan grants no authority to open additional PRs, mark ready, merge, deploy, apply migrations, alter Auth/SMTP settings, or send external email.
 - Risk: T3. Migration 0470 changes tenant association and privileged membership creation.

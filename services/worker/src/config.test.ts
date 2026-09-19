@@ -1036,3 +1036,15 @@ describe('S3-P0 / DISC-03 — bitcoinUtxoProvider default', () => {
     });
   });
 });
+
+describe('ENABLE_SUBORG_WEBHOOK_FANOUT (SCRUM-3972)', () => {
+  it.each(['true', 'false', 'TRUE', '1', '', 'yes', undefined])(
+    'uses the validated config value for %s', async (value) => {
+      await withConfig({ ENABLE_SUBORG_WEBHOOK_FANOUT: value }, async (mod) => {
+        const { isSubOrgFanoutEnabled } = await import('./webhooks/suborg-fanout.js');
+        expect(mod.config.enableSubOrgWebhookFanout).toBe(value === 'true');
+        expect(isSubOrgFanoutEnabled()).toBe(mod.config.enableSubOrgWebhookFanout);
+      });
+    },
+  );
+});

@@ -103,6 +103,15 @@ test.describe('Settings', () => {
       }
     });
 
+    test('webhook picker distinguishes subscribable and reserved events', async ({ orgAdminPage }) => {
+      await orgAdminPage.goto('/settings/webhooks');
+      await orgAdminPage.getByRole('button', { name: /Add Endpoint/i }).click();
+
+      await expect(orgAdminPage.getByRole('checkbox', { name: /Anchor Secured/i })).toBeEnabled();
+      await expect(orgAdminPage.getByRole('checkbox', { name: /Record Verified/i })).toBeDisabled();
+      await expect(orgAdminPage.getByRole('checkbox', { name: /Anchor Batch Secured/i })).toBeDisabled();
+    });
+
     // WH-01/02/03 (SCRUM-2396/2397/2398): the page also composes the
     // delivery history, failed deliveries (DLQ), and event catalog sections.
     test('webhook page shows delivery history, failed deliveries, and event catalog', async ({ orgAdminPage }) => {
