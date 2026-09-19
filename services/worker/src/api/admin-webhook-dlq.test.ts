@@ -213,6 +213,22 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
     expect(second.body).toEqual({ resolved: 0, already_resolved: 2 });
   });
 
+  it('keeps the first operator as owner when a second resolve races its read-back', async () => {
+    const rows = [{ id: ID_1, resolved_at: null as string | null }];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+    const first = mockRes();
+    const second = mockRes();
+
+    await Promise.all([
+      handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1], note: 'first operator' }), first),
+      handleWebhookDlqResolve('22222222-2222-4222-8222-222222222222', mockReq({ ids: [ID_1], note: 'second operator' }), second),
+    ]);
+
+    expect(first.body).toEqual({ resolved: 1, already_resolved: 0 });
+    expect(second.body).toEqual({ resolved: 0, already_resolved: 1 });
+    expect(rows[0]).toMatchObject({ resolved_by: ADMIN, resolved_note: 'first operator' });
+  });
+
   it('mixed batch: some ids already resolved, some not — both counts correct in one call', async () => {
     const rows = [
       { id: ID_1, resolved_at: new Date().toISOString() }, // already resolved
