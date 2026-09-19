@@ -252,15 +252,15 @@ test.describe('DocuSign integration', () => {
 
     test('OAuth happy path transitions card from disconnected to connected after provisioning', async ({ orgAdminPage }) => {
       const callbackUrl = `http://localhost:3001/api/v1/integrations/docusign/oauth/callback?code=mock-code&state=e2e-state`;
-      let integrationQueryCount = 0;
+      let oauthCompleted = false;
 
-      // First queries return disconnected; after OAuth redirect, return connected.
-      // Threshold is 2 to tolerate React StrictMode double-mount in dev.
+      // Return disconnected until the mocked callback actually completes, then
+      // return the provisioned connection. Request-count thresholds are brittle:
+      // StrictMode and sibling connector hooks may legitimately re-read status.
       await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
         const url = route.request().url();
         if (url.includes('provider=eq.docusign')) {
-          integrationQueryCount += 1;
-          if (integrationQueryCount <= 2) {
+          if (!oauthCompleted) {
             // Initial load: not connected
             await route.fulfill({
               status: 200,
@@ -312,6 +312,7 @@ test.describe('DocuSign integration', () => {
       // before issuing this redirect. The provisioning result does not affect the
       // redirect — the UI always shows connected if the DB upsert succeeded.
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/callback**', async (route) => {
+        oauthCompleted = true;
         await route.fulfill({
           status: 302,
           headers: {

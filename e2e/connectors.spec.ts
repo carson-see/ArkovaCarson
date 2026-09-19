@@ -9,8 +9,50 @@
  * persist" is a genuine persistence check, not a UI-only assertion.
  */
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
-import { test as base } from '@playwright/test';
+import { test as base, type Page } from '@playwright/test';
 import { ROUTES } from '../src/lib/routes';
+
+const E2E_WORKER_BASE = process.env.VITE_WORKER_URL || 'http://localhost:3001';
+
+async function waitForRulesRateLimitHeadroom(page: Page, needed: number): Promise<void> {
+  const deadline = Date.now() + 150_000;
+  for (;;) {
+    const url = `${E2E_WORKER_BASE}/api/rules?e2e_headroom_probe=${Date.now()}`;
+    const [response] = await Promise.all([
+      page.waitForResponse(candidate => candidate.url() === url),
+      page.evaluate(async (probeUrl: string) => {
+        const result = await fetch(probeUrl, { cache: 'no-store' });
+        await result.text();
+      }, url),
+    ]);
+    // X-RateLimit-* is intentionally not CORS-exposed. Playwright observes
+    // the same browser request outside page JS so it can inspect the raw
+    // response without weakening production CORS or changing client identity.
+    const headers = await response.allHeaders();
+    const probe = {
+      status: response.status(),
+      remaining: headers['x-ratelimit-remaining'],
+      reset: headers['x-ratelimit-reset'],
+      retryAfter: headers['retry-after'],
+    };
+    if (!probe.remaining || !probe.reset || !/^\d+$/.test(probe.remaining) || !/^\d+$/.test(probe.reset)) {
+      throw new Error('The /api/rules headroom probe returned malformed rate-limit headers');
+    }
+    if (probe.status !== 429 && Number(probe.remaining) >= needed) return;
+    if (Date.now() > deadline) throw new Error('Shared /api/rules rate-limit bucket never freed up');
+
+    let waitMs = 5_000;
+    if (probe.status === 429) {
+      if (!probe.retryAfter || !/^\d+$/.test(probe.retryAfter)) {
+        throw new Error('The /api/rules 429 omitted a valid Retry-After header');
+      }
+      waitMs = Number(probe.retryAfter) * 1_000 + 1_000;
+    } else if (probe.reset) {
+      waitMs = Math.max(0, Number(probe.reset) * 1_000 - Date.now()) + 1_000;
+    }
+    await page.waitForTimeout(Math.min(waitMs, 65_000));
+  }
+}
 
 test.describe('Connectors page', () => {
   test.afterEach(async () => {
@@ -29,6 +71,13 @@ test.describe('Connectors page', () => {
   });
 
   test('org admin picks a Drive folder, chooses Secure it immediately, saves, and the selection persists on reload', async ({ orgAdminPage }) => {
+    test.setTimeout(180_000);
+    // The CI worker runs with NODE_ENV=test and intentionally does not trust
+    // X-Forwarded-For, so every browser shares ::1. Wait for measured room in
+    // the real /api/rules limiter before mounting the connector hooks instead
+    // of pretending a header creates an isolated client.
+    await orgAdminPage.goto(ROUTES.DASHBOARD);
+    await waitForRulesRateLimitHeadroom(orgAdminPage, 16);
     const service = getServiceClient();
     const { data: profile, error } = await service
       .from('profiles')

@@ -41,9 +41,11 @@ test.describe('Google Drive integration', () => {
 
     await orgAdminPage.goto(ROUTES.CONNECTORS);
     await expect(orgAdminPage.getByRole('heading', { name: 'Connectors' })).toBeVisible();
-    await expect(orgAdminPage.getByRole('heading', { name: 'Google Drive' })).toBeVisible();
+    const driveHeading = orgAdminPage.getByRole('heading', { name: 'Google Drive' });
+    await expect(driveHeading).toBeVisible();
+    const driveCard = driveHeading.locator('../..');
 
-    await orgAdminPage.getByRole('button', { name: 'Connect Drive' }).click();
+    await driveCard.getByRole('button', { name: 'Connect', exact: true }).click();
 
     await expect(orgAdminPage.getByText('Google Drive connected.').first()).toBeVisible();
     await expect(orgAdminPage).toHaveURL((url) => new URL(url).pathname === ROUTES.CONNECTORS);
