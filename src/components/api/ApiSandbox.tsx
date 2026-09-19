@@ -123,8 +123,8 @@ const ENDPOINTS: EndpointDef[] = [
     textParam('barNumber', 'Bar Number', '12345', true),
     textParam('jurisdiction', 'Jurisdiction', 'CA'),
   ]),
-  endpoint('POST', 'ai-search', '/api/v1/ai/search', 'AI Semantic Search', AI_PRICE, 'Semantic search across the record registry using natural language queries.', [
-    textParam('query', 'Search Query', 'accredited nursing programs in California', true),
+  endpoint('GET', 'verify-search', '/api/v1/verify/search', L.SANDBOX_SEARCH_TITLE, AI_PRICE, L.SANDBOX_SEARCH_DESC, [
+    textParam('q', 'Search Query', 'accredited nursing programs in California', true),
   ]),
 ];
 

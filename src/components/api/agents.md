@@ -35,3 +35,5 @@ ApiSandbox endpoint titles/descriptions scrubbed ("Verify Record", "record regis
 ## 2026-09-19 — Sandbox capability inventory
 
 `ApiSandbox.tsx` is a curated endpoint sampler, not a complete API console. Do not add `/api/v1/nessie/query`: the route is permanently disabled in production by founder directive. The live OpenAPI document is the authority for the complete supported surface.
+
+Verification search is `GET /api/v1/verify/search?q=...`. Its copy is centralized in `DEVELOPER_PAGE_LABELS` and must name the response's auditable `search_mode`; embeddings can be disabled or degraded, in which case the API returns `lexical_substring`.

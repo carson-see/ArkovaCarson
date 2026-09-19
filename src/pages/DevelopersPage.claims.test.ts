@@ -74,6 +74,11 @@ describe('DevelopersPage integration claims', () => {
     expect(SOURCE).not.toContain('"ai_metadata"');
   });
 
+  it('links API reference buttons to the live OpenAPI document', () => {
+    expect(SOURCE).toContain("const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs/spec.json`");
+    expect(SOURCE).not.toContain("`${PUBLIC_API_URL}/api/docs`");
+  });
+
   it('distinguishes REST and hosted MCP authentication', () => {
     expect(SOURCE).toContain('Authorization: Bearer');
     expect(SOURCE).toContain('X-API-Key');

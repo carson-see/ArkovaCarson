@@ -17,7 +17,7 @@ import { ROUTES } from '@/lib/routes';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
 import { PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
 
-const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs`;
+const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
 const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
 const NPM_SDK_URL = 'https://www.npmjs.com/package/arkova';
 const PYPI_SDK_URL = 'https://pypi.org/project/arkova/';

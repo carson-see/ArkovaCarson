@@ -17,4 +17,11 @@ describe('API Sandbox published capabilities', () => {
   it('states that the sandbox is a curated endpoint set', () => {
     expect(source).toContain('curated set of API endpoints');
   });
+
+  it('offers verification search with an auditable returned mode', () => {
+    expect(source).toContain("'/api/v1/verify/search'");
+    expect(source).toContain('SANDBOX_SEARCH_TITLE');
+    expect(source).toContain('SANDBOX_SEARCH_DESC');
+    expect(source).not.toContain("'AI Semantic Search'");
+  });
 });
