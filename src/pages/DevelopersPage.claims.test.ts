@@ -80,10 +80,13 @@ describe('DevelopersPage integration claims', () => {
     expect(SOURCE).toContain('https://edge.arkova.ai/mcp');
   });
 
-  it('does not advertise unreleased package versions as published', () => {
-    expect(SOURCE).toContain('npm: arkova@2.2.0');
-    expect(SOURCE).toContain('PyPI: arkova 2.3.0');
-    expect(SOURCE).toContain('npm: arkova-mcp-server@2.2.0');
-    expect(SOURCE).not.toContain('arkova@3.0.0');
+  it('uses version-neutral installs and registry links across a coordinated release', () => {
+    expect(SOURCE).toContain('npm install arkova');
+    expect(SOURCE).toContain('pip install arkova');
+    expect(SOURCE).toContain('npx -y arkova-mcp-server');
+    expect(SOURCE).toContain('https://www.npmjs.com/package/arkova');
+    expect(SOURCE).toContain('https://pypi.org/project/arkova/');
+    expect(SOURCE).not.toMatch(/arkova(?:-mcp-server)?@\d/);
+    expect(SOURCE).not.toContain('CLI is not yet published');
   });
 });

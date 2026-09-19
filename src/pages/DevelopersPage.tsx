@@ -19,6 +19,9 @@ import { PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
 
 const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs`;
 const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
+const NPM_SDK_URL = 'https://www.npmjs.com/package/arkova';
+const PYPI_SDK_URL = 'https://pypi.org/project/arkova/';
+const NPM_MCP_URL = 'https://www.npmjs.com/package/arkova-mcp-server';
 
 const CURL_LINES = [
   { num: '1', parts: [{ text: 'curl', cls: 'text-[#a8e8ff]' }, { text: ' -X GET', cls: 'text-[#dce3ed]' }] },
@@ -343,8 +346,8 @@ export function DevelopersPage() {
               </p>
               <div className="mb-6 rounded-lg border border-[#3c494e]/20 bg-[#192028] p-5 text-sm text-[#bbc9cf]">
                 <p><strong className="text-[#dce3ed]">Hosted:</strong> no install; discover the current catalog with <code className="text-[#a8e8ff]">tools/list</code>.</p>
-                <p className="mt-2"><strong className="text-[#dce3ed]">Local stdio:</strong> <code className="text-[#a8e8ff]">npx -y arkova-mcp-server</code>. The published 2.2.0 package is a legacy surface with a smaller, independently maintained tool set.</p>
-                <p className="mt-2 font-mono text-xs text-[#00d4ff]">npm: arkova-mcp-server@2.2.0</p>
+                <p className="mt-2"><strong className="text-[#dce3ed]">Local stdio:</strong> <code className="text-[#a8e8ff]">npx -y arkova-mcp-server</code>. Hosted and local tool catalogs are independently maintained, so discover tools from the transport you connect.</p>
+                <a className="mt-2 inline-block text-xs text-[#00d4ff] underline" href={NPM_MCP_URL} target="_blank" rel="noopener noreferrer">View arkova-mcp-server on npm</a>
               </div>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
@@ -455,7 +458,12 @@ export function DevelopersPage() {
               <span className="w-1.5 h-6 bg-[#00d4ff]" />
               SDK Examples
             </h2>
-            <p className="-mt-6 mb-8 text-sm text-[#bbc9cf]">Currently published: <code className="text-[#a8e8ff]">npm: arkova@2.2.0</code> · <code className="text-[#a8e8ff]">PyPI: arkova 2.3.0</code>. The API CLI is not yet published.</p>
+            <div className="-mt-6 mb-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[#bbc9cf]">
+              <code className="text-[#a8e8ff]">npm install arkova</code>
+              <a className="text-[#00d4ff] underline" href={NPM_SDK_URL} target="_blank" rel="noopener noreferrer">npm release status</a>
+              <code className="text-[#a8e8ff]">pip install arkova</code>
+              <a className="text-[#00d4ff] underline" href={PYPI_SDK_URL} target="_blank" rel="noopener noreferrer">PyPI release status</a>
+            </div>
             <div className="bg-[#080f16] rounded-xl border border-[#3c494e]/15 overflow-hidden shadow-2xl">
               <div className="flex items-center justify-between px-4 py-3 bg-[#2e353d]/50 border-b border-[#3c494e]/10">
                 <div className="flex gap-1">

@@ -848,4 +848,4 @@ RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash`
 
 ## 2026-09-19 — Developer integration claims
 
-`DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Package badges name only versions already visible in the public registries; never describe a coordinated but unpublished release as available. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.
+`DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Keep install commands version-neutral and link to package registries for live release status so coordinated publications do not immediately stale the page. Never describe a release candidate as published. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.
