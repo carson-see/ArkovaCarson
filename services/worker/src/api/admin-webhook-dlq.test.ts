@@ -155,20 +155,21 @@ describe('SCRUM-4514: GET /admin/webhook-dlq (list/counts)', () => {
 
 describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', () => {
   /** A tiny in-memory `webhook_dlq` stand-in shared across chained mock calls. */
-  function makeTable(rows: Array<{ id: string; resolved_at: string | null; resolved_note?: string; resolved_by?: string }>) {
+  function makeTable(rows: Array<{ id: string; resolved_at: string | null; resolved_note?: string; resolved_by?: string; resolved_request_id?: string }>) {
     function chainFor() {
       return {
-        update: (patch: { resolved_at: string; resolved_note: string; resolved_by: string }) => ({
+        update: (patch: { resolved_at: string; resolved_note: string; resolved_by: string; resolved_request_id: string }) => ({
           in: (_col: string, ids: string[]) => ({
             is: () => {
               const justResolved = rows.filter((r) => ids.includes(r.id) && r.resolved_at === null);
               for (const r of justResolved) Object.assign(r, patch);
-              return { select: () => ({ data: justResolved.map((r) => ({ id: r.id })), error: null }) };
+              return { error: null };
             },
           }),
         }),
         select: () => ({
           in: (_col: string, ids: string[]) => ({
+            eq: (_column: string, value: string) => ({ data: rows.filter((r) => ids.includes(r.id) && r.resolved_request_id === value).map((r) => ({ id: r.id })), error: null }),
             not: (_col2: string, _op: string, _val: unknown) => ({
               data: rows.filter((r) => ids.includes(r.id) && r.resolved_at !== null).map((r) => ({ id: r.id })),
               error: null,

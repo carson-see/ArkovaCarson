@@ -6781,6 +6781,9 @@ export type Database = {
           provider: string
           reason: string
           resolved_at: string | null
+          resolved_by: string | null
+          resolved_note: string | null
+          resolved_request_id: string | null
           webhook_id: string | null
         }
         Insert: {
@@ -6791,6 +6794,9 @@ export type Database = {
           provider: string
           reason: string
           resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_note?: string | null
+          resolved_request_id?: string | null
           webhook_id?: string | null
         }
         Update: {
@@ -6801,6 +6807,9 @@ export type Database = {
           provider?: string
           reason?: string
           resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_note?: string | null
+          resolved_request_id?: string | null
           webhook_id?: string | null
         }
         Relationships: []

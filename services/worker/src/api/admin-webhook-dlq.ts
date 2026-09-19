@@ -48,6 +48,7 @@
  */
 
 import type { Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
@@ -190,17 +191,17 @@ export async function handleWebhookDlqResolve(userId: string, req: Request, res:
 
   const uniqueIds = [...new Set(ids)];
   const nowIso = new Date().toISOString();
+  const requestId = randomUUID();
 
   try {
     // Atomic claim: only rows currently unresolved are matched, so calling
     // this twice with the same ids resolves them once, then resolves zero.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: justResolved, error: updateError } = await (db as any)
+    const { error: updateError } = await (db as any)
       .from('webhook_dlq')
-      .update({ resolved_at: nowIso, resolved_note: note, resolved_by: userId })
+      .update({ resolved_at: nowIso, resolved_note: note, resolved_by: userId, resolved_request_id: requestId })
       .in('id', uniqueIds)
-      .is('resolved_at', null)
-      .select('id');
+      .is('resolved_at', null);
 
     if (updateError) {
       logger.error({ error: updateError }, 'webhook-dlq resolve UPDATE failed');
@@ -208,6 +209,21 @@ export async function handleWebhookDlqResolve(userId: string, req: Request, res:
       return;
     }
 
+    // Do not use UPDATE ... .select() to count the CAS winners. PostgREST
+    // reapplies the mutated `resolved_at IS NULL` filter to RETURNING, which
+    // yields an empty set after a successful write. Read back the exact audit
+    // tuple written by this request instead.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: justResolved, error: readbackError } = await (db as any)
+      .from('webhook_dlq')
+      .select('id')
+      .in('id', uniqueIds)
+      .eq('resolved_request_id', requestId);
+    if (readbackError) {
+      logger.error({ error: readbackError }, 'webhook-dlq resolve ownership read-back failed');
+      res.status(500).json({ error: 'Failed to verify webhook DLQ resolution' });
+      return;
+    }
     const resolvedIds = (justResolved ?? []) as Array<{ id: string }>;
     const resolvedCount = resolvedIds.length;
 
