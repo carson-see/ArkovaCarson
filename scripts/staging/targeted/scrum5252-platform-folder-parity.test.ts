@@ -34,6 +34,9 @@ describe('SCRUM-5252 hosted parity target and token guards', () => {
     expect(() => validateTargets('https://dlfcwhljvkomeouykcwk.supabase.co',
       'https://arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app/other'))
       .toThrow();
+    expect(() => validateTargets('https://dlfcwhljvkomeouykcwk.supabase.co',
+      'https://user:pass@arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app'))
+      .toThrow();
   });
 
   it('requires the exact actor and aal2 claim', () => {
@@ -70,11 +73,19 @@ describe('SCRUM-5252 hosted parity target and token guards', () => {
       });
     }) as typeof fetch;
     try {
-      await workerRequest('https://worker.example', 'iam-secret', '/health', { jwt: 'app-secret' });
+      await workerRequest(
+        'https://arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app',
+        'iam-secret', '/health', { jwt: 'app-secret' },
+      );
       expect(captured?.get('x-serverless-authorization')).toBe('Bearer iam-secret');
       expect(captured?.get('authorization')).toBe('Bearer app-secret');
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('refuses a request target that did not pass the fixed B4 binding', async () => {
+    await expect(workerRequest('https://api.arkova.ai', 'iam-secret', '/health', {}))
+      .rejects.toThrow('refusing unverified worker request target');
   });
 });

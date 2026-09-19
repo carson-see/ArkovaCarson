@@ -9,6 +9,7 @@ import { runWithVerifiedCleanup } from './uat24-folder-feature-lifecycle';
 const EXPECTED_REF = 'dlfcwhljvkomeouykcwk';
 const EXPECTED_WORKER_HOST =
   'arkova-worker-cto-train-b4-0913-staging-270018525501.us-central1.run.app';
+const VERIFIED_WORKER_ORIGIN = `https://${EXPECTED_WORKER_HOST}`;
 const GCLOUD_USER_TOKEN_AUDIENCE = '32555940559.apps.googleusercontent.com';
 const IDS = {
   platform: '52520000-0000-4000-8000-00000000a001',
@@ -44,9 +45,11 @@ export function validateTargets(supabaseUrl: string, workerUrl: string): void {
   const supabase = new URL(supabaseUrl);
   const worker = new URL(workerUrl);
   assert(supabase.origin === `https://${EXPECTED_REF}.supabase.co` && supabase.pathname === '/'
-    && !supabase.search && !supabase.hash, 'refusing non-B4 Supabase target');
+    && !supabase.username && !supabase.password && !supabase.search && !supabase.hash,
+  'refusing non-B4 Supabase target');
   assert(worker.origin === `https://${EXPECTED_WORKER_HOST}` && worker.pathname === '/'
-    && !worker.search && !worker.hash, 'refusing non-B4 worker target');
+    && !worker.username && !worker.password && !worker.search && !worker.hash,
+  'refusing non-B4 worker target');
 }
 
 export function assertAal2Token(token: string, expectedUserId: string): void {
@@ -78,12 +81,13 @@ export async function workerRequest(
   workerUrl: string, iamToken: string, path: string, auth: { jwt?: string; apiKey?: string },
   init: RequestInit = {},
 ): Promise<{ status: number; body: Json }> {
+  assert(workerUrl === VERIFIED_WORKER_ORIGIN, 'refusing unverified worker request target');
   const headers = new Headers(init.headers);
   headers.set('content-type', 'application/json');
   headers.set('x-serverless-authorization', `Bearer ${iamToken}`);
   if (auth.jwt) headers.set('authorization', `Bearer ${auth.jwt}`);
   if (auth.apiKey) headers.set('x-api-key', auth.apiKey);
-  const response = await fetch(`${workerUrl}${path}`, { ...init, headers, redirect: 'error' });
+  const response = await fetch(`${VERIFIED_WORKER_ORIGIN}${path}`, { ...init, headers, redirect: 'error' });
   const body = await response.json().catch(() => ({})) as Json;
   return { status: response.status, body };
 }

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { runWithVerifiedCleanup } from './uat24-folder-feature-lifecycle';
 
 const EXPECTED_REF = 'vaarxclqdxnwoxziolmp';
+const VERIFIED_SUPABASE_ORIGIN = `https://${EXPECTED_REF}.supabase.co`;
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -21,12 +22,15 @@ const anchorId = required('UAT24_UNFILED_ANCHOR_ID');
 const connectionId = required('UAT24_CONNECTOR_CONNECTION_ID');
 const provider = process.env.UAT24_CONNECTOR_PROVIDER?.trim() || 'google_drive';
 const hostname = new URL(baseUrl).hostname;
-assert(hostname === `${EXPECTED_REF}.supabase.co`, `refusing non-UAT24 rig host ${hostname}`);
+assert(baseUrl === VERIFIED_SUPABASE_ORIGIN && hostname === `${EXPECTED_REF}.supabase.co`,
+  `refusing non-UAT24 rig target ${baseUrl}`);
 assert(provider === 'google_drive' || provider === 'docusign', 'unsupported connector provider');
 
 const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, 'content-type': 'application/json' };
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${baseUrl}/rest/v1/${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) } });
+  const response = await fetch(`${VERIFIED_SUPABASE_ORIGIN}/rest/v1/${path}`, {
+    ...init, headers: { ...headers, ...(init.headers ?? {}) }, redirect: 'error',
+  });
   const body = await response.text();
   if (!response.ok) {
     let code = 'unknown_error';
@@ -36,7 +40,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (body ? JSON.parse(body) : null) as T;
 }
 async function expectFailure(path: string, body: Record<string, unknown>, pattern: RegExp): Promise<void> {
-  const response = await fetch(`${baseUrl}/rest/v1/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  const response = await fetch(`${VERIFIED_SUPABASE_ORIGIN}/rest/v1/${path}`, {
+    method: 'POST', headers, body: JSON.stringify(body), redirect: 'error',
+  });
   const text = await response.text();
   assert(!response.ok, `${path} unexpectedly succeeded`);
   let code = 'unknown_error';
