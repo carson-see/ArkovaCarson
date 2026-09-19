@@ -2159,7 +2159,6 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
-  },
     '/referrals': {
       get: {
         summary: 'Partner referral code and attributed organizations',
