@@ -2,6 +2,7 @@
   "name": "@arkova/langchain",
   "version": "3.0.0",
   "description": "LangChain tool wrappers for Arkova credential verification API",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist", "LICENSE"],
@@ -19,5 +20,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   }
 }

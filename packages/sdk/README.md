@@ -83,8 +83,8 @@ const arkova = new Arkova({
   /** API key — get one from app.arkova.ai/settings/api-keys */
   apiKey: 'ak_live_...',
 
-  /** Override the API base URL (default: production worker) */
-  baseUrl: 'https://arkova-worker-270018525501.us-central1.run.app',
+  /** Override the API base URL (default: https://api.arkova.ai) */
+  baseUrl: 'https://api.arkova.ai',
 
   /** Optional retry tuning. Retries apply when the method is safe (GET/HEAD/OPTIONS)
    *  or the call is idempotent (verifyBatch, anchor, anchorBulk). 429 responses
@@ -102,7 +102,7 @@ const arkova = new Arkova({
 });
 ```
 
-The `apiKey` is the only thing you usually need. The SDK ships pointed at the production worker; only override `baseUrl` for local development or staging.
+The `apiKey` is the only thing you usually need. The SDK ships pointed at the public production API hostname; only override `baseUrl` for local development or staging.
 
 ---
 

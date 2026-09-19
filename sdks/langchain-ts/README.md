@@ -1,6 +1,12 @@
 # @arkova/langchain
 
-LangChain tool wrappers for the Arkova record verification API.
+Zero-dependency, LangChain-style callable tools for the Arkova record verification API.
+
+Each exported tool has `name`, `description`, and `call(input: string): Promise<string>`.
+The package does not depend on `@langchain/core`, and its classes do not extend
+LangChain `Tool`, `StructuredTool`, or `Runnable`. Use them directly in code that
+accepts this small callable shape, or wrap them in the adapter required by your
+installed LangChain version before passing them to an agent executor.
 
 ## Installation
 
@@ -18,10 +24,19 @@ const tools = getArkovaTools({
   apiKey: 'ak_live_your_api_key_here',
 });
 
-// Use with any LangChain agent
 // tools includes: ArkovaVerifyTool, ArkovaAnchorStatusTool, ArkovaSearchTool,
 //                 ArkovaAttestTool, ArkovaBatchVerifyTool, ArkovaVerifySignatureTool
+
+// The stable package contract is the tool's own call(string) method.
+const result = await tools[0].call('ARK-EXAMPLE-RECORD-001');
+
+// To use a current LangChain agent, wrap `name`, `description`, and `call`
+// with the Tool/DynamicTool adapter supplied by your installed LangChain version.
 ```
+
+Arkova does not claim direct compatibility with every LangChain release. The
+framework changes its tool base classes and invocation interfaces independently;
+pin and test your application-side adapter when upgrading LangChain.
 
 ## Tools
 

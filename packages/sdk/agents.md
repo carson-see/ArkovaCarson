@@ -16,6 +16,8 @@
   is an explicit devDependency; do not rely on the repository root install to supply it.
 - Runtime support starts at Node 20: the SDK uses global `crypto.subtle`, which is not available
   by default on the supported Node 18 line. Keep README and `engines.node` aligned.
+- The default origin is the public gateway `https://api.arkova.ai`, not a raw Cloud Run revision
+  hostname. `client.test.ts` pins the exact default request URL.
 - **npm name is unscoped `arkova` (CTO ruling 2026-08-18), superseding the 2026-08-01
   `@carsonarkova/sdk` scoped-package ruling below.** Parity with the PyPI package, which already
   publishes unscoped as `arkova`. An unscoped name needs no npm org at all — first-publish

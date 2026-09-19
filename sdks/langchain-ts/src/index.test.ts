@@ -95,6 +95,21 @@ describe('ArkovaVerifyTool', () => {
       }),
     );
   });
+
+  it('refuses redirects so a custom API key cannot be forwarded to another origin', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ public_id: 'X', status: 'SECURED' }),
+    });
+
+    const tool = new ArkovaVerifyTool(mockConfig);
+    await tool.call('X');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://test.arkova.io/api/v1/verify/X',
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
 });
 
 describe('ArkovaSearchTool', () => {

@@ -130,6 +130,9 @@ async function arkovaFetch(
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;
   return fetch(`${baseUrl}${path}`, {
     ...options,
+    // Never follow redirects while carrying the caller's custom API-key
+    // header. Keep this after `options` so no tool can opt back into follow.
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': config.apiKey,
