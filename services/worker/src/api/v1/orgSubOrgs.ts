@@ -21,6 +21,7 @@ import { buildInvitationEmail } from '../../email/templates.js';
 import { logger } from '../../utils/logger.js';
 import { db as _db } from '../../utils/db.js';
 import { callRpc } from '../../utils/rpc.js';
+import { emitSubOrgEvent } from '../../webhooks/subOrgEvents.js';
 import {
   resolveParentAdminOrg,
   subOrgAuditActor,
@@ -121,6 +122,7 @@ export interface AffiliateActionContext {
 }
 
 export interface AffiliateActionSpec {
+  webhookEventType: 'suborg.approved' | 'suborg.revoked';
   targetStatus: 'APPROVED' | 'REVOKED';
   alreadyStatusError: string;
   /** Machine code for `alreadyStatusError` on the published key surface (U6). */
@@ -704,6 +706,11 @@ export async function applyAffiliateStatusAction(
   if (!auditResult.ok) return auditResult;
 
   logger.info({ orgId: context.orgId, childOrgId: context.childOrgId }, action.successLog);
+  void emitSubOrgEvent({
+    eventType: action.webhookEventType,
+    parentOrgId: context.orgId,
+    childOrgId: context.childOrgId,
+  });
   return routeSuccess(undefined);
 }
 
@@ -739,6 +746,7 @@ async function handleAffiliateStatusAction(
 }
 
 export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
+  webhookEventType: 'suborg.approved',
   targetStatus: 'APPROVED',
   alreadyStatusError: 'Organization is already approved',
   alreadyStatusCode: 'already_approved',
@@ -750,6 +758,7 @@ export const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
 };
 
 export const REVOKE_AFFILIATE_ACTION: AffiliateActionSpec = {
+  webhookEventType: 'suborg.revoked',
   targetStatus: 'REVOKED',
   alreadyStatusError: 'Affiliation is already revoked',
   alreadyStatusCode: 'already_revoked',
@@ -930,6 +939,15 @@ orgSubOrgsRouter.post('/create', async (req: Request, res: Response) => {
     );
 
     logger.info({ orgId, childOrgId: childOrg.id }, 'Affiliate org created');
+
+    // SCRUM-3972 (R20): last thing before the response; parent-only (the
+    // affiliate has no endpoints yet at creation time, and nothing it owns has
+    // changed).
+    void emitSubOrgEvent({
+      eventType: 'suborg.created',
+      parentOrgId: orgId,
+      childOrgId: childOrg.id,
+    });
 
     res.status(201).json({
       affiliateOrg: childOrg,
@@ -1417,6 +1435,13 @@ export async function allocateSubOrgCreditsCore(
     amount > 0 ? 'suborg_credits_allocated' : 'suborg_credits_reclaimed',
   );
 
+  void emitSubOrgEvent({
+    eventType: amount > 0 ? 'suborg.credits_allocated' : 'suborg.credits_reclaimed',
+    parentOrgId: caller.orgId,
+    childOrgId,
+    data: { amount, parent_balance: data.parent_balance, child_balance: data.child_balance, note },
+  });
+
   return {
     status: 200,
     body: {
@@ -1483,7 +1508,39 @@ export async function offboardSubOrgCore(
       body: { error: code },
     };
   }
+  if (data.reclaimed > 0 && (
+    typeof data.parent_balance !== 'number' || !Number.isSafeInteger(data.parent_balance) || data.parent_balance < 0
+    || typeof data.child_balance !== 'number' || !Number.isSafeInteger(data.child_balance) || data.child_balance < 0
+  )) {
+    // The transaction may have committed, but malformed balance metadata
+    // cannot support a valid credit event. Do not guess or perform a racy read.
+    return { status: RPC_UNEXPECTED_STATUS, body: { error: 'unknown_error' } };
+  }
   logger.info({ orgId: caller.orgId, childOrgId, reclaimed: data.reclaimed, actorKind: caller.kind }, 'suborg_offboarded');
+  // The atomic RPC has committed reclaim, suspension and audit together.
+  // Both caller types reach this core; neither mount emits a second copy.
+  if (data.reclaimed > 0) {
+    void emitSubOrgEvent({
+      eventType: 'suborg.credits_reclaimed',
+      parentOrgId: caller.orgId,
+      childOrgId,
+      data: {
+        amount: -data.reclaimed,
+        parent_balance: data.parent_balance,
+        child_balance: data.child_balance,
+        note: reason ? `offboarding: ${reason}` : 'offboarding',
+      },
+    });
+  }
+  if (data.already_suspended !== true) {
+    void emitSubOrgEvent({
+      eventType: 'suborg.suspended', parentOrgId: caller.orgId, childOrgId, data: { reason },
+    });
+  }
+  void emitSubOrgEvent({
+    eventType: 'suborg.offboarded', parentOrgId: caller.orgId, childOrgId,
+    data: { reclaimed: data.reclaimed, reason },
+  });
   return {
     status: 200,
     body: {
@@ -1497,6 +1554,8 @@ export async function offboardSubOrgCore(
 interface OffboardRpcResult {
   success?: boolean;
   reclaimed?: number;
+  parent_balance?: number;
+  child_balance?: number;
   already_suspended?: boolean;
   error?: string;
 }
@@ -1567,14 +1626,9 @@ orgSubOrgsRouter.get('/credits', async (req: Request, res: Response) => {
 // (cross-org queue resolution), so revocation severs the affiliation, not the
 // tenancy. This endpoint is the real lever.
 //
-// ORDER IS THE DESIGN: reclaim, then suspend. If the suspend fails after a
-// successful reclaim the credits are safely back with the parent and the
-// sub-org is merely still active, so a retry finishes the job. Suspending first
-// would strand the parent's credits inside an org nobody can act in.
-//
-// The sub-org's ANCHORED RECORDS ARE NOT TOUCHED. They are the customer's
-// evidence, not ours, and they must stay verifiable on the public surface after
-// the relationship ends.
+// Offboarding is one database transaction: reclaim the locked current balance,
+// suspend the child and commit both audit records together. Shared core
+// notifications follow the successful RPC and use its locked balance result.
 
 const OffboardSchema = z.object({
   childOrgId: z.string().uuid(),
