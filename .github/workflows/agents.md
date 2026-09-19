@@ -859,3 +859,7 @@ When merging the invitation integration with the Zapier CI addition, preserve
 both `uat22-local-integration` and `zapier-validation` in the result map and
 the aggregation loop. Either failure or cancellation must fail required Tests;
 collecting a result without iterating it silently drops that suite from the gate.
+
+## 2026-09-19 — bounded ptau mirror recovery
+
+`recover-ptau-mirror.yml` is a manual, main-only production-environment workflow for recovering the pinned Powers of Tau input from the existing trusted zk artifact cache when both public upstreams return 403. It deliberately requests an impossible exact cache key and restores only the established `zk-artifacts-Linux-circom2.1.9-` prefix, then requires the repository-pinned SHA-256 and a >10 MB size before WIF authentication. Upload uses Cloud Storage generation precondition zero, so it creates the fixed object once and cannot overwrite any existing bytes. A second download into a fresh runner-temp path rechecks the same hash without using Actions cache. It does not create the bucket or alter public IAM; those one-time infrastructure operations stay explicit and reviewable.

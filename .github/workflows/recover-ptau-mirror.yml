@@ -1,0 +1,76 @@
+name: Recover trusted ptau mirror
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: arkova1
+  MIRROR_BUCKET: arkova1-public-build-artifacts
+  PTAU_NAME: powersOfTau28_hez_final_14.ptau
+  PTAU_SHA256: 489be9e5ac65d524f7b1685baac8a183c6e77924fdb73d2b8105e335f277895d
+  CACHE_PREFIX: zk-artifacts-Linux-circom2.1.9-
+
+jobs:
+  recover:
+    name: Verify cache and publish immutable ptau mirror
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restore a previously trusted zk artifact cache
+        id: zk-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: services/worker/circuits/artifacts
+          key: ptau-recovery-never-exact-${{ github.run_id }}
+          restore-keys: |
+            zk-artifacts-Linux-circom2.1.9-
+          fail-on-cache-miss: true
+
+      - name: Require fallback cache provenance and pinned ptau checksum
+        run: |
+          set -euo pipefail
+          test "${{ steps.zk-cache.outputs.cache-hit }}" != 'true'
+          restored_key='${{ steps.zk-cache.outputs.cache-matched-key }}'
+          case "$restored_key" in
+            "${CACHE_PREFIX}"*) ;;
+            *) echo "::error::Unexpected cache key: ${restored_key}"; exit 1 ;;
+          esac
+          ptau="services/worker/circuits/artifacts/${PTAU_NAME}"
+          test -f "$ptau"
+          test "$(stat -c %s "$ptau")" -gt 10000000
+          echo "${PTAU_SHA256}  ${ptau}" | sha256sum -c -
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      - name: Publish exact bytes without overwriting an existing object
+        run: |
+          set -euo pipefail
+          source="services/worker/circuits/artifacts/${PTAU_NAME}"
+          target="gs://${MIRROR_BUCKET}/zk/${PTAU_NAME}"
+          gcloud storage cp --if-generation-match=0 "$source" "$target"
+          gcloud storage objects describe "$target" --format='yaml(name,generation,size,checksums)'
+
+      - name: Verify a fresh cache-independent mirror download
+        run: |
+          set -euo pipefail
+          target="gs://${MIRROR_BUCKET}/zk/${PTAU_NAME}"
+          fresh="${RUNNER_TEMP}/fresh-${PTAU_NAME}"
+          test ! -e "$fresh"
+          gcloud storage cp "$target" "$fresh"
+          test "$(stat -c %s "$fresh")" -gt 10000000
+          echo "${PTAU_SHA256}  ${fresh}" | sha256sum -c -
+          rm -f "$fresh"
