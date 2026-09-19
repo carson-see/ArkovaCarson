@@ -40,6 +40,8 @@ jobs:
           uv pip install --python .venv/bin/python --no-deps --no-build dist/*.whl
 
       - name: Test installed wheel
+        env:
+          ARKOVA_TEST_INSTALLED_WHEEL: "1"
         run: uv run --locked --no-sync --no-build pytest
 
       - name: Lint

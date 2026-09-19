@@ -399,6 +399,7 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
       expect(workflow).toMatch(/cache-dependency-glob:\s*packages\/arkova-py\/uv\.lock/u);
       expect(workflow).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);
       expect(workflow).toMatch(/uv pip install --python \.venv\/bin\/python --no-deps --no-build dist\/\*\.whl/u);
+      expect(workflow).toMatch(/ARKOVA_TEST_INSTALLED_WHEEL:\s*["']1["']/u);
       expect(workflow).toMatch(/uv run --locked --no-sync --no-build pytest/u);
       expect(workflow).toMatch(/uv run --locked --no-sync --no-build ruff check src tests/u);
       expect(workflow).not.toContain("--editable");

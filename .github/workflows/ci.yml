@@ -2058,6 +2058,8 @@ jobs:
           uv pip install --python .venv/bin/python --no-deps --no-build dist/*.whl
 
       - name: Run Python SDK tests
+        env:
+          ARKOVA_TEST_INSTALLED_WHEEL: "1"
         run: uv run --locked --no-sync --no-build pytest
 
       # Ruff and every other dev dependency come from uv.lock. This is the same
