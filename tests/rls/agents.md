@@ -193,3 +193,11 @@ SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
 timestamp in a separate `finally` path. The lock times out instead of evicting
 an apparently stale owner. Keep file parallelism enabled so unrelated fixture
 collisions remain visible.
+
+## 2026-09-19 — Referral RPC missing-role claims (migration 0466)
+
+`referral-rpc-empty-claims.test.ts` runs the actual 0456/0466 function bodies in
+native PostgreSQL transactions. It proves the pre-fix predicates skip both
+tenant guards when request role claims are absent, then proves 0466 denies that
+context while preserving service-role and authenticated tenant-member paths.
+The candidate migration is installed only inside each rolled-back transaction.

@@ -1603,3 +1603,11 @@ balance read; the existing public offboard HTTP shape stays unchanged.
 The native harness asserts exact balances across both serialization orders and
 zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
 for the final C3 source review and fresh qualification.
+
+## 2026-09-19 — Referral RPC empty-claims guard (0466)
+
+Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both
+referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
+claims are absent; every service-role comparison must coalesce that result to
+`false` so PL/pgSQL authority guards fail closed. Normal authenticated and
+service-role paths remain unchanged.

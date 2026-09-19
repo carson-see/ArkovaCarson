@@ -90,6 +90,12 @@ describe('SCRUM-5024 — record_org_referral tenant authority', () => {
     expect(body).not.toContain('request.jwt.claim.role');
   });
 
+  it('treats a missing caller role as non-service instead of skipping the guard', () => {
+    expect(body).toMatch(
+      /coalesce\(public\.get_caller_role\(\) = 'service_role',\s*false\)/,
+    );
+  });
+
   it('does not use `NOT IN (SELECT ...)` for the membership test', () => {
     // `x NOT IN (a set containing NULL)` is NULL, and `IF NULL THEN RAISE` does
     // not fire — a fail-OPEN authority check. `NOT EXISTS` is NULL-safe.
@@ -140,5 +146,11 @@ describe('SCRUM-5024 — get_org_referrals tenant authority', () => {
   it('uses a NULL-safe membership test', () => {
     expect(body).toContain('get_user_org_ids');
     expect(body).not.toMatch(/NOT IN \(SELECT public\.get_user_org_ids\(\)\)/);
+  });
+
+  it('treats a missing caller role as non-service instead of skipping the guard', () => {
+    expect(body).toMatch(
+      /coalesce\(public\.get_caller_role\(\) = 'service_role',\s*false\)/,
+    );
   });
 });
