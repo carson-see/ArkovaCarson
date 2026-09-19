@@ -140,6 +140,31 @@ describe('Deploy Worker traffic-safety contract', () => {
     expect(canaryStep()).toMatch(/\|\|ENABLE_CONNECTOR_ARTIFACT_DRAIN=true/u);
   });
 
+  it('wires the proof-signing KMS key so ?format=signed stops answering 503', () => {
+    // SCRUM-5258. The signer (api/v1/verify-proof.ts `resolveSigner`) reads
+    // PROOF_SIGNING_KMS_KEY + PROOF_SIGNING_KEY_ID straight off process.env and
+    // returns null when either is absent, so `?format=signed` answered 503 on
+    // every prod revision from the feature shipping (SCRUM-900, 2026-04-28)
+    // until this wiring landed — 3.5 months during which the KMS key existed,
+    // was ENABLED, carried the right IAM, and had its PUBLIC half already
+    // published at /.well-known/arkova-keys.json and /.well-known/did.json.
+    // Nothing was broken; two env vars were never set.
+    //
+    // There is NO Zod validation for these two in config.ts (unlike the
+    // Bitcoin KMS key), so a typo here does not fail the boot — it silently
+    // restores the 503. That is exactly why this is asserted in the workflow
+    // contract and again against the serving revision below.
+    //
+    // The key id must match the `active` entry in the public key registry
+    // (`proofKeysRouter`), or a verifier resolving a bundle's signing_key_id
+    // finds no key and cannot check the signature.
+    const canary = canaryStep();
+    expect(canary).toMatch(
+      /\|\|PROOF_SIGNING_KMS_KEY=projects\/arkova1\/locations\/global\/keyRings\/arkova-signing\/cryptoKeys\/proof-signing\/cryptoKeyVersions\/1/u,
+    );
+    expect(canary).toMatch(/\|\|PROOF_SIGNING_KEY_ID=arkova-proof-2026-q2/u);
+  });
+
   it('asserts at runtime that the serving revision carries the required config', () => {
     const verify = step('Verify serving revision carries required config');
     expect(verify).toMatch(/gcloud run revisions describe/u);
@@ -152,6 +177,8 @@ describe('Deploy Worker traffic-safety contract', () => {
       'ENABLE_DOCUSIGN_WEBHOOK',
       'DOCUSIGN_DEMO',
       'ENABLE_CONNECTOR_ARTIFACT_DRAIN',
+      'PROOF_SIGNING_KMS_KEY',
+      'PROOF_SIGNING_KEY_ID',
     ]) {
       expect(verify, `${name} is not asserted on the serving revision`).toContain(name);
     }
