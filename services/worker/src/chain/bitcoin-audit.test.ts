@@ -370,7 +370,7 @@ describe('Bitcoin Audit Hardening', () => {
        
       // bitcoin imported at top level
       const tx = bitcoin.Transaction.fromHex(result.txHex);
-      const opReturnOutput = tx.outs.find((o: { script: Buffer }) => o.script[0] === 0x6a);
+      const opReturnOutput = tx.outs.find((o: { script: Uint8Array }) => o.script[0] === 0x6a);
       expect(opReturnOutput).toBeDefined();
     });
 
