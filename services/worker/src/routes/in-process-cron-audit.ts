@@ -61,7 +61,7 @@ export type InProcessCronGuard =
 
 /** What a second concurrent copy actually costs. Ordered least to most severe. */
 export type InProcessCronDoubleFireImpact =
-  /** Fully guarded — the loser no-ops. */
+  /** The loser no-ops while the recorded guard is held; rationale names any lease-loss edge. */
   | 'none'
   /** Duplicated reads/CPU; no incorrect state. */
   | 'wasted-work'
@@ -135,7 +135,11 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
     rationale:
       'Both the five-minute in-process task and /jobs/process-revocations call '
       + 'runLeasedRevocationSweep, which holds REVOCATION_RUN_LEASE before selecting any anchor. '
-      + 'The losing instance no-ops before treasury UTXO selection or a chain call.',
+      + 'The ordinary losing instance no-ops before treasury UTXO selection or a chain call. This '
+      + 'is strong overlap reduction, not an exactly-once broadcast claim: withRunLease abandons '
+      + 'a body after maxRunMs and cannot cancel its promise, so a pathologically hung chain call '
+      + 'could resume after the lease is released. Revocation still needs a durable pre-broadcast '
+      + 'per-anchor claim/journal to eliminate that residual chain window.',
   },
   {
     jobName: 'process-webhook-retries',
@@ -237,7 +241,10 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
     rationale:
       'Both the six-hour in-process task and /jobs/rebroadcast-txs call '
       + 'runLeasedRebroadcastSweep. REBROADCAST_RUN_LEASE serializes the read/increment/write '
-      + 'sequence, so attempts cannot be lost between warm instances.',
+      + 'sequence in ordinary operation. The body is bounded to 20 transactions with 10-second '
+      + 'network timeouts, far below maxRunMs, but the lease deadline still abandons rather than '
+      + 'cancels a promise; a pathological late continuation can therefore duplicate idempotent '
+      + 'raw-tx broadcast work or race the advisory attempt counter.',
   },
   {
     jobName: 'consolidate-utxos',
