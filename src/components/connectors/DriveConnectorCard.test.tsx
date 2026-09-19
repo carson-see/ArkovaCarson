@@ -96,7 +96,7 @@ describe('DriveConnectorCard', () => {
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     expect(screen.getByText('Checking')).toBeInTheDocument();
-    const connectButton = screen.getByRole('button', { name: /connect drive/i });
+    const connectButton = screen.getByRole('button', { name: CONNECTIONS_LABELS.CONNECT_BUTTON });
     expect(connectButton).toBeDisabled();
   });
 
@@ -104,7 +104,7 @@ describe('DriveConnectorCard', () => {
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /connect drive/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.CONNECT_BUTTON })).toBeInTheDocument();
     });
     expect(screen.getByText(/not connected/i)).toBeInTheDocument();
 
@@ -123,7 +123,7 @@ describe('DriveConnectorCard', () => {
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
     });
     expect(screen.getByText('Connected')).toBeInTheDocument();
 
@@ -170,7 +170,7 @@ describe('DriveConnectorCard', () => {
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
     });
     expect(fromMock).not.toHaveBeenCalledWith('anchors');
     expect(screen.queryByText(/secured via drive/i)).not.toBeInTheDocument();
@@ -209,7 +209,7 @@ describe('DriveConnectorCard', () => {
 
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
-    const connectButton = await screen.findByRole('button', { name: /connect drive/i });
+    const connectButton = await screen.findByRole('button', { name: CONNECTIONS_LABELS.CONNECT_BUTTON });
     await waitFor(() => expect(connectButton).toBeEnabled());
     fireEvent.click(connectButton);
 
@@ -231,10 +231,10 @@ describe('DriveConnectorCard', () => {
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
     });
 
-    const disconnectButton = screen.getByRole('button', { name: /disconnect/i });
+    const disconnectButton = screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON });
     fireEvent.click(disconnectButton);
 
     await waitFor(() => {
@@ -261,7 +261,7 @@ describe('DriveConnectorCard', () => {
 
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
-    const disconnectButton = await screen.findByRole('button', { name: /disconnect/i });
+    const disconnectButton = await screen.findByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON });
     fireEvent.click(disconnectButton);
 
     await waitFor(() => {
@@ -305,7 +305,7 @@ describe('DriveConnectorCard', () => {
         json: () => Promise.resolve(body),
       });
       render(<DriveConnectorCard orgId={ORG_ID} />);
-      const connectButton = await screen.findByRole('button', { name: /connect drive/i });
+      const connectButton = await screen.findByRole('button', { name: CONNECTIONS_LABELS.CONNECT_BUTTON });
       await waitFor(() => expect(connectButton).toBeEnabled());
       fireEvent.click(connectButton);
     }
