@@ -1,4 +1,8 @@
 # services/worker/src/
+The global CORS middleware runs before all route mounts but defers the exact `/api/v1` boundary to
+the v1 router's distinct CORS policy. Non-v1 routes retain the narrower browser header contract.
+Keep the mount-order regression in `index.test.ts` when changing either layer.
+
 PR #2904 review: `memory-leaks.test.ts` explicitly supplies the disabled fanout config while importing actual delivery/lifecycle cleanup. The suite remains independent of configured-worker credentials.
 
 _Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_

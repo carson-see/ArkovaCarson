@@ -58,10 +58,18 @@ describe('ThirdPartyNoticesPage', () => {
   // it appeared NOWHERE. Electing MIT is exactly what makes MIT attribution
   // load-bearing, so this is the case where the omission mattered most.
   it('discloses jszip, the dual-licensed dependency used under MIT', () => {
+    const lock = JSON.parse(readFileSync(resolve(REPO_ROOT, 'package-lock.json'), 'utf8')) as {
+      packages: Record<string, { version?: string }>;
+    };
+    const version = lock.packages['node_modules/jszip']?.version;
+    expect(version).toBeTruthy();
     render(<MemoryRouter><ThirdPartyNoticesPage /></MemoryRouter>);
-    expect(
-      screen.getByText((_content, el) => el?.textContent === 'jszip@3.10.1'),
-    ).toBeDefined();
+    const name = screen.getByText((_content, el) => el?.textContent === `jszip@${version}`);
+    const entry = name.closest('li');
+    expect(entry).not.toBeNull();
+    expect(within(entry!).getByText(/USES IT UNDER MIT/)).toBeDefined();
+    expect(within(entry!).getByText('Unmodified upstream source').closest('a')?.getAttribute('href'))
+      .toBe(`https://registry.npmjs.org/jszip/-/jszip-${version}.tgz`);
   });
 
   it('never badges a shipped component as not-yet-shipped (R-7)', () => {

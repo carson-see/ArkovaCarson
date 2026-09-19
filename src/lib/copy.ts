@@ -755,6 +755,35 @@ export const API_KEY_LABELS = {
   ACTIVE: 'Active',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  // SCRUM-5023 — expiry visibility. "Active" and "Expired" are terminal
+  // states the user can only react to; EXPIRING_SOON is the one that leaves
+  // time to act, which is the whole point of the story.
+  EXPIRING_SOON: 'Expiring soon',
+  // Remaining-time fragments appended to the badge. Split by plurality rather
+  // than printing "in 0 days" / "in 1 days".
+  EXPIRES_TODAY: 'today',
+  EXPIRES_IN_ONE_DAY: 'in 1 day',
+  EXPIRES_IN_DAYS: 'in {days} days',
+  EXTEND_KEY: 'Extend',
+  EXTEND_TITLE: 'Extend API Key Expiry',
+  EXTEND_DESCRIPTION:
+    'Choose a new expiry, counted from now. The key itself does not change, so there is nothing to redistribute.',
+  EXTEND_30_DAYS: '30 days',
+  EXTEND_90_DAYS: '90 days',
+  EXTEND_365_DAYS: '1 year',
+  EXTEND_REMOVE: 'Remove expiry',
+  EXTEND_FAILED: 'Failed to change the expiry. It is unchanged — please try again.',
+  // Every preset REPLACES the current expiry rather than adding to it, so the
+  // current one has to be on screen: without it a user cannot tell which
+  // presets extend the key and which quietly cut it short.
+  EXTEND_CURRENT: 'Currently expires {date}.',
+  EXTEND_CURRENT_NONE: 'This key currently has no expiry.',
+  EXTEND_CONFIRM_SHORTEN:
+    '{option} is EARLIER than this key\u2019s current expiry. The key will stop working sooner than it does today.',
+  EXTEND_CONFIRM_REMOVE:
+    'This key will never expire. It stays usable until someone revokes it.',
+  EXTEND_CONFIRM_APPLY: 'Yes, change it',
+  EXTEND_CONFIRM_CANCEL: 'Go back',
   LAST_USED: 'Last used',
   NEVER_USED: 'Never used',
   FETCH_ERROR: 'Unable to load API keys. Please refresh and try again.',

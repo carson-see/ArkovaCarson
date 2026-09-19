@@ -737,7 +737,7 @@ export interface IntentReconcileResult {
   rejectedReason?: string;
 }
 
-interface TxidJournalDbRow {
+export interface TxidJournalDbRow {
   id: string;
   batch_id: string;
   txid: string;
@@ -1020,15 +1020,18 @@ async function resolveTxidJournal(
   return true;
 }
 
-function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
+export function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
   if (!Array.isArray(row.leaf_order)) {
     throw new Error('leaf_order is not an array');
   }
   const leaves = row.leaf_order.map((leaf) => {
     const candidate = leaf as { anchor_id?: unknown; fingerprint?: unknown };
+    if (typeof candidate.anchor_id !== 'string' || typeof candidate.fingerprint !== 'string') {
+      throw new Error('leaf_order entries require string anchor_id and fingerprint');
+    }
     return {
-      anchorId: String(candidate.anchor_id ?? ''),
-      fingerprint: String(candidate.fingerprint ?? ''),
+      anchorId: candidate.anchor_id,
+      fingerprint: candidate.fingerprint,
     };
   });
   const entry = buildTxidJournalEntry({

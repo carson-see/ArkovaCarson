@@ -90,7 +90,7 @@ function buildScriptHex(fingerprint: string, metaTrunc8Hex?: string): string {
   const parts = [OP_RETURN_PREFIX, Buffer.from(fingerprint, 'hex')];
   if (metaTrunc8Hex) parts.push(Buffer.from(metaTrunc8Hex, 'hex'));
   const payload = Buffer.concat(parts);
-  return bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]).toString('hex');
+  return Buffer.from(bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload])).toString('hex');
 }
 
 describe('SCRUM-2486 AC-3: frozen fingerprint → on-chain mapping', () => {
@@ -151,8 +151,8 @@ describe('SCRUM-2486 AC-3: frozen fingerprint → on-chain mapping', () => {
       Buffer.from('XXXX'),
       Buffer.from(FROZEN.fingerprint, 'hex'),
     ]);
-    const wrongScriptHex = bitcoin.script
-      .compile([bitcoin.opcodes.OP_RETURN, wrongPrefix])
+    const wrongScriptHex = Buffer.from(bitcoin.script
+      .compile([bitcoin.opcodes.OP_RETURN, wrongPrefix]))
       .toString('hex');
     expect(wrongScriptHex).not.toBe(FROZEN.scriptHex);
     // And the real extractor rejects the non-ARKV script (returns null).

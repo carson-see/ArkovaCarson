@@ -74,7 +74,7 @@ describe('handleAnchorDocument submission action parity', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://worker.test/api/v1/anchor');
-    expect(init.redirect).toBe('error');
+    expect(init.redirect).toBe('manual');
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
       fingerprint: 'c'.repeat(64),
@@ -82,6 +82,27 @@ describe('handleAnchorDocument submission action parity', () => {
       credential_type: 'OTHER',
       metadata: { credential_type: 'OTHER' },
     }));
+  });
+
+  it('rejects a worker redirect without forwarding the credential to its target', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: 'https://attacker.example/steal' } }));
+
+    const result = await handleAnchorDocument({
+      content_hash: 'd'.repeat(64),
+      record_type: 'document',
+    }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('HTTP 302');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/anchor',
+      expect.objectContaining({ redirect: 'manual', headers: expect.objectContaining({ 'X-API-Key': 'ak_test_secret' }) }),
+    );
   });
 
   it('preserves a canonical worker credential type', async () => {
@@ -244,7 +265,7 @@ describe('handleGetSubmissionStatus caller-scoped proxy', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'https://worker.test/api/v1/anchor/ark_test/submission-status',
       expect.objectContaining({
-        redirect: 'error',
+        redirect: 'manual',
         signal: expect.any(AbortSignal),
         headers: { Accept: 'application/json', 'X-API-Key': 'ak_test_secret' },
       }),
@@ -1559,7 +1580,7 @@ describe('arkova_manage_folders', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'https://worker.test/api/v1/folders?owner_scope=ORG',
       expect.objectContaining({
-        redirect: 'error',
+        redirect: 'manual',
         headers: expect.objectContaining({ 'X-API-Key': 'ak_test_caller' }),
         signal: expect.any(AbortSignal),
       }),
@@ -1602,6 +1623,24 @@ describe('arkova_manage_folders', () => {
         method, ...(body ? { body: JSON.stringify(body) } : {}),
       }));
     }
+  });
+
+  it.each([
+    ['API key', { callerApiKey: 'ak_test_caller' }, { 'X-API-Key': 'ak_test_caller' }],
+    ['Bearer', { callerAuthorization: 'Bearer verified-token' }, { Authorization: 'Bearer verified-token' }],
+  ])('rejects a folder redirect without forwarding the verified %s credential', async (_kind, credential, expectedHeader) => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://attacker.example/steal' } }));
+    const result = await handleManageFolders(
+      { action: 'list' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', ...credential },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('307');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders',
+      expect.objectContaining({ redirect: 'manual', headers: expect.objectContaining(expectedHeader) }),
+    );
   });
 
   it('rejects ambiguous bulk id lists before a worker call', async () => {

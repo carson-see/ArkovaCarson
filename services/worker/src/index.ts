@@ -23,7 +23,7 @@ import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
 import { rateLimiters } from './utils/rateLimit.js';
 import { apiIpShadowGuard, publicVerifyAnonLimiter } from './middleware/apiIpShadowGuard.js';
-import { apiV1Router } from './api/v1/router.js';
+import { apiV1CorsMiddleware, apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 import { badgeRouter } from './api/badge.js';
@@ -160,6 +160,12 @@ app.use(requireCloudflareOrigin);
 // for ALL routes (health, billing, admin, anchor, cron, api/v1, etc.).
 // Previously corsMiddleware was per-route which missed OPTIONS preflight.
 app.use(corsMiddleware);
+
+// The v1 API owns a distinct CORS contract (API-key/idempotency headers, PUT,
+// and its own production origin policy). Mount that owner at the exact prefix
+// before payment, feature, auth, and side-router middleware can answer OPTIONS.
+app.use('/api/v1', apiV1CorsMiddleware);
+app.use('/v1', apiV1CorsMiddleware);
 
 // ─── Health check — always available, no auth (Constitution 1.9) ───
 // P7-TS-06: Enhanced with subsystem checks (anchoring, KMS, fee rate)

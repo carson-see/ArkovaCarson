@@ -64,6 +64,7 @@ const {
     enableProdNetworkAnchoring: false,
     useMocks: true,
     frontendUrl: 'http://localhost:5173',
+    corsAllowedOrigins: 'http://localhost:5173',
     apiKeyHmacSecret: 'test-hmac-secret',
     // SCRUM-3888: default off, matching config.ts's default — mutated per-test
     // in the "origin guard mount" describe block and restored in its afterEach.
@@ -793,6 +794,78 @@ describe('worker server', () => {
 
       expect(res.status).toBe(204);
       expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
+  });
+
+  describe('OPTIONS /api/v1/* (API-key CORS preflight)', () => {
+    it('advertises the v1 authentication and idempotency headers before the v1 router runs', async () => {
+      const res = await request(app, 'OPTIONS', '/api/v1/webhooks', undefined, {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'x-api-key,idempotency-key,content-type',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Origin']).toBe('http://localhost:5173');
+      expect(res.headers['Access-Control-Allow-Headers']).toContain('X-API-Key');
+      expect(res.headers['Access-Control-Allow-Headers']).toContain('Idempotency-Key');
+      expect(res.headers['Access-Control-Allow-Methods']).toContain('PUT');
+    });
+
+    it('uses the v1 router origin policy for disallowed origins', async () => {
+      const res = await request(app, 'OPTIONS', '/api/v1/folders/folder-id/connector', undefined, {
+        origin: 'https://evil.example.com',
+        'access-control-request-method': 'PUT',
+        'access-control-request-headers': 'x-api-key,content-type',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Origin']).toBeUndefined();
+      expect(res.headers['Access-Control-Allow-Headers']).toBeUndefined();
+    });
+
+    it('does not advertise v1-only headers on non-v1 browser routes', async () => {
+      const res = await request(app, 'OPTIONS', '/api/checkout/session', undefined, {
+        origin: 'http://localhost:5173',
+      });
+
+      expect(res.headers['Access-Control-Allow-Headers']).not.toContain('X-API-Key');
+      expect(res.headers['Access-Control-Allow-Headers']).not.toContain('Idempotency-Key');
+    });
+
+    it('does not treat /api/v10 as the v1 boundary', async () => {
+      const res = await request(app, 'OPTIONS', '/api/v10/probe', undefined, {
+        origin: 'http://localhost:5173',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Headers']).toBe(
+        'Content-Type, Authorization, X-Cron-Secret',
+      );
+    });
+
+    it('gives the legacy /v1 alias the same preflight contract', async () => {
+      const res = await request(app, 'OPTIONS', '/v1/folders/folder-id/connector', undefined, {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'PUT',
+        'access-control-request-headers': 'x-api-key,idempotency-key,content-type',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Headers']).toContain('X-API-Key');
+      expect(res.headers['Access-Control-Allow-Headers']).toContain('Idempotency-Key');
+      expect(res.headers['Access-Control-Allow-Methods']).toContain('PUT');
+    });
+
+    it('does not treat /v10 as the legacy v1 boundary', async () => {
+      const res = await request(app, 'OPTIONS', '/v10/probe', undefined, {
+        origin: 'http://localhost:5173',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Headers']).toBe(
+        'Content-Type, Authorization, X-Cron-Secret',
+      );
     });
   });
 

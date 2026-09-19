@@ -97,8 +97,8 @@
     },
     {
       "name": "jszip",
-      "version": "3.10.1",
-      "reason": "Dual-licensed (MIT OR GPL-3.0-or-later); used under MIT. Transitive dependency of mammoth.js for .docx extraction."
+      "version": "3.10.2",
+      "reason": "Dual-licensed (MIT OR GPL-3.0-or-later); used under MIT for client-side ZIP/XML and mammoth DOCX extraction. Version 3.10.2 license text is byte-identical to reviewed 3.10.1 (SHA-256 566c953c6090b1218ca6217dd7359d45dde46581968586dc607d59a78af6a9c4)."
     },
     {
       "name": "libheif-js",
