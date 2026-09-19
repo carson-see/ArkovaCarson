@@ -34,7 +34,7 @@ import { createServiceClient } from '../../src/tests/rls/helpers';
 const RUN_STARTED = Date.now();
 const RUN_ID = RUN_STARTED.toString(36);
 const RUN_HEX = RUN_STARTED.toString(16).padStart(12, '0').slice(-12);
-const ORG_ID = 'f19e2400-0000-4000-8000-0000000005120';
+const ORG_ID = 'f19e2400-0000-4000-8000-000000005120';
 
 let fpSeed = 0;
 function nextFingerprint(): string {
