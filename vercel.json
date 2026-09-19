@@ -10,7 +10,8 @@
       "rescue/*": true,
       "feature/*": true,
       "security/*": true,
-      "chore/*": true
+      "chore/*": true,
+      "soak-evidence/*": false
     }
   },
   "headers": [
