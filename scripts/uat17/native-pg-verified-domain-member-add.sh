@@ -21,6 +21,15 @@ CREATE TYPE profile_status AS ENUM ('ACTIVE','PENDING_ACTIVATION','DEACTIVATED')
 CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,raw_app_meta_data jsonb DEFAULT '{}');
 CREATE TABLE organizations(id uuid PRIMARY KEY,display_name text,domain text,domain_verified boolean DEFAULT false,verification_status text,suspended boolean NOT NULL DEFAULT false,payment_state text);
 CREATE TABLE profiles(id uuid PRIMARY KEY,email text NOT NULL,full_name text,org_id uuid,role user_role,role_set_at timestamptz,deleted_at timestamptz,is_platform_admin boolean DEFAULT false,status profile_status DEFAULT 'ACTIVE');
+CREATE FUNCTION check_role_immutability() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.role IS NOT NULL AND NEW.role IS DISTINCT FROM OLD.role THEN
+    RAISE EXCEPTION 'User role cannot be changed once set' USING ERRCODE = '23514';
+  END IF;
+  IF OLD.role IS NULL AND NEW.role IS NOT NULL THEN NEW.role_set_at := now(); END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER enforce_role_immutability BEFORE UPDATE OF role ON profiles FOR EACH ROW EXECUTE FUNCTION check_role_immutability();
 CREATE TABLE org_members(id uuid DEFAULT gen_random_uuid() PRIMARY KEY,user_id uuid NOT NULL,org_id uuid NOT NULL,role org_member_role NOT NULL DEFAULT 'member',invited_by uuid,CONSTRAINT org_members_unique_membership UNIQUE(user_id,org_id));
 CREATE TABLE audit_events(id uuid DEFAULT gen_random_uuid() PRIMARY KEY,event_type text,event_category text,actor_id uuid,target_type text,target_id text,org_id uuid,details text);
 CREATE FUNCTION public.get_caller_role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.role',true),'') $$;
@@ -55,6 +64,13 @@ if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "SET request.jwt.claim.role='service_rol
 grep -q 'membership_role_conflict' "$ROLE_CONFLICT_LOG"
 after_role_state="$($PSQL -At -d "$DB" -c "SELECT om.role||'|'||p.role||'|'||p.org_id||'|'||(SELECT count(*) FROM audit_events WHERE event_type='MEMBER_ADDED') FROM org_members om JOIN profiles p ON p.id=om.user_id WHERE om.user_id='$TARGET' AND om.org_id='$ORG';")"
 [[ "$after_role_state" == "$before_role_state" ]]
+
+# Per-organization authority belongs to org_members. Adding an existing
+# INDIVIDUAL as an admin must not rewrite the immutable legacy profile role.
+ADMIN_TARGET=12121212-1212-4212-8212-121212121212
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "INSERT INTO auth.users VALUES ('$ADMIN_TARGET','org-admin@example.invalid',now(),'{}'); INSERT INTO profiles(id,email,role) VALUES ('$ADMIN_TARGET','org-admin@example.invalid','INDIVIDUAL');" >/dev/null
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "SET request.jwt.claim.role='service_role'; SELECT * FROM add_existing_org_member('$ACTOR','$ORG','org-admin@example.invalid','ORG_ADMIN');" >/dev/null
+[[ "$($PSQL -At -d "$DB" -c "SELECT om.role||'|'||p.role||'|'||p.org_id FROM org_members om JOIN profiles p ON p.id=om.user_id WHERE om.user_id='$ADMIN_TARGET' AND om.org_id='$ORG';")" == "admin|INDIVIDUAL|$ORG" ]]
 
 # Missing caller authority (including NULL claims) fails before target lookup.
 if $PSQL -v ON_ERROR_STOP=1 -d "$DB" -c "RESET request.jwt.claim.role; SELECT * FROM add_existing_org_member('$ACTOR','$ORG','missing@example.invalid','INDIVIDUAL');" >/dev/null 2>&1; then exit 1; fi

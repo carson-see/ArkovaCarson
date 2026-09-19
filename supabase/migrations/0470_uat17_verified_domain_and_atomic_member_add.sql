@@ -228,7 +228,10 @@ BEGIN
   IF v_inserted THEN
     UPDATE profiles
     SET org_id = p_org_id,
-        role = p_role::user_role,
+        -- profiles.role is the immutable legacy primary-role projection. The
+        -- requested per-organization authority lives in org_members.role, so
+        -- never rewrite an existing profile role while backfilling org_id.
+        role = COALESCE(role, p_role::user_role),
         role_set_at = CASE WHEN role IS NULL THEN now() ELSE role_set_at END
     WHERE id = v_target.id
       AND org_id IS NULL;

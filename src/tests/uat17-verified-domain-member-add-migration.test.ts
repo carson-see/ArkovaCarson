@@ -22,6 +22,7 @@ describe('UAT-17 verified-domain and member-add migration', () => {
     expect(sql).toMatch(/v_inserted := coalesce\(v_inserted, false\)/i);
     expect(sql).toMatch(/v_existing_role IS DISTINCT FROM v_member_role/i);
     expect(sql).toMatch(/RAISE EXCEPTION 'membership_role_conflict'/i);
+    expect(sql).toMatch(/role = COALESCE\(role, p_role::user_role\)/i);
     expect(sql).toMatch(/INSERT INTO audit_events/i);
   });
 
