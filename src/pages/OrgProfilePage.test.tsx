@@ -282,7 +282,7 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
     expect(mockRefreshInvitations).not.toHaveBeenCalled();
   });
 
-  it('refreshes invitations after a resend succeeds', async () => {
+  it('resends a blocked admin-role invitation as an individual and refreshes on success', async () => {
     mockInviteMember.mockResolvedValue(true);
     const user = userEvent.setup();
     renderPage();
@@ -295,7 +295,7 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
 
     expect(mockInviteMember).toHaveBeenCalledWith(expect.objectContaining({
       email: 'pending@example.com',
-      role: 'ORG_ADMIN',
+      role: 'INDIVIDUAL',
       orgId: 'org-1',
     }));
     expect(mockRefreshInvitations).toHaveBeenCalledTimes(1);

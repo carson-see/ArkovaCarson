@@ -434,7 +434,9 @@ export function OrgProfilePage() {
     if (!orgId) return;
     const invited = await inviteMember({
       email: invitation.email,
-      role: invitation.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INDIVIDUAL',
+      // invite_member deliberately rejects ORG_ADMIN invitations. Resend the
+      // replacement as an individual; an admin can promote after acceptance.
+      role: 'INDIVIDUAL',
       orgId,
       orgName: organization?.display_name ?? 'Your Organization',
       inviterName: profile?.full_name ?? undefined,
