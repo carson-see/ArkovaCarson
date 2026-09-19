@@ -1,5 +1,20 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-19 — authoritative PR base resolution
+
+The staging and identity gates resolve the target branch through GitHub’s authenticated git/ref API. The PR resource’s cached base SHA can lag main and must not select the trusted release snapshot. When staging sees this mismatch, it checks out the exact source head and merges the authoritative base before running the checker; conflicts fail closed. This local merge is never pushed and does not assert new soak evidence.
+
+## 2026-09-19 — draft admission saves Actions budget
+
+`ci.yml` has one cheap `CI Admission` job. Ordinary draft pull requests report
+that decision and skip the expensive matrix; `ready_for_review` starts the full
+matrix, while `converted_to_draft` enters the existing concurrency group and
+cancels an obsolete source run. Mergify `mergify/*` speculative drafts always
+run every existing job, as do protected-branch pushes and manual dispatches.
+Every prior `needs` edge remains and each job keeps its established display
+name. `scripts/ci/ci-draft-admission.test.ts` pins triggers, scenarios, gating,
+and the complete pre-admission DAG.
+
 ## PR #2940 — Edge deploy follows the installed Wrangler version
 
 Both edge dry-run and production deploy invoke `./node_modules/.bin/wrangler`

@@ -84,3 +84,39 @@ Environment classification parses the base URI hostname. A vendor string in a pa
 ## 2026-09-05 — Adobe OAuth response body deadlines
 
 The request AbortController was cleared when headers arrived, leaving parseAdobeJson awaiting an unbounded text read. A stalled-token-response regression failed before the fix. All Adobe JSON response paths now use the existing readTextBounded helper with a fixed safe label and ten-second body deadline, translated to AdobeSignApiError 408 without secret-bearing URLs or body content.
+
+## 2026-09-14 — Drive response body deadlines (F-D0-5)
+
+`drive.ts` carried nine `await res.json().catch(() => null)` reads — every external Google call
+in the file (token exchange, refresh, revoke, `changes/startPageToken`, `changes.watch`,
+`channels.stop`, `files.get`, `changes.list`, `drives.get`). None of them was bounded: the
+`AbortSignal`/controller pattern covers the REQUEST, and the body read that follows is a separate
+await with no timer, so a Google endpoint that sends headers and then trickles parks the caller
+indefinitely (undici's default `bodyTimeout` only fires on total silence). `refreshAccessToken`
+and `listChanges` are both reached from `withRunLease`-held cron runs — the drive-changes runner
+and the subscription-renewal job — which is the exact shape that disabled SUBMITTED→SECURED
+promotion for every tenant for 35+ minutes on 2026-08-12.
+
+All nine now go through `readDriveJson(res, label)`, a thin wrapper over `readJsonBounded`
+(`utils/body-read-timeout.ts`) with `DRIVE_BODY_READ_TIMEOUT_MS = 10_000`, matching Adobe Sign.
+
+Contract points pinned by `drive-body-timeout.test.ts`:
+
+* **`label` is a stable OPERATION name, never a Drive URL.** The bounded reader embeds its `url`
+  argument verbatim in the message it throws, and that text reaches logs, Sentry and
+  `job_queue.last_error`. A Drive URL carries fileIds and driveIds, so the call sites pass
+  `'Drive files.get'`, `'Drive changes.list'` and friends instead.
+* **A parked body becomes `DriveApiError` 408 with NO `detail`** (§1.6A / SCRUM-2492) — a body that
+  never arrived cannot be summarised, and 408 is visibly distinct from a slow-but-alive Drive.
+* **A malformed / non-JSON body still degrades to `null`**, preserving the previous
+  `.catch(() => null)` behavior at every call site: the caller's own `!res.ok` / missing-field
+  check is what then produces the real error. Only the PARKED case is new.
+* **`getSharedDriveName` still falls back to the drive id**, timeout included. Its documented
+  contract is "falls back to the ID on failure"; a cosmetic display name must neither fail nor
+  park a connector flow, so it catches the 408.
+
+**Still unbounded, deliberately:** `readCappedBody` in `fetchDriveFileBytes` — the one
+document-bearing path. It uses `arrayBuffer()` / a `for await` over the body stream, neither of
+which the `readJsonBounded` / `readTextBounded` primitives cover, and neither of which the
+`bounded-body-reads` lint flags. Bounding a size-capped streaming read needs its own primitive and
+its own soak; see the Bug Tracker row for this finding.

@@ -1,0 +1,258 @@
+{
+  "id": "founder-no-resoak-2026-09-19",
+  "repository": "carson-see/ArkovaCarson",
+  "approved_by": "carson-see",
+  "authority": "Explicit founder instruction on September 19 2026 in Codex task 01a0b9a3-e51d-7283-b8eb-d9562be64c43: no re-soaks; review the open PRs and get them merged. CTO review accepts existing evidence with the listed residuals. Subsequent explicit founder instructions in the same task require finishing deferred release fixes and permanent CI/GitHub/GCP/Vercel savings, with no further soaks. September19 hard cap: no new work PRs until this backlog clears.",
+  "starts_at": "2026-09-19T12:00:00Z",
+  "expires_at": "2026-09-26T12:00:00Z",
+  "expiry_limit": "Expiry applies to new check evaluations. GitHub caches successful checks; controller must drain or dequeue before expiry and clear this snapshot at release close.",
+  "scope": "The original eleven PRs and their reviewed existing release/cost follow-ups listed below, frozen September19. Exact heads only; no unrelated work, automatic admission of later PRs, or waiver of other required checks.",
+  "prs": [
+    {
+      "number": 2841,
+      "head_sha": "7dd63e925b163d85a6cb31622ec11650b8e321e7",
+      "prior_reviewed_source": "482848235d8e6d053eda40621775126b0ef6797b",
+      "existing_evidence": [
+        "docs/staging/rc-manifests/rc-train-b5c-2026-09-14.json",
+        "/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5c/window1",
+        "PR body: 145 corrected-path tests; TLA 606 states/825 edges"
+      ],
+      "residual_risk": "B5c observed the predecessor. Configured-provider delivery, corrected recipient pagination and corrected compare-and-set were not hosted; targeted current-union tests required."
+    },
+    {
+      "number": 2882,
+      "head_sha": "edb1e1ba1ed40e50ee71b4b82c9d4e5996476a58",
+      "existing_evidence": [
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-14/dependency-review/train-d-review/d2-launch/window3/controller-status.json",
+        "September 19 exact-head bitcoinjs signing and compatibility suite: 8 files, 261 tests passed."
+      ],
+      "residual_risk": "D2 observation was interrupted after 37 cycles without closing proof. No uninterrupted full duration or new soak is asserted; real compiled signing controls and current targeted tests are retained."
+    },
+    {
+      "number": 2904,
+      "head_sha": "3ae282b5bc84269d7e89f9b73a0725596155ce5d",
+      "prior_reviewed_source": "e541f0a381be4ea117c84c1a88d838adbdc13a59",
+      "existing_evidence": [
+        "PR body: all 15 timed-out deliveries persisted successfully 522-760ms after completion",
+        "PR body: corrected observer 10 regression tests",
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-17/pr2904-review"
+      ],
+      "residual_risk": "No uninterrupted 24h closing cycle with corrected observer; prior timeout cycles remain failed, not relabeled."
+    },
+    {
+      "number": 2905,
+      "head_sha": "d8f8d317bf6e58714f2df8c2090a29900be5c91e",
+      "prior_reviewed_source": "bb659ffb9fb0bcd6f04f87d5724961694beff2eb",
+      "existing_evidence": [
+        "PR body: native PostgreSQL referral attribution, RPC tenant-authority and MFA policy proofs",
+        "PR body: focused UI/RLS tests and UAT screenshots",
+        "September19 consolidation: prior reviewed work retained plus reviewed follow-up; ancestry/exact-patch and component verification in pr-final-review consolidation receipts."
+      ],
+      "residual_risk": "No completed hosted referral window or closing cycle; current-union referral/RLS/migration tests required."
+    },
+    {
+      "number": 2912,
+      "head_sha": "a816ced88bdb6ad4ee31269dbb4099e6701fe098",
+      "existing_evidence": [
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-14/pr2912-publication-review.json",
+        "September 19 current-main merge: 73 frontend/governance and 249 worker assertions passed; both typechecks and lint passed. Independent review verified mechanical merge-tree equality."
+      ],
+      "residual_risk": "Historical Train E predates the bounded folder-reader correction. Real Google consent/folder enumeration/renewal were not observed. The existing rule adoption check-then-write race is bounded but not eliminated by a database constraint."
+    },
+    {
+      "number": 2951,
+      "head_sha": "8a7102e75801a6b0c0a1db5b538223de9a3d56a3",
+      "existing_evidence": [
+        "September 19 dependency review: clean npm install, license scan, 6 notices UI tests, build TypeScript and diff check passed.",
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-19/other-prs/review-summary.json"
+      ],
+      "residual_risk": "Broad root dependency upgrade compatibility surface; current-main merge preserves newer main versions. Fresh exact-head CI required; no new timed browser observation is asserted."
+    },
+    {
+      "number": 2964,
+      "head_sha": "8c1561f6fff5080d8ebc7cf1b6cc28f88ea491d6",
+      "prior_reviewed_source": "e435ed175641a16442b8eecd0c56c1929f930909",
+      "existing_evidence": [
+        "/Volumes/Extreme/Arkova/worktrees/cto-uat-union-20260914/artifacts/uat17-email/uat17-union-20260914-1910/summary.json",
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-17/pr2964-fix",
+        "ROOT-HANDOFF: 27 completed UAT17 cycles"
+      ],
+      "residual_risk": "Interrupted observation lacked full duration and closing cycle; current-union auth trigger/signup/resend/expiry tests required."
+    },
+    {
+      "number": 2966,
+      "head_sha": "2cc5c46ba47b71e288924e6733366d778525a3bc",
+      "prior_reviewed_source": "a4e1e54e0c070f2cd5751cbb8d538e8d07125d26",
+      "existing_evidence": [
+        "/Volumes/Extreme/Arkova/_scratch/cto-uat-20260914/b4-corrected-soak-394ec338bc0d-20260914T232646Z/summary.json",
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-17/b4-diagnosis.json",
+        "PR body: native concurrency and rollback proofs"
+      ],
+      "residual_risk": "Seven complete passing cycles followed by preserved HTTP402 fixture-cap failure; duration and closing-cycle shortfall accepted. Current-union submit/credit/Stripe/private-tag tests required."
+    },
+    {
+      "number": 2967,
+      "head_sha": "aace4ce6792d66272c2e493ee12033b9cc7b0f69",
+      "prior_reviewed_source": "da12020a4b2eb999a6441e058f175c14a1f1cba2",
+      "existing_evidence": [
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-14/oldest-review/qualification/c3-window1/summary.json",
+        "PR body: native PostgreSQL rollback/reapply and description persistence/repair tests",
+        "2026-09-19: corrected malformed organization UUID in RLS fixture; native PostgreSQL17 actual migration function roundtrip and rollback verified. Runtime SQL unchanged."
+      ],
+      "residual_risk": "C3 was interrupted without continuity/closing cycle. Production data repair remains a separately authorized action."
+    },
+    {
+      "number": 2968,
+      "head_sha": "b76e966503c79e0ec864ba6feba8dcf8d5067e49",
+      "prior_reviewed_source": "694b6482f625e0bf92050c8e3564c9103d87c335",
+      "existing_evidence": [
+        "/Volumes/Extreme/Arkova/_scratch/cto-uat-20260914/b4-corrected-soak-394ec338bc0d-20260914T232646Z/summary.json",
+        "/Volumes/Extreme/offload/codex-release-evidence/2026-09-17/b4-diagnosis.json",
+        "PR body: native 0462/0464 rollback and focused route/adapter tests",
+        "b76e966503c79e0ec864ba6feba8dcf8d5067e49: fixed-host staging-driver security correction; 8 focused tests and build TypeScript pass"
+      ],
+      "residual_risk": "Seven complete passing cycles followed by fixture-cap failure; duration/closing-cycle shortfall accepted. Sonar rerun and current-union folder/route/OpenAPI tests remain required."
+    },
+    {
+      "number": 2979,
+      "head_sha": "23a90a68ab8c0dbb50bcfd145f5197cce94424a9",
+      "existing_evidence": [
+        "PR #2979 workflow-contract tests: 56 passing; September 19 exact-head history contract 15/15 and build TypeScript passed.",
+        "September 19 proof KMS signer, signed-bundle, signer-resolution and proof route suites: 5 files, 106 tests passed; worker build passed.",
+        "September19 consolidation: prior reviewed work retained plus reviewed follow-up; ancestry/exact-patch and component verification in pr-final-review consolidation receipts."
+      ],
+      "residual_risk": "This deploy-wiring change has no completed staging window. Existing signing code and key configuration are reviewed; signature verification after deployment remains required. Public key discovery documentation has pre-existing gaps explicitly recorded in the PR."
+    },
+    {
+      "number": 2991,
+      "head_sha": "2474096b9e4e06850e5d7c6ab91e056c3630a238",
+      "existing_evidence": [
+        "43 workflow parser/install-policy tests, build TypeScript and exact parser CLI cases passed. Root reviewed real YAML parser and removed body-only migration drift trigger.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Configuration/parser changes still require final queue CI; no hosted timed observation claimed."
+    },
+    {
+      "number": 2992,
+      "head_sha": "2ecf11121d71865c1fd45049844555854eee90a4",
+      "existing_evidence": [
+        "Developer API/SDK/MCP claims checked against live paths; targeted claims tests, four-width UI proof and MCP clipboard checks passed. Root reviewed final three-file MCP command delta.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Client command depends on user-provided API key. Final frontend build and required queue tests pending; no deployment claim."
+    },
+    {
+      "number": 2993,
+      "head_sha": "1c5e6318817c0ec4268af68f5340a2dae2378f05",
+      "existing_evidence": [
+        "Root inspected Vercel branch filtering and verified eight branch cases; only evidence and speculative branches excluded. Source/main remain enabled.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Realized build-dollar reduction remains to be measured after configuration deployment; no new observation claimed."
+    },
+    {
+      "number": 2995,
+      "head_sha": "5649bf0f8ca81e1a4c60b13d4f2b8ee1a5aca981",
+      "existing_evidence": [
+        "Ancestry-verified union of former2995/3002/2994 at5649bf0f8; worker543, SDK116, Zapier24 plus targeted dashboard/browser/type checks preserved in PR component evidence.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Final complete-union queue checks required. signature_revoked remains deliberately dark without a producer. No new uninterrupted hosted window asserted."
+    },
+    {
+      "number": 2997,
+      "head_sha": "c61cd630cbd0e5690d56ebab3b9a0b5137fa8500",
+      "existing_evidence": [
+        "PTAU workflow shell review, immutable upload and hash controls, nine focused consumer tests and shell syntax validation passed. Root reviewed consumer fallback/atomic rename.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19",
+        "Final source security fixes use HTTPS-only redirects and lockfile snarkjs executable; ten focused tests passed, root reviewed delta.",
+        "September19 root-reviewed conflict resolution: Current main merged with documentation union only; anonymous mirror18957464bytes exact SHA256 verified; real empty-cache six-step circuit build and14proof tests passed, postmerge27tests passed."
+      ],
+      "residual_risk": "Owned bucket is empty/private until recovery runs; release must verify recovered hash, object access and real cache-miss consumer before claiming this operational gap closed.",
+      "prior_reviewed_source": "cb28bcc49b8580a323dce2703c96a0a5849090c7"
+    },
+    {
+      "number": 2998,
+      "head_sha": "2e65fd4771c946fd7c6b09f5da4083e4de04a833",
+      "existing_evidence": [
+        "Root and independent Sol review of canonical queue-admin authority, lookup-error denial and tenant permissions;81 focused tests passed.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Required final queue CI and production route verification pending; no new hosted observation asserted."
+    },
+    {
+      "number": 2999,
+      "head_sha": "d4d4267650d0281cdc587fe8e05af133e2fc1400",
+      "existing_evidence": [
+        "Native PostgreSQL17 concurrency proof: provision one period, serialize concurrent debit, reject overlaps, isolate owners. All three RPC ACLs verified. Staging0467 exact SQL passed; root/worker build types and lint passed after stale-helper removal.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Production0467 must apply before worker deployment. No full hosted duration claimed; concurrent/runtime behavior verified with targeted native tests."
+    },
+    {
+      "number": 3000,
+      "head_sha": "e57909d83984f1f825e0fc82c70d065f3368917d",
+      "existing_evidence": [
+        "Root reviewed anchor quota fail-closed behavior and caller;42 focused tests passed, including lookup errors vs true missing/null/inactive caps.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Transient database failures intentionally return retryable503. Required full queue checks and deployment pending."
+    },
+    {
+      "number": 3003,
+      "head_sha": "d1787becf3a38121fdadafc5ce8182e39a387bf5",
+      "existing_evidence": [
+        "320/375/1280 real browser layout checks and four component tests passed. Independent UAT owner reviewed evidence; CI runs the specific mobile flow and preserves its artifacts. Unrelated Sonar suppression removed.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19",
+        "September19 root-reviewed conflict resolution: Current main merged without functional mobile changes; actual Playwright320/375/1280, build typecheck and54workflow/append-only tests passed."
+      ],
+      "residual_risk": "Scope is People page action visibility, not a complete mobile redesign. Final queue CI required; no timed browser soak asserted.",
+      "prior_reviewed_source": "6ed44cf883c723edbdca5583afe02a4deaebdcf7"
+    },
+    {
+      "number": 3004,
+      "head_sha": "62f35d294c9526490152e0acbf16aadd6e90e66c",
+      "existing_evidence": [
+        "Native PG17 two-session monthly-credit singleton test: one allocation/expiry, zero duplicate entries, correct balance.260 worker/lease tests and types passed. Exact0468 applied/verified in B4; independent review retained lease residuals.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Run leases prevent ordinary concurrent winners but shared deadline abandonment cannot cancel an already-running promise; pathological late continuation remains documented. No absolute no-double-broadcast claim. Production0468 and final CI required."
+    },
+    {
+      "number": 3005,
+      "head_sha": "e52dcfb3f113e58c4a67b27ddd773be04223fb5b",
+      "existing_evidence": [
+        "Root reviewed request-marker CAS/readback and synchronized generated types. Independent19-test suite plus actual B4 database rollback proof validated winner identity, second-operator no-op, note constraint and zero persistent probe rows.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Production0469 must apply before deployment; notes remain admin-only and omitted from list/log output. Required full queue checks remain."
+    },
+    {
+      "number": 3008,
+      "head_sha": "c015ebaf6e95c60f0379beda152822062c663f1f",
+      "existing_evidence": [
+        "Invite resend failed-result behavior and INDIVIDUAL role semantics verified by six focused tests, root build TypeScript and lint. Root reviewed two-file delta.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Administrator elevation remains the separate explicit promotion flow. Required final UI/queue checks and deployment pending."
+    },
+    {
+      "number": 3015,
+      "head_sha": "21ae3d7e37d45c2f461dee216ad52b08384bbffc",
+      "existing_evidence": [
+        "233 cron-route tests plus worker types/lint passed; root reviewed incomplete recovery returning503 and bounded slash normalization.",
+        "September19 release evidence retained in PR body and /Volumes/Extreme/offload/codex-release-evidence/2026-09-19"
+      ],
+      "residual_risk": "Incomplete recovery now deliberately triggers existing retry behavior; deployment and final queue CI required. No new soak claimed."
+    },
+    {
+      "number": 2986,
+      "head_sha": "e48be377bd4aac2b67c0b5c7ca555bd501339bd6",
+      "existing_evidence": [
+        "Package owner qualified SDK/MCP/CLI/embed/LangChain source with370 package/root tests; final SDK19-event union had117 tests, types/build/pack verification. Root verified integrated branch preserves both public-host regression and full event-name pins.",
+        "Source is stacked on reviewed consolidated2995; npm publication remains separately verified after merge and guide factcheck."
+      ],
+      "residual_risk": "Final complete source must merge before registry publication; check published tarball source identity. Standalone consumer packages have no worker soak revision. Other required queue checks and deployment checks remain intact."
+    }
+  ]
+}

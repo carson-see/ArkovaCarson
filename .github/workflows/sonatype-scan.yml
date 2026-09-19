@@ -3,6 +3,10 @@ name: sonatype-scan
 on:
   pull_request:
     branches: [main]
+    # Defer the four-workspace install/scan matrix for ordinary drafts. The
+    # ready transition creates a fresh run; Mergify speculative drafts still
+    # execute the complete scan before merge.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - '**/package.json'
       - '**/package-lock.json'
@@ -28,7 +32,12 @@ jobs:
     # with "the GitHub Action workflow must specify exactly one of
     # workload_identity_provider or credentials_json". The scheduled cron run
     # (Mondays 12:00 UTC) and human-author PRs still cover license/CVE checks.
-    if: github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+       startsWith(github.head_ref, 'mergify/') ||
+       github.event.pull_request.draft != true)
     strategy:
       fail-fast: false
       matrix:

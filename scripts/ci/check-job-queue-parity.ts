@@ -114,6 +114,16 @@ export const QUEUE_INTERNALS_ALLOWLIST: readonly string[] = [
   // processNextJob. Not queued work and not a lease/checkpoint either; listed
   // here because rule 4 allow-lists by module path, not by read-vs-write.
   'services/worker/src/jobs/platform-health-digest-cron.ts',
+  // Drive connector-health observability (feat/drive-connector-health-observability,
+  // SCRUM-4937-class). The health endpoint does a single read-only
+  // `.select('status').eq('type', DRIVE_FILE_CHANGED_JOB_TYPE)
+  // .eq('payload->>org_id', orgId).in('status', ['failed','dead'])` to count
+  // recent failed/dead google_drive.file_changed rows for the fetch-job-failure
+  // health signal — it never enqueues, claims, or completes a row and never
+  // calls submitJob/claimJob/processNextJob. Not queued work and not a
+  // lease/checkpoint either; listed here because rule 4 allow-lists by module
+  // path, not by read-vs-write.
+  'services/worker/src/api/connector-health.ts',
 ];
 
 const PRODUCER_FNS = new Set(['submitJob']);
