@@ -1,5 +1,15 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-19 — staging evidence defers ordinary drafts before install
+
+`staging-evidence.yml` resolves the PR's live `draft` field before checkout or
+dependency installation. Ordinary drafts publish the distinct `Staging evidence
+deferred (Draft)` job and stop there; `ready_for_review` mints the full required
+`Staging Soak Evidence Gate`, while `converted_to_draft` cancels obsolete work
+through the existing concurrency group. A frozen ready-event rerun that finds a
+live draft fails before checkout rather than publishing a reusable green required
+status. Genuine Mergify speculative PRs retain their actor-bound behavior.
+
 ## 2026-09-19 — Python SDK installs are lock-bound in CI and publication
 
 The Python SDK test and PyPI workflows use the same exact `setup-uv` commit,
