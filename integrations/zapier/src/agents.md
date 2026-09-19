@@ -51,3 +51,8 @@ an ORDERED list, and `test/zapier.test.ts` pins it with `toEqual`.
 Nothing in this app reads `VALID_EVENTS`, and no packaged trigger subscribes to
 either event, so listing them mirrors the worker allowlist rather than shipping
 a new Zap. `attestation.revoked` additionally has no reachable producer yet.
+
+## 2026-09-19 — Finality webhook triggers
+
+`VALID_EVENTS` includes the two registered public-only finality events,
+`anchor.revocation_anchored` and `attestation.active`.

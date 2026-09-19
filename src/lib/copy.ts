@@ -692,6 +692,8 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   // attestation was created" until batch-create emits.
   'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
+  'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
+  'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
 };
 
 // =============================================================================

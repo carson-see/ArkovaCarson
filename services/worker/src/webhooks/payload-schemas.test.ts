@@ -26,6 +26,8 @@ import {
   ComplianceDocumentExpiringPayloadSchema,
   AttestationCreatedPayloadSchema,
   AttestationRevokedPayloadSchema,
+  AttestationActivePayloadSchema,
+  AnchorRevocationAnchoredPayloadSchema,
   BANNED_PAYLOAD_KEYS,
   findBannedPayloadKeys,
   isBannedPayloadKey,
@@ -914,7 +916,7 @@ describe('the three real leaking producer payloads are now refused (SCRUM-3982)'
   // dispatch in a non-fatal try/catch, so refusal costs a warn log, not a
   // failed job.
 
-  it('services/worker/src/jobs/revocation.ts:141 — anchor.revocation_anchored (anchor_id + fingerprint)', () => {
+  it('refuses the pre-fix anchor.revocation_anchored payload (anchor_id + fingerprint)', () => {
     const result = validateWebhookPayload('anchor.revocation_anchored', {
       anchor_id: '550e8400-e29b-41d4-a716-446655440000',
       public_id: 'pub-001',
@@ -926,9 +928,8 @@ describe('the three real leaking producer payloads are now refused (SCRUM-3982)'
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    const named = result.error.issues.map((i) => i.path.join('.'));
-    expect(named).toContain('anchor_id');
-    expect(named).toContain('fingerprint');
+    expect(result.error.message).toContain('anchor_id');
+    expect(result.error.message).toContain('fingerprint');
   });
 
   it('services/worker/src/jobs/attestationAnchor.ts:161 — attestation.active (fingerprint)', () => {
@@ -954,6 +955,24 @@ describe('the three real leaking producer payloads are now refused (SCRUM-3982)'
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('fingerprint');
+  });
+});
+
+describe('SCRUM-5063 — registered finality payloads', () => {
+  it('accepts a public-only anchor.revocation_anchored payload', () => {
+    expect(AnchorRevocationAnchoredPayloadSchema.safeParse({
+      public_id: 'ARK-REV-1', status: 'REVOKED', revocation_tx_id: 'tx-revoke',
+      revocation_block_height: 900001, original_chain_tx_id: 'tx-original',
+    }).success).toBe(true);
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('anchor.revocation_anchored');
+  });
+
+  it('accepts a public-only attestation.active payload', () => {
+    expect(AttestationActivePayloadSchema.safeParse({
+      public_id: 'ATT-PUBLIC-1', attestation_type: 'VERIFICATION', status: 'ACTIVE',
+      chain_tx_id: 'tx-active', chain_timestamp: '2026-09-19T12:00:00Z',
+    }).success).toBe(true);
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('attestation.active');
   });
 });
 
@@ -1188,13 +1207,11 @@ describe('unregistered event types fail closed (Z2)', () => {
     },
   );
 
-  it('pins the legacy allowlist to exactly the seven types with a live dispatch site', () => {
+  it('pins the legacy allowlist after registering two finality events', () => {
     // `git grep -n "dispatchWebhookEvent(" services/worker/src`, minus the 12
     // registered types. This list is a RATCHET: entries come off it as
     // SCRUM-5063 registers each type. Nothing is ever added.
     expect([...LEGACY_UNREGISTERED_EVENT_TYPES].sort()).toEqual([
-      'anchor.revocation_anchored',
-      'attestation.active',
       'compliance.anchor_delayed',
       'compliance.certificate_expiring',
       'compliance.signature_revoked',

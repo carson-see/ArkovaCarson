@@ -106,6 +106,8 @@ describe('WebhookEventCatalog', () => {
     // selects only `id, status, attester_user_id`, so that dispatch has never
     // fired. Registered and subscribable, not live.
     'attestation.created',
+    'anchor.revocation_anchored',
+    'attestation.active',
   ]);
 
   it('claims live only for events with a real emit point', () => {

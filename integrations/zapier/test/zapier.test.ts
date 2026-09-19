@@ -213,6 +213,8 @@ describe('Constants', () => {
       'compliance.document_expiring',
       'attestation.created',
       'attestation.revoked',
+      'anchor.revocation_anchored',
+      'attestation.active',
     ]);
   });
 });

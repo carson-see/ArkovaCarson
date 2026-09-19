@@ -579,6 +579,8 @@ describe('WebhookSettings', () => {
         // (attestation.created was shipping the document fingerprint, §1.6).
         'attestation.created',
         'attestation.revoked',
+        'anchor.revocation_anchored',
+        'attestation.active',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);

@@ -31,7 +31,9 @@ export type WebhookEventType =
   // region regex stops at the first one and would silently read a truncated
   // union.
   | 'attestation.created'
-  | 'attestation.revoked';
+  | 'attestation.revoked'
+  | 'anchor.revocation_anchored'
+  | 'attestation.active';
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {

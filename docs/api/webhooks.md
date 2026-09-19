@@ -72,6 +72,7 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
 | `anchor.superseded` | A `SECURED` anchor is atomically replaced by a re-issued child (`SECURED` → `SUPERSEDED`), via `POST /api/anchor/:id/supersede`. Offered as a listed subscription option since SCRUM-3538; the CRUD allowlist has accepted it since SCRUM-2937. | Stable |
 | `anchor.batch_secured` | Aggregate event for the merkle-batch path, intended to fire once per merkle transaction. | Contract defined; subscriptions are accepted and the payload contract has been locked since SCRUM-1794, but **no producer dispatches this event** — no delivery has ever occurred. Records secured through the merkle-batch path are reported by the per-anchor `anchor.secured` fan-out, which is live; subscribe to that |
+| `anchor.revocation_anchored` | The revocation transaction is submitted and its network receipt is recorded. | Stable |
 
 `anchor.superseded` payload `data`: `public_id`, `status` (always `SUPERSEDED`), `chain_tx_id`, `chain_block_height`, `superseded_at`, plus optional `superseded_by_public_id` (the replacement record's public id — `null` when it is not resolvable at dispatch time), `supersession_reason` (free text, max 500 chars), and `org_public_id`. Follow `superseded_by_public_id` to walk the version chain without polling.
 
@@ -97,17 +98,16 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 |---|---|---|
 | `attestation.created` | An attester creates a **single** attestation via `POST /api/v1/attestations`. Fires at creation, before the attestation is secured. Bulk creation via `POST /api/v1/attestations/batch-create` does **not** emit this event. | Stable for the single-create route |
 | `attestation.revoked` | An attester withdraws an attestation via `PATCH /api/v1/attestations/{public_id}/revoke`. | Contract defined; subscriptions are accepted and the payload contract is locked, but the emit point is **not yet reachable in production** — no delivery of this event has occurred |
+| `attestation.active` | The attestation anchoring job records the transaction and promotes the attestation to `ACTIVE`. | Stable |
 
 `attestation.created` payload `data`: `public_id`, `attestation_type`, `status` (`DRAFT` or `PENDING` — a creation event never carries a terminal status), `created_at`, plus optional `org_public_id`.
 
 `attestation.revoked` payload `data`: `public_id`, `status` (always `REVOKED`), `revocation_reason`, `revoked_at`, plus optional `attestation_type` and `org_public_id`.
 
-**There is no subscribable attestation-finality event yet.** An earlier version
-of this page suggested pairing `attestation.created` with `anchor.secured` for
-on-chain finality; that is wrong — an attestation reaches finality through its
-own anchoring job, which emits `attestation.active`, and that event is not
-registered and therefore cannot be subscribed to. Poll
-`GET /api/v1/attestations/{public_id}` for `status: ACTIVE` until it is.
+Subscribe to `attestation.active` for the attestation anchoring signal. Its
+payload contains the attestation public id, type, `ACTIVE` status, transaction
+id, and network-observed chain timestamp. It carries no fingerprint or internal
+attestation UUID.
 
 Both obey the same allowlist as every other family: public ids only, no internal UUIDs, no document fingerprint, RFC 3339 timestamps with an explicit timezone. Until SCRUM-3982 these two events were dispatched without being registered, so no endpoint could subscribe to them and their payloads were not schema-checked; registering them is what makes the field ban enforceable, not merely documented.
 

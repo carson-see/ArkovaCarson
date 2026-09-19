@@ -144,3 +144,9 @@ on one of the two load orders.
 site in the worker. Not registration in `payload-schemas.ts`, not a payload
 schema existing, and not an `audit_events` row carrying the same `event_type`
 string — that last one is exactly what made `anchor.batch_secured` look live.
+
+## 2026-09-19 — Finality events are subscribable
+
+The picker and catalog include live `anchor.revocation_anchored` and
+`attestation.active` entries. Their fields mirror the strict worker schemas;
+both have reachable job producers.

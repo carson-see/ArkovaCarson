@@ -132,4 +132,12 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: false,
     fields: ['public_id', 'status', 'revocation_reason', 'revoked_at', 'attestation_type?', 'org_public_id?'],
   },
+  'anchor.revocation_anchored': {
+    live: true,
+    fields: ['public_id', 'status', 'revocation_tx_id', 'revocation_block_height', 'original_chain_tx_id', 'org_public_id?'],
+  },
+  'attestation.active': {
+    live: true,
+    fields: ['public_id', 'attestation_type', 'status', 'chain_tx_id', 'chain_timestamp', 'org_public_id?'],
+  },
 };

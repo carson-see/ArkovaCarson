@@ -40,6 +40,8 @@ export const VALID_EVENTS = [
   // delivery has happened.
   'attestation.created',
   'attestation.revoked',
+  'anchor.revocation_anchored',
+  'attestation.active',
 ] as const;
 
 /** Max batch verify size (sync) */

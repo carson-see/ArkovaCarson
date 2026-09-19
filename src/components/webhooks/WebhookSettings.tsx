@@ -114,6 +114,8 @@ export const AVAILABLE_EVENTS = [
   // ./webhookEventLiveness CATALOG_DATA.
   { id: 'attestation.created', label: 'Attestation Created' },
   { id: 'attestation.revoked', label: 'Attestation Revoked' },
+  { id: 'anchor.revocation_anchored', label: 'Anchor Revocation Confirmed' },
+  { id: 'attestation.active', label: 'Attestation Active' },
 ];
 
 export function WebhookSettings({

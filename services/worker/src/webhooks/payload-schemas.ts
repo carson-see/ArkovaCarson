@@ -367,6 +367,28 @@ export const AttestationRevokedPayloadSchema = z
   })
   .strict();
 
+/** Finality signal emitted after an anchor revocation receipt is confirmed. */
+export const AnchorRevocationAnchoredPayloadSchema = z
+  .object({
+    ...PUBLIC_ID_FIELDS,
+    status: z.literal('REVOKED'),
+    revocation_tx_id: z.string().min(1),
+    revocation_block_height: z.number().int().nonnegative().nullable(),
+    original_chain_tx_id: z.string().min(1).nullable(),
+  })
+  .strict();
+
+/** Finality signal emitted by the attestation anchoring job. */
+export const AttestationActivePayloadSchema = z
+  .object({
+    ...PUBLIC_ID_FIELDS,
+    attestation_type: z.string().min(1).max(64),
+    status: z.literal('ACTIVE'),
+    chain_tx_id: z.string().min(1),
+    chain_timestamp: isoTimestamp,
+  })
+  .strict();
+
 /**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
@@ -384,6 +406,8 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'compliance.document_expiring': ComplianceDocumentExpiringPayloadSchema,
   'attestation.created': AttestationCreatedPayloadSchema,
   'attestation.revoked': AttestationRevokedPayloadSchema,
+  'anchor.revocation_anchored': AnchorRevocationAnchoredPayloadSchema,
+  'attestation.active': AttestationActivePayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
@@ -399,6 +423,8 @@ export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChan
 export type ComplianceDocumentExpiringPayload = z.infer<typeof ComplianceDocumentExpiringPayloadSchema>;
 export type AttestationCreatedPayload = z.infer<typeof AttestationCreatedPayloadSchema>;
 export type AttestationRevokedPayload = z.infer<typeof AttestationRevokedPayloadSchema>;
+export type AnchorRevocationAnchoredPayload = z.infer<typeof AnchorRevocationAnchoredPayloadSchema>;
+export type AttestationActivePayload = z.infer<typeof AttestationActivePayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
   constructor(
@@ -534,8 +560,6 @@ export function findBannedPayloadKeys(data: unknown, path: string[] = []): strin
  */
 export const LEGACY_UNREGISTERED_EVENT_TYPES = [
   'job.completed',
-  'attestation.active',
-  'anchor.revocation_anchored',
   'compliance.anchor_delayed',
   'compliance.certificate_expiring',
   'compliance.signature_revoked',

@@ -247,3 +247,8 @@ commit or rollback. Retry stays idempotent. The obsolete partial-reclaim
 promise is removed and the unavailable error is `offboard_unavailable`.
 Current hierarchy scope remains direct affiliates; depth 3 in the database
 does not imply this API enumerates all descendants. No live rollout is claimed.
+
+## 2026-09-19 — Finality webhook contracts
+
+The public guide documents subscribable `anchor.revocation_anchored` and
+`attestation.active` events and their public-id-only payload semantics.
