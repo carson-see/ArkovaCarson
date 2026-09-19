@@ -8,7 +8,8 @@
   "files": ["dist", "LICENSE"],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "npm run build"
   },
   "keywords": ["arkova", "langchain", "verification", "credentials", "ai-agent"],
   "author": "Arkova <engineering@arkova.ai>",

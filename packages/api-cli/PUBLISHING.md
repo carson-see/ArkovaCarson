@@ -34,7 +34,12 @@ npm test
 npm run lint
 
 npm pack --dry-run
+tarball=$(npm pack --silent)
 npm publish --dry-run
+
+install_dir=$(mktemp -d)
+npm install --prefix "$install_dir" "$PWD/$tarball"
+"$install_dir/node_modules/.bin/arkova" --help
 ```
 
 Inspect the dry-run file list. It must contain only `LICENSE`, `README.md`,
@@ -42,12 +47,13 @@ Inspect the dry-run file list. It must contain only `LICENSE`, `README.md`,
 packed manifest must contain `"arkova": "3.0.0"`, no `file:` dependency, and
 no `private` field.
 
-Install the produced tarball in an empty directory using the public registry,
-then run:
+The commands above install the produced tarball, including its exact public
+`arkova@3.0.0` dependency, in an empty directory. Then run an authenticated
+health check from that installed binary:
 
 ```sh
-arkova --help
-ARKOVA_API_KEY=ak_test_placeholder arkova health
+ARKOVA_API_KEY="$ARKOVA_RELEASE_SMOKE_KEY" \
+  "$install_dir/node_modules/.bin/arkova" health
 ```
 
 The health result must name the approved production git SHA. Publishing is an

@@ -537,7 +537,7 @@ The SDK works directly in modern browsers via the standard `<script type="module
 
 ### Base URL
 
-Production: `https://arkova-worker-270018525501.us-central1.run.app`
+Production: `https://api.arkova.ai`
 Override with `baseUrl` config option for staging or local development.
 
 ### Method index
