@@ -1,5 +1,11 @@
 # services/worker/src/api/v1/agents.md
 
+## PR #2905 — Route parity after the main refresh
+
+The parity harness includes both the new referrals router and main’s verified
+search router. Preserve both entries and imports when resolving concurrent
+additions so either undocumented mount still fails the harness.
+
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
 
@@ -1591,6 +1597,30 @@ drives, and the thing being ratcheted is the literal key set at the call site.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
 
+## 2026-09-12 SCRUM-5024 — `referrals.ts` (new): `GET /api/v1/referrals`
+
+Read-only. Returns the calling organization's ACTIVE referral code, the share
+link, and the organizations that code introduced.
+
+- **The 401 is in the HANDLER, not the mount.** `requireScope('read:orgs')` in
+  `router.ts` is a capability gate, not authentication: `apiKeyAuth.ts` calls
+  `next()` the moment `req.apiKey` is unset, so an anonymous caller passes
+  straight through it. A local `requireApiKey(req, res)` (same shape as
+  `webhooks.ts`) writes the 401.
+- The organization is `req.apiKey.orgId` — never a query parameter, a body
+  field, or `req.apiKey.userId`. `referrals.test.ts` asserts this on the QUERY
+  (which `org_id` each read filtered by), not only on the response body.
+- **Public ids only.** No `id`, `org_id`, `user_id` or `referral_code_id` in any
+  casing at any depth; a recursive walk in the test asserts no banned key and no
+  uuid-shaped value survives. `organization_public_id` is OMITTED, not null, for
+  an organization that predates the public-id backfill.
+- An organization with no minted code answers **200** with
+  `referral_code: null` and `referred: []` — not 404, which is
+  indistinguishable from "this endpoint is gone". A FAILED read answers 500:
+  degrading to an empty list would tell a partner they referred nobody.
+- No scope-vocabulary change — `read:orgs` already exists in `apiScopes.ts`.
+- Documented in `docs.ts`, `docs/api/openapi.yaml` and the `docs/api/README.md`
+  table, and added to the `MOUNTS` table in `docs.routeParity.test.ts`.
 ## 2026-09-12 SCRUM-4984 / SCRUM-4985 — fail-closed tenant scoping on the AI read endpoints; entity-verify stops building filter grammar
 
 **`tenantRowAccess.ts` is the only allowed way to answer "may this caller read this row" on a v1

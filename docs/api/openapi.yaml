@@ -643,6 +643,64 @@ paths:
         "200":
           description: Usage statistics
 
+  /referrals:
+    get:
+      operationId: listReferrals
+      summary: Partner referral code and attributed organizations
+      description: >
+        The calling organization's active referral code, the link to share, and the
+        organizations that code introduced. The organization is derived from the API
+        key; there is no organization parameter. Public ids only —
+        `organization_public_id` is omitted for an organization that has none.
+        MEASURED: which organizations presented this code at creation, and when.
+        NOT ASSERTED: any commission, payout, discount or revenue share.
+      tags: [Organizations]
+      x-arkova-required-scopes:
+        - read:orgs
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: >
+            Referral code and attributed organizations. An organization with no minted
+            code returns `referral_code: null` with an empty list, not a 404.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [referral_code, share_url, referred, total]
+                properties:
+                  referral_code:
+                    type: string
+                    nullable: true
+                    description: 8 characters from ABCDEFGHJKMNPQRSTUVWXYZ23456789, or null.
+                  share_url:
+                    type: string
+                    nullable: true
+                    description: Null exactly when referral_code is null.
+                  referred:
+                    type: array
+                    items:
+                      type: object
+                      required: [display_name, referred_at, verification_status]
+                      properties:
+                        organization_public_id:
+                          type: string
+                          description: Omitted when the referred organization has no public id.
+                        display_name:
+                          type: string
+                        referred_at:
+                          type: string
+                          format: date-time
+                        verification_status:
+                          type: string
+                  total:
+                    type: integer
+        "401":
+          description: API key required
+        "403":
+          description: API key lacks the read:orgs scope
+
   /attestations:
     post:
       operationId: createAttestation

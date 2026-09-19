@@ -870,3 +870,21 @@ Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Atte
 ## PR #2782 — proof download block identity
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
+
+## 2026-09-12 SCRUM-5024 — `ReferralSettingsPage.tsx` (new), `/settings/referrals`
+
+Wraps `ReferralPanel` in the AppShell. The organization comes from
+`useActiveOrg()` rather than `profile.org_id`, so a user who administers both a
+parent and a sub-organization sees the one they actually selected (ORG-HIER-01)
+instead of whatever the legacy primary column names.
+
+ORG_ADMIN gates MINTING only — a member still sees the code and the table,
+because the code is a shareable string and hiding it from the people asked to
+share it helps nobody. Authority is re-checked in SQL regardless:
+`ensure_org_referral_code` requires `is_org_admin_of`.
+
+While `useActiveOrg` is loading, the page renders a spinner rather than passing
+`orgId = null` through — the panel's null branch says "join or create an
+organization", which would flash at a user who has one.
+
+`SettingsPage.tsx` gained the fourth link in the organization card.

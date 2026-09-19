@@ -61,6 +61,8 @@ export const ROUTES = {
   SETTINGS_API_KEYS: '/settings/api-keys',
   SETTINGS_WEBHOOKS: '/settings/webhooks',
   CREDENTIAL_TEMPLATES: '/settings/credential-templates',
+  // SCRUM-5024 — partner referral code + the organizations it introduced.
+  SETTINGS_REFERRALS: '/settings/referrals',
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
