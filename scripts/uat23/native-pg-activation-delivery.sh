@@ -45,6 +45,7 @@ SQL
   supabase/migrations/00000000000000_baseline_at_main_HEAD.sql) >/dev/null
 "$PSQL" -v ON_ERROR_STOP=1 -d "$DB" -c 'CREATE TRIGGER zz_auth_user_auto_associate_org AFTER INSERT OR UPDATE OF email,email_confirmed_at ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_auth_user_email_verified_org_join();' >/dev/null
 "$PSQL" -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0471_uat23_activation_delivery_claim.sql >/dev/null
+"$PSQL" -v ON_ERROR_STOP=1 -d "$DB" -f supabase/migrations/0476_recover_bulk_recipient_profile_qualified_columns.sql >/dev/null
 
 PROFILE=11111111-1111-4111-8111-111111111111
 TOKEN_HASH=$(printf 'a%.0s' {1..64})
@@ -96,12 +97,20 @@ INSERT INTO auth.users(id,email,raw_app_meta_data) VALUES
  ('$MEMBER','member@example.invalid','{"arkova_bulk_recipient":true,"admin_provisioned":true}'),
  ('$ORPHAN_MEMBER','orphan-member@example.invalid','{"arkova_bulk_recipient":true,"admin_provisioned":true}'),
  ('$RACE_MEMBER','race-member@example.invalid','{"arkova_bulk_recipient":true,"admin_provisioned":true}');
+INSERT INTO profiles(id,email) VALUES ('$RECOVERED','recover@example.invalid');
 UPDATE auth.users SET email_confirmed_at=now() WHERE id='$CONFIRMED';
 INSERT INTO profiles(id,email) VALUES ('$MEMBER','member@example.invalid');
 INSERT INTO profiles(id,email) VALUES ('$RACE_MEMBER','race-member@example.invalid');
 INSERT INTO org_members(user_id,org_id) VALUES ('$MEMBER','$ORG');
 INSERT INTO org_members(user_id,org_id) VALUES ('$ORPHAN_MEMBER','$ORG');
 SET request.jwt.claim.role='service_role';
+-- The Auth trigger creates the production-shaped ACTIVE profile with a NULL
+-- token. This is the exact 0471 path that previously raised SQLSTATE 42702.
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id='$RECOVERED' AND status='ACTIVE' AND activation_token IS NULL) THEN
+    RAISE EXCEPTION 'missing existing-profile recovery fixture';
+  END IF;
+END \$\$;
 SELECT * FROM recover_bulk_recipient_profile('recover@example.invalid','Recovered','$RECOVERY_TOKEN',now()+interval '7 days',NULL);
 SELECT * FROM recover_bulk_recipient_profile('recover@example.invalid','Changed','$REPLAY_TOKEN',now()+interval '7 days',NULL);
 SQL
