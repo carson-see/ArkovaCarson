@@ -106,6 +106,18 @@ describe('WebhookEventCatalog', () => {
     // selects only `id, status, attester_user_id`, so that dispatch has never
     // fired. Registered and subscribable, not live.
     'attestation.created',
+    // SCRUM-3972: each has a verified emit point in
+    // services/worker/src/api/v1/orgSubOrgs.ts (create / approve / revoke /
+    // credits / offboard), all unflagged. ENABLE_SUBORG_WEBHOOK_FANOUT gates a
+    // DIFFERENT thing — the cross-organization fan-out of anchor.* events — and
+    // does not gate these, which is why they are live rather than deferred.
+    'suborg.created',
+    'suborg.approved',
+    'suborg.revoked',
+    'suborg.credits_allocated',
+    'suborg.credits_reclaimed',
+    'suborg.suspended',
+    'suborg.offboarded',
   ]);
 
   it('claims live only for events with a real emit point', () => {
