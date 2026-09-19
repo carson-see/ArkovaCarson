@@ -68,6 +68,8 @@ interface WebhookSettingsProps {
    */
   onTestPing?: (id: string) => Promise<WebhookTestPingResult>;
   loading?: boolean;
+  fetchError?: string | null;
+  onRetry?: () => void;
 }
 
 // SCRUM-1743: source of truth is `services/worker/src/api/v1/webhooks-schemas.ts`
@@ -130,6 +132,8 @@ export function WebhookSettings({
   onToggle,
   onTestPing,
   loading = false,
+  fetchError = null,
+  onRetry,
 }: Readonly<WebhookSettingsProps>) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newUrl, setNewUrl] = useState('');
@@ -245,12 +249,20 @@ export function WebhookSettings({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle>Webhook Endpoints</CardTitle>
             <CardDescription>
               Receive notifications when events occur in your organization
             </CardDescription>
+            <a
+              href="https://api.arkova.ai/docs"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-primary underline-offset-4 hover:underline"
+            >
+              Update endpoint URLs and event subscriptions with the webhook API
+            </a>
           </div>
           <Dialog open={isDialogOpen} onOpenChange={(open) => {
             if (!open) {
@@ -348,10 +360,16 @@ export function WebhookSettings({
                       <Label>Events</Label>
                       <div className="space-y-2">
                         {AVAILABLE_EVENTS.map((event) => (
-                          <label key={event.id} className="flex items-center gap-2">
+                          <label
+                            key={event.id}
+                            className={`flex items-center gap-2 ${
+                              CATALOG_DATA[event.id]?.live ? '' : 'cursor-not-allowed opacity-60'
+                            }`}
+                          >
                             <input
                               type="checkbox"
                               checked={selectedEvents.includes(event.id)}
+                              disabled={!CATALOG_DATA[event.id]?.live}
                               onChange={(e) => {
                                 if (e.target.checked) {
                                   setSelectedEvents([...selectedEvents, event.id]);
@@ -389,11 +407,24 @@ export function WebhookSettings({
       </CardHeader>
 
       <CardContent>
+        {fetchError && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <span>Unable to load webhook endpoints. {fetchError}</span>
+              {onRetry && (
+                <Button type="button" variant="outline" size="sm" className="ml-3" onClick={onRetry}>
+                  Try again
+                </Button>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
         {loading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
-        ) : (endpoints.length === 0 ? (
+        ) : fetchError ? null : (endpoints.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>No webhook endpoints configured</p>
             <p className="text-sm">Add an endpoint to receive event notifications</p>

@@ -97,6 +97,35 @@ describe('WebhookSettings', () => {
       const spinner = container.querySelector('.animate-spin');
       expect(spinner).toBeInTheDocument();
     });
+
+    it('shows endpoint fetch failures instead of an empty-state success', () => {
+      render(
+        <WebhookSettings
+          {...defaultProps}
+          endpoints={[]}
+          fetchError="Permission denied"
+        />,
+      );
+
+      expect(screen.getByText(/Unable to load webhook endpoints/)).toBeInTheDocument();
+      expect(screen.getByText(/Permission denied/)).toBeInTheDocument();
+      expect(screen.queryByText('No webhook endpoints configured')).not.toBeInTheDocument();
+    });
+
+    it('offers a retry after an endpoint fetch failure', async () => {
+      const onRetry = vi.fn();
+      render(
+        <WebhookSettings
+          {...defaultProps}
+          endpoints={[]}
+          fetchError="Please refresh and try again."
+          onRetry={onRetry}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      expect(onRetry).toHaveBeenCalledOnce();
+    });
   });
 
   // =========================================================================
@@ -640,6 +669,23 @@ describe('WebhookSettings', () => {
       expect(checkbox.closest('label')?.textContent).toContain(
         WEBHOOK_LABELS.EVENT_NOT_YET_ACTIVE_SUFFIX,
       );
+      expect(checkbox).toBeDisabled();
+    });
+
+    it('allows subscriptions only to events with a live producer', async () => {
+      render(<WebhookSettings {...defaultProps} />);
+      await userEvent.click(screen.getByText('Add Endpoint'));
+
+      for (const event of AVAILABLE_EVENTS) {
+        const checkbox = screen.getByLabelText(
+          new RegExp(event.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        );
+        if (CATALOG_DATA[event.id]?.live) {
+          expect(checkbox, event.id).toBeEnabled();
+        } else {
+          expect(checkbox, event.id).toBeDisabled();
+        }
+      }
     });
   });
 });
