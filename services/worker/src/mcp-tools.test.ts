@@ -57,6 +57,7 @@ const EXPECTED_TOOL_NAMES = [
   'arkova_search_anchors',
   'nessie_query',
   'arkova_anchor_document',
+  'arkova_get_submission_status',
   'arkova_verify_document',
   'arkova_verify_batch',
   'arkova_search',
@@ -589,51 +590,43 @@ describe('handleNessieQuery (PH1-SDK-03)', () => {
 
 describe('handleAnchorDocument (PH1-SDK-03)', () => {
   const validHash = 'a'.repeat(64);
+  const WRITE_CONFIG = { ...CONFIG, workerBaseUrl: 'https://worker.test', callerApiKey: 'ak_test_secret' };
 
   it('returns error if content_hash is empty', async () => {
-    const result = await handleAnchorDocument({ content_hash: '' }, CONFIG);
+    const result = await handleAnchorDocument({ content_hash: '' }, WRITE_CONFIG);
     expect(result.isError).toBe(true);
   });
 
   it('rejects non-SHA-256 content_hash', async () => {
-    const result = await handleAnchorDocument({ content_hash: 'not-a-hash' }, CONFIG);
+    const result = await handleAnchorDocument({ content_hash: 'not-a-hash' }, WRITE_CONFIG);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('SHA-256');
   });
 
   it('submits anchor request successfully', async () => {
-    // BUG-028: the RPC/table row carries no public_id column — mocking one
-    // here is how the old, never-held "anchor receipt with a public
-    // identifier" contract survived. The receipt is a SUBMISSION receipt:
-    // public_id is an explicit null and the fingerprint is the handle.
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ id: 'anchor-1', content_hash: validHash, anchor_id: null }]),
+      json: async () => ({ public_id: 'ark_test_receipt', fingerprint: validHash, status: 'PENDING', action: 'queue', idempotent: false }),
     });
 
     const result = await handleAnchorDocument(
       { content_hash: validHash, record_type: 'patent_grant', source: 'uspto' },
-      CONFIG,
+      WRITE_CONFIG,
     );
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.status).toBe('submitted');
-    expect(parsed.content_hash).toBe(validHash);
-    // Explicit null, not a dropped key: no anchor exists yet, so no public_id.
-    expect(parsed).toHaveProperty('public_id', null);
-    expect(parsed.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: validHash });
+    expect(parsed.status).toBe('PENDING');
+    expect(parsed.fingerprint).toBe(validHash);
+    expect(parsed).toHaveProperty('public_id', 'ark_test_receipt');
     expect(parsed).not.toHaveProperty('record_id');
   });
 
   it('uses idempotency_key for 5-minute retry dedupe without leaking internal ids', async () => {
     const retryKey = ['123e4567', 'e89b', '12d3', 'a456', '426614174000'].join('-');
 
-    // BUG-028: dedupe returns the same submission-receipt shape as a fresh
-    // submission — public_id explicit null (no anchor exists yet), and the
-    // internal public_records UUID never leaks as a substitute identifier.
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ id: 'internal-rec-1', content_hash: validHash, anchor_id: null }]),
+      json: async () => ({ public_id: 'ark_test_receipt', fingerprint: validHash, status: 'PENDING', action: 'queue', idempotent: true }),
     });
 
     const result = await handleAnchorDocument(
@@ -641,17 +634,17 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
         content_hash: validHash,
         idempotency_key: retryKey,
       },
-      CONFIG,
+      WRITE_CONFIG,
     );
 
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.status).toBe('already_submitted');
-    expect(parsed).toHaveProperty('public_id', null);
-    expect(parsed.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: validHash });
+    expect(parsed.status).toBe('PENDING');
+    expect(parsed.idempotent).toBe(true);
+    expect(parsed).toHaveProperty('public_id', 'ark_test_receipt');
     expect(parsed).not.toHaveProperty('record_id');
     expect(JSON.stringify(parsed)).not.toContain('internal-rec-1');
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/public_records');
+    expect(mockFetch.mock.calls[0][0]).toBe('https://worker.test/api/v1/anchor');
   });
 
   it('handles API error', async () => {
@@ -659,7 +652,7 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
       ok: false,
       text: async () => 'duplicate key',
     });
-    const result = await handleAnchorDocument({ content_hash: validHash }, CONFIG);
+    const result = await handleAnchorDocument({ content_hash: validHash }, WRITE_CONFIG);
     expect(result.isError).toBe(true);
   });
 });
