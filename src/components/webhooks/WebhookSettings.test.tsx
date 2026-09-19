@@ -573,6 +573,11 @@ describe('WebhookSettings', () => {
         // BUG-002: registered in the worker allowlist so the expiry-alert cron's
         // dispatch can actually reach a subscriber.
         'compliance.document_expiring',
+        'job.completed',
+        'compliance.certificate_expiring',
+        'compliance.anchor_delayed',
+        'compliance.signature_revoked',
+        'compliance.timestamp_coverage_low',
         // SCRUM-3982: both were dispatched from
         // services/worker/src/api/v1/attestations.ts while unregistered, so no
         // endpoint could subscribe AND the payload skipped schema validation

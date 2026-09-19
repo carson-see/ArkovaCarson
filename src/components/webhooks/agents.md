@@ -150,3 +150,7 @@ string — that last one is exactly what made `anchor.batch_secured` look live.
 The picker and catalog include live `anchor.revocation_anchored` and
 `attestation.active` entries. Their fields mirror the strict worker schemas;
 both have reachable job producers.
+
+## 2026-09-19 — legacy webhook families registered
+
+The picker and catalog now include `job.completed` and four compliance event contracts. Job completion, certificate expiry, anchor delay, and timestamp coverage have reachable producers and are marked active. `compliance.signature_revoked` is subscribable but stays “Not yet active” because its emitter has no lifecycle callsite. Field lists mirror the strict worker schemas; job/certificate references are opaque and no internal UUID or raw processing error is displayed.

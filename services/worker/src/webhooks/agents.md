@@ -212,19 +212,19 @@ six ordered mirrors updated in the same commit
 
 ### Historical SCRUM-3982 gaps and current disposition
 
-The following bullets described the state when SCRUM-3982 landed. SCRUM-5063 now closes the first two items for `anchor.revocation_anchored` and `attestation.active`; five unregistered families remain.
+The following bullets described the state when SCRUM-3982 landed. SCRUM-5063 first closed `anchor.revocation_anchored` and `attestation.active`; the 2026-09-19 deferred-gap batch then closed the remaining five families.
 
-- **Five event types remain dispatched-but-unregistered**: `job.completed`, `compliance.anchor_delayed`,
+- **Closed 2026-09-19 — five formerly dispatched-but-unregistered types**: `job.completed`, `compliance.anchor_delayed`,
   `compliance.certificate_expiring`, `compliance.signature_revoked`,
-  `compliance.timestamp_coverage_low`. A clean payload on any of them still
-  passes with `bypassed: true`, by design — the ban is on the FIELDS, not on
-  being unregistered, and refusing unknown types wholesale would break seven
-  live call sites at once with no subscriber benefit (nothing can subscribe to
-  an unregistered type).
+  `compliance.timestamp_coverage_low`. All now use strict schemas. Job and
+  certificate producers derive deterministic, domain-separated 128-bit opaque
+  references from internal UUIDs; raw failure text and certificate subject CN
+  are omitted. Signature revocation is contract-locked but remains correctly
+  marked non-live because no lifecycle route calls its emitter.
 - **Closed by SCRUM-5063:** the revocation and attestation anchoring producers now ship public-id-only payloads through strict registered schemas.
-- **`job_id`, `certificate_id` and `signature_id` are NOT in
+- **Historical:** `job_id`, `certificate_id` and `signature_id` are NOT in
   `BANNED_PAYLOAD_KEYS`.** They are internal UUIDs on unregistered events, and
-  they still pass. The ban list is derived from what this file's header
+  they passed before registration. The ban list is derived from what this file's header
   declares, and widening it is a separate decision; registering those events
   with public-id-only schemas is the real fix.
 - **The scan is top-level only**, matching what `.strict()` does for registered

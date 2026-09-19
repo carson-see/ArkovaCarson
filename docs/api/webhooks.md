@@ -89,8 +89,22 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | Event | Fired When | Status |
 |---|---|---|
 | `compliance.document_expiring` | A `SECURED` record is inside its 7-day expiry window and has **not** expired yet. Advance warning — `anchor.expired` fires after the fact, once the sweep has already transitioned the record to `EXPIRED`. Emitted by the daily `check-credential-expiry` job, gated on `ENABLE_EXPIRY_ALERTS`. | Stable |
+| `compliance.certificate_expiring` | A signing certificate enters its 30-, 7-, or 1-day expiration window. | Stable |
+| `compliance.anchor_delayed` | An organization has pending records older than one hour. | Stable |
+| `compliance.signature_revoked` | A signature is revoked. | Contract defined; subscriptions are accepted, but no lifecycle route calls the emitter yet |
+| `compliance.timestamp_coverage_low` | An organization's 30-day timestamp coverage falls below 80 percent. | Stable |
 
 `compliance.document_expiring` payload `data`: `public_id`, `status` (always `SECURED`), `expires_at`, `days_remaining` (positive integer), `warning_level` (`7_day`), plus optional `credential_type`, `label`, `org_public_id`.
+
+Certificate and job references are deterministic, domain-separated opaque values derived from internal records; internal UUIDs are never sent. Compliance aggregate events contain bounded counts, percentages, thresholds, and timestamps only.
+
+### Batch Verification Jobs
+
+| Event | Fired When | Status |
+|---|---|---|
+| `job.completed` | An asynchronous batch verification request finishes successfully or fails. | Stable |
+
+`job.completed` payload `data`: `job_ref`, `status` (`complete` or `failed`), `total`, `result_count`, and nullable `error_code` (`processing_failed` for failures). Raw exception text is never sent.
 
 ### Attestation Lifecycle (SCRUM-3982)
 

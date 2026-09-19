@@ -105,6 +105,11 @@ export const AVAILABLE_EVENTS = [
   // never registered in the worker allowlist, so this option could not be
   // offered and every dispatch matched zero endpoints.
   { id: 'compliance.document_expiring', label: 'Document Expiring Soon' },
+  { id: 'job.completed', label: 'Batch Verification Completed' },
+  { id: 'compliance.certificate_expiring', label: 'Signing Certificate Expiring' },
+  { id: 'compliance.anchor_delayed', label: 'Securing Delayed' },
+  { id: 'compliance.signature_revoked', label: 'Signature Revoked' },
+  { id: 'compliance.timestamp_coverage_low', label: 'Timestamp Coverage Low' },
   // SCRUM-3982: both were dispatched from services/worker/src/api/v1/attestations.ts
   // while unregistered, so no endpoint could subscribe and the payload skipped
   // schema validation entirely (attestation.created was shipping the document

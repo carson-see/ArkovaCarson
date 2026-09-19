@@ -880,7 +880,7 @@ describe('validateWebhookPayload — banned keys refused on EVERY event type (SC
     },
   );
 
-  it('still passes a CLEAN unregistered payload with bypassed: true', () => {
+  it('validates the formerly unregistered payloads through strict schemas', () => {
     // Deliberate: the ban is on the FIELDS, not on being unregistered. Turning
     // unknown types into a blanket refusal would break every remaining
     // dispatch site at once for no subscriber benefit (nothing can subscribe
@@ -891,7 +891,7 @@ describe('validateWebhookPayload — banned keys refused on EVERY event type (SC
       threshold_minutes: 60,
     });
     expect(delayed.ok).toBe(true);
-    if (delayed.ok) expect(delayed.bypassed).toBe(true);
+    if (delayed.ok) expect(delayed.bypassed).toBeUndefined();
 
     // NOTE the `job_id` here: it IS an internal `batch_verification_jobs`
     // UUID, and it is NOT in BANNED_PAYLOAD_KEYS, so this payload passes. That
@@ -904,8 +904,7 @@ describe('validateWebhookPayload — banned keys refused on EVERY event type (SC
       total: 2,
       result_count: 2,
     });
-    expect(job.ok).toBe(true);
-    if (job.ok) expect(job.bypassed).toBe(true);
+    expect(job.ok).toBe(false);
   });
 });
 
@@ -1211,13 +1210,27 @@ describe('unregistered event types fail closed (Z2)', () => {
     // `git grep -n "dispatchWebhookEvent(" services/worker/src`, minus the 12
     // registered types. This list is a RATCHET: entries come off it as
     // SCRUM-5063 registers each type. Nothing is ever added.
-    expect([...LEGACY_UNREGISTERED_EVENT_TYPES].sort()).toEqual([
-      'compliance.anchor_delayed',
-      'compliance.certificate_expiring',
-      'compliance.signature_revoked',
-      'compliance.timestamp_coverage_low',
-      'job.completed',
-    ]);
+    expect([...LEGACY_UNREGISTERED_EVENT_TYPES]).toEqual([]);
+  });
+});
+
+describe('remaining legacy event contracts', () => {
+  const valid: Record<string, Record<string, unknown>> = {
+    'job.completed': { job_ref: 'job_0123456789abcdef0123456789abcdef', status: 'complete', total: 2, result_count: 2, error_code: null },
+    'compliance.certificate_expiring': { certificate_ref: 'cert_0123456789abcdef0123456789abcdef', expires_at: '2026-10-01T00:00:00Z', warning_level: '30_day', days_remaining: 30 },
+    'compliance.anchor_delayed': { pending_count: 3, oldest_pending_since: '2026-09-12T10:00:00Z', threshold_minutes: 60 },
+    'compliance.signature_revoked': { public_id: 'sig-public-1', revocation_reason: 'key compromise', revoked_at: '2026-09-19T00:00:00Z' },
+    'compliance.timestamp_coverage_low': { coverage_pct: 70, threshold_pct: 80, total_signatures: 10, timestamped_signatures: 7, period_days: 30 },
+  };
+
+  it.each(Object.entries(valid))('validates %s through a strict schema', (eventType, payload) => {
+    const result = validateWebhookPayload(eventType, payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  it.each(Object.entries(valid))('rejects unknown/internal fields on %s', (eventType, payload) => {
+    expect(validateWebhookPayload(eventType, { ...payload, org_id: 'internal' }).ok).toBe(false);
   });
 });
 
