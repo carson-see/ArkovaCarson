@@ -11,7 +11,8 @@
       "feature/*": true,
       "security/*": true,
       "chore/*": true,
-      "soak-evidence/*": false
+      "soak-evidence/**": false,
+      "mergify/merge-queue/**": false
     }
   },
   "headers": [
