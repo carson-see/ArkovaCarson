@@ -301,6 +301,25 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
     expect(mockRefreshInvitations).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves an admin invitation role when a platform admin resends it', async () => {
+    platformAdminMode.value = true;
+    mockInviteMember.mockResolvedValue(true);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('tab', { name: 'People' }));
+    await waitFor(() => expect(capturedOnResend).not.toBeNull());
+
+    await act(async () => {
+      await capturedOnResend!({ email: 'pending-admin@example.com', role: 'ORG_ADMIN' });
+    });
+
+    expect(mockInviteMember).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'pending-admin@example.com',
+      role: 'ORG_ADMIN',
+      orgId: 'org-1',
+    }));
+  });
+
   it('does not refresh invitations after a resend fails', async () => {
     mockInviteMember.mockResolvedValue(false);
     const user = userEvent.setup();

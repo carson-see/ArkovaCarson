@@ -434,9 +434,10 @@ export function OrgProfilePage() {
     if (!orgId) return;
     const invited = await inviteMember({
       email: invitation.email,
-      // invite_member deliberately rejects ORG_ADMIN invitations. Resend the
-      // replacement as an individual; an admin can promote after acceptance.
-      role: 'INDIVIDUAL',
+      // The browser invite_member RPC deliberately rejects ORG_ADMIN, but the
+      // platform-admin worker route supports it. Preserve the requested role
+      // for that authorized route; ordinary org admins still resend as members.
+      role: platformAdmin && invitation.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INDIVIDUAL',
       orgId,
       orgName: organization?.display_name ?? 'Your Organization',
       inviterName: profile?.full_name ?? undefined,
@@ -444,7 +445,7 @@ export function OrgProfilePage() {
     if (invited) {
       await refreshInvitations();
     }
-  }, [inviteMember, orgId, organization?.display_name, profile?.full_name, refreshInvitations]);
+  }, [inviteMember, orgId, organization?.display_name, platformAdmin, profile?.full_name, refreshInvitations]);
 
   const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
     const { error } = await supabase
