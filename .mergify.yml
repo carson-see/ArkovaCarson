@@ -257,7 +257,11 @@ queue_rules:
 # ---------------------------------------------------------------------------
 
 merge_queue:
-  max_parallel_checks: 5
+  # Each speculative candidate runs the complete required-check matrix. Keep
+  # two candidates moving concurrently without paying for five competing full
+  # matrices; queues remain batch_size: 1 because agents.md unions still
+  # collide when multiple PRs share a speculative batch.
+  max_parallel_checks: 2
 
 # ---------------------------------------------------------------------------
 # Pull request rules — automation triggers

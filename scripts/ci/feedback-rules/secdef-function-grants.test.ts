@@ -12,6 +12,8 @@
  * DEFINER function bypasses RLS, so the residue is an anon-reachable
  * RLS-bypassing RPC. Occurred in 0364, 0377, 0378, 0388 and 0406.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   parseSecurityDefinerFunctions,
@@ -350,14 +352,44 @@ GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
 `;
 
-  it('pins the set to exactly the two prod-verified functions', () => {
+  it('pins the set to exactly the reviewed browser functions', () => {
     // Growing this set is a security decision — a new entry means a SECURITY
     // DEFINER function stays callable by every signed-in user. It must come
     // with a live-prod ACL check and a named browser caller, like these did.
+    // 2026-09-13 (CTO, SCRUM-5024): the three referral RPCs are added ahead of
+    // their prod apply; each body is the authority check (membership / admin
+    // of p_org_id, self-referral refused, tenant-scoped reads), pinned by
+    // tests/rls/referral-attribution.test.ts, and the browser callers are
+    // ReferralPanel.tsx and ReferralSettingsPage.tsx. anon stays revoked.
     expect([...DELIBERATELY_AUTHENTICATED].sort()).toEqual([
+      'public.create_webhook_endpoint',
+      'public.ensure_org_referral_code',
+      'public.get_org_referrals',
       'public.get_pipeline_stats',
       'public.get_user_monthly_anchor_count',
+      'public.record_org_referral',
     ]);
+  });
+
+  it('accepts only the reviewed immutable webhook definition with its intentional browser grant', () => {
+    const file = '0454_scrum3972_webhook_endpoint_scope.sql';
+    const sql = readFileSync(resolve(import.meta.dirname, '../../../supabase/migrations', file), 'utf8');
+    const check = (value: string) => findViolations([{ file, sql: value }], {
+      deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
+    });
+    expect(check(sql)).toEqual([]);
+    // Neither the role exception nor same-name parsing may authorize a new
+    // unguarded overload, remove caller scoping, or reopen anonymous access.
+    expect(check(sql + `
+CREATE FUNCTION public.create_webhook_endpoint(p_org_id uuid)
+RETURNS jsonb LANGUAGE sql SECURITY DEFINER AS $$ SELECT '{}'::jsonb $$;
+REVOKE ALL ON FUNCTION public.create_webhook_endpoint(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.create_webhook_endpoint(uuid) TO authenticated;
+`)).toHaveLength(1);
+    expect(check(sql.replace("IF v_user_id IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;", '')))
+      .toHaveLength(1);
+    expect(check(sql + '\nGRANT EXECUTE ON FUNCTION public.create_webhook_endpoint(text, text[], text) TO anon;'))
+      .toHaveLength(1);
   });
 
   it('same-file: an anon-only revoke satisfies an auth-exempt function', () => {

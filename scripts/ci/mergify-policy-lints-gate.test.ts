@@ -16,14 +16,11 @@
  * AS A MERGE GATE — there was nothing to override.
  *
  * This pins the check into every queue rule so the gate is real, and pins the
- * ci.yml job name so the two cannot silently drift apart. No conditional-job
- * deadlock is possible: the job carries no job-level `if:` and no path filter,
- * so the check name is reported on every PR run of ci.yml. (The ci.yml-wide
- * `paths-ignore` caveat — a PR touching ONLY LICENSE/.gitignore/README.md/
- * memory/**.md runs no ci.yml job at all — is shared with every other gated
- * ci.yml check and documented in `.mergify.yml` itself; it is not introduced
- * here.) Branch protection's required-check set is a separate, Carson/admin-
- * only surface — this test pins only the in-repo Mergify layer.
+ * ci.yml job name so the two cannot silently drift apart. The only
+ * job condition allowed is shared draft admission: ready PRs, protected
+ * pushes and Mergify candidates still run. Scenario coverage lives in
+ * ci-draft-admission.test.ts. Path filtering must stay inside the job.
+ * The workflow-wide paths-ignore behavior is unchanged.
  *
  * Follows the raw-content contract style of s33-wave2-workflow-contract.test.ts
  * and the queue-gate shape of mergify-orphaned-export-gate.test.ts /
@@ -64,20 +61,18 @@ describe('.mergify.yml — Policy Lints gates the queue', () => {
     expect(ci).toContain('name: Policy Lints');
   });
 
-  it('the gated job stays unconditional — a conditional job here would deadlock the queue', () => {
+  it('the gated job uses only queue-safe draft admission', () => {
     const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
     const job = /\n {2}policy-lints:\n([\s\S]*?)(?=\n {2}[a-z][\w-]*:\n)/u.exec(ci)?.[0];
     expect(job, 'ci.yml must keep the policy-lints job').toBeDefined();
-    // A job-level `if:` (indented 4 spaces, directly under the job key) would
-    // let the check go unreported on PRs where the condition is false, and an
-    // unreported required check never satisfies `check-success` — the queue
-    // would wait forever. Path conditioning in this repo is done with
-    // step-level `if:` inside always-reporting jobs (policy-lints already does
-    // exactly that for its Confluence coverage step), never by suppressing a
-    // gated job.
+    // The only allowed condition is shared draft admission. Its scenario
+    // contract proves Mergify candidates and ready PRs always run this job.
+    // Reject additional per-job conditions that could deadlock the queue.
     expect(
       job,
-      'policy-lints must not gain a job-level if: while listed in merge_conditions',
-    ).not.toMatch(/\n {4}if:/u);
+      'policy-lints must use only the shared draft admission condition',
+    ).toContain("    if: ${{ needs.admission.outputs.run_full == 'true' }}\n");
+    expect(job?.match(/^    if:/gm)).toHaveLength(1);
+    expect(job).toContain('    needs: admission\n');
   });
 });

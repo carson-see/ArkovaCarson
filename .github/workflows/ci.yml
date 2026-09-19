@@ -14,7 +14,10 @@ on:
       - '.gitignore'
       - 'README.md'
       - 'memory/**.md'
+  workflow_dispatch:
+
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     branches: [main, staging, develop]
     paths-ignore:
       - 'LICENSE'
@@ -45,9 +48,23 @@ env:
   NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
 
 jobs:
+  admission:
+    name: CI Admission
+    runs-on: ubuntu-latest
+    outputs:
+      run_full: ${{ steps.decision.outputs.run_full }}
+    steps:
+      - name: Admit protected, ready, and speculative runs
+        id: decision
+        env:
+          RUN_FULL: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'mergify/') || github.event.pull_request.draft != true }}
+        run: echo "run_full=$RUN_FULL" >> "$GITHUB_OUTPUT"
+
   # Secret scanning - block commits containing secrets
   secret-scan:
     name: Secret Scanning
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -64,6 +81,8 @@ jobs:
   # Dependency scanning - check for vulnerable packages
   dependency-scan:
     name: Dependency Scanning
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -306,6 +325,8 @@ jobs:
   # postinstall must not be able to fail a compliance gate.
   notices-freshness:
     name: Third-Party Notices Freshness
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -330,6 +351,8 @@ jobs:
   # credentials are not yet present in repo secrets.
   sonatype-sca:
     name: sonatype-sca
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -385,7 +408,8 @@ jobs:
   # the token from GCP Secret Manager and fails if the project drifts back.
   sonar-quality-gate-config:
     name: SonarCloud Quality Gate Config
-    if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') }}
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' && (!(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -430,6 +454,8 @@ jobs:
   # eliminates 4 runner spin-ups (~8 min/PR saved).
   policy-lints:
     name: Policy Lints
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -611,6 +637,8 @@ jobs:
   # false — a NEW orphan must block the PR.
   orphaned-export-lint:
     name: Orphaned Export Lint
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -647,6 +675,8 @@ jobs:
   # log, and a path cited there may be legitimately dead today.
   doc-pointers:
     name: Doc Pointer Resolution
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -682,6 +712,8 @@ jobs:
   # observed green across a sprint.
   agent-hook-guards:
     name: Agent Hook Guards
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -716,6 +748,8 @@ jobs:
   # credentials, no write path.
   edge-deployed-version-check:
     name: Edge Deployed-Version Drift (warn-only)
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -745,6 +779,8 @@ jobs:
   # continue to run.
   tdd-enforcement:
     name: TDD Enforcement
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -765,6 +801,8 @@ jobs:
   # Type checking and linting
   typecheck-lint:
     name: TypeCheck & Lint
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -883,6 +921,8 @@ jobs:
   # Verify generated types are up to date
   types-check:
     name: Generated Types Check
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     # CI-INFRA hotfix 2026-07-01: pinned off ubuntu-latest — a runner-image shift broke
     # supabase/setup-cli@v2.1.1's bun/musl setup step (glibc runner hit the musl-asset error).
     runs-on: ubuntu-22.04
@@ -942,7 +982,8 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
-    needs: [typecheck-lint, tdd-enforcement]
+    needs: [admission, typecheck-lint, tdd-enforcement]
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1285,6 +1326,8 @@ jobs:
   # AI eval regression gate (GAP-1) — catches prompt quality regressions before deploy
   ai-eval-gate:
     name: AI Eval Regression Gate
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1338,6 +1381,8 @@ jobs:
   # remediation data lands and this becomes a blocking launch gate.
   golden-distribution-audit:
     name: Golden Distribution Audit
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1437,6 +1482,8 @@ jobs:
   # TLA+ state machine verification (TLA-02)
   tla-verify:
     name: TLA+ Verification
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1555,6 +1602,8 @@ jobs:
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
   migration-check:
     name: Migration Safety Check
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1628,7 +1677,8 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
-    needs: [typecheck-lint, test]
+    needs: [admission, typecheck-lint, test]
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1848,7 +1898,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    needs: [typecheck-lint]
+    needs: [admission, typecheck-lint]
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1901,6 +1952,8 @@ jobs:
   # publish gate would reject it, a PR should reject it first.
   python-sdk-tests:
     name: Python SDK Tests (packages/arkova-py)
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1916,7 +1969,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install Python SDK with dev extras
-        run: python -m pip install --only-binary=:all: --upgrade "pip==26.2.1" && python -m pip install --only-binary=:all: -e ".[dev]"
+        run: >-
+          python -m pip install --only-binary=:all: --upgrade "pip==26.2.1" && python -m pip install --only-binary=:all: -e ".[dev]"
 
       - name: Run Python SDK tests
         run: pytest
@@ -1937,6 +1991,8 @@ jobs:
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:
     name: Lockfile Integrity
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1965,10 +2021,11 @@ jobs:
   # SBOM generation (CISO Action-10) — produce CycloneDX bill of materials on main
   sbom-generation:
     name: SBOM Generation
+    needs: admission
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    if: github.ref == 'refs/heads/main'
+    if: ${{ needs.admission.outputs.run_full == 'true' && (github.ref == 'refs/heads/main') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Node.js
@@ -2022,6 +2079,8 @@ jobs:
   # any accidental call to Arkova fails loudly instead of silently passing.
   verifier-cli:
     name: Verifier CLI (clean-room)
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2094,6 +2153,8 @@ jobs:
   # build steps are guarded on the diff actually touching worker source/config.
   worker-build-parity:
     name: Worker Build (deploy-parity)
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2151,6 +2212,8 @@ jobs:
   # NON-REQUIRED for now.
   verifier-build:
     name: Verifier Build
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2241,7 +2304,8 @@ jobs:
   # Runs only on pull_request events (needs PR head/draft context).
   evidence-identity:
     name: Evidence-identity gate
-    if: github.event_name == 'pull_request'
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' && (github.event_name == 'pull_request') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2272,13 +2336,22 @@ jobs:
           fi
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
+          BASE_REPO="$(jq -r '.base.repo.full_name // empty' <<<"${DATA}")"
+          BASE_REF="$(jq -r '.base.ref // empty' <<<"${DATA}")"
+          if [[ "${BASE_REPO}" != "${{ github.repository }}" || ! "${BASE_REF}" =~ ^(main|staging|develop)$ ]]; then
+            echo "::error::PR #${PR_NUMBER} has an unexpected base repository/ref."
+            exit 1
+          fi
+          BASE_DATA="$(gh api "repos/${BASE_REPO}/git/ref/heads/${BASE_REF}")"
+          BASE_SHA="$(jq -r '.object.sha // empty' <<<"${BASE_DATA}")"
           IS_DRAFT="$(jq -r '.draft // false' <<<"${DATA}")"
-          if [[ -z "${HEAD_SHA}" ]]; then
-            echo "::error::gh api returned an empty head SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
+          if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::gh api returned an invalid head/base SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
             exit 1
           fi
           {
             echo "head_sha=${HEAD_SHA}"
+            echo "base_sha=${BASE_SHA}"
             echo "is_draft=${IS_DRAFT}"
           } >> "${GITHUB_OUTPUT}"
           # SECURITY: the PR body is fully author-controlled. A FIXED heredoc
@@ -2319,6 +2392,7 @@ jobs:
           # exactly the fields that go stale on a bare rerun.
           PR_BODY: ${{ steps.live_pr.outputs.body }}
           PR_HEAD_SHA: ${{ steps.live_pr.outputs.head_sha }}
+          BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
           PR_IS_DRAFT: ${{ steps.live_pr.outputs.is_draft }}
         run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts
 
@@ -2340,6 +2414,8 @@ jobs:
   # fail-closed main() returns the USAGE code 2 when handed no input path.
   anti-hollow-soak:
     name: Anti-hollow-soak guards
+    needs: admission
+    if: ${{ needs.admission.outputs.run_full == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

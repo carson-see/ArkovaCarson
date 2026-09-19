@@ -615,6 +615,23 @@ export const WEBHOOK_LABELS = {
   TEST_PING_ERROR: "Couldn't send the test event. Please try again.",
   TEST_PING_INACTIVE: 'Enable this endpoint before sending a test event.',
 
+  // ── SCRUM-3972: delivery scope ────────────────────────────────────────────
+  // CLAUDE.md §1.3: user-visible copy says "affiliated organization", never
+  // "sub-org". The availability note is written in the FUTURE tense on purpose
+  // (builder contract §7) — the cross-organization delivery is behind a
+  // server-side gate that is currently off, so the option stores a preference
+  // today and starts delivering once that gate opens.
+  SCOPE_LABEL: 'Which organizations’ events',
+  SCOPE_SELF: 'This organization only',
+  SCOPE_SELF_DESC: 'Receive events for records and activity belonging to this organization. This is the default and matches how every existing endpoint behaves.',
+  SCOPE_SELF_AND_DESCENDANTS: 'This organization and its direct affiliated organizations',
+  // CTO review 2026-09-12: "direct" is load-bearing, not decoration. Affiliation
+  // chains deeper than one level are reachable (proved in
+  // machines/subOrgWebhookFanout.machine.ts) and this option does NOT include
+  // them, so the copy must not imply a whole subtree.
+  SCOPE_SELF_AND_DESCENDANTS_DESC: 'Also receive events belonging to organizations directly affiliated to this one, once their affiliation is approved. Organizations further down a chain are not included, an affiliation that is suspended stops, and affiliated organizations never receive this organization’s events.',
+  SCOPE_PENDING_NOTE: 'Delivery of affiliated organizations’ events will begin once Arkova enables it; until then this endpoint receives this organization’s events only.',
+
   // ── WH-03 (SCRUM-2398): delivery history + failed deliveries ─────────────
   DELIVERIES_TITLE: 'Delivery History',
   DELIVERIES_DESC: 'Recent event notifications sent to your endpoints. Only delivery details are shown — never document contents.',
@@ -685,6 +702,11 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
   'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
+  'job.completed': 'A batch verification request finished processing.',
+  'compliance.certificate_expiring': 'A signing certificate is approaching its expiration date.',
+  'compliance.anchor_delayed': 'One or more document records have waited longer than the configured securing threshold.',
+  'compliance.signature_revoked': 'A signature was revoked.',
+  'compliance.timestamp_coverage_low': 'Signature timestamp coverage fell below the configured threshold.',
   // CTO ruling Z5 (2026-09-12), §1.13 R-7: scoped to the single-create route.
   // POST /api/v1/attestations dispatches this event; the bulk route
   // POST /api/v1/attestations/batch-create does not dispatch anything, so a
@@ -692,6 +714,15 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   // attestation was created" until batch-create emits.
   'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
+  'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
+  'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
+  'suborg.created': 'A parent organization created an affiliated organization.',
+  'suborg.approved': 'A parent organization approved an affiliated organization.',
+  'suborg.revoked': 'A parent organization revoked an affiliation.',
+  'suborg.credits_allocated': 'A parent organization allocated credits to an affiliated organization.',
+  'suborg.credits_reclaimed': 'A parent organization reclaimed credits from an affiliated organization.',
+  'suborg.suspended': 'An affiliated organization was suspended by its parent organization.',
+  'suborg.offboarded': 'An affiliated organization was offboarded — credits returned and the organization suspended.',
 };
 
 // =============================================================================
@@ -1587,6 +1618,7 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_CREDENTIAL_TEMPLATES: 'Document Templates',
   BREADCRUMB_WEBHOOKS: 'Webhooks',
   BREADCRUMB_API_KEYS: 'API Keys',
+  BREADCRUMB_REFERRALS: 'Referrals',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
   COLLAPSE: 'Collapse',
@@ -1767,6 +1799,8 @@ export const SETTINGS_PAGE_LABELS = {
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
+  REFERRALS: 'Referrals',
+  REFERRALS_DESC: 'Share your referral code and see who joined through it',
   TEMPLATES_EMPTY_TITLE: 'No templates yet',
   TEMPLATES_EMPTY_DESC: 'Create your first document template to start securing verifiable documents.',
   TEMPLATES_EMPTY_CTA: 'Create Template',
@@ -2576,6 +2610,11 @@ export const DEVELOPER_PAGE_LABELS = {
   MCP_TOOL_VERIFY_DESC: 'Verify a record by its public ID',
   MCP_TOOL_SEARCH: 'arkova_search_anchors',
   MCP_TOOL_SEARCH_DESC: 'Search the public record registry',
+  MCP_ONE_COMMAND_TITLE: 'Connect Claude Code in one command',
+  MCP_KEY_PREREQUISITE: 'First set ARKOVA_API_KEY in your shell. The command expands it before Claude Code saves the server configuration.',
+  MCP_COPY_COMMAND: 'Copy install command',
+  MCP_COMMAND_COPIED: 'Install command copied',
+  MCP_ONE_CLICK_NOTE: 'One-click links are omitted because Arkova does not put API keys in URLs. Use a client’s secure secret prompt or the command above.',
 
   // API docs card on ApiKeySettingsPage
   API_DOCS_CARD_TITLE: 'API Documentation',
@@ -2588,6 +2627,8 @@ export const DEVELOPER_PAGE_LABELS = {
   SANDBOX_ANON_HINT_CTA: 'create an account',
   SANDBOX_ANON_HINT_SUFFIX: 'to generate a key.',
   SANDBOX_ERROR_UNREACHABLE: 'Could not connect to API server. The server may be unreachable or CORS may be blocking the request.',
+  SANDBOX_SEARCH_TITLE: 'Verification Search',
+  SANDBOX_SEARCH_DESC: 'Search verified records. The response reports search_mode as semantic_vector or lexical_substring so callers can identify how results were produced.',
 } as const;
 
 // =============================================================================
@@ -5000,4 +5041,55 @@ export const TWO_FACTOR_SETUP_LABELS = {
   // instead once that call fails or times out.
   LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
   LOAD_ERROR_RETRY: 'Retry',
+} as const;
+
+// =============================================================================
+// PARTNER REFERRALS — SCRUM-5024
+//
+// Terminology: the word "token" is banned in user-visible strings (§1.3), so
+// the shareable string is a "code" and the URL is a "link" throughout.
+//
+// MEASURED vs NOT ASSERTED (§1.5, extended by the R-7 claims gate): this panel
+// states which organizations presented the code when they were created, and
+// when. It does not state, imply or promise a commission, discount, payout or
+// revenue share — commercial terms are a separate decision and no field here
+// feeds billing. REFERRAL_NOT_ASSERTED is that sentence and must stay on the
+// page; do not soften it into marketing language.
+// =============================================================================
+
+export const REFERRAL_LABELS = {
+  PAGE_TITLE: 'Referrals',
+  PAGE_DESCRIPTION: 'Invite other organizations to Arkova and see which ones joined through your link.',
+  LOADING: 'Loading your referrals…',
+
+  CODE_CARD_TITLE: 'Your referral code',
+  CODE_CARD_DESCRIPTION: 'Share the link below. Organizations that sign up through it are recorded against your account.',
+  CODE_LABEL: 'Referral code',
+  SHARE_LINK_LABEL: 'Share link',
+  COPY_LINK: 'Copy link',
+  COPY_LINK_DONE: 'Copied',
+  COPY_LINK_FAILED: 'Could not copy the link. Select it and copy manually.',
+
+  CREATE_TITLE: 'No referral code yet',
+  CREATE_DESCRIPTION: 'Create a code to start inviting organizations. You can create it once; the same code is reused from then on.',
+  CREATE_BUTTON: 'Create referral code',
+  CREATING: 'Creating…',
+  CREATE_FAILED: 'Could not create a referral code. Please try again.',
+
+  TABLE_TITLE: 'Organizations you referred',
+  TABLE_EMPTY_TITLE: 'No referrals yet',
+  TABLE_EMPTY_DESCRIPTION: 'Once an organization signs up through your link, it appears here.',
+  COLUMN_ORGANIZATION: 'Organization',
+  COLUMN_JOINED: 'Joined',
+  COLUMN_STATUS: 'Status',
+
+  LOAD_FAILED_TITLE: 'Could not load your referrals',
+  LOAD_FAILED_RETRY: 'Retry',
+
+  ADMIN_ONLY: 'Only organization administrators can manage the referral code.',
+  NO_ORG: 'Join or create an organization to use referrals.',
+
+  /** The §1.5 measured / not-asserted sentence. Keep it on the page. */
+  NOT_ASSERTED:
+    'What this shows: organizations that entered your code when they created their account, and the date they did. It does not represent any commission, discount or payment.',
 } as const;

@@ -35,6 +35,17 @@ in the same PR. Re-verify with:
 | `credential.verified` | `CredentialVerifiedPayloadSchema` | `services/worker/src/api/v1/verify.ts` + `services/worker/src/api/v1/oracle.ts` (SCRUM-1799) | Wired but dark: BOTH sites gated on `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` (default false; verified unset in prod 2026-08-29) |
 | `credential.status_changed` | `CredentialStatusChangedPayloadSchema` | Four sites (SCRUM-1800): `services/worker/src/api/anchor-revoke.ts` (revoke), `services/worker/src/api/anchor-lineage.ts` (supersede), `services/worker/src/jobs/check-confirmations.ts` (bulk confirm), `services/worker/src/jobs/chain-maintenance.ts` (reorg revert) | Live for any anchor with non-null `credential_type`; no feature flag |
 | `compliance.document_expiring` | `ComplianceDocumentExpiringPayloadSchema` | `services/worker/src/routes/cron.ts` (`POST /cron/check-credential-expiry`, behind `ENABLE_EXPIRY_ALERTS`) | Live, flag-gated (BUG-002) |
+| `suborg.created` | `SubOrgCreatedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/create`, via `webhooks/subOrgEvents.ts` `emitSubOrgEvent` | Live, unflagged. Parent org id only. |
+| `suborg.approved` | `SubOrgApprovedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/approve` (shared status-action handler), via `emitSubOrgEvent` | Live, unflagged. Parent org id only. |
+| `suborg.revoked` | `SubOrgRevokedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/revoke` (shared status-action handler), via `emitSubOrgEvent` | Live, unflagged. Parent org id only. |
+| `suborg.credits_allocated` | `SubOrgCreditsAllocatedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/credits` (positive `amount`), via `emitSubOrgEvent` | Live, unflagged. Parent AND affiliate org id (`CHILD_NOTIFIED_SUBORG_EVENTS`). |
+| `suborg.credits_reclaimed` | `SubOrgCreditsReclaimedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/credits` (negative `amount`) AND the reclaim step of `POST /org/sub-orgs/offboard`, via `emitSubOrgEvent` | Live, unflagged. Parent AND affiliate org id. The two producers are separate requests, each emitting exactly once for its own call — neither delegates to the other's handler, so there is no double-emit. |
+| `suborg.suspended` | `SubOrgSuspendedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/offboard` (only when the affiliate was not already suspended), via `emitSubOrgEvent` | Live, unflagged. Parent AND affiliate org id. |
+| `suborg.offboarded` | `SubOrgOffboardedPayloadSchema` (SCRUM-3972) | `services/worker/src/api/v1/orgSubOrgs.ts` `POST /org/sub-orgs/offboard`, via `emitSubOrgEvent` | Live, unflagged. Parent AND affiliate org id. |
+
+**Cross-organization fan-out (SCRUM-3972, separate from the table above).** `webhooks/suborg-fanout.ts` widens the endpoint selection in `dispatchWebhookEvent` so an `anchor.*` / `credential.*` event owned by an APPROVED affiliate can ALSO reach a **parent** endpoint whose `scope` column (migration 0454) is `self_and_descendants`. This is gated by `ENABLE_SUBORG_WEBHOOK_FANOUT` (`config.ts`, `boolFlag(false)`) — dark until the founder flips it, because it reverses decision D2 (`orgSubOrgs.ts` — a parent sees what its affiliates SPEND, never what they secured). The seven `suborg.*` events in the table above are NOT behind this flag: they are the parent's own affiliation actions on the parent's own (and, for four of them, the affiliate's own) org id, so no boundary is crossed. One hop only, never upward (an affiliate's endpoint never receives its parent's events), and a cross-organization payload always carries `org_public_id` — see the file header of `suborg-fanout.ts` for the full authority and caching rules.
+
+**Fan-out predicate, as amended by CTO review 2026-09-12.** A child's event reaches a parent endpoint only when `parent_org_id` matches, `parent_approval_status = 'APPROVED'`, **and `organizations.suspended` is false**. The suspension check is load-bearing and not redundant: `suspend_suborg` (migration 0290) flips `suspended` and never moves `parent_approval_status`, so an offboarded affiliate reads `APPROVED` permanently — approval alone would keep streaming a former affiliate's secured-record public ids to its ex-parent forever. Separately, the `suborg.*` family is excluded from fan-out by event-type prefix: those events are already addressed to the parent directly, and their `.strict()` schemas cannot carry `org_public_id`, so fanning them would produce either a duplicate or an error-level Sentry alarm on an entirely correct request. Both are pinned in `delivery.suborgScope.test.ts`.
 
 ### Dispatched but UNREGISTERED (validation-bypassed) — BUG-002 shape
 
@@ -393,3 +404,33 @@ the existing per-anchor `anchor.secured` confirmation fan-out; pre-confirmation 
 authenticated polling-only. `anchor.submitted` remains valid for the legacy direct-anchor processor,
 but is not emitted by canonical batch/instant submission. Payload-schema regressions pin that neither
 submitted nor secured projections can carry private tags or metadata.
+## 2026-09-19 — SCRUM-5063 finality event disposition
+
+`anchor.revocation_anchored` and `attestation.active` now have strict,
+public-id-only schemas and are removed from the legacy bypass ratchet. Their
+producers no longer send internal anchor UUIDs or document fingerprints.
+
+## 2026-09-19 — deferred webhook-family disposition
+
+The historical SCRUM-3982 gap list above is preserved as the state recorded
+when that work landed. SCRUM-5063 later registered
+`anchor.revocation_anchored` and `attestation.active` with strict public-only
+schemas and removed internal anchor identifiers and fingerprints at their
+producers. The deferred-gap batch then registered `job.completed`,
+`compliance.anchor_delayed`, `compliance.certificate_expiring`,
+`compliance.signature_revoked`, and `compliance.timestamp_coverage_low`.
+Job and certificate producers now derive deterministic, domain-separated
+opaque references; raw job errors and certificate subject names are omitted.
+`compliance.signature_revoked` remains correctly marked non-live because no
+lifecycle callsite invokes its emitter.
+The historical registry and gap list above are preserved verbatim as the state
+recorded when SCRUM-3982 landed. SCRUM-5063 now registers
+`anchor.revocation_anchored` and `attestation.active` with strict public-only
+schemas. Their reachable job producers no longer send internal anchor UUIDs,
+attestation UUIDs, or document fingerprints. The worker registry, generated
+API guide, dashboard catalog, SDK type union, and Zapier allowlist are kept in
+sync by the registration-drift gate.
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+The fan-out reader uses config.enableSubOrgWebhookFanout. Delivery suites explicitly mock the disabled flag; the dedicated sub-organization suite enables the same config dependency. This supersedes the older rationale for an ad-hoc process.env read.

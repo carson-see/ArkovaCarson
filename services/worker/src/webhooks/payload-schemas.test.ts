@@ -26,12 +26,15 @@ import {
   ComplianceDocumentExpiringPayloadSchema,
   AttestationCreatedPayloadSchema,
   AttestationRevokedPayloadSchema,
+  AttestationActivePayloadSchema,
+  AnchorRevocationAnchoredPayloadSchema,
   BANNED_PAYLOAD_KEYS,
   findBannedPayloadKeys,
   isBannedPayloadKey,
   LEGACY_UNREGISTERED_EVENT_TYPES,
   PAYLOAD_SCHEMAS_BY_EVENT_TYPE,
   validateWebhookPayload,
+  SUBORG_NOTE_MAX,
   WebhookPayloadValidationError,
 } from './payload-schemas.js';
 import { BANNED_RESPONSE_KEYS } from '../api/v1/response-schemas.js';
@@ -802,6 +805,200 @@ describe('ComplianceDocumentExpiringPayloadSchema (BUG-002)', () => {
   });
 });
 
+// ─── SCRUM-3972: affiliated-organization lifecycle events ───────────────────
+
+describe('suborg.* payload schemas (SCRUM-3972)', () => {
+  const BASE = {
+    public_id: 'ORG-CHILD-0001',
+    display_name: 'Nairobi Legal Aid',
+    parent_public_id: 'ORG-PARENT-0001',
+    parent_approval_status: 'APPROVED' as const,
+    occurred_at: '2026-09-12T10:00:00.000Z',
+  };
+
+  const CREDIT = {
+    ...BASE,
+    amount: 100,
+    parent_balance: 900,
+    child_balance: 100,
+    note: 'Q3 allocation',
+  };
+
+  /**
+   * The whole registered set, so a new suborg event added without its own
+   * banned-field cases still gets swept by the shared assertions below.
+   */
+  const SUBORG_CASES: ReadonlyArray<[string, Record<string, unknown>]> = [
+    ['suborg.created', BASE],
+    ['suborg.approved', BASE],
+    ['suborg.revoked', { ...BASE, parent_approval_status: 'REVOKED' }],
+    ['suborg.credits_allocated', CREDIT],
+    ['suborg.credits_reclaimed', { ...CREDIT, amount: -100, child_balance: 0, parent_balance: 1000 }],
+    ['suborg.suspended', { ...BASE, reason: 'contract ended' }],
+    ['suborg.offboarded', { ...BASE, reclaimed: 100, reason: 'contract ended' }],
+  ];
+
+  it('registers all seven, so each is subscribable and none bypasses validation', () => {
+    const registered = Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE);
+    for (const [eventType] of SUBORG_CASES) {
+      expect(registered).toContain(eventType);
+    }
+    expect(SUBORG_CASES).toHaveLength(7);
+  });
+
+  it.each(SUBORG_CASES)('accepts a valid %s payload', (eventType, payload) => {
+    const result = validateWebhookPayload(eventType, payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  // CLAUDE.md §6 (internal UUIDs) + §1.6 (fingerprint). `parent_org_id` is the
+  // one this family would most plausibly grow by accident, since it is the
+  // field name the REST surface uses internally.
+  it.each(SUBORG_CASES)(
+    'rejects banned identifier fields on %s',
+    (eventType, payload) => {
+      for (const banned of [
+        'anchor_id',
+        'fingerprint',
+        'user_id',
+        'org_id',
+        'parent_org_id',
+        'child_org_id',
+      ]) {
+        const result = validateWebhookPayload(eventType, {
+          ...payload,
+          [banned]: '550e8400-e29b-41d4-a716-446655440000',
+        });
+        expect(result.ok, `${eventType} accepted banned field ${banned}`).toBe(false);
+      }
+    },
+  );
+
+  it.each(SUBORG_CASES)('rejects an unknown key on %s (strict mode)', (eventType, payload) => {
+    expect(validateWebhookPayload(eventType, { ...payload, admin_email: 'a@b.test' }).ok).toBe(false);
+    expect(validateWebhookPayload(eventType, { ...payload, domain: 'example.test' }).ok).toBe(false);
+  });
+
+  it.each(SUBORG_CASES)('rejects a non-ISO occurred_at on %s', (eventType, payload) => {
+    expect(validateWebhookPayload(eventType, { ...payload, occurred_at: '2026-09-12' }).ok).toBe(false);
+    expect(validateWebhookPayload(eventType, { ...payload, occurred_at: 1757671200000 }).ok).toBe(false);
+  });
+
+  it.each(SUBORG_CASES)('requires both public identifiers on %s', (eventType, payload) => {
+    const { public_id: _p, ...noChild } = payload;
+    expect(validateWebhookPayload(eventType, noChild).ok).toBe(false);
+    const { parent_public_id: _q, ...noParent } = payload;
+    expect(validateWebhookPayload(eventType, noParent).ok).toBe(false);
+  });
+
+  it.each(SUBORG_CASES)(
+    'mirrors organizations_parent_approval_status_check on %s',
+    (eventType, payload) => {
+      // CHECK (parent_approval_status IS NULL OR parent_approval_status = ANY
+      //        (ARRAY['PENDING','APPROVED','REVOKED']))
+      for (const status of ['PENDING', 'APPROVED', 'REVOKED', null]) {
+        expect(
+          validateWebhookPayload(eventType, { ...payload, parent_approval_status: status }).ok,
+          `${eventType} rejected DB-legal status ${String(status)}`,
+        ).toBe(true);
+      }
+      // A value the database would refuse must not be expressible on the wire.
+      expect(
+        validateWebhookPayload(eventType, { ...payload, parent_approval_status: 'SUSPENDED' }).ok,
+      ).toBe(false);
+      // ...and the field is required, not merely nullable: omitting it would
+      // let a consumer read "unknown" as "not affiliated".
+      const { parent_approval_status: _s, ...omitted } = payload;
+      expect(validateWebhookPayload(eventType, omitted).ok).toBe(false);
+    },
+  );
+
+  it('pins the credit sign convention in the schema, not just the emit site', () => {
+    // An "allocation" that moves nothing or moves credits backwards is a
+    // reclaim mislabelled — a consumer reconciling balances would be wrong.
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, amount: 0 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, amount: -1 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_reclaimed', { ...CREDIT, amount: 0 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_reclaimed', { ...CREDIT, amount: 5 }).ok).toBe(false);
+  });
+
+  it('requires integer, non-negative balances', () => {
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, parent_balance: -1 }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, child_balance: 1.5 }).ok).toBe(false);
+  });
+
+  it('treats an offboarding that reclaimed nothing as a real value, not a missing one', () => {
+    expect(validateWebhookPayload('suborg.offboarded', { ...BASE, reclaimed: 0 }).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.offboarded', { ...BASE, reclaimed: -1 }).ok).toBe(false);
+    // `reclaimed` is required — an offboarding that does not say what moved is
+    // not reconcilable.
+    expect(validateWebhookPayload('suborg.offboarded', BASE).ok).toBe(false);
+  });
+
+  it('allows null/absent optional prose and bounds its length', () => {
+    expect(validateWebhookPayload('suborg.suspended', { ...BASE, reason: null }).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.suspended', BASE).ok).toBe(true);
+    expect(validateWebhookPayload('suborg.suspended', { ...BASE, reason: 'x'.repeat(501) }).ok).toBe(false);
+    expect(validateWebhookPayload('suborg.credits_allocated', { ...CREDIT, note: null }).ok).toBe(true);
+    // `note` is bounded by SUBORG_NOTE_MAX (513), not 500 — see the bound
+    // reconciliation suite at the bottom of this file. `reason` above stays at
+    // 500 because it is passed through uncomposed.
+    expect(
+      validateWebhookPayload('suborg.credits_allocated', {
+        ...CREDIT,
+        note: 'x'.repeat(SUBORG_NOTE_MAX + 1),
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateWebhookPayload('suborg.credits_allocated', {
+        ...CREDIT,
+        note: 'x'.repeat(SUBORG_NOTE_MAX),
+      }).ok,
+    ).toBe(true);
+  });
+});
+
+/**
+ * CTO review 2026-09-12 — bound reconciliation between the REST contract and
+ * the webhook contract.
+ *
+ * `POST /org/suborgs/offboard` accepts `reason: z.string().trim().max(500)` and
+ * the handler emits `suborg.credits_reclaimed` with
+ * `note = 'offboarding: ' + reason` — 13 characters longer. At the maximum
+ * accepted reason the composed note is 513 characters, which the payload
+ * schema rejected, and because `dispatchWebhookEvent` THROWS on schema
+ * rejection the whole event was lost for an entirely valid request.
+ */
+describe('SCRUM-3972 — suborg note bound vs the offboard reason bound', () => {
+  const base = {
+    public_id: 'ORG-CHILD-0001',
+    display_name: 'Affiliate Ltd',
+    parent_public_id: 'ORG-PARENT-0001',
+    parent_approval_status: 'APPROVED' as const,
+    occurred_at: '2026-09-12T10:00:00.000Z',
+    amount: -5,
+    parent_balance: 105,
+    child_balance: 0,
+  };
+
+  it('accepts the longest note the offboard route can compose', () => {
+    const maxReason = 'r'.repeat(500);
+    const note = `offboarding: ${maxReason}`;
+    expect(note.length).toBe(513);
+    const result = validateWebhookPayload('suborg.credits_reclaimed', { ...base, note });
+    expect(result.ok).toBe(true);
+  });
+
+  it('still refuses a note beyond that bound', () => {
+    const result = validateWebhookPayload('suborg.credits_reclaimed', {
+      ...base,
+      note: 'x'.repeat(SUBORG_NOTE_MAX + 1),
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
 /* ────────────────────────────────────────────────────────────────────────────
  * SCRUM-3982 — the banned-field ratchet.
  *
@@ -888,7 +1085,7 @@ describe('validateWebhookPayload — banned keys refused on EVERY event type (SC
     },
   );
 
-  it('still passes a CLEAN unregistered payload with bypassed: true', () => {
+  it('validates the formerly unregistered payloads through strict schemas', () => {
     // Deliberate: the ban is on the FIELDS, not on being unregistered. Turning
     // unknown types into a blanket refusal would break every remaining
     // dispatch site at once for no subscriber benefit (nothing can subscribe
@@ -899,7 +1096,7 @@ describe('validateWebhookPayload — banned keys refused on EVERY event type (SC
       threshold_minutes: 60,
     });
     expect(delayed.ok).toBe(true);
-    if (delayed.ok) expect(delayed.bypassed).toBe(true);
+    if (delayed.ok) expect(delayed.bypassed).toBeUndefined();
 
     // NOTE the `job_id` here: it IS an internal `batch_verification_jobs`
     // UUID, and it is NOT in BANNED_PAYLOAD_KEYS, so this payload passes. That
@@ -912,8 +1109,7 @@ describe('validateWebhookPayload — banned keys refused on EVERY event type (SC
       total: 2,
       result_count: 2,
     });
-    expect(job.ok).toBe(true);
-    if (job.ok) expect(job.bypassed).toBe(true);
+    expect(job.ok).toBe(false);
   });
 });
 
@@ -924,7 +1120,7 @@ describe('the three real leaking producer payloads are now refused (SCRUM-3982)'
   // dispatch in a non-fatal try/catch, so refusal costs a warn log, not a
   // failed job.
 
-  it('services/worker/src/jobs/revocation.ts:141 — anchor.revocation_anchored (anchor_id + fingerprint)', () => {
+  it('refuses the pre-fix anchor.revocation_anchored payload (anchor_id + fingerprint)', () => {
     const result = validateWebhookPayload('anchor.revocation_anchored', {
       anchor_id: '550e8400-e29b-41d4-a716-446655440000',
       public_id: 'pub-001',
@@ -936,9 +1132,8 @@ describe('the three real leaking producer payloads are now refused (SCRUM-3982)'
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    const named = result.error.issues.map((i) => i.path.join('.'));
-    expect(named).toContain('anchor_id');
-    expect(named).toContain('fingerprint');
+    expect(result.error.message).toContain('anchor_id');
+    expect(result.error.message).toContain('fingerprint');
   });
 
   it('services/worker/src/jobs/attestationAnchor.ts:161 — attestation.active (fingerprint)', () => {
@@ -964,6 +1159,24 @@ describe('the three real leaking producer payloads are now refused (SCRUM-3982)'
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('fingerprint');
+  });
+});
+
+describe('SCRUM-5063 — registered finality payloads', () => {
+  it('accepts a public-only anchor.revocation_anchored payload', () => {
+    expect(AnchorRevocationAnchoredPayloadSchema.safeParse({
+      public_id: 'ARK-REV-1', status: 'REVOKED', revocation_tx_id: 'tx-revoke',
+      revocation_block_height: 900001, original_chain_tx_id: 'tx-original',
+    }).success).toBe(true);
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('anchor.revocation_anchored');
+  });
+
+  it('accepts a public-only attestation.active payload', () => {
+    expect(AttestationActivePayloadSchema.safeParse({
+      public_id: 'ATT-PUBLIC-1', attestation_type: 'VERIFICATION', status: 'ACTIVE',
+      chain_tx_id: 'tx-active', chain_timestamp: '2026-09-19T12:00:00Z',
+    }).success).toBe(true);
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('attestation.active');
   });
 });
 
@@ -1176,10 +1389,10 @@ describe('findBannedPayloadKeys scans nested objects and arrays (AB6)', () => {
 
 describe('unregistered event types fail closed (Z2)', () => {
   it('refuses an event type that is neither registered nor a known legacy type', () => {
-    const result = validateWebhookPayload('suborg.created', { public_id: 'pub-1' });
+    const result = validateWebhookPayload('partner.created', { public_id: 'pub-1' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.eventType).toBe('suborg.created');
+      expect(result.error.eventType).toBe('partner.created');
       expect(result.error.message).toMatch(/not registered/i);
     }
   });
@@ -1198,19 +1411,31 @@ describe('unregistered event types fail closed (Z2)', () => {
     },
   );
 
-  it('pins the legacy allowlist to exactly the seven types with a live dispatch site', () => {
+  it('pins the legacy allowlist after registering two finality events', () => {
     // `git grep -n "dispatchWebhookEvent(" services/worker/src`, minus the 12
     // registered types. This list is a RATCHET: entries come off it as
     // SCRUM-5063 registers each type. Nothing is ever added.
-    expect([...LEGACY_UNREGISTERED_EVENT_TYPES].sort()).toEqual([
-      'anchor.revocation_anchored',
-      'attestation.active',
-      'compliance.anchor_delayed',
-      'compliance.certificate_expiring',
-      'compliance.signature_revoked',
-      'compliance.timestamp_coverage_low',
-      'job.completed',
-    ]);
+    expect([...LEGACY_UNREGISTERED_EVENT_TYPES]).toEqual([]);
+  });
+});
+
+describe('remaining legacy event contracts', () => {
+  const valid: Record<string, Record<string, unknown>> = {
+    'job.completed': { job_ref: 'job_0123456789abcdef0123456789abcdef', status: 'complete', total: 2, result_count: 2, error_code: null },
+    'compliance.certificate_expiring': { certificate_ref: 'cert_0123456789abcdef0123456789abcdef', expires_at: '2026-10-01T00:00:00Z', warning_level: '30_day', days_remaining: 30 },
+    'compliance.anchor_delayed': { pending_count: 3, oldest_pending_since: '2026-09-12T10:00:00Z', threshold_minutes: 60 },
+    'compliance.signature_revoked': { public_id: 'sig-public-1', revocation_reason: 'key compromise', revoked_at: '2026-09-19T00:00:00Z' },
+    'compliance.timestamp_coverage_low': { coverage_pct: 70, threshold_pct: 80, total_signatures: 10, timestamped_signatures: 7, period_days: 30 },
+  };
+
+  it.each(Object.entries(valid))('validates %s through a strict schema', (eventType, payload) => {
+    const result = validateWebhookPayload(eventType, payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  it.each(Object.entries(valid))('rejects unknown/internal fields on %s', (eventType, payload) => {
+    expect(validateWebhookPayload(eventType, { ...payload, org_id: 'internal' }).ok).toBe(false);
   });
 });
 

@@ -130,19 +130,25 @@ export const API_SCOPE_BADGE_CLASSES: Record<DisplayApiScope, string> = {
   usage: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
-// Scopes shown in the "create API key" picker. Legacy scopes are accepted on
-// the wire but not surfaced as choices for new keys.
-//
-// `ORG_API_SCOPES` is here, not only in the vocabulary (review U11/SCRUM-3971):
-// the picker is the ONLY way a customer mints a key, so a scope that exists in
-// `API_KEY_SCOPES`, passes the CHECK constraint and gates six live routes but
-// is absent from this array is a feature with no reachable key — the shipped
-// hook with no UI. `LEGACY_API_SCOPES` and `COMPLIANCE_API_SCOPES` stay out
-// deliberately: those are issued by other flows, not chosen here.
-export const SELECTABLE_API_SCOPES: ScopeDescriptor[] = [
-  ...API_V2_SCOPES,
-  ...ORG_API_SCOPES,
-].map((id) => ({
+// Capabilities an org admin can grant to a newly created machine credential.
+// Keep this narrower than API_KEY_SCOPES: that vocabulary also contains
+// compatibility aliases, reserved grants, and grants whose routes are not
+// currently reachable with API-key authentication. Showing those would imply
+// protection or functionality the worker does not provide.
+const SELECTABLE_API_SCOPE_IDS = [
+  'read:records',
+  'read:orgs',
+  'read:search',
+  'write:anchors',
+  'verify',
+  'verify:batch',
+  'usage:read',
+  'webhooks:manage',
+  'agents:manage',
+  'orgs:manage',
+] as const satisfies readonly ApiScope[];
+
+export const SELECTABLE_API_SCOPES: ScopeDescriptor[] = SELECTABLE_API_SCOPE_IDS.map((id) => ({
   id,
   label: API_SCOPE_LABELS[id],
   className: API_SCOPE_BADGE_CLASSES[id],

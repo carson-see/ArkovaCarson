@@ -23,6 +23,11 @@ export type WebhookEventType =
   // Advance warning: a SECURED record is inside its 7-day expiry window and has
   // NOT expired yet. Distinct from `anchor.expired`, which fires after the fact.
   | 'compliance.document_expiring'
+  | 'job.completed'
+  | 'compliance.certificate_expiring'
+  | 'compliance.anchor_delayed'
+  | 'compliance.signature_revoked'
+  | 'compliance.timestamp_coverage_low'
   // Attestation lifecycle, public ids only — no fingerprint, no internal UUID.
   // SCRUM-3982 registered both. `attestation.revoked` is subscribable and
   // contract-locked, but its producer is not yet reachable, so no delivery of
@@ -31,7 +36,20 @@ export type WebhookEventType =
   // region regex stops at the first one and would silently read a truncated
   // union.
   | 'attestation.created'
-  | 'attestation.revoked';
+  | 'attestation.revoked'
+  | 'anchor.revocation_anchored'
+  | 'attestation.active'
+  // SCRUM-3972 — affiliated-organization lifecycle, emitted on the PARENT
+  // organization's id (and, for the four that change an affiliate's budget or
+  // tenancy, on the affiliate's id too). Public slugs only: `public_id` is the
+  // affiliate, `parent_public_id` the parent.
+  | 'suborg.created'
+  | 'suborg.approved'
+  | 'suborg.revoked'
+  | 'suborg.credits_allocated'
+  | 'suborg.credits_reclaimed'
+  | 'suborg.suspended'
+  | 'suborg.offboarded';
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {

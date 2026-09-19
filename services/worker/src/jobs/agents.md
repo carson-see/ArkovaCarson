@@ -1952,3 +1952,8 @@ Read before changing it:
 `instant-secure.ts` accepts a generation-tagged job and compares it with `rearm_generation` before and after processing. This is not atomic generation fencing inside the batch claim. Migration 0463 must precede this worker because the selected column and retry RPC are new. Roll back the worker before removing that RPC/column. The retry RPC creates one new durable job only for a funded, never-debited NEEDS_CREDIT intent; HELD and safely refunded FAILED work stay unchanged.
 
 The instant consumer now uses the generated table/RPC types directly, replacing temporary `any` bridges. Omitting an absent error-code argument retains the SQL NULL default.
+## 2026-09-19 — Public-only finality webhooks (SCRUM-5063)
+
+The revocation and attestation anchoring jobs emit registered finality events
+using public resource ids and chain receipt fields only. Never restore
+`anchor_id`, `attestation_id`, or `fingerprint` to either payload.
