@@ -300,6 +300,14 @@ vi.mock('../jobs/chain-maintenance.js', () => ({
   monitorFeeRates: (...args: unknown[]) => mockMonitorFeeRates(...args),
 }));
 
+// Both HTTP chain triggers share the same lease-guarded entry points as the
+// in-process scheduler. Route tests keep their existing body/error assertions
+// while the dedicated leased-chain-jobs suite exercises the real CAS lease.
+vi.mock('../jobs/leased-chain-jobs.js', () => ({
+  runLeasedRevocationSweep: (...args: unknown[]) => mockProcessRevokedAnchors(...args),
+  runLeasedRebroadcastSweep: (...args: unknown[]) => mockRebroadcastDroppedTransactions(...args),
+}));
+
 const mockRecoverStuckBroadcasts = vi.fn().mockResolvedValue({ recovered: 0 });
 vi.mock('../jobs/broadcast-recovery.js', () => ({
   recoverStuckBroadcasts: (...args: unknown[]) => mockRecoverStuckBroadcasts(...args),

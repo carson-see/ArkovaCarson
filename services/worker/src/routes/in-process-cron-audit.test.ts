@@ -205,10 +205,7 @@ describe('in-process cron audit — a claimed guard must be verifiable', () => {
     expect(unguardedInProcessCronJobs().map((entry) => entry.jobName).sort()).toEqual([
       'consolidate-utxos',
       'monitor-fee-rates',
-      'process-monthly-credits',
-      'process-revoked-anchors',
       'process-webhook-retries',
-      'rebroadcast-dropped-transactions',
     ]);
   });
 });
