@@ -123,6 +123,16 @@ export const DELIBERATELY_AUTHENTICATED = new Set([
   // src/pages/PipelineAdminPage.tsx — client-RPC fallback when the worker
   // route fails. Archive 0173 exists to fix these grants and KEPT authenticated.
   'public.get_pipeline_stats',
+  // SCRUM-5024 (0455/0456) — src/components/referrals/ReferralPanel.tsx and
+  // src/pages/ReferralSettingsPage.tsx call these as the signed-in org admin.
+  // Each body is the authority check: ensure_org_referral_code refuses a
+  // non-admin of p_org_id, record_org_referral requires membership of p_org_id
+  // (service_role or member) and refuses self-referral, get_org_referrals
+  // returns rows only for the caller's own organization (tests/rls/
+  // referral-attribution.test.ts cases 5, 9d, 10-13). anon stays revoked.
+  'public.ensure_org_referral_code',
+  'public.record_org_referral',
+  'public.get_org_referrals',
 ]);
 
 // 0454 is already applied on staging and must remain byte-identical. A future

@@ -568,6 +568,21 @@ organizations.
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
 
+## 2026-09-12 SCRUM-5024 — `admin-provisioning.ts`: optional `referral_code`
+
+`CreateOrganizationSchema` gained an OPTIONAL `referral_code`, validated against
+the same class as the database's `referral_codes_code_format` CHECK — spelled
+out as `[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}`, not `[A-Z2-9]`, which would admit
+`I`, `L` and `O` and validate codes the CHECK guarantees to reject.
+
+Attribution runs AFTER `admin_provision_organization` returns, never inside it:
+threading it through would put two unrelated facts under one idempotency key.
+`attributeReferral()` never throws and never fails the provisioning — the
+organization already exists by then, and a mistyped code is not a reason to
+leave an operator with a half-created partner. Every outcome is logged (info on
+success, **error** on every non-applied branch, including `rpc_failed` and
+`threw`) and reported additively on the result as `referral_applied` +
+`referral_reason`. Both fields are absent when no code was supplied.
 ## 2026-09-12 SCRUM-4986 / SCRUM-4991 — revoke requires ORG_ADMIN in the worker; invitation double-accept is a no-op
 
 - **`anchor-revoke.ts`** selected `memberships.role` and never read it, so any ORG_MEMBER could call

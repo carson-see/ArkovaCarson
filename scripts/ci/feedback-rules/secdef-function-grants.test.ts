@@ -352,14 +352,22 @@ GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
 `;
 
-  it('pins the set to the prod-verified browser functions', () => {
+  it('pins the set to exactly the reviewed browser functions', () => {
     // Growing this set is a security decision — a new entry means a SECURITY
     // DEFINER function stays callable by every signed-in user. It must come
     // with a live-prod ACL check and a named browser caller, like these did.
+    // 2026-09-13 (CTO, SCRUM-5024): the three referral RPCs are added ahead of
+    // their prod apply; each body is the authority check (membership / admin
+    // of p_org_id, self-referral refused, tenant-scoped reads), pinned by
+    // tests/rls/referral-attribution.test.ts, and the browser callers are
+    // ReferralPanel.tsx and ReferralSettingsPage.tsx. anon stays revoked.
     expect([...DELIBERATELY_AUTHENTICATED].sort()).toEqual([
       'public.create_webhook_endpoint',
+      'public.ensure_org_referral_code',
+      'public.get_org_referrals',
       'public.get_pipeline_stats',
       'public.get_user_monthly_anchor_count',
+      'public.record_org_referral',
     ]);
   });
 
