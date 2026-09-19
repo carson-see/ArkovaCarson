@@ -203,7 +203,6 @@ describe('in-process cron audit — a claimed guard must be verifiable', () => {
     // list a reader is entitled to see without re-deriving it, and it moves
     // only when a job is actually guarded (or a new unguarded one lands).
     expect(unguardedInProcessCronJobs().map((entry) => entry.jobName).sort()).toEqual([
-      'cleanup-expired-data',
       'consolidate-utxos',
       'monitor-fee-rates',
       'process-monthly-credits',

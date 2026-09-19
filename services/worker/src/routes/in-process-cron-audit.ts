@@ -219,17 +219,14 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
   {
     jobName: 'cleanup-expired-data',
     entrypointModule: 'routes/scheduled.ts',
-    guard: 'unguarded',
-    doubleFireImpact: 'duplicate-side-effect',
+    guard: 'atomic-claim',
+    doubleFireImpact: 'none',
     rationale:
-      'Calls cleanup_expired_data() with no lock. The function DROPs and re-CREATEs the '
-      + 'reject_audit_delete trigger around its audit_events purge, so concurrent runs contend on '
-      + 'trigger DDL — observed deadlocking (SQLSTATE 40P01) on four of six consecutive nights in '
-      + 'prod. The window between one instance DROPping the trigger and re-CREATEing it is also a '
-      + 'window in which the other instance deletes audit rows unprotected.',
-    followUp:
-      'Already in flight: PR #2335 makes cleanup_expired_data() a singleton. This entry moves to '
-      + 'atomic-claim when that lands; it is recorded unguarded because that is the state of main.',
+      'Migration 0417 places pg_try_advisory_xact_lock(8675309, 2) at the top of '
+      + 'cleanup_expired_data(). The winner performs the purge; every concurrent caller returns '
+      + 'skipped_concurrent_run=true before touching rows or trigger DDL. The lock lives inside '
+      + 'the RPC, so it covers in-process cron, Cloud Scheduler HTTP, and operator calls, and '
+      + 'Postgres releases it automatically at transaction end.',
   },
   {
     jobName: 'detect-reorgs',
