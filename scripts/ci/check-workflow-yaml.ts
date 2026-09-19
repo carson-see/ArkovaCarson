@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { load } from 'js-yaml';
+import { isMainModule } from './lib/ciContext.js';
 
 export interface WorkflowYamlError { path: string; message: string }
 
@@ -31,7 +32,7 @@ export function checkWorkflowYaml(repoRoot = process.cwd()): WorkflowYamlError[]
     });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   const errors = checkWorkflowYaml();
   for (const error of errors) console.error(`${error.path}: ${error.message}`);
   if (errors.length > 0) process.exitCode = 1;
