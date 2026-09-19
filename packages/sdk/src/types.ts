@@ -95,7 +95,7 @@ export interface RetryConfig {
 export interface ArkovaConfig {
   /** API key (starts with 'ak_') */
   apiKey?: string;
-  /** Base URL for the Arkova API (default: https://arkova-worker-270018525501.us-central1.run.app) */
+  /** Base URL for the Arkova API (default: https://api.arkova.ai) */
   baseUrl?: string;
   /**
    * Built-in retry handling for 429/5xx responses and network errors.
