@@ -7369,6 +7369,14 @@ export type Database = {
         Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
         Returns: boolean
       }
+      ensure_ai_credits_period: {
+        Args: {
+          p_monthly_allocation: number
+          p_now?: string
+          p_org_id: string
+        }
+        Returns: boolean
+      }
       deduct_credit: {
         Args: {
           p_amount?: number

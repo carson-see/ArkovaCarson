@@ -16,7 +16,7 @@ CREATE OR REPLACE FUNCTION public.ensure_ai_credits_period(
 ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
 SET search_path='public' SET lock_timeout='5s' AS $$
 BEGIN
-  IF p_org_id IS NULL OR p_monthly_allocation < 0 OR p_now IS NULL THEN
+  IF p_org_id IS NULL OR p_monthly_allocation IS NULL OR p_monthly_allocation < 0 OR p_now IS NULL THEN
     RAISE EXCEPTION 'invalid AI credit period arguments' USING ERRCODE='invalid_parameter_value';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('ai_credits:org:' || p_org_id::text, 0));
@@ -52,4 +52,16 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path='public' AS $$
    AND ac.period_start<=now() AND ac.period_end>now()
  ORDER BY ac.created_at,ac.id LIMIT 1
 $$;
+
+-- CREATE OR REPLACE preserves existing privileges today, but spell the
+-- security boundary out so a restored database cannot inherit broad defaults.
+REVOKE ALL ON FUNCTION public.deduct_ai_credits(uuid,uuid,integer) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.deduct_ai_credits(uuid,uuid,integer) TO service_role;
+REVOKE ALL ON FUNCTION public.check_ai_credits(uuid,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.check_ai_credits(uuid,uuid) TO service_role;
 COMMIT;
+
+-- Rollback (operator-reviewed only): drop ensure_ai_credits_period and both
+-- exclusion constraints, then restore check_ai_credits/deduct_ai_credits from
+-- the immediately preceding migration snapshot. Do not drop constraints while
+-- concurrent writes are admitted; doing so reopens duplicate debit behavior.

@@ -121,23 +121,11 @@ export async function deductAICredits(
  * extraction. This makes the provisioning implicit and idempotent instead of
  * requiring an operator to seed rows by hand.
  *
- * `ai_credits` has NO unique constraint on `(org_id, period_start)` (see
- * `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` — only a
- * primary key on `id`), so this is a select-then-insert rather than an
- * upsert, and the insert cannot be made atomic with `ON CONFLICT`. Adding
- * that constraint is DDL on a table read by every extraction, which is a
- * migration (and a T3 PR) in its own right — so the TOCTOU window is closed
- * in application code instead, by a **re-read after insert**: if a concurrent
- * request provisioned the same org in the same instant, both requests observe
- * the duplicate, agree on a keeper (lowest `(created_at, id)` — the row that
- * existed first, and therefore the row with the >= usage count), and the
- * loser deletes **only the row it just inserted**. A pre-existing row can
- * never be deleted by this path.
- *
- * Leaving the duplicate in place is what makes this worth closing:
- * `deduct_ai_credits`'s `UPDATE` has no row limit, so two overlapping-period
- * rows for one org make every subsequent deduction increment both — the org
- * silently burns credits at 2x for the rest of the month.
+ * Migration 0467 owns the concurrency boundary: an advisory transaction lock
+ * serializes first-period provisioning and exclusion constraints reject any
+ * overlapping org or user period. The debit RPC locks and updates one
+ * deterministic row, so legacy duplicates fail closed instead of multiplying
+ * a charge across every overlapping row.
  *
  * The lookup mirrors `deduct_ai_credits`'s own window
  * (`period_start <= now < period_end`) rather than an exact match on a
@@ -155,7 +143,7 @@ export async function ensureAICreditsPeriod(
 ): Promise<boolean> {
   if (!orgId) return false;
   try {
-    const { data, error } = await (db as any).rpc('ensure_ai_credits_period', {
+    const { data, error } = await callRpc<boolean>(db, 'ensure_ai_credits_period', {
       p_org_id: orgId,
       p_monthly_allocation: config.aiCreditsMonthlyAllocation,
       p_now: now.toISOString(),
