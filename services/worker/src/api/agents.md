@@ -1,5 +1,9 @@
 # agents.md — services/worker/src/api/
 
+## UAT-22 selected-org invitation list (2026-09-14)
+
+`handleAdminListInvitations` independently requires platform-admin authority and validates the selected UUID before service-role reads. It returns at most 100 unaccepted invitations newest first using explicit public columns and a separate response whitelist; the accept token and private row fields never leave this endpoint. No schema or RLS change.
+
 ## 2026-09-13 (CTO review, PR #2911) — `admin-webhook-dlq.ts` resolve now validates `ids` as UUIDs
 
 `isValidIdsArray` checked `typeof v === 'string' && v.length > 0` only — no shape check.
@@ -102,6 +106,21 @@ live handshake. A wrong secret, or an account tier that does not grant `webhook_
 real status attached), not on this dashboard. Tests:
 `describe('resolveConnectorKind — adobe_sign')` in `connector-health.test.ts` pins both directions
 plus the whitespace-only-credential case.
+
+## 2026-09-11 — UAT-22 selected-org platform invitations
+
+`admin-invitations.ts` closes the gap between `OrgProfilePage` and the tenant-scoped
+`invite_member` RPC. After a platform-admin check, it loads the selected organization and actor
+display name from trusted rows, rejects an existing target-org member, and inserts the invitation
+with the client UUID as its primary key. A `23505` replay is accepted only when the committed row
+matches actor, org, normalized email, role, pending status, future expiry, and a nonempty UUID
+token. The provider key `invitation/<id>` deduplicates matching Resend payloads for Resend's
+documented 24-hour window; outside that window this handler does not promise exactly-once email.
+Invitation acceptance still owns membership creation: ORG_ADMIN maps to `org_members.admin`,
+INDIVIDUAL maps to `member`, and an existing account's home profile org is preserved.
+`admin-lists.ts` now provides the exact selected-org detail read used by that page; it validates
+the org UUID, rechecks platform-admin authority, and returns 404 rather than a generic empty row.
+
 ## 2026-08-23 — `queue-resolution.ts`: `GET /api/queue/pending` had NO role gate (SCRUM-3569, SEC)
 
 Any authenticated member of an org could list every PENDING_RESOLUTION anchor in that org — `public_id`, **`filename`** and **`fingerprint`** for each. Not cross-tenant (the query was org-scoped), but a rank-and-file member enumerating what their coworkers uploaded is exactly the disclosure this surface was documented not to allow.
@@ -521,6 +540,30 @@ never the not_anchored sentinel reserved for a successful empty lookup.
 
 PR #2572 follow-up: DocuSign stop now delegates to migration 0446 for a current-parent row lock, canonical administration recheck, marker revocation and audit in one transaction. Owned integration accounts are queried separately from inherited markers.
 
+## 2026-09-12 — `apiScopes.ts`: `orgs:manage`, and why there is no `orgs:read` (SCRUM-3971)
+
+ONE new scope, in a new `ORG_API_SCOPES` array spread into `API_KEY_SCOPES`.
+Reads on the sub-organization surface are served by the EXISTING `read:orgs`; a
+separate `orgs:read` would have been a second spelling of a grant every affected
+key already holds, and every integration would have had to be re-issued.
+
+`scopeSatisfies` makes `orgs:manage` satisfy `read:orgs`, one-way. A key granted
+only the write scope must still be able to LIST what it may act on, or the write
+scope is unusable alone. `read:orgs` never satisfies `orgs:manage` — that is the
+direction that would matter, and `apiScopes.test.ts` pins both halves.
+
+**The array name is load-bearing.** `scripts/ci/check-api-scope-vocabulary.ts`
+resolves the spread by NAME in both copies, so `src/lib/apiScopes.ts` must export
+`ORG_API_SCOPES` too — the gate THROWS (not warns) if it is missing there. Six
+surfaces move together or CI is red: worker vocabulary, frontend vocabulary +
+`API_SCOPE_LABELS` + `API_SCOPE_BADGE_CLASSES`, the LATEST migration naming EACH
+of `api_keys_scopes_known_values` and `agents_allowed_scopes_known_values`,
+`docs/api/README.md`, and `docs/api/openapi.yaml`'s `x-arkova-canonical-scopes`.
+
+`orgs:manage` is in the vocabulary but deliberately NOT in
+`PASSPORT_AGENT_SCOPE_ALLOWLIST` — a delegated agent key never manages
+organizations.
+
 ## PR #2695 — timestamp helper simplification (2026-09-10)
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
@@ -537,3 +580,9 @@ The helper uses a direct PENDING comparison and has no test-only export. Behavio
   promised a concurrent double accept was "a clean no-op"; the code threw the loser's 23505 as a 500.
   23505 on that insert is now treated as success (the membership exists). Any other insert error
   still throws and triggers the new-account rollback.
+
+## 2026-09-14 — PR #2937 multi-account Drive health review
+
+Drive OAuth permits multiple active account IDs in an organization; connect does not retire older accounts and renewal processes each active row. The provider health card must evaluate every active Google row and retain any failure, using renewal, cursor, fetch-job and processing precedence, then connection timestamp and stable row ID for a deterministic explanation. Revoked accounts cannot hide active health; only an all-revoked set is disconnected. Expiry, renewal timestamp and sanitized account label come from that same explanation row. Order reversal and mixed healthy/failed/revoked regression cases exercise the API output. The separate disconnect multi-account cleanup mismatch is logged for follow-up and is outside this repair.
+
+Integration and enabled-rule inventories now use shared scanAllPages with complete-page validation, total ordering, a five-second abort signal and row/page budgets. An error or incomplete inventory returns503 rather than a partial healthy response. Cursor health shares the pure driveFolderIds binding parser with the actual runner: an enabled rule with empty configuration is not a watched folder; later configured rows are scanned too.

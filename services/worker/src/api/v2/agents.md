@@ -71,3 +71,34 @@ worth noticing before "harmonising" them.
 
 The `?? created_at` shape is the one to reject in review: it reads as correct and misreports only on
 the subset of rows where `chain_timestamp` is NULL, so a spot check will not catch it.
+
+## 2026-09-12 — `/orgs` gained hierarchy, public-id only (SCRUM-3971)
+
+`list_orgs` returned exactly the key's own organization with no way to tell a
+parent from a child. It now adds `parent_public_id` and `children[]`, both
+additive.
+
+- **`parent_public_id` is OMITTED when there is no parent, never null.** Key
+  presence alone answers "is this a child?", matching the `jurisdiction`
+  convention on the v1 verification response.
+- **`parent_org_id` is a banned response field**, so the parent is resolved to
+  ITS public id server-side and the raw uuid never leaves.
+- **One hop by construction.** `check_sub_org_depth` permits a single level, so
+  `children` is the whole descendant set — no recursive CTE, no `get_org_subtree`
+  (that function prunes on public-listing consents, which default false, so it
+  would silently hide confidential children).
+- **A row that cannot be named is a 500, not an omission.** A parent that exists
+  but has no public id would otherwise report a child organization as top-level,
+  and a child dropped from `children` reads as "this organization has no
+  affiliates". Both are wrong answers an agent would act on. 0453 makes
+  `organizations.public_id` NOT NULL; the handler refuses rather than trusting it.
+
+`/orgs` now issues up to three reads per call (self, parent, children), so a test
+double that returns one shared chain object no longer covers the handler.
+
+
+## CTO #2844 hierarchy wording correction — 2026-09-14
+
+The `children` directory field lists direct affiliates only. Database chains
+can reach depth 3, so it is not the complete descendant set. Runtime scope is
+unchanged; the incorrect one-level SQL-depth comment is corrected.

@@ -1,7 +1,19 @@
 # services/worker/src/routes/agents.md
 
+## UAT-22 invitation GET route (2026-09-14)
+
+`GET /api/admin/organizations/:id/invitations` sits behind the structural `/admin` gate and forwards the authenticated actor to the independently authorized list handler. Route regressions cover missing auth, non-admin denial and selected-org dispatch.
+
 Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test backup) and HTTP-triggered (Cloud Scheduler in prod).
 
+## 2026-09-11 — UAT-22 selected-org platform invitation route
+
+`POST /api/admin/organizations/:id/invitations` is mounted on `adminRouter`. It uses the router's
+authenticated identity and the handler independently requires platform-admin authority; request
+body display names or actor fields are never trusted. The durable invitation UUID is returned only
+as an identifier—the single-use invitation token never enters the HTTP response.
+`GET /api/admin/organizations/:id` supplies the selected-org metadata that browser RLS correctly
+hides from a platform admin whose home membership belongs to a different organization.
 ## 2026-09-13 (CTO review, PR #2911) — `cron.ts`'s `/webhook-dlq-report` comment named the wrong endpoint
 
 The route comment pointed operators at `POST /api/admin/webhook-dlq/replay` — the endpoint from

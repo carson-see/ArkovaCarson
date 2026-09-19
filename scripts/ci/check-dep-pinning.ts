@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, statSync, realpathSync, readdirSync } from 'node:fs';
 import { resolve, sep, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
+import { hasLabel } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
 const DEPENDENCY_SECTIONS = [
@@ -203,7 +204,6 @@ function scanOverrideValues(
 
 function main(): void {
   const repo = resolveRepoRoot();
-  const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const packageJsons = listPackageJsons(repo);
 
   const allViolations: Violation[] = [];
@@ -217,7 +217,7 @@ function main(): void {
   }
 
   // Check override label
-  if (prLabels.includes(OVERRIDE_LABEL)) {
+  if (hasLabel(OVERRIDE_LABEL)) {
     console.log(`⚠️  PR labeled \`${OVERRIDE_LABEL}\` — allowing ${allViolations.length} unpinned dependency version(s).`);
     for (const v of allViolations) {
       console.log(`  ${v.file} → ${v.section} → ${v.name}: ${v.version}`);

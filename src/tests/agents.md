@@ -164,3 +164,35 @@ The FERPA contract explicitly classifies `get_public_org_profile` as counts grou
 ## 2026-09-05 — PR #2440 subtype opt-out release review
 
 Stacked #2440 on the verified #2314 head and reconciled the shared PII contract. Review reproduced three REST subtype leaks for opted-out DEGREE, CLE, and missing-type records. The unmerged 0433 projection and worker API_RICH_KEYS now both withhold sub_type when directory suppression applies; the canonical value remains available on published and non-education controls. SQL emits null and REST omits the optional key. Existing 0415 remains unchanged, including the running #2314 soak. Updated contract classifies sub_type as suppressed rather than accepting a second published residual. Worker regression tests and the latest-migration contract pin both surfaces. New staged migration/runtime validation is required for #2440.
+
+## 2026-09-12 — `sec-0453-suborg-api-key-authority.test.ts` (SCRUM-3971)
+
+Same two-layer shape as `sec-0396` / `sec-0405`: a CONTENT GUARD that reads the
+migration SQL and runs everywhere, plus a LIVE INTEGRATION block gated on
+`RUN_LIVE_RLS=1`.
+
+The content guard is the part that runs in CI, and it is a ratchet rather than a
+description: it pins that all three key-driven RPCs delegate to the single
+`_suborg_api_key_authorized` predicate, that the predicate requires the key to
+belong to the organization AND be active AND unrevoked AND unexpired AND hold
+`orgs:manage`, that `audit_events.actor_id` is NULL on key-driven writes, that
+the child row is locked `FOR UPDATE` before authority is decided, and that
+`anon`/`authenticated` are REVOKEd by name. Three of those five predicate clauses
+are invisible to any integration test that uses a freshly-minted key.
+
+**The live block was NOT executed by the session that wrote it** — no rig, no
+prod, no local stack. Treat it as the specification for the T3 soak, not as
+evidence that it passes. It needs 0453 applied to a throwaway/isolated database
+and the `SEC0453_*` fixture ids in the environment. NEVER run it against
+production: the cases deliberately attempt cross-tenant writes.
+
+## 2026-09-14 — Isolate gate fixtures from speculative CI identity
+
+The dependency, prose-hold, worker-environment and F-5c null-identity CLI tests
+now clear the surrounding Actions PR/head/repository identity before setting
+their local fixture environment. Mergify speculative PR #2974 exposed four
+false failures: ordinary fixture override labels were correctly rejected as
+untrusted queue labels because the runner's queue head leaked into the child.
+All four failures reproduce under a queue-shaped runner environment. Explicit
+forged-queue negative cases still reject those labels; resolver authentication
+and all production gate behavior remain unchanged.

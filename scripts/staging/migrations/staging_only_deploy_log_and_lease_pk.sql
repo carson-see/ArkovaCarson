@@ -82,7 +82,10 @@ CREATE POLICY staging_deploy_log_service_role_only
 REVOKE ALL ON public.staging_deploy_log FROM PUBLIC;
 REVOKE ALL ON public.staging_deploy_log FROM anon;
 REVOKE ALL ON public.staging_deploy_log FROM authenticated;
+-- Supabase default privileges may include TRUNCATE, which bypasses row triggers.
+REVOKE ALL ON public.staging_deploy_log FROM service_role;
 GRANT  SELECT, INSERT ON public.staging_deploy_log TO service_role;
+REVOKE ALL ON SEQUENCE public.staging_deploy_log_id_seq FROM PUBLIC, anon, authenticated, service_role;
 GRANT  USAGE, SELECT  ON SEQUENCE public.staging_deploy_log_id_seq TO service_role;
 
 -- 5. Helper RPC for scripts/staging/deploy.sh. SECURITY DEFINER + search_path

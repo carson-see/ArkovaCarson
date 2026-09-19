@@ -2,6 +2,14 @@
 
 Email sending infrastructure powered by Resend SDK. Handles transactional email delivery with audit logging.
 
+## 2026-09-11 — provider idempotency for invitation retries
+
+`sendEmail` accepts an optional `idempotencyKey` and passes it through the Resend SDK options.
+The UAT-22 admin invitation handler uses `invitation/<invitation-id>`. Resend documents a 24-hour
+deduplication window and rejects the same key with a changed payload, so this limits duplicate
+delivery during normal retries without asserting permanent exactly-once delivery. Existing callers
+that omit the key keep the one-argument SDK call.
+
 ## Files
 
 - **index.ts** — Barrel export for the email module (sender + templates).
