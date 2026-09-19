@@ -383,10 +383,9 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       }
     }
 
-    // SCRUM-1740 — sandbox anchor quota gate. No-op for prod orgs
-    // (anchor_quota is NULL). Sandbox orgs with is_test=true and a
-    // configured cap get a 402 quota_exhausted problem+json response when
-    // they hit their limit. Re-submissions of an existing fingerprint
+    // SCRUM-1740 — contractual anchor quota gate. An explicit enforced cap
+    // returns 402 at the limit; a config or usage read fault returns retryable
+    // 503 rather than bypassing the cap. Re-submissions of an existing fingerprint
     // already short-circuited at the dedup-check above, so partners can
     // re-anchor without consuming quota.
     if (orgId && !(await ensureAnchorQuotaAvailable(db, orgId, res))) {
