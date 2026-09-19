@@ -34,7 +34,7 @@ npm install arkova
 
 Or with pnpm: `pnpm add arkova`. Or with yarn: `yarn add arkova`.
 
-**Requirements:** Node.js ≥20 (uses native `fetch` and global `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
+**Requirements:** Node.js ≥18 (uses native `fetch` and `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
 
 **Bundle size:** Under 10KB minified, zero runtime dependencies.
 
@@ -70,7 +70,7 @@ That's it. No UI, no SDK calls to learn beyond `anchor`, `verify`, `verifyBatch`
 
 ### 20-line document anchor example
 
-See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complete Node 20+ script that anchors a local document and prints the public ID.
+See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complete Node 18+ script that anchors a local document and prints the public ID.
 
 ---
 
@@ -83,8 +83,8 @@ const arkova = new Arkova({
   /** API key — get one from app.arkova.ai/settings/api-keys */
   apiKey: 'ak_live_...',
 
-  /** Override the API base URL (default: https://api.arkova.ai) */
-  baseUrl: 'https://api.arkova.ai',
+  /** Override the API base URL (default: production worker) */
+  baseUrl: 'https://arkova-worker-270018525501.us-central1.run.app',
 
   /** Optional retry tuning. Retries apply when the method is safe (GET/HEAD/OPTIONS)
    *  or the call is idempotent (verifyBatch, anchor, anchorBulk). 429 responses
@@ -102,7 +102,7 @@ const arkova = new Arkova({
 });
 ```
 
-The `apiKey` is the only thing you usually need. The SDK ships pointed at the public production API hostname; only override `baseUrl` for local development or staging.
+The `apiKey` is the only thing you usually need. The SDK ships pointed at the production worker; only override `baseUrl` for local development or staging.
 
 ---
 
@@ -537,7 +537,7 @@ The SDK works directly in modern browsers via the standard `<script type="module
 
 ### Base URL
 
-Production: `https://api.arkova.ai`
+Production: `https://arkova-worker-270018525501.us-central1.run.app`
 Override with `baseUrl` config option for staging or local development.
 
 ### Method index

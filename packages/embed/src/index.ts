@@ -27,7 +27,7 @@
 import type { ArkovaEmbedConfig, AnchorData, EmbedMode } from './types';
 import { renderLoading, renderError, renderWidget } from './render';
 
-const DEFAULT_API_BASE = 'https://api.arkova.ai';
+const DEFAULT_API_BASE = 'https://arkova-worker-270018525501.us-central1.run.app';
 const DEFAULT_APP_BASE = 'https://app.arkova.ai';
 
 /** Strip trailing slash characters without regex (avoids ReDoS). */

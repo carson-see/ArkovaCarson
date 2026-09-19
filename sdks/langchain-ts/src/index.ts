@@ -26,14 +26,13 @@ export interface ArkovaToolConfig {
 }
 
 interface VerifyResult {
-  verified: boolean;
+  valid: boolean;
   public_id: string;
   status: string;
   issuer?: string;
   credential_type?: string;
   anchored_at?: string;
   tx_id?: string;
-  [key: string]: unknown;
 }
 
 interface AnchorStatusResult {
@@ -131,9 +130,6 @@ async function arkovaFetch(
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;
   return fetch(`${baseUrl}${path}`, {
     ...options,
-    // Never follow redirects while carrying the caller's custom API-key
-    // header. Keep this after `options` so no tool can opt back into follow.
-    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': config.apiKey,
@@ -170,12 +166,12 @@ export class ArkovaVerifyTool {
 
       const data = await res.json() as VerifyResult;
       return JSON.stringify({
-        ...data,
-        // The API's `verified` field is the authoritative contract. Status is
-        // evidence, not a second validity predicate: SUBMITTED/PENDING have
-        // not reached confirmed verification, and revoked/unknown states fail
-        // closed even if a future status vocabulary changes.
-        valid: data.verified === true,
+        valid: data.status === 'SECURED' || data.status === 'SUBMITTED',
+        public_id: data.public_id,
+        status: data.status,
+        issuer: data.issuer,
+        credential_type: data.credential_type,
+        anchored_at: data.anchored_at,
       });
     } catch (err) {
       return JSON.stringify({ valid: false, error: err instanceof Error ? err.message : 'Unknown error' });

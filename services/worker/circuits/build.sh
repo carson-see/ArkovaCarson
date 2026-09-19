@@ -125,7 +125,7 @@ if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
   printf '%s\n' "$CIRCOMLIB_VERSION" > "$CIRCOMLIB_VERSION_STAMP"
 fi
 
-echo "[build-circuit] Step 3/6: fetch Powers of Tau from Arkova mirror with upstream fallback"
+echo "[build-circuit] Step 3/6: fetch Powers of Tau from the Arkova mirror"
 PTAU_NAME="$PTAU_NAME" PTAU_SHA256="$PTAU_SHA256" \
   "$CIRCUITS_DIR/fetch-pinned-ptau.sh" "$PTAU_PATH"
 

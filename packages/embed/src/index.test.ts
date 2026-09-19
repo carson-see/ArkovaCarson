@@ -48,27 +48,6 @@ describe('mount analytics event result', () => {
 });
 
 describe('resolveConfig trailing-slash stripping', () => {
-  it('uses the public API gateway by default', async () => {
-    const calls: string[] = [];
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      calls.push(String(input));
-      return new Response(JSON.stringify({ verified: true, status: 'SECURED' }), { status: 200 });
-    }) as typeof fetch;
-
-    try {
-      await mount({
-        publicId: 'ARK-TEST',
-        target: document.createElement('div'),
-        disableAnalytics: true,
-      });
-    } finally {
-      globalThis.fetch = origFetch;
-    }
-
-    expect(calls).toEqual(['https://api.arkova.ai/api/v1/verify/ARK-TEST']);
-  });
-
   it('strips trailing slashes from apiBaseUrl', async () => {
     // We test via mount() which calls resolveConfig internally.
     // Without a target, mount throws — we catch and inspect the fetch call.

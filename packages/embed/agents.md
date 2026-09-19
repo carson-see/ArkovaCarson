@@ -26,13 +26,3 @@
   this package) is the eventual path to a real CDN host; until it exists, self-hosting
   `dist/embed.iife.js` per the "Styling and customization" section is the documented
   alternative to depending on `app.arkova.ai`.
-
-## 2026-09-19 — first-public-release build qualification
-
-- Vite 8's configured `minify: 'esbuild'` path requires its optional `esbuild`
-  peer to be installed explicitly. Pin `esbuild` in devDependencies and the
-  lockfile; a clean checkout without it fails before emitting any bundle.
-- The default verification origin is the stable public gateway `https://api.arkova.ai`
-  across manual mounting, the web component, and report-block rendering. Keep the
-  three behavioral regressions aligned; `apiBaseUrl` remains an explicit override
-  for staging and local development.

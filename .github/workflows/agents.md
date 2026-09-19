@@ -15,6 +15,21 @@ Every prior `needs` edge remains and each job keeps its established display
 name. `scripts/ci/ci-draft-admission.test.ts` pins triggers, scenarios, gating,
 and the complete pre-admission DAG.
 
+## 2026-09-19 — protected-main T0 pushes use focused validation
+
+`ci.yml` reuses `requiredTierFor` for pushes to `main`. A supported T0-only
+docs/test/CI-policy push runs `Protected Main Focused Validation` plus the
+unchanged `Secret Scanning` security job instead
+of starting the runtime, browser, scanner, and build matrix. The focused job
+parses every workflow, checks governance pointers, typechecks/builds the root,
+lints shipped copy, runs the complete `scripts/ci` contract suite for CI-policy
+changes, and executes directly changed root/worker/shell tests. Worker tests use
+worker-local dependencies and also run worker typecheck/build deploy parity.
+Runtime/deploy/migration paths, Supabase-backed RLS/infra tests, unsupported T0 paths,
+deletions, renames, missing objects, non-ancestor ranges, malformed SHAs, and
+empty diffs all run the full matrix. PRs, Mergify candidates, staging/develop
+pushes, and manual dispatch remain full-matrix under their prior rules.
+
 ## PR #2940 — Edge deploy follows the installed Wrangler version
 
 Both edge dry-run and production deploy invoke `./node_modules/.bin/wrangler`
@@ -875,9 +890,6 @@ both `uat22-local-integration` and `zapier-validation` in the result map and
 the aggregation loop. Either failure or cancellation must fail required Tests;
 collecting a result without iterating it silently drops that suite from the gate.
 
-## 2026-09-19 — bounded ptau mirror recovery
-
-`recover-ptau-mirror.yml` is a manual, main-only production-environment workflow for recovering the pinned Powers of Tau input from the existing trusted zk artifact cache when both public upstreams return 403. It deliberately requests an impossible exact cache key and restores only the established `zk-artifacts-Linux-circom2.1.9-` prefix, then requires the repository-pinned SHA-256 and a >10 MB size before WIF authentication. Upload uses Cloud Storage generation precondition zero, so it creates the fixed object once and cannot overwrite any existing bytes. A second download into a fresh runner-temp path rechecks the same hash without using Actions cache. It does not create the bucket or alter public IAM; those one-time infrastructure operations stay explicit and reviewable.
 
 ## 2026-09-19 — stop rerunning migration drift on PR-body edits
 

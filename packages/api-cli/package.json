@@ -1,7 +1,6 @@
 {
   "name": "arkova-api-cli",
   "version": "0.1.0",
-  "description": "JSON command-line client for the Arkova verification API",
   "private": true,
   "type": "module",
   "bin": {
@@ -14,8 +13,7 @@
     "test": "vitest run",
     "pretypecheck": "npm --prefix ../sdk run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "eslint src test",
-    "prepublishOnly": "npm run typecheck && npm test && npm run lint"
+    "lint": "eslint src test"
   },
   "dependencies": {
     "arkova": "file:../sdk"
@@ -30,15 +28,5 @@
   },
   "engines": {
     "node": ">=20.14.0"
-  },
-  "files": ["dist", "README.md", "LICENSE"],
-  "keywords": ["arkova", "verification", "credentials", "cli"],
-  "author": "Arkova <engineering@arkova.ai>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/carson-see/ArkovaCarson",
-    "directory": "packages/api-cli"
-  },
-  "publishConfig": { "access": "public" }
+  }
 }

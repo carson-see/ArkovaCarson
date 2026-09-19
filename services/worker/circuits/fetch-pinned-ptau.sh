@@ -7,7 +7,6 @@ set -euo pipefail
 PTAU_NAME="${PTAU_NAME:-powersOfTau28_hez_final_14.ptau}"
 PTAU_SHA256="${PTAU_SHA256:-489be9e5ac65d524f7b1685baac8a183c6e77924fdb73d2b8105e335f277895d}"
 PTAU_MIRROR_URL="${PTAU_MIRROR_URL:-https://storage.googleapis.com/arkova1-public-build-artifacts/zk/${PTAU_NAME}}"
-PTAU_UPSTREAM_URL="${PTAU_UPSTREAM_URL:-https://storage.googleapis.com/zkevm/ptau/${PTAU_NAME}}"
 
 destination="${1:?usage: fetch-pinned-ptau.sh DESTINATION}"
 mkdir -p "$(dirname "$destination")"
@@ -30,23 +29,18 @@ fi
 temporary="$(mktemp "${destination}.download.XXXXXX")"
 trap 'rm -f "$temporary"' EXIT
 
-for url in "$PTAU_MIRROR_URL" "$PTAU_UPSTREAM_URL"; do
-  : > "$temporary"
-  echo "[build-circuit] downloading $PTAU_NAME from $url"
-  if ! curl --proto '=https' --proto-redir '=https' -fsSL --retry 5 --retry-delay 5 --max-time 1800 -o "$temporary" "$url"; then
-    echo "[build-circuit] source unavailable; trying next pinned source" >&2
-    continue
-  fi
-  actual="$(sha256_of "$temporary")"
-  if [[ "$actual" != "$PTAU_SHA256" ]]; then
-    echo "[build-circuit] source SHA-256 mismatch; trying next pinned source" >&2
-    continue
-  fi
-  mv "$temporary" "$destination"
-  trap - EXIT
-  echo "[build-circuit] PTAU SHA-256 OK ($actual)"
-  exit 0
-done
-
-echo "[build-circuit] ERROR: no source produced the repository-pinned $PTAU_NAME" >&2
-exit 1
+echo "[build-circuit] downloading $PTAU_NAME from $PTAU_MIRROR_URL"
+if ! curl --proto '=https' --proto-redir '=https' -fsSL \
+  --connect-timeout 10 --max-time 120 --retry 2 --retry-max-time 180 \
+  -o "$temporary" "$PTAU_MIRROR_URL"; then
+  echo "[build-circuit] ERROR: Arkova mirror unavailable" >&2
+  exit 1
+fi
+actual="$(sha256_of "$temporary")"
+if [[ "$actual" != "$PTAU_SHA256" ]]; then
+  echo "[build-circuit] ERROR: Arkova mirror SHA-256 mismatch" >&2
+  exit 1
+fi
+mv "$temporary" "$destination"
+trap - EXIT
+echo "[build-circuit] PTAU SHA-256 OK ($actual)"

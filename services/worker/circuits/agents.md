@@ -42,8 +42,8 @@ any existing checkout and run `npm run build:circuit`.
 
 ## 2026-09-19 — Arkova-owned cold-cache recovery
 
-`fetch-pinned-ptau.sh` makes the immutable Arkova Cloud Storage object the primary source and the
-zkEVM URL the fallback. Both sources are untrusted transport: bytes enter `artifacts/` only after
-matching the existing repository SHA-256 pin, through an atomic same-filesystem rename. A failed
-or corrupt mirror therefore falls through to upstream without leaving partial bytes at the path
-consumed by snarkjs; if neither source matches, the build fails closed.
+`fetch-pinned-ptau.sh` fetches the immutable Arkova Cloud Storage object. Bytes enter `artifacts/`
+only after matching the existing repository SHA-256 pin, through an atomic same-filesystem rename.
+The historical zkEVM and Hermez public URLs still return HTTP 403 and are not fallbacks. If the
+Arkova source is unavailable or corrupt, the build fails closed without leaving partial bytes at
+the path consumed by snarkjs.

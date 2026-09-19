@@ -44,7 +44,7 @@ import type {
   ProofBundleSignature,
 } from './types';
 
-const DEFAULT_BASE_URL = 'https://api.arkova.ai';
+const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
 
 /**
  * Maximum public IDs per `verifyBatch()` call. Mirrors the worker's

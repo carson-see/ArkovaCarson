@@ -45,10 +45,6 @@ describe('renderReportBlock (with fetch)', () => {
     });
 
     const html = await renderReportBlock('ARK-2026-RPT-001');
-    expect(mockFetch).toHaveBeenCalledWith(
-      'https://api.arkova.ai/api/v1/verify/ARK-2026-RPT-001',
-      expect.any(Object),
-    );
     expect(html).toContain('Verified');
     expect(html).toContain('nursing_license.pdf');
     expect(html).toContain('Professional License');

@@ -237,6 +237,14 @@ soak harness ships one outside this repo.
 
 `secure-dialog-layout.spec.ts` mounts the real securing dialog, children and CSS through a development-only HTML fixture. Run `npx playwright test -c e2e/secure-dialog-layout.config.ts` for isolated headless Chromium on port 5200 (or set `E2E_BASE_URL` to another loopback Vite server). No seeded account or remote service is needed. The spec deliberately imports the base Playwright test rather than the authenticated fixture barrel: that barrel requires live credential environment variables at module load, while this layout suite uses deterministic boundary mocks and blocks non-loopback requests. This is a presentation/interaction proof, not production anchoring or auth evidence. Geometry, intact attestation labels, extracted-field editing, enabled actions, field focus, keyboard navigation and screenshots cover four viewport sizes; keep the real components and transition logic in this fixture.
 
+## 2026-09-12 SCRUM-5024 — `signup-entry.spec.ts`: partner `?ref` capture
+
+Two cases added at 1280 px and 375 px: a valid `?ref` is stripped from the URL
+(while an unrelated `utm_source` survives) and parked upper-cased under the
+canonical `localStorage` key `arkova.referral`; a malformed `?ref` is stripped
+AND discarded, because parking it would only ever produce `unknown_code` at
+`record_org_referral`.
+
 ## UAT-01 / SCRUM-4031 — public signup entry (2026-09-05)
 
 `signup-entry.spec.ts` runs without seed sessions or backend writes. At 1280px and 375px it checks immediate email/OAuth controls, keyboard order, mismatch recovery, sign-in navigation, no horizontal overflow and screenshot attachments. Build with a stale `VITE_BETA_INVITE_CODE` value to reproduce legacy deployments. This smoke does not establish email delivery or server confirmation policy; `auth.spec.ts` owns the real confirmation-required account creation check.
