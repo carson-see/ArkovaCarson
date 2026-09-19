@@ -30,7 +30,7 @@ That's the entire integration. No backend, no SDK, no auth tokens.
 
 ## How it works
 
-When the script loads, it scans the document for elements with `data-arkova-credential="<publicId>"` and mounts a verification badge inside each one. The badge fetches the credential's public verification data from `https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/{publicId}` (CORS-enabled, no API key needed) and renders one of three states:
+When the script loads, it scans the document for elements with `data-arkova-credential="<publicId>"` and mounts a verification badge inside each one. The badge fetches the record's public verification data from `https://api.arkova.ai/api/v1/verify/{publicId}` (CORS-enabled, no API key needed) and renders one of three states:
 
 | State | When |
 |---|---|
@@ -69,7 +69,7 @@ A 320px single-line badge showing just status icon + label + filename + Arkova b
 |---|---|---|---|
 | `data-arkova-credential` | ✅ | — | Anchor public ID, e.g. `ARK-2026-001` |
 | `data-arkova-mode` | ❌ | `full` | `compact` or `full` |
-| `data-arkova-api-base` | ❌ | production worker URL | Override the API base (staging, local) |
+| `data-arkova-api-base` | ❌ | `https://api.arkova.ai` | Override the API base for staging or local development |
 | `data-arkova-app-base` | ❌ | `https://app.arkova.ai` | Override the app base for the "full details" link |
 
 ---
@@ -147,9 +147,12 @@ Imported directly via npm (`@arkova/embed`) or accessed at `window.ArkovaEmbed`:
 import { mount, autoInit } from '@arkova/embed';
 import type { ArkovaEmbedConfig, AnchorData, EmbedMode } from '@arkova/embed';
 
+const container = document.getElementById('badge');
+if (!container) throw new Error('Missing #badge container');
+
 await mount({
   publicId: 'ARK-2026-001',
-  target: document.getElementById('badge')!,
+  target: container,
   mode: 'full',                     // 'compact' | 'full'
   apiBaseUrl: 'https://...',        // optional override
   appBaseUrl: 'https://...',        // optional override
@@ -211,7 +214,7 @@ The widget is designed to drop into hostile environments without breaking:
 
 - **CORS:** the public verification API allows wildcard origins for read-only verify calls.
 - **CSP `script-src`:** the bundle is served from `app.arkova.ai` — add it to your `script-src` allowlist.
-- **CSP `connect-src`:** add `arkova-worker-270018525501.us-central1.run.app` (or your custom `apiBaseUrl`).
+- **CSP `connect-src`:** add `api.arkova.ai` (or your custom `apiBaseUrl`).
 - **CSP `style-src`:** **no allowlist change needed.** The widget uses inline `style="..."` attributes only — no `<style>` blocks, no `style-src 'unsafe-inline'` requirement *if* the inline style attribute hash is allowlisted. Most sites already allow inline style attributes.
 - **No external fonts.** The widget uses the `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, ...` system font stack.
 - **No images, no link tags, no eval.** Verified in test (`CSP / inline-style safety` suite).
@@ -252,7 +255,7 @@ No. It fetches the public verification record by ID and (optionally) logs a `met
 Yes. Each `[data-arkova-credential]` element is mounted independently. There's no global state.
 
 **What if my site uses a strict CSP?**
-You'll need to allowlist `app.arkova.ai` in `script-src` and `arkova-worker-270018525501.us-central1.run.app` in `connect-src`. The widget itself is `unsafe-eval`-free and avoids `<style>` blocks.
+You'll need to allowlist `app.arkova.ai` in `script-src` and `api.arkova.ai` in `connect-src`. The widget itself is `unsafe-eval`-free and avoids `<style>` blocks.
 
 **Can I use this in a Shadow DOM?**
 Yes. Pass a target inside an open shadow root:
