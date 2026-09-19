@@ -34,13 +34,15 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Require fallback cache provenance and pinned ptau checksum
+        env:
+          CACHE_HIT: ${{ steps.zk-cache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.zk-cache.outputs.cache-matched-key }}
         run: |
           set -euo pipefail
-          test "${{ steps.zk-cache.outputs.cache-hit }}" != 'true'
-          restored_key='${{ steps.zk-cache.outputs.cache-matched-key }}'
-          case "$restored_key" in
+          test "$CACHE_HIT" != 'true'
+          case "$CACHE_MATCHED_KEY" in
             "${CACHE_PREFIX}"*) ;;
-            *) echo "::error::Unexpected cache key: ${restored_key}"; exit 1 ;;
+            *) echo "::error::Unexpected cache key: ${CACHE_MATCHED_KEY}"; exit 1 ;;
           esac
           ptau="services/worker/circuits/artifacts/${PTAU_NAME}"
           test -f "$ptau"

@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
 const workflow = readFileSync('.github/workflows/recover-ptau-mirror.yml', 'utf8');
@@ -15,8 +18,10 @@ describe('trusted ptau mirror recovery workflow', () => {
     expect(workflow).toContain('key: ptau-recovery-never-exact-${{ github.run_id }}');
     expect(workflow).toContain('zk-artifacts-Linux-circom2.1.9-');
     expect(workflow).toContain('fail-on-cache-miss: true');
-    expect(workflow).toContain("test \"${{ steps.zk-cache.outputs.cache-hit }}\" != 'true'");
-    expect(workflow).toContain('cache-matched-key');
+    expect(workflow).toContain('CACHE_HIT: ${{ steps.zk-cache.outputs.cache-hit }}');
+    expect(workflow).toContain('CACHE_MATCHED_KEY: ${{ steps.zk-cache.outputs.cache-matched-key }}');
+    expect(workflow).toContain('test "$CACHE_HIT" != \'true\'');
+    expect(workflow).not.toMatch(/run:[\s\S]*\$\{\{ steps\.zk-cache\.outputs\./u);
   });
 
   it('checks the repository pin before upload and after a fresh download', () => {
@@ -31,5 +36,23 @@ describe('trusted ptau mirror recovery workflow', () => {
     expect(workflow).toContain('workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}');
     expect(workflow).toContain('service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}');
     expect(workflow).toContain('gcloud storage cp --if-generation-match=0 "$source" "$target"');
+  });
+
+  it('treats a hostile cache-matched-key as inert data', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ptau-cache-key-'));
+    const marker = join(dir, 'executed');
+    const hostile = `wrong-prefix'; touch '${marker}'; #`;
+    const result = spawnSync('bash', ['-c', [
+      'set -euo pipefail',
+      'case "$CACHE_MATCHED_KEY" in',
+      '  "${CACHE_PREFIX}"*) ;;',
+      '  *) exit 23 ;;',
+      'esac',
+    ].join('\n')], {
+      env: { ...process.env, CACHE_MATCHED_KEY: hostile, CACHE_PREFIX: 'zk-artifacts-Linux-circom2.1.9-' },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(23);
+    expect(() => readFileSync(marker)).toThrow();
   });
 });
