@@ -43,7 +43,7 @@ import { HttpError } from './utxo-provider.js';
 // ─── in-process proof fixture (one confirmed tx) ────────────────────────────
 
 function dsha(b: Buffer): Buffer {
-  return bitcoin.crypto.sha256(bitcoin.crypto.sha256(b));
+  return Buffer.from(bitcoin.crypto.sha256(bitcoin.crypto.sha256(b)));
 }
 function makeTxidLE(seed: number): Buffer {
   const b = Buffer.alloc(32);
