@@ -130,10 +130,18 @@ export function WebhookSettingsPage() {
     return () => { cancelled = true; };
   }, [orgId]);
 
-  const handleAdd = async (url: string, events: string[]): Promise<string> => {
+  const handleAdd = async (
+    url: string,
+    events: string[],
+    // SCRUM-3972. Passed straight through to the RPC, which persists it in the
+    // same INSERT as the row — so an endpoint is never briefly stored with a
+    // scope the admin did not choose.
+    scope: 'self' | 'self_and_descendants' = 'self',
+  ): Promise<string> => {
     const { data, error } = await supabase.rpc('create_webhook_endpoint', {
       p_url: url,
       p_events: events,
+      p_scope: scope,
     });
 
     if (error) {
