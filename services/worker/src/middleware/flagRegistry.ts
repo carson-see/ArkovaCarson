@@ -64,6 +64,10 @@ const ENV_FLAG_GETTERS = {
   ENABLE_QUEUE_REMINDERS: () => config.enableQueueReminders,
   ENABLE_TREASURY_ALERTS: () => config.enableTreasuryAlerts,
   ENABLE_WEBHOOK_HMAC: () => config.enableWebhookHmac,
+  // SCRUM-3972 — cross-org webhook fan-out to parent endpoints. Env-backed
+  // (config.ts) on purpose: reversing decision D2 is a founder decision, so it
+  // must not be re-openable by a switchboard_flags DB write.
+  ENABLE_SUBORG_WEBHOOK_FANOUT: () => config.enableSubOrgWebhookFanout,
   ENABLE_RULE_ACTION_DISPATCHER: () => config.enableRuleActionDispatcher,
   ENABLE_ALLOCATION_ROLLOVER: () => config.enableAllocationRollover,
   ENABLE_VISUAL_FRAUD_DETECTION: () => config.enableVisualFraudDetection,
