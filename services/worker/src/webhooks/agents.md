@@ -212,19 +212,19 @@ six ordered mirrors updated in the same commit
 
 ### Historical SCRUM-3982 gaps and current disposition
 
-The following bullets described the state when SCRUM-3982 landed. SCRUM-5063 first closed `anchor.revocation_anchored` and `attestation.active`; the 2026-09-19 deferred-gap batch then closed the remaining five families.
+The following bullets described the state when SCRUM-3982 landed. SCRUM-5063 now closes the first two items for `anchor.revocation_anchored` and `attestation.active`; five unregistered families remain.
 
-- **Closed 2026-09-19 — five formerly dispatched-but-unregistered types**: `job.completed`, `compliance.anchor_delayed`,
+- **Five event types remain dispatched-but-unregistered**: `job.completed`, `compliance.anchor_delayed`,
   `compliance.certificate_expiring`, `compliance.signature_revoked`,
-  `compliance.timestamp_coverage_low`. All now use strict schemas. Job and
-  certificate producers derive deterministic, domain-separated 128-bit opaque
-  references from internal UUIDs; raw failure text and certificate subject CN
-  are omitted. Signature revocation is contract-locked but remains correctly
-  marked non-live because no lifecycle route calls its emitter.
+  `compliance.timestamp_coverage_low`. A clean payload on any of them still
+  passes with `bypassed: true`, by design — the ban is on the FIELDS, not on
+  being unregistered, and refusing unknown types wholesale would break seven
+  live call sites at once with no subscriber benefit (nothing can subscribe to
+  an unregistered type).
 - **Closed by SCRUM-5063:** the revocation and attestation anchoring producers now ship public-id-only payloads through strict registered schemas.
-- **Historical:** `job_id`, `certificate_id` and `signature_id` are NOT in
+- **`job_id`, `certificate_id` and `signature_id` are NOT in
   `BANNED_PAYLOAD_KEYS`.** They are internal UUIDs on unregistered events, and
-  they passed before registration. The ban list is derived from what this file's header
+  they still pass. The ban list is derived from what this file's header
   declares, and widening it is a separate decision; registering those events
   with public-id-only schemas is the real fix.
 - **The scan is top-level only**, matching what `.strict()` does for registered
@@ -385,3 +385,17 @@ the bracketed hostname as TLS `servername` (SCRUM-5038).
 `anchor.revocation_anchored` and `attestation.active` now have strict,
 public-id-only schemas and are removed from the legacy bypass ratchet. Their
 producers no longer send internal anchor UUIDs or document fingerprints.
+
+## 2026-09-19 — deferred webhook-family disposition
+
+The historical SCRUM-3982 gap list above is preserved as the state recorded
+when that work landed. SCRUM-5063 later registered
+`anchor.revocation_anchored` and `attestation.active` with strict public-only
+schemas and removed internal anchor identifiers and fingerprints at their
+producers. The deferred-gap batch then registered `job.completed`,
+`compliance.anchor_delayed`, `compliance.certificate_expiring`,
+`compliance.signature_revoked`, and `compliance.timestamp_coverage_low`.
+Job and certificate producers now derive deterministic, domain-separated
+opaque references; raw job errors and certificate subject names are omitted.
+`compliance.signature_revoked` remains correctly marked non-live because no
+lifecycle callsite invokes its emitter.
