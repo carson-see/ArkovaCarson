@@ -54,6 +54,10 @@ jobs:
     outputs:
       run_full: ${{ steps.decision.outputs.run_full }}
       run_focused: ${{ steps.decision.outputs.run_focused }}
+      baseline_sha: ${{ steps.main_push.outputs.baseline_sha }}
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Checkout protected-main history for tier admission
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -77,8 +81,8 @@ jobs:
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         id: main_push
         env:
-          PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: node_modules/.bin/tsx scripts/ci/main-push-admission.ts
 
       - name: Admit protected, ready, and speculative runs
@@ -115,7 +119,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Run changed-surface and CI policy validation
         env:
-          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_BEFORE: ${{ needs.admission.outputs.baseline_sha }}
           PUSH_AFTER: ${{ github.sha }}
         run: node_modules/.bin/tsx scripts/ci/run-main-t0-validation.ts
 
