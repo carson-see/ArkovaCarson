@@ -278,6 +278,32 @@ function assertWorkflowContract(workflow: string): void {
   ]);
 }
 
+describe("staging-evidence draft admission contract", () => {
+  it("skips ordinary event-time drafts before allocating a runner", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const jobIf = workflow.match(/^    if: (.+)$/mu)?.[1];
+    const jobName = workflow.match(/^    name: (.+)$/mu)?.[1];
+
+    expect(jobIf).toContain("!github.event.pull_request.draft");
+    expect(jobIf).toContain("startsWith(github.head_ref, 'mergify/merge-queue/')");
+    expect(jobIf).toContain("github.event.pull_request.user.login == 'mergify[bot]'");
+    expect(jobName).toContain("'Staging evidence deferred (Draft)'");
+    expect(jobName).toContain("'Staging Soak Evidence Gate'");
+
+    // Event truth table pinned by the expression above: ordinary and forged
+    // queue drafts allocate no runner; Ready/missing-draft events and genuine
+    // Mergify speculative drafts retain their existing evaluation paths.
+    const admits = (draft: unknown, branch: string, author: string) =>
+      draft !== true ||
+      (branch.startsWith("mergify/merge-queue/") && author === "mergify[bot]");
+    expect(admits(true, "feature/human", "human")).toBe(false);
+    expect(admits(true, "mergify/merge-queue/forged", "human")).toBe(false);
+    expect(admits(false, "feature/ready", "human")).toBe(true);
+    expect(admits(undefined, "feature/missing", "human")).toBe(true);
+    expect(admits(true, "mergify/merge-queue/real", "mergify[bot]")).toBe(true);
+  });
+});
+
 describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
   it("defers an ordinary live draft before base resolution, checkout, or dependency installation", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");

@@ -66,7 +66,13 @@ concurrency:
 
 jobs:
   staging-evidence:
-    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]') }}
+    # Ordinary event-time drafts have not requested admission. Skip at the job
+    # boundary so GitHub allocates no runner (even a five-second runner job is
+    # billed as a full minute). The distinct job name below prevents this
+    # skipped draft status from impersonating the required ready-state gate.
+    # A genuine Mergify speculative draft retains its existing policy path.
+    # Missing/malformed draft context admits the job and fails closed inside.
+    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]') && (!github.event.pull_request.draft || (startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')) }}
     name: ${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'Staging evidence status edit' || (github.event.pull_request.draft && !(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]') && 'Staging evidence deferred (Draft)' || 'Staging Soak Evidence Gate') }}
     runs-on: ubuntu-latest
     permissions:
