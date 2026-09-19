@@ -1704,7 +1704,7 @@ async function submitAnchorViaWorker(
   return textResult(body);
 }
 
-function authenticatedWorkerJson(
+async function authenticatedWorkerJson(
   config: SupabaseConfig,
   path: string,
   init: { method?: string; headers?: Record<string, string>; body?: string } = {},
@@ -1712,25 +1712,23 @@ function authenticatedWorkerJson(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS);
   const base = config.workerBaseUrl!.replace(/\/$/, '');
-  return (async () => {
+  try {
+    const response = await fetch(`${base}${path}`, {
+      ...init,
+      redirect: 'error',
+      headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },
+      signal: controller.signal,
+    });
+    let body: Record<string, unknown> | null = null;
     try {
-      const response = await fetch(`${base}${path}`, {
-        ...init,
-        redirect: 'error',
-        headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },
-        signal: controller.signal,
-      });
-      let body: Record<string, unknown> | null = null;
-      try {
-        body = await response.json() as Record<string, unknown>;
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-      }
-      return { response, body };
-    } finally {
-      clearTimeout(timer);
+      body = await response.json() as Record<string, unknown>;
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
     }
-  })();
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function handleAnchorDocument(
