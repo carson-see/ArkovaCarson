@@ -61,3 +61,7 @@ curl -s https://api.arkova.ai/health
 curl -s https://api.arkova.ai/v1/verify/<public-id>
 curl -s https://docs.arkova.ai/keys.json
 ```
+
+## 2026-09-19 — publish the active proof-signing key on both discovery hosts
+
+`docs.arkova.ai/keys.json` now publishes the active `arkova-proof-2026-q2` Ed25519 public key using the verifier contract `{kid, alg, pem}` and no longer claims production signing is disabled. `api.arkova.ai/.well-known/arkova-keys.json` is narrowly proxied to the worker's canonical registry; other `/.well-known/*` paths remain closed. `keys-contract.test.ts` pins the docs projection to every active entry in `services/worker/proof-keys.public.json`, validates the PEM as public-only Ed25519 JWK material, and binds the key id to the did:web fragment. Live read-only verification before this change confirmed the checked-in PEM byte-for-byte matches KMS `proof-signing` version 1 and the app DID publishes the same `kid` and JWK `x` coordinate.
