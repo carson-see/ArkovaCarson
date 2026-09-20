@@ -43,7 +43,7 @@ dev = [
   # Hatchling imports this helper only for editable builds. Keep it explicit so
   # the local project can install without an isolated, freshly resolved env.
   "editables>=0.3,<1",
-  "pytest>=8,<9",
+  "pytest>=8,<10",
   # EXACT pin, on purpose. ruff has no stable-default guarantee below 1.0:
   # 0.16.0 widened its implicit default rule set (adding I / UP / SIM / PYI /
   # BLE / RUF), which turned the publish workflow's `ruff check src tests` red
