@@ -36,7 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, PROFILE_MEDIA_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
@@ -49,6 +49,8 @@ import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDoc
 import { AdobeSignConnectorCard, adobeSignErrorCopy } from '@/components/integrations/AdobeSignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
+import { replaceProfileMedia } from '@/lib/profileMedia';
+import { ProfileMediaImage, useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
@@ -235,6 +237,9 @@ function OrgProfilePageInner() {
 
   // Logo upload state
   const [logoUploading, setLogoUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const orgIdRef = useRef(orgId ?? null);
+  useEffect(() => { orgIdRef.current = orgId ?? null; }, [orgId]);
 
   // Sub-org affiliation state
   const [parentOrgName, setParentOrgName] = useState<string | null>(null);
@@ -366,56 +371,34 @@ function OrgProfilePageInner() {
     setOrgSettingsInit(true);
   }
 
-  // Logo upload handler
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBrandUpload = async (kind: 'logo' | 'banner', e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !orgId) return;
-
-    // Validate file
-    const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
-    const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      toast.error('Please upload a PNG, JPG, or WebP image.');
-      return;
+    if (!file || !orgId || !organization?.public_id) return;
+    const requestOrgId = orgId;
+    if (kind === 'logo') setLogoUploading(true);
+    else setBannerUploading(true);
+    try {
+      const field = kind === 'logo' ? 'logo_storage_path' : 'banner_storage_path';
+      const oldPath = organization?.[field] ?? null;
+      await replaceProfileMedia({ file, scope: 'organizations', scopeId: organization.public_id, kind, previousPath: oldPath,
+        commit: (path) => updateOrganization({ [field]: path }, { field, expected: oldPath }),
+        onCleanupWarning: () => toast.warning(PROFILE_MEDIA_LABELS.CLEANUP_WARNING) });
+      if (orgIdRef.current === requestOrgId) toast.success(kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED);
+    } catch (uploadError) {
+      if (orgIdRef.current === requestOrgId) toast.error(uploadError instanceof Error ? uploadError.message : ORG_LOGO_LABELS.UPLOAD_FAILED);
+    } finally {
+      if (orgIdRef.current === requestOrgId) {
+        if (kind === 'logo') setLogoUploading(false);
+        else setBannerUploading(false);
+      }
+      e.target.value = '';
     }
-    if (file.size > MAX_SIZE) {
-      toast.error('Logo must be under 2 MB.');
-      return;
-    }
-
-    setLogoUploading(true);
-    const ext = file.name.split('.').pop() ?? 'png';
-    const path = `${orgId}/logo.${ext}`;
-
-    // Upload to storage (upsert to overwrite existing)
-    const { error: uploadError } = await supabase.storage
-      .from('org-logos')
-      .upload(path, file, { upsert: true, contentType: file.type });
-
-    if (uploadError) {
-      toast.error(ORG_LOGO_LABELS.UPLOAD_FAILED);
-      setLogoUploading(false);
-      return;
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage.from('org-logos').getPublicUrl(path);
-    const logoUrl = urlData?.publicUrl;
-
-    if (logoUrl) {
-      // Update org record with logo_url
-      await updateOrganization({ logo_url: logoUrl });
-      toast.success(ORG_LOGO_LABELS.UPLOAD_SUCCESS);
-    }
-
-    setLogoUploading(false);
-    // Reset the input so re-selecting the same file triggers onChange
-    e.target.value = '';
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
+  const resolvedOrgLogoUrl = useProfileMediaUrl(organization?.logo_storage_path, orgLogoUrl);
   const orgFoundedDisplay = getOrganizationFoundedDisplay(organization);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(profile);
 
@@ -584,8 +567,8 @@ function OrgProfilePageInner() {
           <div className="-mt-14 mb-3 flex items-end justify-between">
             <div className="relative group">
               <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border-4 border-background bg-card shadow-xl overflow-hidden">
-                {orgLogoUrl ? (
-                  <img src={orgLogoUrl} alt={organization?.display_name ? `${organization.display_name} organization logo` : 'Organization logo'} className="h-full w-full object-cover" loading="lazy" decoding="async" width={112} height={112} />
+                {resolvedOrgLogoUrl ? (
+                  <img src={resolvedOrgLogoUrl} referrerPolicy="no-referrer" alt={organization?.display_name ? `${organization.display_name} organization logo` : 'Organization logo'} className="h-full w-full object-cover" loading="lazy" decoding="async" width={112} height={112} />
                 ) : (
                   <Building2 className="h-14 w-14 text-primary" />
                 )}
@@ -593,7 +576,7 @@ function OrgProfilePageInner() {
               {isAdmin && (
                 <label
                   className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                  aria-label={orgLogoUrl ? ORG_LOGO_LABELS.CHANGE_LOGO : ORG_LOGO_LABELS.UPLOAD_LOGO}
+                  aria-label={resolvedOrgLogoUrl ? ORG_LOGO_LABELS.CHANGE_LOGO : ORG_LOGO_LABELS.UPLOAD_LOGO}
                 >
                   {logoUploading ? (
                     <Loader2 className="h-6 w-6 animate-spin text-white" />
@@ -604,7 +587,7 @@ function OrgProfilePageInner() {
                     type="file"
                     className="sr-only"
                     accept="image/png,image/jpeg,image/webp"
-                    onChange={handleLogoUpload}
+                    onChange={(event) => void handleBrandUpload('logo', event)}
                     disabled={logoUploading}
                   />
                 </label>
@@ -1140,6 +1123,13 @@ function OrgProfilePageInner() {
                   onChange={(e) => { setOrgFoundedDate(e.target.value); setOrgSaved(false); }}
                   disabled={orgUpdating}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="org-banner">{PROFILE_MEDIA_LABELS.ORG_BANNER}</Label>
+                <ProfileMediaImage storagePath={organization?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_ORG_BANNER} className="h-32 w-full rounded-lg object-cover" />
+                <Input id="org-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={bannerUploading || orgUpdating} onChange={(event) => void handleBrandUpload('banner', event)} />
+                <p className="text-xs text-muted-foreground">{PROFILE_MEDIA_LABELS.ORG_BANNER_HINT}</p>
               </div>
 
               <Button

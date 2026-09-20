@@ -30,3 +30,12 @@ create_webhook_endpoint is deliberately authenticated for WebhookSettingsPage. T
 ## 2026-09-19 — queue resolver baseline burn-down
 
 Migration 0477 explicitly closes the squashed-baseline `resolve_anchor_queue_by_public_id` ACL. Its stale squashed-baseline exception is removed; the numbered-definition and replay-terminal-state checks remain unchanged.
+
+## 2026-09-19 — UAT-14 profile-media ACL exceptions
+
+Migration 0481 revokes PUBLIC, anon, and authenticated before granting only the
+roles required by the named Storage policies and public profile callers. Keep
+its three public read/projection functions in `DELIBERATELY_PUBLIC` and its
+authenticated write-policy helper in `DELIBERATELY_AUTHENTICATED`; their SQL
+bodies enforce the reviewed public-toggle, ACTIVE, AAL, owner, and exact-org
+admin boundaries.

@@ -619,3 +619,11 @@ instant/queue keyboard actionability, purchase/admin guidance, and durable
 NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
 only account and network boundaries; submissions are captured at the worker HTTP
 boundary and rearm must reuse the original fingerprint.
+## 2026-09-19 — UAT-14 profile fixture
+
+`uat14-profiles.spec.ts` renders the real public member, public organization,
+Settings media editor, and organization brand editor at 1280/375. Editor probes
+use Chromium's real decoder/canvas path and assert scoped PNG upload plus pointer
+payloads, malformed-image rejection, and privacy controls. Auth, RPC, Storage,
+and signed-media boundaries remain mocked; screenshots do not prove hosted
+Storage signing, expiry, or Auth policy behavior.

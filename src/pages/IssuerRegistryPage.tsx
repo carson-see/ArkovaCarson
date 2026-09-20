@@ -21,6 +21,9 @@ import { ROUTES, getAppBaseUrl, issuerRegistryPath, publicProfilePath } from '@/
 import { isSearchSubdomain } from '@/App';
 import { OrganizationSchema } from '@/components/seo/OrganizationSchema';
 import { OrgPageMeta } from '@/components/seo/OrgPageMeta';
+import { QRCodeSVG } from 'qrcode.react';
+import { safeSocialHref } from '@/lib/socialLinks';
+import { useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 
 /** Map credential types to icons */
 function credentialIcon(type: string | null) {
@@ -56,6 +59,8 @@ export function IssuerRegistryPage() {
   const { profile, loading: profileLoading, error: profileError, fetchProfile } = useOrgProfile();
   const { registry, loading: registryLoading, fetchRegistry } = useIssuerRegistry();
   const standalone = isSearchSubdomain();
+  const logoUrl = useProfileMediaUrl(profile?.logo_storage_path, profile?.logo_url);
+  const bannerUrl = useProfileMediaUrl(profile?.banner_storage_path);
 
   useEffect(() => {
     if (orgId) {
@@ -102,6 +107,10 @@ export function IssuerRegistryPage() {
     : 0;
 
   const pageUrl = `${getAppBaseUrl()}${issuerRegistryPath(profile.org_id)}`;
+  const websiteHref = safeSocialHref('website', profile.website_url);
+  const twitterHref = safeSocialHref('twitter', profile.twitter_url);
+  const linkedinHref = safeSocialHref('linkedin', profile.linkedin_url);
+  const domainHref = safeSocialHref('website', profile.domain);
 
   return (
     <div className="min-h-screen bg-background">
@@ -118,13 +127,16 @@ export function IssuerRegistryPage() {
         </Link>
 
         {/* ── Hero Header ─────────────────────────────────────────────── */}
-        <div className="rounded-2xl border border-[#00d4ff]/10 bg-gradient-to-br from-[#0d141b] to-[#111a24] p-6 sm:p-8 mb-6">
+        <div className="overflow-hidden rounded-2xl border border-[#00d4ff]/10 bg-gradient-to-br from-[#0d141b] to-[#111a24] mb-6">
+          {bannerUrl && <img src={bannerUrl} referrerPolicy="no-referrer" alt="" className="h-32 sm:h-44 w-full object-cover" />}
+          <div className="p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
             {/* Logo */}
             <div className="shrink-0">
-              {profile.logo_url ? (
+              {logoUrl ? (
                 <img
-                  src={profile.logo_url}
+                  src={logoUrl}
+                  referrerPolicy="no-referrer"
                   alt={`${profile.display_name} organization logo`}
                   className="h-16 w-16 sm:h-20 sm:w-20 rounded-2xl object-contain bg-[#192028] p-2"
                 />
@@ -138,7 +150,7 @@ export function IssuerRegistryPage() {
             {/* Name + meta */}
             <div className="flex-1 min-w-0 text-center sm:text-left">
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 mb-1">
-                <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
+                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
                   {profile.display_name}
                 </h1>
                 {profile.verification_status === 'VERIFIED' && (
@@ -180,9 +192,9 @@ export function IssuerRegistryPage() {
                     Founded {new Date(profile.founded_date).getFullYear()}
                   </span>
                 )}
-                {profile.domain && (
+                {domainHref && (
                   <a
-                    href={profile.domain.startsWith('http') ? profile.domain : `https://${profile.domain}`}
+                    href={domainHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 hover:text-[#00d4ff] transition-colors"
@@ -195,9 +207,9 @@ export function IssuerRegistryPage() {
 
               {/* Links */}
               <div className="flex justify-center sm:justify-start gap-2 mt-4">
-                {profile.website_url && (
+                {websiteHref && (
                   <a
-                    href={profile.website_url}
+                    href={websiteHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-[#00d4ff] hover:text-[#00d4ff]/80 border border-[#00d4ff]/20 rounded-full px-3 py-1 hover:bg-[#00d4ff]/5 transition-colors"
@@ -207,9 +219,9 @@ export function IssuerRegistryPage() {
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
                 )}
-                {profile.twitter_url && (
+                {twitterHref && (
                   <a
-                    href={profile.twitter_url}
+                    href={twitterHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
@@ -218,9 +230,9 @@ export function IssuerRegistryPage() {
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
                 )}
-                {profile.linkedin_url && (
+                {linkedinHref && (
                   <a
-                    href={profile.linkedin_url}
+                    href={linkedinHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
@@ -231,6 +243,8 @@ export function IssuerRegistryPage() {
                 )}
               </div>
             </div>
+            <div className="shrink-0 rounded-lg bg-white p-2" aria-label="Organization profile QR code"><QRCodeSVG value={pageUrl} size={96} level="M" /></div>
+          </div>
           </div>
         </div>
 

@@ -362,6 +362,7 @@ GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
     // tests/rls/referral-attribution.test.ts, and the browser callers are
     // ReferralPanel.tsx and ReferralSettingsPage.tsx. anon stays revoked.
     expect([...DELIBERATELY_AUTHENTICATED].sort()).toEqual([
+      'public.can_write_profile_media',
       'public.create_webhook_endpoint',
       'public.ensure_org_referral_code',
       'public.folder_administers_org',

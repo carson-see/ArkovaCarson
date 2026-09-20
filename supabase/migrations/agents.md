@@ -1637,6 +1637,10 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+## 2026-09-19 — 0481 UAT-14 media privacy
+
+0481 is additive and unapplied locally: private bucket, public-ID-bound object paths, active AAL2 owner/admin writes, current-pointer public reads, and v2 whitelisted public-profile RPCs. The native fixture is minimal PostgreSQL evidence, not hosted Storage/Auth proof.
+All four 0481 SECURITY DEFINER helpers explicitly revoke PUBLIC/anon/authenticated before narrow grants. Public personal signing and the v2 DTO both require public, active, non-deleted profiles; legacy base RPC behavior is not an authorization substitute.
 | `0477` | `0477_uat19_queue_resolve_authorization.sql` | SCRUM-5268 / UAT-19 | PRE-PUBLICATION | Replaces only the service-role four-argument `resolve_anchor_queue_by_public_id` body. Tenant and collision scope come from the selected public anchor; authorization is exact `org_members` owner/admin, platform admin, or exact owner/admin of one APPROVED direct parent (no profile-role fallback or recursive ancestry). A tenant+collision advisory transaction lock precedes deterministic row locks, so different-winner races cannot deadlock; the durable receipt is rechecked under lock. ACL/signature stay service-role-only/unchanged. Native proof: `scripts/uat19/native-pg-queue-resolution.sh`. |
 
 ## 2026-09-19 — UAT-24 global-personal folder privacy (0480)

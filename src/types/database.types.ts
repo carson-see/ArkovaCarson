@@ -5190,6 +5190,7 @@ export type Database = {
           affiliation_fee_status: string | null
           affiliation_grace_expires_at: string | null
           banner_url: string | null
+          banner_storage_path: string | null
           created_at: string
           creation_idempotency_key: string | null
           description: string | null
@@ -5214,6 +5215,7 @@ export type Database = {
           linkedin_url: string | null
           location: string | null
           logo_url: string | null
+          logo_storage_path: string | null
           max_sub_orgs: number | null
           org_prefix: string | null
           org_type: string | null
@@ -5240,6 +5242,7 @@ export type Database = {
           affiliation_fee_status?: string | null
           affiliation_grace_expires_at?: string | null
           banner_url?: string | null
+          banner_storage_path?: string | null
           created_at?: string
           creation_idempotency_key?: string | null
           description?: string | null
@@ -5264,6 +5267,7 @@ export type Database = {
           linkedin_url?: string | null
           location?: string | null
           logo_url?: string | null
+          logo_storage_path?: string | null
           max_sub_orgs?: number | null
           org_prefix?: string | null
           org_type?: string | null
@@ -5290,6 +5294,7 @@ export type Database = {
           affiliation_fee_status?: string | null
           affiliation_grace_expires_at?: string | null
           banner_url?: string | null
+          banner_storage_path?: string | null
           created_at?: string
           creation_idempotency_key?: string | null
           description?: string | null
@@ -5314,6 +5319,7 @@ export type Database = {
           linkedin_url?: string | null
           location?: string | null
           logo_url?: string | null
+          logo_storage_path?: string | null
           max_sub_orgs?: number | null
           org_prefix?: string | null
           org_type?: string | null
@@ -5616,6 +5622,8 @@ export type Database = {
           activation_token: string | null
           activation_token_expires_at: string | null
           avatar_url: string | null
+          avatar_storage_path: string | null
+          banner_storage_path: string | null
           bio: string | null
           created_at: string
           deleted_at: string | null
@@ -5649,6 +5657,8 @@ export type Database = {
           activation_token?: string | null
           activation_token_expires_at?: string | null
           avatar_url?: string | null
+          avatar_storage_path?: string | null
+          banner_storage_path?: string | null
           bio?: string | null
           created_at?: string
           deleted_at?: string | null
@@ -5682,6 +5692,8 @@ export type Database = {
           activation_token?: string | null
           activation_token_expires_at?: string | null
           avatar_url?: string | null
+          avatar_storage_path?: string | null
+          banner_storage_path?: string | null
           bio?: string | null
           created_at?: string
           deleted_at?: string | null
@@ -8201,7 +8213,12 @@ export type Database = {
         Args: { p_public_id: string }
         Returns: Json
       }
+      get_public_member_profile_v2: {
+        Args: { p_public_id: string }
+        Returns: Json
+      }
       get_public_org_profile: { Args: { p_org_id: string }; Returns: Json }
+      get_public_org_profile_v2: { Args: { p_org_id: string }; Returns: Json }
       get_public_org_profiles: {
         Args: { p_limit?: number; p_offset?: number; p_org_id?: string }
         Returns: {
