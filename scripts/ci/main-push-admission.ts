@@ -150,6 +150,16 @@ function git(args: string[]): string {
   return execFileSync('/usr/bin/git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
+/**
+ * Explicit code-unit comparator. Identical ordering to the default
+ * `Array#sort()`, stated on purpose: path order feeds admission decisions and
+ * must not vary with the runner's locale (which `localeCompare` would).
+ */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 export function changedFilesForPush(before: string, after: string): string[] {
   if (!SHA_RE.test(before) || !SHA_RE.test(after) || before === ZERO_SHA || after === ZERO_SHA) {
     throw new Error('push SHAs are missing, malformed, or all-zero');
@@ -162,7 +172,7 @@ export function changedFilesForPush(before: string, after: string): string[] {
   // --no-renames makes a rename visible as delete+add, so both path authorities
   // are classified. NUL transport preserves every valid Git filename.
   return git(['diff', '--name-only', '-z', '--no-renames', before, after])
-    .split('\0').filter(Boolean).sort();
+    .split('\0').filter(Boolean).sort(byCodeUnit);
 }
 
 export function deletedFilesForPush(before: string, after: string): string[] {
@@ -170,7 +180,7 @@ export function deletedFilesForPush(before: string, after: string): string[] {
   // deletion-only diff. Deletions and rename-old-sides take the full matrix.
   changedFilesForPush(before, after);
   return git(['diff', '--name-only', '-z', '--no-renames', '--diff-filter=D', before, after])
-    .split('\0').filter(Boolean).sort();
+    .split('\0').filter(Boolean).sort(byCodeUnit);
 }
 
 export function decideMainPushFromGit(before: string, after: string): MainPushDecision {
