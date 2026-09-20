@@ -168,3 +168,11 @@ AI provider abstraction layer for credential metadata extraction, fraud detectio
 - **DO NOT** use Cloudflare as primary provider (fallback-only, gated by `ENABLE_AI_FALLBACK`)
 - **DO NOT** hardcode model names — use `gemini-config.ts` centralized pins
 - **DO** prefer `IAIProvider.generateEmbeddings()` for bulk credential embeddings so Gemini requests are grouped through `batchEmbedContents` instead of per-credential fan-out.
+# AI credit period concurrency — 2026-09-19
+
+`cost-tracker.ts` provisions an org's current period through
+`ensure_ai_credits_period`. Migration 0467 serializes first-period creation,
+rejects overlapping org/user periods, and makes check/debit choose the oldest
+matching row deterministically. When both owner arguments are supplied, the
+established contract remains an OR across org and user; callers should normally
+send exactly one. The RPCs remain executable only by `service_role`.
