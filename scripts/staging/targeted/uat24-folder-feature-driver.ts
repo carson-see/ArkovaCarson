@@ -27,8 +27,19 @@ assert(baseUrl === VERIFIED_SUPABASE_ORIGIN && hostname === `${EXPECTED_REF}.sup
 assert(provider === 'google_drive' || provider === 'docusign', 'unsupported connector provider');
 
 const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, 'content-type': 'application/json' };
+/**
+ * Resolve against the pinned origin and re-check it: `path` must never
+ * retarget a request away from the verified rig's REST endpoint.
+ */
+function restTarget(path: string): URL {
+  const target = new URL(`/rest/v1/${path}`, VERIFIED_SUPABASE_ORIGIN);
+  assert(target.origin === VERIFIED_SUPABASE_ORIGIN && target.pathname.startsWith('/rest/v1/'),
+    'refusing request outside the verified Supabase REST origin');
+  return target;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${VERIFIED_SUPABASE_ORIGIN}/rest/v1/${path}`, {
+  const response = await fetch(restTarget(path), {
     ...init, headers: { ...headers, ...(init.headers ?? {}) }, redirect: 'error',
   });
   const body = await response.text();
@@ -40,7 +51,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (body ? JSON.parse(body) : null) as T;
 }
 async function expectFailure(path: string, body: Record<string, unknown>, pattern: RegExp): Promise<void> {
-  const response = await fetch(`${VERIFIED_SUPABASE_ORIGIN}/rest/v1/${path}`, {
+  const response = await fetch(restTarget(path), {
     method: 'POST', headers, body: JSON.stringify(body), redirect: 'error',
   });
   const text = await response.text();
