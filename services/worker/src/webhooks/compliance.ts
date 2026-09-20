@@ -16,6 +16,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { dispatchWebhookEvent } from './delivery.js';
 import crypto from 'node:crypto';
+import { webhookPublicReference } from './public-reference.js';
 
 /**
  * Check for expiring certificates and emit webhook events.
@@ -38,7 +39,7 @@ export async function checkCertificateExpiry(): Promise<number> {
     try {
       const { data: certs } = await db
         .from('signing_certificates')
-        .select('id, org_id, subject_cn, not_after')
+        .select('id, org_id, not_after')
         .gt('not_after', windowStart.toISOString())
         .lte('not_after', futureDate.toISOString());
 
@@ -56,8 +57,7 @@ export async function checkCertificateExpiry(): Promise<number> {
               'compliance.certificate_expiring',
               crypto.randomUUID(),
               {
-                certificate_id: cert.id,
-                subject: cert.subject_cn,
+                certificate_ref: webhookPublicReference('cert', cert.id),
                 expires_at: cert.not_after,
                 warning_level: threshold.label,
                 days_remaining: threshold.days,
@@ -144,7 +144,7 @@ export async function checkAnchorDelays(): Promise<number> {
  */
 export async function emitSignatureRevoked(
   orgId: string,
-  signatureId: string,
+  signaturePublicId: string,
   reason: string,
 ): Promise<void> {
   try {
@@ -153,13 +153,13 @@ export async function emitSignatureRevoked(
       'compliance.signature_revoked',
       crypto.randomUUID(),
       {
-        signature_id: signatureId,
+        public_id: signaturePublicId,
         revocation_reason: reason,
         revoked_at: new Date().toISOString(),
       },
     );
   } catch (err) {
-    logger.error({ error: err, signatureId }, 'Failed to emit signature revocation event');
+    logger.error({ error: err, signaturePublicId }, 'Failed to emit signature revocation event');
   }
 }
 

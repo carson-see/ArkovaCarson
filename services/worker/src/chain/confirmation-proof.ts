@@ -128,7 +128,10 @@ export interface ConfirmationProofRequest {
  * SHA-256 of a buffer.
  */
 function sha256(data: Uint8Array): Buffer {
-  return bitcoin.crypto.sha256(Buffer.from(data));
+  // bitcoinjs-lib 7 returns Uint8Array from crypto helpers (it dropped its
+  // Node Buffer dependency for browser compat) — wrap back to Buffer since
+  // that's this function's documented/consumed return type.
+  return Buffer.from(bitcoin.crypto.sha256(Buffer.from(data)));
 }
 
 /** Double-SHA-256 (Bitcoin standard). */

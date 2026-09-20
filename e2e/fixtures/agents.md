@@ -20,3 +20,7 @@ Playwright test fixtures providing authenticated page contexts and Supabase help
 - Never hardcode credentials; use env vars (`E2E_SUPABASE_URL`, etc.).
 - All E2E specs should import from `./index.ts`, not individual fixture files.
 - Auth uses pre-saved storageState (no per-test login flows).
+
+## SCRUM-5145 — email confirmation development entry
+
+`uat17-email-confirmation.html`/`.tsx` mount the production signup or callback component and CSS in MemoryRouter. The root production build does not include this development-only HTML entry. Playwright simulates external Auth responses; no mock hook implementation or seeded production account is used.

@@ -10,6 +10,8 @@
  * Internal DB/code may use technical names, but UI renders approved terms only.
  */
 
+import { SIGNUP_EMAIL_LINK_LIFETIME_SECONDS } from './authEmailPolicy';
+
 // =============================================================================
 // ANCHOR STATUS
 // =============================================================================
@@ -615,6 +617,23 @@ export const WEBHOOK_LABELS = {
   TEST_PING_ERROR: "Couldn't send the test event. Please try again.",
   TEST_PING_INACTIVE: 'Enable this endpoint before sending a test event.',
 
+  // ── SCRUM-3972: delivery scope ────────────────────────────────────────────
+  // CLAUDE.md §1.3: user-visible copy says "affiliated organization", never
+  // "sub-org". The availability note is written in the FUTURE tense on purpose
+  // (builder contract §7) — the cross-organization delivery is behind a
+  // server-side gate that is currently off, so the option stores a preference
+  // today and starts delivering once that gate opens.
+  SCOPE_LABEL: 'Which organizations’ events',
+  SCOPE_SELF: 'This organization only',
+  SCOPE_SELF_DESC: 'Receive events for records and activity belonging to this organization. This is the default and matches how every existing endpoint behaves.',
+  SCOPE_SELF_AND_DESCENDANTS: 'This organization and its direct affiliated organizations',
+  // CTO review 2026-09-12: "direct" is load-bearing, not decoration. Affiliation
+  // chains deeper than one level are reachable (proved in
+  // machines/subOrgWebhookFanout.machine.ts) and this option does NOT include
+  // them, so the copy must not imply a whole subtree.
+  SCOPE_SELF_AND_DESCENDANTS_DESC: 'Also receive events belonging to organizations directly affiliated to this one, once their affiliation is approved. Organizations further down a chain are not included, an affiliation that is suspended stops, and affiliated organizations never receive this organization’s events.',
+  SCOPE_PENDING_NOTE: 'Delivery of affiliated organizations’ events will begin once Arkova enables it; until then this endpoint receives this organization’s events only.',
+
   // ── WH-03 (SCRUM-2398): delivery history + failed deliveries ─────────────
   DELIVERIES_TITLE: 'Delivery History',
   DELIVERIES_DESC: 'Recent event notifications sent to your endpoints. Only delivery details are shown — never document contents.',
@@ -685,6 +704,11 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
   'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
+  'job.completed': 'A batch verification request finished processing.',
+  'compliance.certificate_expiring': 'A signing certificate is approaching its expiration date.',
+  'compliance.anchor_delayed': 'One or more document records have waited longer than the configured securing threshold.',
+  'compliance.signature_revoked': 'A signature was revoked.',
+  'compliance.timestamp_coverage_low': 'Signature timestamp coverage fell below the configured threshold.',
   // CTO ruling Z5 (2026-09-12), §1.13 R-7: scoped to the single-create route.
   // POST /api/v1/attestations dispatches this event; the bulk route
   // POST /api/v1/attestations/batch-create does not dispatch anything, so a
@@ -692,6 +716,15 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   // attestation was created" until batch-create emits.
   'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
+  'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
+  'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
+  'suborg.created': 'A parent organization created an affiliated organization.',
+  'suborg.approved': 'A parent organization approved an affiliated organization.',
+  'suborg.revoked': 'A parent organization revoked an affiliation.',
+  'suborg.credits_allocated': 'A parent organization allocated credits to an affiliated organization.',
+  'suborg.credits_reclaimed': 'A parent organization reclaimed credits from an affiliated organization.',
+  'suborg.suspended': 'An affiliated organization was suspended by its parent organization.',
+  'suborg.offboarded': 'An affiliated organization was offboarded — credits returned and the organization suspended.',
 };
 
 // =============================================================================
@@ -720,6 +753,35 @@ export const API_KEY_LABELS = {
   ACTIVE: 'Active',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  // SCRUM-5023 — expiry visibility. "Active" and "Expired" are terminal
+  // states the user can only react to; EXPIRING_SOON is the one that leaves
+  // time to act, which is the whole point of the story.
+  EXPIRING_SOON: 'Expiring soon',
+  // Remaining-time fragments appended to the badge. Split by plurality rather
+  // than printing "in 0 days" / "in 1 days".
+  EXPIRES_TODAY: 'today',
+  EXPIRES_IN_ONE_DAY: 'in 1 day',
+  EXPIRES_IN_DAYS: 'in {days} days',
+  EXTEND_KEY: 'Extend',
+  EXTEND_TITLE: 'Extend API Key Expiry',
+  EXTEND_DESCRIPTION:
+    'Choose a new expiry, counted from now. The key itself does not change, so there is nothing to redistribute.',
+  EXTEND_30_DAYS: '30 days',
+  EXTEND_90_DAYS: '90 days',
+  EXTEND_365_DAYS: '1 year',
+  EXTEND_REMOVE: 'Remove expiry',
+  EXTEND_FAILED: 'Failed to change the expiry. It is unchanged — please try again.',
+  // Every preset REPLACES the current expiry rather than adding to it, so the
+  // current one has to be on screen: without it a user cannot tell which
+  // presets extend the key and which quietly cut it short.
+  EXTEND_CURRENT: 'Currently expires {date}.',
+  EXTEND_CURRENT_NONE: 'This key currently has no expiry.',
+  EXTEND_CONFIRM_SHORTEN:
+    '{option} is EARLIER than this key\u2019s current expiry. The key will stop working sooner than it does today.',
+  EXTEND_CONFIRM_REMOVE:
+    'This key will never expire. It stays usable until someone revokes it.',
+  EXTEND_CONFIRM_APPLY: 'Yes, change it',
+  EXTEND_CONFIRM_CANCEL: 'Go back',
   LAST_USED: 'Last used',
   NEVER_USED: 'Never used',
   FETCH_ERROR: 'Unable to load API keys. Please refresh and try again.',
@@ -1587,6 +1649,7 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_CREDENTIAL_TEMPLATES: 'Document Templates',
   BREADCRUMB_WEBHOOKS: 'Webhooks',
   BREADCRUMB_API_KEYS: 'API Keys',
+  BREADCRUMB_REFERRALS: 'Referrals',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
   COLLAPSE: 'Collapse',
@@ -1767,6 +1830,8 @@ export const SETTINGS_PAGE_LABELS = {
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
+  REFERRALS: 'Referrals',
+  REFERRALS_DESC: 'Share your referral code and see who joined through it',
   TEMPLATES_EMPTY_TITLE: 'No templates yet',
   TEMPLATES_EMPTY_DESC: 'Create your first document template to start securing verifiable documents.',
   TEMPLATES_EMPTY_CTA: 'Create Template',
@@ -1837,6 +1902,77 @@ export const CONNECTIONS_LABELS = {
   DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
+} as const;
+
+// =============================================================================
+// CONNECTORS PAGE (SPEC-CONNECTORS — DocSend-model folder selection, §5)
+// =============================================================================
+//
+// Every user-visible string for /organization/connectors. Extends
+// CONNECTIONS_LABELS' existing GOOGLE_DRIVE_NAME / DOCUSIGN_NAME /
+// CONNECT_BUTTON / STATUS_* keys rather than duplicating them.
+
+export const CONNECTORS_LABELS = {
+  // Page chrome
+  CONNECTORS_PAGE_TITLE: 'Connectors',
+  CONNECTORS_PAGE_SUBTITLE: 'Connect a document source and choose what happens when a new document arrives.',
+  CONNECTORS_ADVANCED_LINK: 'Advanced: manage rules',
+  CONNECTORS_EMPTY_ORG: 'Connectors are set up per organization. Open your organization to continue.',
+
+  // Drive folder selection
+  DRIVE_CHOOSE_FOLDERS: 'Choose folders',
+  DRIVE_FOLDERS_NONE: 'No folders selected yet. Arkova will not act on anything until you choose at least one.',
+  DRIVE_FOLDERS_HEADING: 'Watched folders',
+  DRIVE_FOLDERS_DIRECT_ONLY: 'Only files added directly to a selected folder are picked up. Subfolders are not included — select them too if you need them.',
+  DRIVE_FOLDERS_CAP: 'You can watch up to 20 folders.',
+  DRIVE_PICKER_TITLE: 'Choose Google Drive folders',
+  DRIVE_PICKER_ROOT: 'My Drive',
+  DRIVE_PICKER_EMPTY: 'No subfolders here.',
+  DRIVE_PICKER_LOADING: 'Loading folders…',
+  DRIVE_PICKER_LOAD_MORE: 'Load more folders',
+  DRIVE_PICKER_SHARED_DRIVES_NOTE: 'Shared drives are not supported yet. Choose a folder in My Drive.',
+  DRIVE_PICKER_REMOVE: 'Remove folder',
+  DRIVE_PICKER_DONE: 'Use these folders',
+
+  // Action choice — the only place a customer learns a credit is spent.
+  CONNECTOR_ACTION_HEADING: 'When a new document arrives',
+  CONNECTOR_ACTION_INSTANT: 'Secure it immediately',
+  CONNECTOR_ACTION_INSTANT_HELP: 'Uses 1 credit per document. If you run out of credits, documents move to the secure queue instead and we email your administrators.',
+  CONNECTOR_ACTION_QUEUE: 'Add it to the secure queue',
+  CONNECTOR_ACTION_QUEUE_HELP: 'No credit used. Queued documents are secured in the next scheduled batch.',
+  CONNECTOR_SAVE: 'Save',
+  CONNECTOR_SAVING: 'Saving…',
+  CONNECTOR_SAVED_TOAST: 'Settings saved. New documents will follow this setting.',
+
+  // Errors — each maps a real worker `code`; no copy for a code that cannot happen.
+  DRIVE_FOLDERS_SCOPE_MISSING: 'Arkova needs permission to see your folder names. Reconnect Google Drive to continue.',
+  DRIVE_FOLDERS_RECONNECT: 'Your Google Drive connection expired. Reconnect to choose folders.',
+  DRIVE_FOLDERS_FORBIDDEN: 'You do not have permission to open that folder in Google Drive.',
+  DRIVE_FOLDERS_NOT_FOUND: 'That folder no longer exists in Google Drive.',
+  DRIVE_FOLDERS_UNAVAILABLE: 'Google Drive is not responding right now. Please try again in a moment.',
+  DRIVE_FOLDERS_NOT_CONNECTED: 'Connect Google Drive before choosing folders.',
+  CONNECTOR_SAVE_FAILED: 'Could not save those settings. Please try again.',
+  CONNECTOR_MANAGED_IN_RULES: 'This connector is set up with more than one rule, so it is managed in Rules.',
+  CONNECTOR_MANAGE_IN_RULES_LINK: 'Manage in Rules',
+  CONNECTOR_FOLDER_MISSING: 'This folder was removed or renamed in Google Drive.',
+  CONNECTOR_LOAD_FAILED: 'Could not load your connector settings. Please try again.',
+  CONNECTOR_RECONNECT_BUTTON: 'Reconnect Google Drive',
+  CONNECTOR_RETRY_BUTTON: 'Retry',
+
+  // OrgProfile Settings tab — link row replacing the moved cards (PM-11).
+  SETTINGS_CONNECTORS_LINK_TITLE: 'Connectors',
+  SETTINGS_CONNECTORS_LINK_DESC: 'Google Drive, DocuSign — manage connectors',
+  SETTINGS_CONNECTORS_LINK_BUTTON: 'Manage connectors',
+
+  // OAuth return-trip toasts (Drive leg — DocuSign reuses CONNECTIONS_LABELS'
+  // TOAST_CONNECTED / TOAST_ERROR_PREFIX, which are DocuSign-worded).
+  DRIVE_TOAST_CONNECTED: 'Google Drive connected. New files will now trigger rules.',
+  DRIVE_TOAST_ERROR: 'Google Drive connection was not completed.',
+
+  // Connector card badges/sections (§1.3 — every string here, none inline in JSX).
+  CONNECTOR_MANAGED_BADGE: 'Managed in Rules',
+  DOCUSIGN_ENVELOPES_HEADING: 'Envelopes',
+  DOCUSIGN_ENVELOPES_DESC: 'All completed envelopes from this account.',
 } as const;
 
 // =============================================================================
@@ -2576,6 +2712,11 @@ export const DEVELOPER_PAGE_LABELS = {
   MCP_TOOL_VERIFY_DESC: 'Verify a record by its public ID',
   MCP_TOOL_SEARCH: 'arkova_search_anchors',
   MCP_TOOL_SEARCH_DESC: 'Search the public record registry',
+  MCP_ONE_COMMAND_TITLE: 'Connect Claude Code in one command',
+  MCP_KEY_PREREQUISITE: 'First set ARKOVA_API_KEY in your shell. The command expands it before Claude Code saves the server configuration.',
+  MCP_COPY_COMMAND: 'Copy install command',
+  MCP_COMMAND_COPIED: 'Install command copied',
+  MCP_ONE_CLICK_NOTE: 'One-click links are omitted because Arkova does not put API keys in URLs. Use a client’s secure secret prompt or the command above.',
 
   // API docs card on ApiKeySettingsPage
   API_DOCS_CARD_TITLE: 'API Documentation',
@@ -2588,6 +2729,8 @@ export const DEVELOPER_PAGE_LABELS = {
   SANDBOX_ANON_HINT_CTA: 'create an account',
   SANDBOX_ANON_HINT_SUFFIX: 'to generate a key.',
   SANDBOX_ERROR_UNREACHABLE: 'Could not connect to API server. The server may be unreachable or CORS may be blocking the request.',
+  SANDBOX_SEARCH_TITLE: 'Verification Search',
+  SANDBOX_SEARCH_DESC: 'Search verified records. The response reports search_mode as semantic_vector or lexical_substring so callers can identify how results were produced.',
 } as const;
 
 // =============================================================================
@@ -2601,6 +2744,19 @@ export const AUTH_FORM_LABELS = {
   SIGN_IN: 'Sign in',
   CREATE_ACCOUNT: 'Create account',
   CREATING_ACCOUNT: 'Creating account...',
+} as const;
+
+export const SIGNUP_EMAIL_CONFIRMATION_LABELS = {
+  TITLE: 'Check your email',
+  DESCRIPTION: 'We sent a verification link to confirm your account.',
+  INSTRUCTION: 'Click the link in the email to verify your account and sign in.',
+  EXPIRY: `The link expires in ${SIGNUP_EMAIL_LINK_LIFETIME_SECONDS / 60} minutes. If you don't see the email, check your spam folder.`,
+  RESEND: 'Resend email',
+  RESENDING: 'Sending...',
+  RESEND_WAIT: 'Resend in',
+  RESEND_SUCCESS: 'A new verification link was sent.',
+  RESEND_ERROR: 'We could not send a new verification link. Please try again when the timer ends.',
+  BACK: 'Back to sign up',
 } as const;
 
 // =============================================================================
@@ -2687,10 +2843,10 @@ export const ACTIVATE_ACCOUNT_LABELS = {
 /**
  * SCRUM-2907 — copy for a confirmation link that did not work.
  *
- * Supabase signals a dead link with `error`/`error_code` on the redirect hash
- * and creates no session. Previously the app could not tell that apart from
- * "not signed in yet" and silently redirected to the login form, so a user
- * whose link had expired saw no explanation and had no route forward.
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash.
+ * A consumed link can coexist with an existing browser session, so the callback
+ * distinguishes a correlated confirmed user from an unrelated or unconfirmed
+ * session and gives every state an honest route forward.
  */
 export const AUTH_CALLBACK_LABELS = {
   COMPLETING: 'Completing sign in...',
@@ -2700,6 +2856,10 @@ export const AUTH_CALLBACK_LABELS = {
   FAILED_TITLE: 'We could not complete sign in',
   FAILED_DESCRIPTION:
     'Something went wrong verifying this link. Try again, or request a new link.',
+  SIGNED_IN_TITLE: 'This link is no longer valid',
+  SIGNED_IN_DESCRIPTION:
+    'You are already signed in. Continue to your account, or request a new link for the account you were verifying.',
+  CONTINUE: 'Continue to your account',
   REQUEST_NEW_LINK: 'Request a new link',
   BACK_TO_SIGN_IN: 'Back to sign in',
 } as const;
@@ -4971,4 +5131,55 @@ export const TWO_FACTOR_SETUP_LABELS = {
   // instead once that call fails or times out.
   LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
   LOAD_ERROR_RETRY: 'Retry',
+} as const;
+
+// =============================================================================
+// PARTNER REFERRALS — SCRUM-5024
+//
+// Terminology: the word "token" is banned in user-visible strings (§1.3), so
+// the shareable string is a "code" and the URL is a "link" throughout.
+//
+// MEASURED vs NOT ASSERTED (§1.5, extended by the R-7 claims gate): this panel
+// states which organizations presented the code when they were created, and
+// when. It does not state, imply or promise a commission, discount, payout or
+// revenue share — commercial terms are a separate decision and no field here
+// feeds billing. REFERRAL_NOT_ASSERTED is that sentence and must stay on the
+// page; do not soften it into marketing language.
+// =============================================================================
+
+export const REFERRAL_LABELS = {
+  PAGE_TITLE: 'Referrals',
+  PAGE_DESCRIPTION: 'Invite other organizations to Arkova and see which ones joined through your link.',
+  LOADING: 'Loading your referrals…',
+
+  CODE_CARD_TITLE: 'Your referral code',
+  CODE_CARD_DESCRIPTION: 'Share the link below. Organizations that sign up through it are recorded against your account.',
+  CODE_LABEL: 'Referral code',
+  SHARE_LINK_LABEL: 'Share link',
+  COPY_LINK: 'Copy link',
+  COPY_LINK_DONE: 'Copied',
+  COPY_LINK_FAILED: 'Could not copy the link. Select it and copy manually.',
+
+  CREATE_TITLE: 'No referral code yet',
+  CREATE_DESCRIPTION: 'Create a code to start inviting organizations. You can create it once; the same code is reused from then on.',
+  CREATE_BUTTON: 'Create referral code',
+  CREATING: 'Creating…',
+  CREATE_FAILED: 'Could not create a referral code. Please try again.',
+
+  TABLE_TITLE: 'Organizations you referred',
+  TABLE_EMPTY_TITLE: 'No referrals yet',
+  TABLE_EMPTY_DESCRIPTION: 'Once an organization signs up through your link, it appears here.',
+  COLUMN_ORGANIZATION: 'Organization',
+  COLUMN_JOINED: 'Joined',
+  COLUMN_STATUS: 'Status',
+
+  LOAD_FAILED_TITLE: 'Could not load your referrals',
+  LOAD_FAILED_RETRY: 'Retry',
+
+  ADMIN_ONLY: 'Only organization administrators can manage the referral code.',
+  NO_ORG: 'Join or create an organization to use referrals.',
+
+  /** The §1.5 measured / not-asserted sentence. Keep it on the page. */
+  NOT_ASSERTED:
+    'What this shows: organizations that entered your code when they created their account, and the date they did. It does not represent any commission, discount or payment.',
 } as const;

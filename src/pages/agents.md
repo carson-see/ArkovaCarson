@@ -245,6 +245,31 @@ come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
 copy-level half of the same guard.
 _Last updated: 2026-08-30_
 
+## 2026-09-13 — `ConnectorsPage.tsx` added; `OrgProfilePage.tsx` nav + Settings tab changed
+
+New route `/organization/connectors` (`ROUTES.CONNECTORS`), replacing the org header's "Rules" nav
+button. One card per REAL connector (Google Drive, DocuSign) — composed from
+`src/components/connectors/` (see that folder's agents.md for the picker/action-choice/hook
+internals). Writes exactly one `organization_rules` row per connector per org through the EXISTING
+`/api/rules` CRUD — no new rule engine, no migration.
+
+**`/organization/rules` and `/organization/rules/new` are UNCHANGED and stay routed** — PM-9. This
+page does not delete `RulesPage.tsx` / `RuleBuilderPage.tsx`; the only edit to either surface's
+reachability is one button label on `OrgProfilePage` (`Rules` → `Connectors`,
+`navigate(ROUTES.RULES)` → `navigate(ROUTES.CONNECTORS)`). `useNotifications.ts:200`'s
+rule-execution deep link still points at `ROUTES.RULES` — deliberately left alone, a rule-execution
+notification's natural destination is the rule list, not a connector card.
+
+**OAuth return-trip query params consumed at the PAGE level, not the card** (`?drive_error=`,
+`?docusign_error=`) — a card-local `useSearchParams` effect loses the message under React
+StrictMode's double mount (`src/components/integrations/agents.md`, 2026-08-30 item 3).
+`ConnectorsPage` copies `OrgProfilePage`'s existing effect shape rather than re-deriving it.
+
+**`OrgProfilePage.tsx` Settings tab**: `DriveConnectorCard` / `DocusignConnectorCard` REMOVED from
+inline rendering (moved, not duplicated — PM-11) and replaced with a single link row
+("Connectors — Manage connectors" → `navigate(ROUTES.CONNECTORS)`). `AdobeSignConnectorCard` and
+`MemberDocusignConnectorCard` are UNCHANGED and still render inline here (§1.2 — Adobe's live prod
+state is the "unconfigured" denial; personal DocuSign is member-scoped, not an org connector).
 ## 2026-09-11 — UAT-22 selected-org invitations
 
 `OrgProfilePage` passes the authenticated profile's platform-admin status to
@@ -842,6 +867,43 @@ One-line addition to the `<AssetDetailView anchor={{...}}>` object literal: `fin
 
 Real 375px UAT found the fixed horizontal header clipped Bulk Issue and New Attestation outside the viewport. Document scrollWidth did not detect it because the shell clips overflow. Stack the heading and action group below lg and allow the actions to wrap. The staging browser regression checks every action bounding box at 375px and 1280px; it failed before this fix. Preserve this geometry check alongside actual database loading/error/retry and tenant-isolation checks.
 
+## 2026-09-12 — SCRUM-5023: `ApiKeySettingsPage` passes `extendKey` through
+
+`useApiKeys().extendKey` → `<ApiKeySettings onExtend>`. No page-level logic: the page is a pass-through
+for the hook, as it already is for create/revoke/delete. `ApiKeySettingsPage.test.tsx` mocks the whole
+hook, so a new hook member must be added to that mock or the page renders an `undefined` handler that
+only fails when a user clicks.
+
+
 ## PR #2782 — proof download block identity
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
+
+## 2026-09-14 — SCRUM-5145 consumed confirmation links
+
+`AuthCallbackPage` reconciles only `otp_expired` with authoritative `auth.getUser()`. It auto-routes only when that user is confirmed and matches the signup email remembered in session storage. A confirmed account that cannot be correlated gets an honest signed-in choice; generic errors, unrelated accounts, unconfirmed users, lookup failures, and the three-second lookup timeout remain errors.
+## PR #2951 — installed JSZip attribution guard (2026-09-14)
+
+The notices page test derives JSZip’s version from the lockfile and verifies the matching rendered row, MIT election text, and exact upstream source link. It must continue failing when a shipped version lacks attribution.
+## 2026-09-12 SCRUM-5024 — `ReferralSettingsPage.tsx` (new), `/settings/referrals`
+
+Wraps `ReferralPanel` in the AppShell. The organization comes from
+`useActiveOrg()` rather than `profile.org_id`, so a user who administers both a
+parent and a sub-organization sees the one they actually selected (ORG-HIER-01)
+instead of whatever the legacy primary column names.
+
+ORG_ADMIN gates MINTING only — a member still sees the code and the table,
+because the code is a shareable string and hiding it from the people asked to
+share it helps nobody. Authority is re-checked in SQL regardless:
+`ensure_org_referral_code` requires `is_org_admin_of`.
+
+While `useActiveOrg` is loading, the page renders a spinner rather than passing
+`orgId = null` through — the panel's null branch says "join or create an
+organization", which would flash at a user who has one.
+
+`SettingsPage.tsx` gained the fourth link in the organization card.
+## 2026-09-19 — Developer integration claims
+
+`DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Keep install commands version-neutral and link to package registries for live release status so coordinated publications do not immediately stale the page. Never describe a release candidate as published. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.
+
+The public gateway serves the machine-readable reference at `/api/docs/spec.json`; `/api/docs` returns 404 and must not be used for documentation buttons. Sandbox verification search uses `GET /api/v1/verify/search` and must describe the returned `search_mode` (`semantic_vector` or `lexical_substring`) rather than promise semantic execution.

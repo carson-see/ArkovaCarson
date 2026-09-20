@@ -1,3 +1,25 @@
+## 2026-09-12 — SCRUM-5023: `useApiKeys.extendKey` sends a DURATION
+
+`extendKey(keyId, expiresInDays | null, allowShorten?)` PATCHes `{ expires_in_days: n }`, or
+`{ expires_in_days: null }` to clear. **Never a timestamp.** The worker refuses a non-null
+`expires_at` on purpose: the server holds the clock, and an accepted client timestamp would let a
+caller write an already-past expiry. That mistake is not visible from a component test that only
+asserts the callback fired, so `useApiKeys.extend.test.tsx` pins the request body.
+
+`allowShorten` maps to `allow_shorten`. `expires_in_days` REPLACES the expiry rather than adding to
+it, so the worker 409s `api_key_expiry_would_shorten` on any value earlier than the current expiry
+(and on any value at all for a key that has none). A hook that never sent the flag would make the
+confirmed "yes, shorten it" path fail every time.
+
+`ApiKeyMasked.status` / `.days_until_expiry` are OPTIONAL for a reason: a deployed frontend can be
+talking to an older worker mid-rollout. Prefer `status` over `is_active` — `is_active` is `true` on
+expired keys that authentication already refuses. The response field is `days_until_expiry`, NOT
+`expires_in_days`: the latter is the REQUEST field and means the opposite thing (a duration to set,
+not a countdown to read).
+
+`extendKey` THROWS on a non-OK response, like `revokeKey`/`deleteKey`, so the caller can keep its
+dialog open instead of implying a change that did not happen.
+
 # agents.md — hooks
 
 ## UAT-22 platform invitation list (2026-09-14)
@@ -174,6 +196,38 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 - `@/types/database.types` — auto-generated from `supabase gen types`
 - `useAuth` — most hooks depend on the authenticated user
 
+## 2026-09-12 SCRUM-5024 — `useReferrals.ts` (new) + `useOnboarding.ts` attribution
+
+`useReferrals(orgId)` reads the org's ACTIVE `referral_codes` row and
+`get_org_referrals` directly from Supabase. Two rules it exists to keep:
+
+- **No auto-mint.** `mint()` is called only from the button in `ReferralPanel`.
+  Minting as a side effect of opening a settings page creates durable, shareable
+  partner codes for organizations that never asked for one.
+- **No `?? []`.** A failed read sets `error` and leaves `referred` empty *with*
+  that error set, so the panel can distinguish "you referred nobody" from "we
+  could not find out". Reporting an empty list as an answer is the hollow-200
+  failure mode this repo has shipped before.
+
+`useOnboarding.ts` gained `applyCapturedReferral(orgId)`, called after ALL THREE
+org-creating branches (`update_profile_onboarding` success; the RPC-rejected
+direct insert; the `already_set`-with-no-org fallback). The ordinary branch is
+an `else if` so the fallback cannot attribute the same organization twice.
+
+- It is never threaded INTO `update_profile_onboarding`: an optional org-creating
+  parameter would make the referral vanish down whichever fallback the caller
+  happened to take.
+- It NEVER changes the signup result. A mistyped code must not fail an
+  organization that already exists. Every non-applied outcome is logged at error
+  level with its reason and returned as a typed `ReferralAttributionOutcome` the
+  caller can count — nothing is swallowed.
+- `rpc_failed` leaves the parked code in place (the database never ruled, so a
+  retry is still live); every database verdict clears it (retrying a refused
+  code cannot start succeeding).
+- **Deliberate non-attribution:** `joinOrgByDomain` and invitation-accept create
+  no organization, so nothing is attributed. A partner refers organizations, not
+  seats.
+
 ## 2026-09-05 — SCRUM-4035 pending OAuth profile access
 
 `useProfile` suppresses product-data queries while the session carries `arkova_email_pending`, including its loading indicator, so confirmation remains reachable. A confirmed token re-enables the existing profile query and onboarding destination calculation; covered by hook and real-app browser positive controls.
@@ -183,3 +237,7 @@ _Restored 2026-07-28 — same union-merge-driver incident as the Recent Changes 
 `useProfile` does not fetch or return cached profile data until mailbox proof and
 a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
 the query; account switches and AAL downgrades mask cached data immediately.
+
+## 2026-09-14 — SCRUM-5145 signup resend API
+
+Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.

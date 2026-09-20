@@ -13,6 +13,7 @@ const {
   mockLogger,
   mockDbFrom,
   mockCallRpc,
+  mockDispatchWebhookEvent,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
   const mockLogger = {
@@ -24,8 +25,9 @@ const {
 
   const mockCallRpc = vi.fn();
   const mockDbFrom = vi.fn();
+  const mockDispatchWebhookEvent = vi.fn().mockResolvedValue(undefined);
 
-  return { mockSubmitFingerprint, mockLogger, mockDbFrom, mockCallRpc };
+  return { mockSubmitFingerprint, mockLogger, mockDbFrom, mockCallRpc, mockDispatchWebhookEvent };
 });
 
 // Mock modules
@@ -51,7 +53,7 @@ vi.mock('../chain/client.js', () => ({
 }));
 
 vi.mock('../webhooks/delivery.js', () => ({
-  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+  dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
 vi.mock('../utils/merkle.js', () => ({
@@ -106,8 +108,8 @@ describe('processAttestationAnchoring', () => {
     mockCallRpc.mockResolvedValueOnce({ data: true });
 
     const mockAttestations = [
-      { id: 'att-1', public_id: 'ARK-TST-VER-ABC123', fingerprint: 'fp_1' },
-      { id: 'att-2', public_id: 'ARK-TST-AUD-DEF456', fingerprint: 'fp_2' },
+      { id: 'att-1', public_id: 'ARK-TST-VER-ABC123', fingerprint: 'fp_1', attester_org_id: 'org-1', attestation_type: 'VERIFICATION' },
+      { id: 'att-2', public_id: 'ARK-TST-AUD-DEF456', fingerprint: 'fp_2', attester_org_id: 'org-1', attestation_type: 'AUDIT' },
     ];
 
     let callCount = 0;
@@ -151,6 +153,12 @@ describe('processAttestationAnchoring', () => {
       fingerprint: 'merkle_root_2',
       timestamp: expect.any(String),
     });
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(2);
+    for (const call of mockDispatchWebhookEvent.mock.calls) {
+      expect(call[1]).toBe('attestation.active');
+      expect(call[3]).not.toHaveProperty('fingerprint');
+      expect(call[3]).not.toHaveProperty('attestation_id');
+    }
   });
 
   it('should handle chain submission failure gracefully', async () => {

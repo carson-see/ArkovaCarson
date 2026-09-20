@@ -33,6 +33,26 @@ export interface ApiKeyMasked {
   // Optional: a worker predating the FD-P7 fix omits them.
   revoked_at?: string | null;
   revocation_reason?: string | null;
+  /**
+   * SCRUM-5023 — the server's own answer to "is this key usable?".
+   *
+   * PREFER THIS OVER `is_active`. `is_active` is a stored column and is `true`
+   * on keys the worker's auth middleware already refuses: prod held 13 such
+   * rows. `status` folds `is_active`, `revoked_at` and `expires_at` together
+   * in ONE place (`services/worker/src/api/v1/keyExpiryStatus.ts`).
+   *
+   * OPTIONAL because a frontend deploy can be talking to an older worker for
+   * the length of a rollout — the badge falls back to deriving locally.
+   */
+  status?: 'active' | 'expiring_soon' | 'expired' | 'revoked';
+  /**
+   * Whole days to expiry: 0 on the final day, negative once past, null if none.
+   *
+   * NOT `expires_in_days` — that is the REQUEST field on create/extend and
+   * means "set the expiry this many days from now". One name for two opposite
+   * meanings is how a client ends up PUTting back a countdown.
+   */
+  days_until_expiry?: number | null;
 }
 
 export interface ApiKeyCreated extends ApiKeyMasked {
@@ -141,6 +161,45 @@ export function useApiKeys(options: { enabled?: boolean } = {}) {
     }
   }, [user, qc]);
 
+  /**
+   * SCRUM-5023 — set or clear a key's expiry.
+   *
+   * `expiresInDays` is a DURATION from now, never a timestamp: the server
+   * holds the clock, and PATCH refuses a client-supplied `expires_at` for
+   * exactly that reason. Pass `null` to remove the expiry entirely.
+   *
+   * `allowShorten` acknowledges a change that moves the expiry EARLIER — the
+   * duration REPLACES the current expiry rather than adding to it, so this is
+   * reachable by accident. Without it the server answers 409
+   * `api_key_expiry_would_shorten` and writes nothing.
+   *
+   * Throws on failure, like `revokeKey`/`deleteKey`, so the caller can keep
+   * its dialog open and avoid implying a change that did not happen.
+   */
+  const extendKey = useCallback(async (
+    keyId: string,
+    expiresInDays: number | null,
+    allowShorten = false,
+  ) => {
+    const res = await workerFetch(`/api/v1/keys/${keyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(
+        allowShorten
+          ? { expires_in_days: expiresInDays, allow_shorten: true }
+          : { expires_in_days: expiresInDays },
+      ),
+    });
+
+    if (!res.ok) {
+      const parsed = await res.json().catch(() => ({}));
+      throw new Error(parsed.error ?? 'Failed to change key expiry');
+    }
+
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.apiKeys(user.id) });
+    }
+  }, [user, qc]);
+
   const deleteKey = useCallback(async (keyId: string) => {
     const res = await workerFetch(`/api/v1/keys/${keyId}`, {
       method: 'DELETE',
@@ -162,6 +221,7 @@ export function useApiKeys(options: { enabled?: boolean } = {}) {
     error: queryError ? (queryError as Error).message : null,
     createKey,
     revokeKey,
+    extendKey,
     deleteKey,
     refresh,
   };

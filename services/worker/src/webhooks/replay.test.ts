@@ -413,3 +413,6 @@ describe('replayDelivery refuses a stored payload that carries a banned field (S
     expect(mockLogger.warn).toHaveBeenCalled();
   });
 });
+
+// Keep this delivery suite focused on its own path; fan-out is opt-in.
+vi.mock('../config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));

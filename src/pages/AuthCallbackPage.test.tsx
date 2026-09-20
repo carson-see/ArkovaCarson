@@ -28,6 +28,7 @@ type AuthChangeCallback = (event: string, session: unknown) => void;
 let authChangeCallback: AuthChangeCallback | null = null;
 const mockUnsubscribe = vi.fn();
 const mockGetSession = vi.fn();
+const mockGetUser = vi.fn();
 
 // SCRUM-2907: the real module captures the auth-link error at load time,
 // BEFORE createClient consumes the URL fragment. Mirror that shape here and
@@ -43,6 +44,7 @@ vi.mock('@/lib/supabase', () => ({
         return { data: { subscription: { unsubscribe: mockUnsubscribe } } };
       },
       getSession: () => mockGetSession(),
+      getUser: () => mockGetUser(),
     },
   },
   get authLinkErrorFromUrl() {
@@ -57,6 +59,8 @@ describe('AuthCallbackPage', () => {
     authChangeCallback = null;
     stubbedAuthLinkError = null;
     mockGetSession.mockResolvedValue({ data: { session: null } });
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    window.sessionStorage.clear();
     // Mock window.history.replaceState
     vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
   });
@@ -216,7 +220,7 @@ describe('AuthCallbackPage', () => {
      * bounced to a bare login form, i.e. the exact bug under repair. The error
      * is now captured at supabase-module load and handed over.
      */
-    it('explains an expired link captured before the client consumed the fragment', () => {
+    it('explains an expired link captured before the client consumed the fragment', async () => {
       stubbedAuthLinkError = { expired: true };
       setHash(''); // Supabase already stripped it — this is the real condition.
 
@@ -226,13 +230,15 @@ describe('AuthCallbackPage', () => {
         </MemoryRouter>,
       );
 
+      await act(async () => {});
+
       expect(screen.getByRole('alert')).toBeInTheDocument();
       expect(screen.getByText(/link has expired/i)).toBeInTheDocument();
       // Must NOT dump the user on /login with no explanation.
       expect(mockNavigate).not.toHaveBeenCalled();
     });
 
-    it('explains an expired confirmation link read straight off the fragment', () => {
+    it('explains an expired confirmation link read straight off the fragment', async () => {
       setHash(
         '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired',
       );
@@ -243,12 +249,14 @@ describe('AuthCallbackPage', () => {
         </MemoryRouter>,
       );
 
+      await act(async () => {});
+
       expect(screen.getByRole('alert')).toBeInTheDocument();
       expect(screen.getByText(/link has expired/i)).toBeInTheDocument();
       expect(mockNavigate).not.toHaveBeenCalled();
     });
 
-    it('offers a route back to signup so the user can request a new link', () => {
+    it('offers a route back to signup so the user can request a new link', async () => {
       stubbedAuthLinkError = { expired: true };
 
       render(
@@ -257,10 +265,12 @@ describe('AuthCallbackPage', () => {
         </MemoryRouter>,
       );
 
+      await act(async () => {});
+
       expect(screen.getByRole('link', { name: /new link/i })).toHaveAttribute('href', '/signup');
     });
 
-    it('surfaces a generic auth error that is not an expired link', () => {
+    it('surfaces a generic auth error that is not an expired link', async () => {
       stubbedAuthLinkError = { expired: false };
 
       render(
@@ -268,6 +278,8 @@ describe('AuthCallbackPage', () => {
           <AuthCallbackPage />
         </MemoryRouter>,
       );
+
+      await act(async () => {});
 
       expect(screen.getByRole('alert')).toBeInTheDocument();
       expect(screen.getByText(/could not complete sign in/i)).toBeInTheDocument();
@@ -288,6 +300,100 @@ describe('AuthCallbackPage', () => {
       });
 
       expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+    });
+
+    it('continues only when Auth verifies the consumed link established the intended account', async () => {
+      stubbedAuthLinkError = { expired: true };
+      window.sessionStorage.setItem('arkova_pending_signup_email', 'member@arkova.ai');
+      mockGetUser.mockResolvedValue({
+        data: {
+          user: {
+            id: 'confirmed-user',
+            email: 'member@arkova.ai',
+            email_confirmed_at: '2026-09-14T12:00:00Z',
+          },
+        },
+        error: null,
+      });
+
+      render(
+        <MemoryRouter>
+          <AuthCallbackPage />
+        </MemoryRouter>,
+      );
+
+      await act(async () => {});
+      expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+      expect(screen.queryByText(/link has expired/i)).not.toBeInTheDocument();
+    });
+
+    it('does not suppress a generic callback error for an existing session', async () => {
+      stubbedAuthLinkError = { expired: false };
+      mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'existing' } } } });
+      render(<MemoryRouter><AuthCallbackPage /></MemoryRouter>);
+      await act(async () => {});
+
+      expect(screen.getByText(/could not complete sign in/i)).toBeInTheDocument();
+      expect(mockGetUser).not.toHaveBeenCalled();
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('does not treat an unrelated signed-in account as proof that the link succeeded', async () => {
+      stubbedAuthLinkError = { expired: true };
+      window.sessionStorage.setItem('arkova_pending_signup_email', 'member@arkova.ai');
+      mockGetUser.mockResolvedValue({
+        data: {
+          user: {
+            id: 'other-user',
+            email: 'other@example.com',
+            email_confirmed_at: '2026-09-14T12:00:00Z',
+          },
+        },
+        error: null,
+      });
+      render(<MemoryRouter><AuthCallbackPage /></MemoryRouter>);
+      await act(async () => {});
+
+      expect(screen.getByText(/link is no longer valid/i)).toBeInTheDocument();
+      expect(screen.getByText(/already signed in/i)).toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a stale or unconfirmed session as confirmation proof', async () => {
+      stubbedAuthLinkError = { expired: true };
+      window.sessionStorage.setItem('arkova_pending_signup_email', 'member@arkova.ai');
+      mockGetUser.mockResolvedValue({
+        data: { user: { id: 'member', email: 'member@arkova.ai', email_confirmed_at: null } },
+        error: null,
+      });
+      render(<MemoryRouter><AuthCallbackPage /></MemoryRouter>);
+      await act(async () => {});
+
+      expect(screen.getByText(/link has expired/i)).toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when authoritative session validation errors', async () => {
+      stubbedAuthLinkError = { expired: true };
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: new Error('invalid session') });
+      render(<MemoryRouter><AuthCallbackPage /></MemoryRouter>);
+      await act(async () => {});
+
+      expect(screen.getByText(/link has expired/i)).toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('stops checking a consumed link when authoritative validation stalls', async () => {
+      stubbedAuthLinkError = { expired: true };
+      mockGetUser.mockReturnValue(new Promise(() => {}));
+      render(<MemoryRouter><AuthCallbackPage /></MemoryRouter>);
+      expect(screen.getByText(/completing sign in/i)).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+      });
+      expect(screen.getByText(/link has expired/i)).toBeInTheDocument();
+      expect(mockNavigate).not.toHaveBeenCalled();
     });
   });
 });

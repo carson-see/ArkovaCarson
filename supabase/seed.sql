@@ -625,3 +625,12 @@ VALUES (
 -- Release activation sets enabled_at only after all enforcement paths and Auth hook are verified.
 INSERT INTO private.oauth_email_confirmation_policy(singleton, enabled_at) VALUES (true, NULL)
 ON CONFLICT (singleton) DO NOTHING;
+
+-- SCRUM-5024: one partner referral code so `/settings/referrals` and the RLS
+-- suite have something to read on a fresh `supabase db reset`. The Arkova org
+-- is the referrer; no attribution edge is seeded, because the empty state is
+-- itself a case worth seeing by default. Note the literal avoids O/I/L/0/1 —
+-- `ARKOVA24` would have been rejected by referral_codes_code_format.
+INSERT INTO public.referral_codes (org_id, code, active)
+VALUES ('aaaaaaaa-0000-4000-8000-000000000001', 'ARKVA234', true)
+ON CONFLICT (code) DO NOTHING;

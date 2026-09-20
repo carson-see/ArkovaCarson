@@ -23,17 +23,33 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Setup locked Python package manager
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.3"
+          enable-cache: true
+          cache-dependency-glob: packages/arkova-py/uv.lock
 
-      - name: Test
-        run: pytest
+      - name: Install locked development environment
+        run: uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
+
+      - name: Build and install first-party distribution
+        run: |
+          rm -rf dist
+          uv run --locked --no-sync --no-build python -m build --no-isolation
+          wheels=(dist/*.whl)
+          [[ ${#wheels[@]} -eq 1 && -f ${wheels[0]} ]]
+          wheel_hash=$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)
+          printf '%s --hash=sha256:%s\n' "${wheels[0]}" "$wheel_hash" > "$RUNNER_TEMP/arkova-wheel-requirements.txt"
+          uv pip install --python .venv/bin/python --no-deps --no-build --require-hashes --requirement "$RUNNER_TEMP/arkova-wheel-requirements.txt"
+
+      - name: Test installed wheel
+        env:
+          ARKOVA_TEST_INSTALLED_WHEEL: "1"
+        run: uv run --locked --no-sync --no-build pytest
 
       - name: Lint
-        run: ruff check src tests
-
-      - name: Build
-        run: python -m build
+        run: uv run --locked --no-sync --no-build ruff check src tests
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/arkova-py-v')

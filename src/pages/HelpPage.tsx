@@ -96,7 +96,7 @@ export function HelpPage() {
               {DEVELOPER_PAGE_LABELS.HERO_TITLE}
             </CardTitle>
             <CardDescription>
-              {DEVELOPER_PAGE_LABELS.HERO_SUBTITLE}
+              API reference, SDK installation and examples, MCP connection details, authentication, and an interactive endpoint sampler.
             </CardDescription>
           </CardHeader>
           <CardContent>

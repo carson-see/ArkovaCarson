@@ -1,4 +1,6 @@
 # services/worker/src/
+PR #2904 review: `memory-leaks.test.ts` explicitly supplies the disabled fanout config while importing actual delivery/lifecycle cleanup. The suite remains independent of configured-worker credentials.
+
 _Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_
 
 ## 2026-09-13 SCRUM-3888 — origin guard for the public Cloud Run origin
@@ -35,6 +37,16 @@ procedure (`off` → wire secret + Transform Rule → `observe` ≥24h → `enfo
 adding a reference to a Secret Manager id that does not exist fails the SCRUM-4495 preflight for
 every subsequent worker deploy, not just this rollout. See `.github/workflows/agents.md`'s
 2026-09-13 entry for what the release session must do together to provision it.
+
+## 2026-09-13 — `index.ts` mounts `drive-folders.ts` on the existing `/google_drive` path scope
+
+`GET /api/v1/integrations/google_drive/folders` (Connectors page folder picker) is mounted as a
+SECOND `app.use('/api/v1/integrations', ...)` block, immediately after the existing
+`driveOAuthRouter` mount, reusing the identical `pathScopedKillSwitch('/google_drive',
+'ENABLE_DRIVE_OAUTH')`, `pathScopedMiddleware('/google_drive', rateLimiters.api)`, and
+`pathScopedMiddleware('/google_drive', integrationsAuthGate)` chain — no new feature flag, the
+picker dies with the connector. See `api/v1/integrations/agents.md` and
+`integrations/oauth/agents.md` for the endpoint and the `listChildFolders()`/scope details.
 
 ## 2026-09-07 — ComputeID AgentPassport integration (SCRUM-4492 / SCRUM-4493 / SCRUM-4494)
 
@@ -283,3 +295,8 @@ Two new typed config entries, both read through `config` and never `process.env`
 - `computeidApiKey` (`COMPUTEID_API_KEY`) — optional **by decision**, pinned by a test in `config.test.ts`. The flag-on refine deliberately does NOT require it: the re-check reports itself skipped rather than blocking activation on a key provisioned separately. The silence that decision used to buy is gone — the job logs ERROR and raises a Sentry event when the flag is on and the key is missing.
 
 **Validate-if-present for `COMPUTEID_CA_CERT_PEM` (W11b).** The refine block validated the pin only inside `if (cfg.enableComputeidIntegration)`. Since the pin is now in `deploy-worker.yml --set-secrets` while the flag is still false, a malformed or rotated PEM sits in prod entirely unexercised and is first parsed by the *activation* deploy — the one moment nobody wants a surprise. It is now parsed whenever it is present, and a failure while the flag is OFF is a `console.warn`, never an `addIssue`: a dark integration must not be able to stop the worker booting. Flag ON keeps the hard failure, including the production "must be an X.509 certificate, not a bare SPKI pin" rule.
+
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+The fan-out flag uses the validated config singleton. Config tests load each environment shape and compare the real fan-out reader to that singleton; changing Cloud Run configuration replaces its revision.
