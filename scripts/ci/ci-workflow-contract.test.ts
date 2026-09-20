@@ -482,6 +482,12 @@ describe("changedFiles diff anchoring neutralizes the frozen event base (FD-GATE
     const source = readFileSync(resolve(REPO, "scripts/ci/compute-merge-authority.ts"), "utf8");
     expect(source).toMatch(/import \{[^}]*\bchangedFiles\b[^}]*\} from '\.\/lib\/ciContext\.js'/u);
   });
+
+  it("evidence-identity fetches full history before computing its authority-snapshot file set", () => {
+    const workflow = readFileSync(resolve(REPO, ".github/workflows/ci.yml"), "utf8");
+    const job = workflow.split(/^  evidence-identity:\n/mu)[1]?.split(/^  [a-z][a-z0-9_-]*:\n/mu)[0] ?? "";
+    expect(job).toMatch(/actions\/checkout@[0-9a-f]+[^\n]*\n\s+if:[^\n]*\n\s+with:\n(?:\s+#.*\n)*\s+fetch-depth: 0/u);
+  });
 });
 
 /**
@@ -862,7 +868,6 @@ describe("Zapier required clean-build contract", () => {
   });
 });
 
-
 describe("Tests job cancellation-aware independent suites", () => {
   const independentIds = [
     "sdk-tests", "worker-deps", "edge-deps", "zapier-validation",
@@ -888,5 +893,17 @@ describe("Tests job cancellation-aware independent suites", () => {
     const aggregate = steps.find((candidate) => candidate.includes("name: Aggregate test suite results"));
     expect(aggregate).toMatch(/^\s+if: always\(\)$/mu);
   });
+});
 
+describe("production dependency audit input", () => {
+  it("audits both committed lock graphs instead of a platform-specific installed tree", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const commands = workflow.match(/^\s*run:.*npm audit[^\n]*/gmu) ?? [];
+    expect(commands).toHaveLength(2);
+    for (const command of commands) {
+      expect(command).toContain("--package-lock-only");
+      expect(command).toContain("--audit-level=critical");
+      expect(command).toContain("--omit=dev");
+    }
+  });
 });

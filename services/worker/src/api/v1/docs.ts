@@ -9,6 +9,7 @@ import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
+import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
 // SCRUM-4507: the source-provider vocabulary, taken from the SAME closed
 // marker set the verify endpoint gates on (constants/connectorFingerprint.ts).
 // Imported from the constants module rather than from `verify.ts` on purpose:
@@ -530,7 +531,8 @@ export const openApiSpec: Record<string, any> = {
     '/keys/{keyId}': {
       patch: {
         summary: 'Update API key',
-        description: 'Update the name or scopes of an existing API key.',
+        description:
+          "Update the name or scopes of an existing API key, revoke it, or change its expiry. Expiry is set with expires_in_days (a duration from now; null removes it) — expires_at is not settable. An expiry sent alongside a revoke (is_active: false) is dropped and the revoke is honoured; an expiry cannot be combined with reactivating a key.",
         operationId: 'updateApiKey',
         tags: ['Key Management'],
         security: [{ SupabaseJWT: [] }],
@@ -549,6 +551,28 @@ export const openApiSpec: Record<string, any> = {
 	                    items: { type: 'string' },
 	                    'x-arkova-canonical-scopes': API_KEY_SCOPES,
 	                  },
+                  // SCRUM-5023. Expiry is set by DURATION, never by timestamp:
+                  // the server holds the clock, and an accepted client
+                  // timestamp could write an already-past expiry.
+                  //
+                  // `nullable: true` (NOT `type: 'null'`) — this document
+                  // declares OpenAPI 3.0.3, where the only JSON types are
+                  // string/number/integer/boolean/array/object. `type: 'null'`
+                  // is 3.1 syntax and is invalid here; see the structural
+                  // check in docs.openapi30.test.ts.
+                  expires_in_days: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: MAX_EXPIRES_IN_DAYS,
+                    nullable: true,
+                    description:
+                      'Set the expiry this many days from now, or null to remove the expiry entirely. REPLACES any existing expiry — it does not add to it — so a value earlier than the current expiry is refused with 409 api_key_expiry_would_shorten unless allow_shorten is true.',
+                  },
+                  allow_shorten: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'Acknowledge that expires_in_days moves the expiry EARLIER (or gives an unexpiring key an expiry). Required for such a change; ignored otherwise.',
+                  },
                 },
               },
             },
@@ -556,8 +580,13 @@ export const openApiSpec: Record<string, any> = {
         },
         responses: {
           '200': { description: 'Key updated' },
+          '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '404': { $ref: '#/components/responses/NotFound' },
+          '409': {
+            description:
+              'api_key_already_revoked — revocation is terminal, so the key cannot be reactivated or extended; or api_key_expiry_would_shorten — the requested expiry is earlier than the current one and allow_shorten was not set; or api_key_changed — expiry or revocation changed concurrently, so refresh before retrying.',
+          },
         },
       },
       delete: {
@@ -2113,6 +2142,63 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/integrations/google_drive/folders': {
+      get: {
+        summary: 'List a Google Drive folder\'s child folders',
+        description:
+          'Connectors page folder picker (My Drive only — shared drives are not supported). ' +
+          'Session-authenticated (Supabase JWT), org-admin only; NOT reachable with an API key. ' +
+          'Metadata-only: never returns file content. `hasChildren` is always `null` (unknown) — ' +
+          'Drive has no cheap "has subfolders" signal, so every folder renders as expandable.',
+        operationId: 'listGoogleDriveFolders',
+        tags: ['Integrations'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'org_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } },
+          {
+            name: 'parent',
+            in: 'query',
+            schema: { type: 'string', default: 'root' },
+            description: 'Drive folder id to list, or the literal "root" for My Drive.',
+          },
+          { name: 'page_token', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Child folders of the requested parent',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    folders: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          name: { type: 'string' },
+                          hasChildren: { type: 'boolean', nullable: true, description: 'Always null in v1 — unknown.' },
+                          driveId: { type: 'string', nullable: true, description: 'Always null in v1 — My Drive only.' },
+                        },
+                      },
+                    },
+                    nextPageToken: { type: 'string', description: 'Omitted when there is no further page.' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: '`drive=` (shared drive) query param is not supported in v1, or the query failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { description: 'Google Drive is not connected for this organization (`not_connected`)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '409': { description: 'The stored OAuth grant cannot list folders (`insufficient_drive_scope`) or the connection needs to be re-authorized (`reconnect_required`)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '502': { description: 'Google Drive is unavailable (`drive_unavailable`) — may carry `Retry-After`', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
     '/referrals': {
       get: {
         summary: 'Partner referral code and attributed organizations',
@@ -2486,6 +2572,23 @@ export const openApiSpec: Record<string, any> = {
           is_active: { type: 'boolean' },
           last_used_at: { type: 'string', format: 'date-time', nullable: true },
           created_at: { type: 'string', format: 'date-time' },
+          expires_at: { type: 'string', format: 'date-time', nullable: true },
+          // SCRUM-5023, §1.8 additive. `is_active` is a stored column and
+          // stays exactly what it was — it is TRUE on keys the auth middleware
+          // already refuses. `status` is the server's own answer to "is this
+          // key usable?", and is the field a client should render.
+          status: {
+            type: 'string',
+            enum: ['active', 'expiring_soon', 'expired', 'revoked'],
+            description:
+              `Server-derived usability. Prefer this over is_active/expires_at: is_active is a stored flag that stays true on an expired key, while authentication rejects it. expiring_soon means live and expiring within ${EXPIRING_SOON_WINDOW_DAYS} days.`,
+          },
+          days_until_expiry: {
+            type: 'integer',
+            nullable: true,
+            description:
+              'Whole days until expiry — 0 on the final day, negative once past, null when the key does not expire. Deliberately NOT named expires_in_days: that is the REQUEST field on POST/PATCH and means a duration to set, not a countdown to read.',
+          },
         },
       },
       ApiKeyCreated: {
@@ -2950,6 +3053,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },
     { name: 'AI Intelligence', description: 'AI-powered extraction, search, and fraud detection (requires Supabase JWT)' },
+    { name: 'Integrations', description: 'Third-party connector metadata endpoints (Google Drive, DocuSign) — session-authenticated, not reachable with an API key' },
   ],
 };
 

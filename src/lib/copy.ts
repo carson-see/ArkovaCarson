@@ -751,6 +751,35 @@ export const API_KEY_LABELS = {
   ACTIVE: 'Active',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  // SCRUM-5023 — expiry visibility. "Active" and "Expired" are terminal
+  // states the user can only react to; EXPIRING_SOON is the one that leaves
+  // time to act, which is the whole point of the story.
+  EXPIRING_SOON: 'Expiring soon',
+  // Remaining-time fragments appended to the badge. Split by plurality rather
+  // than printing "in 0 days" / "in 1 days".
+  EXPIRES_TODAY: 'today',
+  EXPIRES_IN_ONE_DAY: 'in 1 day',
+  EXPIRES_IN_DAYS: 'in {days} days',
+  EXTEND_KEY: 'Extend',
+  EXTEND_TITLE: 'Extend API Key Expiry',
+  EXTEND_DESCRIPTION:
+    'Choose a new expiry, counted from now. The key itself does not change, so there is nothing to redistribute.',
+  EXTEND_30_DAYS: '30 days',
+  EXTEND_90_DAYS: '90 days',
+  EXTEND_365_DAYS: '1 year',
+  EXTEND_REMOVE: 'Remove expiry',
+  EXTEND_FAILED: 'Failed to change the expiry. It is unchanged — please try again.',
+  // Every preset REPLACES the current expiry rather than adding to it, so the
+  // current one has to be on screen: without it a user cannot tell which
+  // presets extend the key and which quietly cut it short.
+  EXTEND_CURRENT: 'Currently expires {date}.',
+  EXTEND_CURRENT_NONE: 'This key currently has no expiry.',
+  EXTEND_CONFIRM_SHORTEN:
+    '{option} is EARLIER than this key\u2019s current expiry. The key will stop working sooner than it does today.',
+  EXTEND_CONFIRM_REMOVE:
+    'This key will never expire. It stays usable until someone revokes it.',
+  EXTEND_CONFIRM_APPLY: 'Yes, change it',
+  EXTEND_CONFIRM_CANCEL: 'Go back',
   LAST_USED: 'Last used',
   NEVER_USED: 'Never used',
   FETCH_ERROR: 'Unable to load API keys. Please refresh and try again.',
@@ -1871,6 +1900,77 @@ export const CONNECTIONS_LABELS = {
   DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
+} as const;
+
+// =============================================================================
+// CONNECTORS PAGE (SPEC-CONNECTORS — DocSend-model folder selection, §5)
+// =============================================================================
+//
+// Every user-visible string for /organization/connectors. Extends
+// CONNECTIONS_LABELS' existing GOOGLE_DRIVE_NAME / DOCUSIGN_NAME /
+// CONNECT_BUTTON / STATUS_* keys rather than duplicating them.
+
+export const CONNECTORS_LABELS = {
+  // Page chrome
+  CONNECTORS_PAGE_TITLE: 'Connectors',
+  CONNECTORS_PAGE_SUBTITLE: 'Connect a document source and choose what happens when a new document arrives.',
+  CONNECTORS_ADVANCED_LINK: 'Advanced: manage rules',
+  CONNECTORS_EMPTY_ORG: 'Connectors are set up per organization. Open your organization to continue.',
+
+  // Drive folder selection
+  DRIVE_CHOOSE_FOLDERS: 'Choose folders',
+  DRIVE_FOLDERS_NONE: 'No folders selected yet. Arkova will not act on anything until you choose at least one.',
+  DRIVE_FOLDERS_HEADING: 'Watched folders',
+  DRIVE_FOLDERS_DIRECT_ONLY: 'Only files added directly to a selected folder are picked up. Subfolders are not included — select them too if you need them.',
+  DRIVE_FOLDERS_CAP: 'You can watch up to 20 folders.',
+  DRIVE_PICKER_TITLE: 'Choose Google Drive folders',
+  DRIVE_PICKER_ROOT: 'My Drive',
+  DRIVE_PICKER_EMPTY: 'No subfolders here.',
+  DRIVE_PICKER_LOADING: 'Loading folders…',
+  DRIVE_PICKER_LOAD_MORE: 'Load more folders',
+  DRIVE_PICKER_SHARED_DRIVES_NOTE: 'Shared drives are not supported yet. Choose a folder in My Drive.',
+  DRIVE_PICKER_REMOVE: 'Remove folder',
+  DRIVE_PICKER_DONE: 'Use these folders',
+
+  // Action choice — the only place a customer learns a credit is spent.
+  CONNECTOR_ACTION_HEADING: 'When a new document arrives',
+  CONNECTOR_ACTION_INSTANT: 'Secure it immediately',
+  CONNECTOR_ACTION_INSTANT_HELP: 'Uses 1 credit per document. If you run out of credits, documents move to the secure queue instead and we email your administrators.',
+  CONNECTOR_ACTION_QUEUE: 'Add it to the secure queue',
+  CONNECTOR_ACTION_QUEUE_HELP: 'No credit used. Queued documents are secured in the next scheduled batch.',
+  CONNECTOR_SAVE: 'Save',
+  CONNECTOR_SAVING: 'Saving…',
+  CONNECTOR_SAVED_TOAST: 'Settings saved. New documents will follow this setting.',
+
+  // Errors — each maps a real worker `code`; no copy for a code that cannot happen.
+  DRIVE_FOLDERS_SCOPE_MISSING: 'Arkova needs permission to see your folder names. Reconnect Google Drive to continue.',
+  DRIVE_FOLDERS_RECONNECT: 'Your Google Drive connection expired. Reconnect to choose folders.',
+  DRIVE_FOLDERS_FORBIDDEN: 'You do not have permission to open that folder in Google Drive.',
+  DRIVE_FOLDERS_NOT_FOUND: 'That folder no longer exists in Google Drive.',
+  DRIVE_FOLDERS_UNAVAILABLE: 'Google Drive is not responding right now. Please try again in a moment.',
+  DRIVE_FOLDERS_NOT_CONNECTED: 'Connect Google Drive before choosing folders.',
+  CONNECTOR_SAVE_FAILED: 'Could not save those settings. Please try again.',
+  CONNECTOR_MANAGED_IN_RULES: 'This connector is set up with more than one rule, so it is managed in Rules.',
+  CONNECTOR_MANAGE_IN_RULES_LINK: 'Manage in Rules',
+  CONNECTOR_FOLDER_MISSING: 'This folder was removed or renamed in Google Drive.',
+  CONNECTOR_LOAD_FAILED: 'Could not load your connector settings. Please try again.',
+  CONNECTOR_RECONNECT_BUTTON: 'Reconnect Google Drive',
+  CONNECTOR_RETRY_BUTTON: 'Retry',
+
+  // OrgProfile Settings tab — link row replacing the moved cards (PM-11).
+  SETTINGS_CONNECTORS_LINK_TITLE: 'Connectors',
+  SETTINGS_CONNECTORS_LINK_DESC: 'Google Drive, DocuSign — manage connectors',
+  SETTINGS_CONNECTORS_LINK_BUTTON: 'Manage connectors',
+
+  // OAuth return-trip toasts (Drive leg — DocuSign reuses CONNECTIONS_LABELS'
+  // TOAST_CONNECTED / TOAST_ERROR_PREFIX, which are DocuSign-worded).
+  DRIVE_TOAST_CONNECTED: 'Google Drive connected. New files will now trigger rules.',
+  DRIVE_TOAST_ERROR: 'Google Drive connection was not completed.',
+
+  // Connector card badges/sections (§1.3 — every string here, none inline in JSX).
+  CONNECTOR_MANAGED_BADGE: 'Managed in Rules',
+  DOCUSIGN_ENVELOPES_HEADING: 'Envelopes',
+  DOCUSIGN_ENVELOPES_DESC: 'All completed envelopes from this account.',
 } as const;
 
 // =============================================================================

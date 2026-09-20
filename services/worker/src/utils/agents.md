@@ -798,3 +798,15 @@ Two traps this code is shaped around:
 ## 2026-09-10 — ComputeID historical review closure
 
 ComputeID webhook limiting now uses its own per-IP bucket (SCRUM-4569), preventing one anonymous source from consuming the provider budget globally. The existing bounded store and limiter isolation remain in place; a different-IP starvation regression exercises the actual limiter.
+
+## 2026-09-14 — PR #2841 API-key notice recipient scope
+
+`orgAdminRecipients.ts` is used only by API-key expiry notices. Its profile query
+matches GET/PATCH `/api/v1/keys`: `role=ORG_ADMIN` and `org_id` equal to the key's
+owning organization, plus exclusion of soft-deleted profiles. It does not expand
+API authorization to `org_members`. The tests apply filters to concrete profile
+and membership rows, including membership-only and foreign-home-org admins who
+must not receive the action link. Empty eligible results stay visible through
+the job's `noRecipients` count; database errors propagate as failures.
+
+- 2026-09-14 (SCRUM-5023 review): API-key recipients retain stable ID-ordered pagination through `scanAllPages`; a server cap below the requested width cannot truncate delivery silently. Page failures and row/page budget exhaustion fail the org lookup without returning partial recipients. Regression covers 1,205 administrators across 400-row pages, a later-page failure, and a 25,001-row budget overflow.

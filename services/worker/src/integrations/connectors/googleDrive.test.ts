@@ -132,6 +132,7 @@ describe('Google Drive connector OAuth', () => {
       [
         'https://www.googleapis.com/auth/drive.file',
         'https://www.googleapis.com/auth/drive.activity.readonly',
+        'https://www.googleapis.com/auth/drive.metadata.readonly',
         'https://www.googleapis.com/auth/userinfo.email',
       ].join(' '),
     );

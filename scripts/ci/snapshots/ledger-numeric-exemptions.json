@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-20",
+      "author": "CTO review session (Claude Fable 5.1) \u2014 SCRUM-5281 privacy fix",
+      "note": "ADDED 0480 (0480_uat24_global_personal_folder_privacy, PR #3022, SCRUM-5142/UAT-24; bug SCRUM-5281) immediately ahead of applying it to prod vzwyaatejekddvltxyye via MCP apply_migration. Reason: prod carries 0462 without 0480, so folders_select_user grants platform administrators unconditional SELECT over every USER-scope folder including globally personal ones (verified read-only via pg_policies 2026-09-19T21:36Z). 0480 replaces only that policy, is tightening-only, idempotent (DROP POLICY IF EXISTS + CREATE), touches no hot table, and its bytes (sha256 67e3df8c99069e23ab3155226c0673bdd42dc9761905d17b984c8e754adb1e73) are identical in PR #3022 head 40ffe5148 and in the soaking composite c2ce445f, clean on rig dlfcwhljvkomeouykcwk since 2026-09-19T21:27:22Z (T2 floor passed; T3 floor 2026-09-20T21:27:23Z still ahead \u2014 applied before T3 close by CTO decision, same posture as 0466-0469, because waiting leaves a live privacy exposure to protect nothing). Founder delegated the call to the CTO in-session 2026-09-20. Per CLAUDE.md \u00a70 rule 10 the apply and this exemption land in the same motion; the ledger row is reconciled to numeric 0480 in-session and list_migrations re-read. REMOVE when #3022 lands the .sql on main."
+    },
+    {
       "date": "2026-09-19",
       "author": "CTO existing-release completion",
       "note": "Admission immediately before exact reviewed/staged production application of0466\u20130469 for existing PR2905/2999/3004/3005. This does not assert application: operator must apply exact recorded hashes, reconcile generated versions to numeric, verify ACL/catalog/rollback probes, and remove any unapplied admission if stopped. Remove each exemption when its source SQL lands on main. Explicit founder instructions: complete existing fixes, no re-soaks, zero new work PRs. Prior0443 duplicate unchanged."
@@ -260,6 +265,7 @@
     "0466",
     "0467",
     "0468",
-    "0469"
+    "0469",
+    "0480"
   ]
 }

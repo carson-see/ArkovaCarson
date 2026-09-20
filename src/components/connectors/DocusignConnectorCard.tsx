@@ -6,16 +6,18 @@
  */
 
 import { useCallback, useState } from 'react';
-import { CheckCircle, FileSignature, Loader2, PlugZap, ShieldAlert, Unplug } from 'lucide-react';
+import { CheckCircle, FileSignature, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
-import { useSignatureConnection } from './useSignatureConnection';
-import { followSignatureOAuthStart } from './signatureOAuthResponse';
+// These live with the OTHER integration cards (Adobe Sign also depends on
+// useSignatureConnection and shares this status row) — not moved here with
+// this card.
+import { useSignatureConnection } from '../integrations/useSignatureConnection';
+import { followSignatureOAuthStart } from '../integrations/signatureOAuthResponse';
+import { ConnectorCardStatusRow } from '../integrations/ConnectorCardStatusRow';
 
 interface DocusignConnectorCardProps {
   orgId: string;
@@ -103,55 +105,20 @@ export function DocusignConnectorCard({ orgId }: Readonly<DocusignConnectorCardP
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            {statusLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            ) : connected ? (
-              <CheckCircle className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <PlugZap className="h-5 w-5 text-muted-foreground" />
-            )}
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium">Status</p>
-                <Badge variant={connected ? 'default' : 'secondary'}>
-                  {statusLoading ? CONNECTIONS_LABELS.STATUS_CHECKING : connected ? CONNECTIONS_LABELS.STATUS_CONNECTED : CONNECTIONS_LABELS.STATUS_NOT_CONNECTED}
-                </Badge>
-              </div>
-              {connected && accountLabel && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {CONNECTIONS_LABELS.ACCOUNT_LABEL_PREFIX}{accountLabel}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {connected ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDisconnect}
-              disabled={actionLoading}
-            >
-              {actionLoading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Unplug className="mr-2 h-4 w-4" />
-              )}
-              {actionLoading ? CONNECTIONS_LABELS.DISCONNECTING : CONNECTIONS_LABELS.DISCONNECT_BUTTON}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleConnect}
-              disabled={statusLoading || actionLoading || gateBlocked || gateLoading}
-            >
-              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {actionLoading ? CONNECTIONS_LABELS.CONNECTING : CONNECTIONS_LABELS.CONNECT_BUTTON}
-            </Button>
+        <ConnectorCardStatusRow
+          statusLoading={statusLoading}
+          connected={connected}
+          actionLoading={actionLoading}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+          connectDisabled={gateBlocked || gateLoading}
+        >
+          {connected && accountLabel && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {CONNECTIONS_LABELS.ACCOUNT_LABEL_PREFIX}{accountLabel}
+            </p>
           )}
-        </div>
+        </ConnectorCardStatusRow>
 
         {/* SCRUM-2361 (DS-01): verified-org entitlement notice. Only shown when
             not already connected — a connected org manages via Disconnect. */}
