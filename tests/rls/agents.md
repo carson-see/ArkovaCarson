@@ -12,6 +12,8 @@ the UAT-04 live policy census covers them during the complete migration replay.
 
 ## Files
 - **`oauth-email-confirmation.test.ts`** — SCRUM-4035 real SQL authority and replay/concurrency checks. Role-corruption setup uses the local Supabase bootstrap administrator, restricted to owned loopback ports 54322/55503 and the repository CI port blocks; `UAT03_DATABASE_URL` can select the owned native candidate database. Creator cases use `SET SESSION AUTHORIZATION` so a superuser session cannot hide non-superuser role behavior. Setup proves a live bootstrap connection; permission assertions match the primary server ERROR diagnostic exactly, excluding supplied SQL in Node commands or PostgreSQL LINE/CONTEXT excerpts. Transaction scripts use stdin with `SHOW_ALL_RESULTS=off` explicitly exercised: multi-command `psql -c` otherwise hides intermediate results on CI's psql. Temporary roles and grants roll back; concurrent fixtures delete only their own UUID and restore the previous activation timestamp.
+- **`email-signup-org-association.test.ts`** — SCRUM-5145 real SQL helper-behavior proof that email/password signup creates no domain membership before mailbox confirmation, then creates exactly one membership and assigns the profile after confirmation. It recreates the production trigger definitions (`create_profile_for_new_user` plus verified-email association) only inside a rolled-back, UUID-isolated loopback fixture because the squashed baseline omits Auth-schema triggers; hosted UAT must separately prove the deployed catalog.
+- **`auth-user-trigger-restoration.test.ts`** — SCRUM-5145 forward-replay proof for migration 0459: creates both canonical auth.users triggers when absent, preserves OID/function/definition when already correct, and rejects a divergent same-name trigger instead of silently replacing it. The fixture is transaction-rolled-back and accepts the repository CI port block or an owned `/tmp` Unix-socket database.
 - **`rls.test.ts`** — core RLS tests: cross-tenant reads, own-data reads, insert/update/delete policies. Uses `withUser()` and `createServiceClient()` from `src/tests/rls/helpers.ts`.
 - **`rls-extended.test.ts`** — extended RLS coverage for newer tables and edge cases.
 - **`p7.test.ts`** — Phase 7 RLS policy tests.
@@ -178,6 +180,17 @@ session (no local stack available there) — it is the T3 soak specification.
 The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.
 
 The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.
+
+## 2026-09-14 — SCRUM-5145 restored auth trigger compatibility
+
+`fingerprint-lookup-index-plan.test.ts` upserts its owned profile after inserting
+`auth.users`. A complete schema with migration 0459 creates that profile through
+the canonical auth-user trigger; a baseline without the trigger still needs the
+test to create it. Setup uses transaction-local service-role claims, like
+teardown, so the real privileged-profile-field trigger permits the fixture's
+owned organization and role assignment. Claims expire at commit; the production
+guard remains enabled. The upsert preserves all plan assertions and uses no
+shared fixture identities.
 
 ## 2026-09-11 — UAT-04 mandatory MFA boundary
 

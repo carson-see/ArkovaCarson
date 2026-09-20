@@ -232,3 +232,7 @@ The retry screen can reach the DOM before its passive polling effect registers t
 `authenticated`/AAL2 token. Profile role, grace dates, capability cooldowns, and
 local completion callbacks cannot grant protected content. Enrollment and
 challenge errors stay closed with retry/sign-out.
+
+## 2026-09-14 — SCRUM-5145 signup resend ownership
+
+`SignUpForm` starts a 90-second cooldown after the initial email and every resend attempt. It calls `useAuth.resendSignUpConfirmation`; never call `signUp` again to resend, because that repeats account creation and can change callback behavior.

@@ -237,3 +237,7 @@ an `else if` so the fallback cannot attribute the same organization twice.
 `useProfile` does not fetch or return cached profile data until mailbox proof and
 a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
 the query; account switches and AAL downgrades mask cached data immediately.
+
+## 2026-09-14 — SCRUM-5145 signup resend API
+
+Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.

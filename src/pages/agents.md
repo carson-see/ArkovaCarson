@@ -879,6 +879,9 @@ only fails when a user clicks.
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
 
+## 2026-09-14 — SCRUM-5145 consumed confirmation links
+
+`AuthCallbackPage` reconciles only `otp_expired` with authoritative `auth.getUser()`. It auto-routes only when that user is confirmed and matches the signup email remembered in session storage. A confirmed account that cannot be correlated gets an honest signed-in choice; generic errors, unrelated accounts, unconfirmed users, lookup failures, and the three-second lookup timeout remain errors.
 ## PR #2951 — installed JSZip attribution guard (2026-09-14)
 
 The notices page test derives JSZip’s version from the lockfile and verifies the matching rendered row, MIT election text, and exact upstream source link. It must continue failing when a shipped version lacks attribution.
