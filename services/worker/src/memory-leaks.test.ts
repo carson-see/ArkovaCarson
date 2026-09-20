@@ -15,6 +15,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ─── Mock setup ───────────────────────────────────────────────────────
 
+// Delivery/lifecycle imports reach fanout; memory cleanup does not require
+// credentials or enabled descendant delivery.
+vi.mock('./config.js', () => ({ config: { enableSubOrgWebhookFanout: false } }));
+
 vi.mock('./utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));

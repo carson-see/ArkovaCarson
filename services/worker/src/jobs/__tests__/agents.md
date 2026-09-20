@@ -22,6 +22,7 @@ Tests for job processors — public record fetchers, pipeline health, embedding,
 | `pipeline-health.test.ts` | Tests for pipeline health monitoring |
 | `publicRecordAnchor.test.ts` | Tests for public record anchor creation |
 | `publicRecordAnchor-revert-in-filter.test.ts` | Guards the failed-broadcast rollback: every `.in('id', …)` revert chunk must fit the PostgREST URL budget (2026-07-29 incident class) |
+| `publicRecordAnchor-description-rpc-argument.test.ts` | SCRUM-5120: pins the JS-side half of the `batch_insert_anchors` description contract — `processPublicRecordAnchoring` must call `client.rpc('batch_insert_anchors', { p_anchors })` with a `description` key present (not `null`) on an element built from a record with source text, and the key ABSENT (not `null`/`''`) on one without. Mocks the RPC on purpose (this is a JS-argument-shape assertion, not a persistence proof) — the persistence half lives in `tests/rls/scrum-5120-batch-insert-anchors-description.test.ts` against real Postgres, per `tests/rls/agents.md`'s mock-the-collaborator-not-the-invariant rule. |
 | `publicRecordEmbedder.test.ts` | Tests for public record embedding generation |
 | `trainingExporter.test.ts` | Tests for training data export from golden dataset |
 | `usptoFetcher.test.ts` | Tests for USPTO patent/trademark fetcher |

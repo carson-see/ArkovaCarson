@@ -18,6 +18,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { EmailConfirmation } from '@/components/onboarding/EmailConfirmation';
 import { AUTH_FORM_LABELS } from '@/lib/copy';
+import {
+  clearPendingSignupEmail,
+  rememberPendingSignupEmail,
+  SIGNUP_EMAIL_RESEND_COOLDOWN_SECONDS,
+} from '@/lib/authEmailPolicy';
 
 interface SignUpFormProps {
   onSuccess?: () => void;
@@ -25,7 +30,15 @@ interface SignUpFormProps {
 }
 
 export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps>) {
-  const { signUp, signInWithGoogle, signInWithLinkedIn, loading, error, clearError } = useAuth();
+  const {
+    signUp,
+    resendSignUpConfirmation,
+    signInWithGoogle,
+    signInWithLinkedIn,
+    loading,
+    error,
+    clearError,
+  } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -33,6 +46,8 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
   const [validationError, setValidationError] = useState<string | null>(null);
   const [signupComplete, setSignupComplete] = useState(false);
   const [resending, setResending] = useState(false);
+  const [resendAvailableAt, setResendAvailableAt] = useState<number>();
+  const [resendResult, setResendResult] = useState<'success' | 'error'>();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -71,19 +86,36 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
       if (result.session) {
         onSuccess?.();
       } else {
+        rememberPendingSignupEmail(email);
+        setResendAvailableAt(Date.now() + SIGNUP_EMAIL_RESEND_COOLDOWN_SECONDS * 1000);
+        setResendResult(undefined);
         setSignupComplete(true);
       }
     }
   };
 
   const handleResend = async () => {
+    if (resending || (resendAvailableAt !== undefined && Date.now() < resendAvailableAt)) return;
+
     setResending(true);
-    // Resend signup email
-    await signUp(email, password, fullName || undefined);
-    setResending(false);
+    setResendResult(undefined);
+    try {
+      const result = await resendSignUpConfirmation(email);
+      setResendResult(result.error ? 'error' : 'success');
+    } catch {
+      // useAuth converts expected failures into result.error, but retain a
+      // truthful fallback if an injected implementation unexpectedly throws.
+      setResendResult('error');
+    } finally {
+      // The response may be lost after Auth accepted the request. Apply the
+      // cooldown to every attempt so a network ambiguity cannot send a burst.
+      setResendAvailableAt(Date.now() + SIGNUP_EMAIL_RESEND_COOLDOWN_SECONDS * 1000);
+      setResending(false);
+    }
   };
 
   const handleBack = () => {
+    clearPendingSignupEmail();
     setSignupComplete(false);
   };
 
@@ -91,10 +123,13 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
   if (signupComplete) {
     return (
       <EmailConfirmation
+        key={resendAvailableAt}
         email={email}
         onResend={handleResend}
         onBack={handleBack}
         resending={resending}
+        resendAvailableAt={resendAvailableAt}
+        resendResult={resendResult}
       />
     );
   }

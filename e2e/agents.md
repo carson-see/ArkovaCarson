@@ -1,5 +1,9 @@
 # agents.md — e2e/
 
+## API key/webhook dashboard targeted UAT (2026-09-19)
+
+`uat-api-webhook-dashboard.spec.ts` and its standalone config exercise the real settings routes/components at 1280px and 375px with auth, Supabase, and worker I/O stubbed only at the browser network boundary. It proves scope/event controls, scrubbed retryable endpoint-read failure, and responsive geometry. It is targeted frontend evidence, not backend/RLS integration proof; the ordinary CI E2E project retains that responsibility. The spec self-skips under every named shared project and runs only with its dedicated config.
+
 ## UAT-22 invitation list browser probe (2026-09-14)
 
 The opt-in `uat22-platform-invite.spec.ts` distinguishes mocked GET list responses from POST create responses and checks that the sent invite appears after refresh at 1280px and 375px. This is browser transport/rendering coverage with real fixture auth, not live worker/DB proof. The real mounted-router counterpart is `services/worker/src/api/admin-invitations.local.test.ts`; both remain explicit local runs with fixture prerequisites. No skip was removed.
@@ -98,6 +102,28 @@ writes `metadata` through `serviceClient`, and that is load-bearing rather than 
 migration 0423's trigger strips `connector_source` from any write by a non-`service_role` caller.
 A fixture written as the user would produce a record with no marker, hence no chips — and the spec
 would pass while testing nothing. Same reason the DocuSign block above uses the service client.
+
+## 2026-09-13 — `connectors.spec.ts` added; `route-screenshot-baseline.spec.ts` gained a `connectors` entry
+
+Google Drive itself is mocked at the network boundary
+(`page.route('**/api/v1/integrations/google_drive/folders**', ...)`) — the real worker process is
+never asked to decrypt a KMS-encrypted token or call the real Google API, so the test needs no real
+Drive grant. `/api/rules` is deliberately NOT mocked: it hits the real worker + test database, so
+"Save, reload, selection and action persist" is a genuine persistence check. The test seeds a
+connected `org_integrations` row directly via `getServiceClient()` (fake `encrypted_tokens` —
+never decrypted, because the folders call is intercepted before it reaches the worker) and cleans
+up both `org_integrations` and `organization_rules` rows for the seed org-admin's org in
+`afterEach`, so re-runs start clean.
+
+The route-guard case uses a SEPARATE `base.describe` block with
+`base.use({ storageState: { cookies: [], origins: [] } })` to get a genuinely logged-out context —
+every default `page` fixture in this file is already authenticated via project `storageState`
+(see the top of `fixtures/auth.ts`), so asserting an unauthenticated redirect needs to opt OUT of
+that, not just navigate with the default `page`.
+
+`route-screenshot-baseline.spec.ts` gained one `connectors` entry, inserted next to the existing
+`rules` / `rule-builder` entries — which stay (SPEC-CONNECTORS PM-9: `/organization/rules` remains
+routed; deleting its baseline would hide a regression in a page that is still live).
 
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
@@ -232,6 +258,14 @@ soak harness ships one outside this repo.
 ## SCRUM-4448 — isolated securing layout regression
 
 `secure-dialog-layout.spec.ts` mounts the real securing dialog, children and CSS through a development-only HTML fixture. Run `npx playwright test -c e2e/secure-dialog-layout.config.ts` for isolated headless Chromium on port 5200 (or set `E2E_BASE_URL` to another loopback Vite server). No seeded account or remote service is needed. The spec deliberately imports the base Playwright test rather than the authenticated fixture barrel: that barrel requires live credential environment variables at module load, while this layout suite uses deterministic boundary mocks and blocks non-loopback requests. This is a presentation/interaction proof, not production anchoring or auth evidence. Geometry, intact attestation labels, extracted-field editing, enabled actions, field focus, keyboard navigation and screenshots cover four viewport sizes; keep the real components and transition logic in this fixture.
+
+## 2026-09-12 SCRUM-5024 — `signup-entry.spec.ts`: partner `?ref` capture
+
+Two cases added at 1280 px and 375 px: a valid `?ref` is stripped from the URL
+(while an unrelated `utm_source` survives) and parked upper-cased under the
+canonical `localStorage` key `arkova.referral`; a malformed `?ref` is stripped
+AND discarded, because parking it would only ever produce `unknown_code` at
+`record_org_referral`.
 
 ## UAT-01 / SCRUM-4031 — public signup entry (2026-09-05)
 
@@ -587,3 +621,7 @@ positive access checks must pass before a negative isolation result is meaningfu
 The sign-out test uses its own real UI login and MFA enrollment, so signing out
 cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
 and `loginViaUi` retain their original authentication level.
+
+## 2026-09-14 — SCRUM-5145 email confirmation browser regressions
+
+`uat17-email-confirmation.spec.ts` drives the actual SignUpForm, useAuth, EmailConfirmation and AuthCallbackPage through the development-only fixture at1280/375. Auth signup/resend HTTP responses are simulated; the tests assert one signup, dedicated password-free resend, truthful outcomes, idle-time cooldown reset, long-address containment and actionable expired links. They use empty storageState and do not need seeded sessions. Run locally with `npx playwright test --config=e2e/uat17-email-confirmation.config.ts`; the dedicated config owns port5197 and uses placeholder local Auth configuration. The spec also runs in the ordinary CI Chromium project. Screenshots are Playwright attachments. This proves browser behavior, not real SMTP, server expiry, organization association or MFA; the isolated hosted driver and actual browser UAT cover those release gates.

@@ -142,6 +142,7 @@ function mockAuthState(email: string, id: string) {
     signOut: vi.fn(),
     signIn: vi.fn(),
     signUp: vi.fn(),
+    resendSignUpConfirmation: vi.fn(),
     signInWithGoogle: vi.fn(),
     signInWithLinkedIn: vi.fn(),
     clearError: vi.fn(),

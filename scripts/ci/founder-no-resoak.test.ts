@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { evaluateNoResoakDecision, loadNoResoakDecision, NO_RESOAK_DECISION_PATH } from './lib/founder-no-resoak';
 import { check } from './check-staging-evidence';
@@ -57,4 +58,14 @@ describe('explicit September 19 founder no-resoak decision', () => {
   it('still rejects an under-declared risk tier', () => {
     expect(check({ ...input, body: body.replace('T2', 'T1'), noResoakDecision: decision }).ok).toBe(false);
   });
+});
+
+// The founder narrowed the exception after later PRs were incorrectly admitted.
+it('keeps the committed release exception scoped to the original reviewed work', () => {
+  const actual = JSON.parse(readFileSync(NO_RESOAK_DECISION_PATH, 'utf8'));
+  expect(actual.prs.map((pr: { number: number }) => pr.number).sort((a: number, b: number) => a - b))
+    .toEqual([2841, 2882, 2904, 2905, 2912, 2951, 2964, 2966, 2967, 2968, 2979]);
+  expect(evaluateNoResoakDecision(actual, {
+    ...input, prNumber: 2966, headSha: '6ff342fb1b71f636ff647885e638d2deff062f5a',
+  }).accepted).toBe(false);
 });

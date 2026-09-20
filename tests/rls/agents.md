@@ -2,8 +2,18 @@
 
 Row Level Security integration tests. Verify RLS policies enforce tenant isolation and role-based access.
 
+## PR #2905 — Referral disclosure requires a verified human session
+
+The disposable referred-org member now completes real GoTrue MFA through
+`elevateRlsClientToAal2` before asserting tenant isolation. A password-only session
+is blocked before tenant RLS and cannot prove the disclosure boundary. Migration
+0457 adds the existing restrictive MFA predicate to both new referral tables;
+the UAT-04 live policy census covers them during the complete migration replay.
+
 ## Files
 - **`oauth-email-confirmation.test.ts`** — SCRUM-4035 real SQL authority and replay/concurrency checks. Role-corruption setup uses the local Supabase bootstrap administrator, restricted to owned loopback ports 54322/55503 and the repository CI port blocks; `UAT03_DATABASE_URL` can select the owned native candidate database. Creator cases use `SET SESSION AUTHORIZATION` so a superuser session cannot hide non-superuser role behavior. Setup proves a live bootstrap connection; permission assertions match the primary server ERROR diagnostic exactly, excluding supplied SQL in Node commands or PostgreSQL LINE/CONTEXT excerpts. Transaction scripts use stdin with `SHOW_ALL_RESULTS=off` explicitly exercised: multi-command `psql -c` otherwise hides intermediate results on CI's psql. Temporary roles and grants roll back; concurrent fixtures delete only their own UUID and restore the previous activation timestamp.
+- **`email-signup-org-association.test.ts`** — SCRUM-5145 real SQL helper-behavior proof that email/password signup creates no domain membership before mailbox confirmation, then creates exactly one membership and assigns the profile after confirmation. It recreates the production trigger definitions (`create_profile_for_new_user` plus verified-email association) only inside a rolled-back, UUID-isolated loopback fixture because the squashed baseline omits Auth-schema triggers; hosted UAT must separately prove the deployed catalog.
+- **`auth-user-trigger-restoration.test.ts`** — SCRUM-5145 forward-replay proof for migration 0459: creates both canonical auth.users triggers when absent, preserves OID/function/definition when already correct, and rejects a divergent same-name trigger instead of silently replacing it. The fixture is transaction-rolled-back and accepts the repository CI port block or an owned `/tmp` Unix-socket database.
 - **`rls.test.ts`** — core RLS tests: cross-tenant reads, own-data reads, insert/update/delete policies. Uses `withUser()` and `createServiceClient()` from `src/tests/rls/helpers.ts`.
 - **`rls-extended.test.ts`** — extended RLS coverage for newer tables and edge cases.
 - **`p7.test.ts`** — Phase 7 RLS policy tests.
@@ -24,6 +34,7 @@ Row Level Security integration tests. Verify RLS policies enforce tenant isolati
 - **`fingerprint-lookup-index-plan.test.ts`** — migration 0441. Pins the QUERY PLAN of `get_public_anchor_by_fingerprint`, not its timing. `anchors.fingerprint` is `character(64)` and the RPC parameter is `text`; comparing them bare makes Postgres cast the COLUMN (`Filter: ((fingerprint)::text = …)`), which makes `idx_anchors_fingerprint_lookup` unusable and, over prod's ~3.5M-row SECURED partition, blew `statement_timeout` — verify-by-fingerprint and `get_fingerprint` on edge.arkova.ai returned `isError: "Document verification timed out"` (found 2026-09-08, `docs/staging/edge-retro-2026-09-07/DEPLOY.md` finding 1). A TIMING assertion cannot catch this and must not be written here: the defect is invisible below roughly a million rows and the 12h retro-soak ran on a 10-row fixture. So the suite sets `enable_seqscan = off` — which removes the only row-count-dependent variable and leaves the question "is this predicate index-compatible at all?", true or false at any size — and asserts an **Index Cond** on that index rather than the index NAME appearing in the plan (with seqscan off the planner will happily FULL-scan the same index and apply `(fingerprint)::text` as a Filter, a plan that contains the name while doing the pathological thing). The query is EXTRACTED from the live `pg_proc` body, so the test degrades if someone reverts the function instead of passing against a re-typed copy. Carries a NEGATIVE CONTROL (the pre-0441 uncast form of that same extracted query must NOT reach the index — verified RED before the migration, GREEN after) and POSITIVE CONTROLS (a SECURED row still resolves, upper-case input still resolves, and an in-flight row stays byte-identical to an unknown one so 0386's SECURED-only invariant survives the cast).
 - **`public-anchor-pii-projection.test.ts`** — migration 0385. Live proof that the anon-GRANTed `get_public_anchor` / `get_public_anchor_by_fingerprint` projection no longer leaks learner PII: seeds learner names into `filename` / `metadata.title` / `metadata.description` and PII into `revocation_reason`, then reads back as a real ANON client and asserts on the SERIALIZED body (so a value cannot hide in an unnamed field). Vectors come from `scripts/ci/public-pii-projection-contract.json`, the shared contract that also binds `services/worker/src/ctdl/ctdl-pii-guard.ts`, so this suite and the CTDL suite cannot drift on what counts as PII. Carries PRECISION assertions too (real institution names, ordinary titles, numeric issuer URLs must still publish) — a gate that blanks legitimate credentials is a worse product than the leak it replaced. Seeds must set `revoked_at` alongside `revocation_reason` (`anchors_revocation_consistency`).
 - **`ferpa-directory-info-opt-out.test.ts`** — **FD-FERPA-1**, migration `0415`. Live proof that `anchors.directory_info_opt_out` actually suppresses directory information on all three anon-reachable SQL projections: seeds a SECURED anchor carrying an issuer name, a `cpe_metadata.field_of_study`, award/expiry dates and a name-shaped filename, then reads it back as a real ANON client and asserts on the SERIALIZED body, so a value cannot survive by moving to a key the test does not name. Every negative is paired with a POSITIVE CONTROL — the same fixture with the flag off must still publish, and the opted-out record must still VERIFY (`verified`, `fingerprint`, chain receipt, a non-empty `filename` and `issuer_name` display string). The `credential_type: null` case is not invented coverage: all three production anchors carrying the flag have a NULL type, so a suppression rule keyed on the education set alone suppresses nothing for any of them. The fingerprint path is asserted for INDISTINGUISHABILITY (`toEqual` against the public-id body) rather than merely "also suppresses", because `0415` deliberately does not redefine it and relies on its delegation to `get_public_anchor`. The search half asserts EXCLUSION FROM MATCHING, not a blanked title — a non-empty result set is itself the disclosure (0387's hit-count oracle) — and uses `CLE` so the assertion is not vacuous, since CLE is in the FERPA set but not the academic set 0387 already excludes. A `INSURANCE` case pins the recorded residual: a PRESENT non-education type still publishes, matching the REST path's own pinned boundary. Requires the local DB migrated to at least 0415.
+- **`scrum-5120-batch-insert-anchors-description.test.ts`** — migration `0458`. Live proof that `public.batch_insert_anchors` actually PERSISTS the caller's `description` field instead of silently dropping it (the SCRUM-5120 defect: 0370's SCRUM-3031 redefinition never read `elem->>'description'` out of `p_anchors`, so every pipeline-anchor description was discarded on a normal-looking 200). Calls the RPC as `service_role` (0377 revoked `anon`/`authenticated` EXECUTE) with one element carrying a `description` and one that omits the key entirely — mirroring `buildPipelineAnchorInsert`'s conditional-spread shape exactly, not `description: null` — then reads both rows back and asserts the first persisted verbatim (POSITIVE) and the second stayed NULL (NEGATIVE CONTROL, proves the fix reads the caller's value rather than writing a fixed string). A second test re-submits the same fingerprint with a different description and asserts the `ON CONFLICT DO NOTHING` dedup path (0370/SCRUM-3031) is unaffected by the new column — the winning row keeps its original description, not the second call's. Requires the local DB migrated to at least 0458. Owns its own org (`f19e2400-…-0000000005120`) and user, created/deleted in `beforeAll`/`afterAll` per the fixture-ownership rule below.
 
 ## Conventions
 - Requires local Supabase running (`supabase start`) with seed data (`supabase db reset`).
@@ -141,11 +152,45 @@ needed), which reuses the 2026-08-15 e2e sign-out guard's detector:
   `vitest.config.rls.ts`): it would hide this class of collision and slow
   every RLS run; parallel execution is itself part of what the suite proves.
 
+## 2026-09-12 SCRUM-5024 — `referral-attribution.test.ts`
+
+Live-database proof for migration `0455`. Every property here is enforced by SQL
+— an RLS policy, a GRANT, a CHECK, a partial unique index, or a SECURITY DEFINER
+body — so per this file's own rule none of it may live in a mocked suite.
+
+The disclosure boundary is why the file exists: `organization_referrals` has no
+SELECT policy matching `referred_org_id`, so a member of a REFERRED organization
+must read zero rows about it, and the `organization.referred` audit row is filed
+against the REFERRER's `org_id`. Both are asserted directly, because a future
+"let's add the obvious policy" change would quietly undo them.
+
+Also pinned: the format CHECK rejects `I`/`L`/`O`/`0`/`1` even via `service_role`;
+`generate_referral_code` is 42501 for anon AND authenticated; one ACTIVE code per
+org (23505); `ensure_org_referral_code` is idempotent; `record_org_referral` is
+total (lower-case applies, replay is `already_attributed` with still exactly one
+row, unknown writes one audit row and NO edge, self is refused, blank is
+`no_code` and writes NO audit row); and neither table accepts a write from
+`authenticated`.
+
+Requires a local Supabase with `0455` applied. It was NOT run in the authoring
+session (no local stack available there) — it is the T3 soak specification.
+
 ## 2026-09-10 — PR #2694 complete-schema fixture correction
 
 The fingerprint index-plan suite now creates its own organization and required profiles row after auth.users. A complete committed Supabase replay exposed anchors_user_id_fkey during the old setup, before any of the seven plan checks executed. Teardown deletes only this run’s user/org fixture, including partial setup. An overlong fingerprint negative case also pins the unconstrained bpchar cast against accidental character(64) truncation. Migration 0441 remains immutable.
 
 The same full-schema run showed a second fixture defect: enable_seqscan=off still permits the planner to choose another index. With only one SECURED row it legitimately chose the status index. The suite now seeds 2,048 owned SECURED background rows so the fingerprint is selective, still asserting Index Cond and the uncast negative control without a latency threshold.
+
+## 2026-09-14 — SCRUM-5145 restored auth trigger compatibility
+
+`fingerprint-lookup-index-plan.test.ts` upserts its owned profile after inserting
+`auth.users`. A complete schema with migration 0459 creates that profile through
+the canonical auth-user trigger; a baseline without the trigger still needs the
+test to create it. Setup uses transaction-local service-role claims, like
+teardown, so the real privileged-profile-field trigger permits the fixture's
+owned organization and role assignment. Claims expire at commit; the production
+guard remains enabled. The upsert preserves all plan assertions and uses no
+shared fixture identities.
 
 ## 2026-09-11 — UAT-04 mandatory MFA boundary
 
@@ -162,3 +207,11 @@ SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
 timestamp in a separate `finally` path. The lock times out instead of evicting
 an apparently stale owner. Keep file parallelism enabled so unrelated fixture
 collisions remain visible.
+
+## 2026-09-19 — Referral RPC missing-role claims (migration 0466)
+
+`referral-rpc-empty-claims.test.ts` runs the actual 0456/0466 function bodies in
+native PostgreSQL transactions. It proves the pre-fix predicates skip both
+tenant guards when request role claims are absent, then proves 0466 denies that
+context while preserving service-role and authenticated tenant-member paths.
+The candidate migration is installed only inside each rolled-back transaction.

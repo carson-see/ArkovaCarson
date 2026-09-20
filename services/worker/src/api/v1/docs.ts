@@ -9,6 +9,7 @@ import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
+import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatus.js';
 // SCRUM-4507: the source-provider vocabulary, taken from the SAME closed
 // marker set the verify endpoint gates on (constants/connectorFingerprint.ts).
 // Imported from the constants module rather than from `verify.ts` on purpose:
@@ -530,7 +531,8 @@ export const openApiSpec: Record<string, any> = {
     '/keys/{keyId}': {
       patch: {
         summary: 'Update API key',
-        description: 'Update the name or scopes of an existing API key.',
+        description:
+          "Update the name or scopes of an existing API key, revoke it, or change its expiry. Expiry is set with expires_in_days (a duration from now; null removes it) — expires_at is not settable. An expiry sent alongside a revoke (is_active: false) is dropped and the revoke is honoured; an expiry cannot be combined with reactivating a key.",
         operationId: 'updateApiKey',
         tags: ['Key Management'],
         security: [{ SupabaseJWT: [] }],
@@ -549,6 +551,28 @@ export const openApiSpec: Record<string, any> = {
 	                    items: { type: 'string' },
 	                    'x-arkova-canonical-scopes': API_KEY_SCOPES,
 	                  },
+                  // SCRUM-5023. Expiry is set by DURATION, never by timestamp:
+                  // the server holds the clock, and an accepted client
+                  // timestamp could write an already-past expiry.
+                  //
+                  // `nullable: true` (NOT `type: 'null'`) — this document
+                  // declares OpenAPI 3.0.3, where the only JSON types are
+                  // string/number/integer/boolean/array/object. `type: 'null'`
+                  // is 3.1 syntax and is invalid here; see the structural
+                  // check in docs.openapi30.test.ts.
+                  expires_in_days: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: MAX_EXPIRES_IN_DAYS,
+                    nullable: true,
+                    description:
+                      'Set the expiry this many days from now, or null to remove the expiry entirely. REPLACES any existing expiry — it does not add to it — so a value earlier than the current expiry is refused with 409 api_key_expiry_would_shorten unless allow_shorten is true.',
+                  },
+                  allow_shorten: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'Acknowledge that expires_in_days moves the expiry EARLIER (or gives an unexpiring key an expiry). Required for such a change; ignored otherwise.',
+                  },
                 },
               },
             },
@@ -556,8 +580,13 @@ export const openApiSpec: Record<string, any> = {
         },
         responses: {
           '200': { description: 'Key updated' },
+          '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '404': { $ref: '#/components/responses/NotFound' },
+          '409': {
+            description:
+              'api_key_already_revoked — revocation is terminal, so the key cannot be reactivated or extended; or api_key_expiry_would_shorten — the requested expiry is earlier than the current one and allow_shorten was not set; or api_key_changed — expiry or revocation changed concurrently, so refresh before retrying.',
+          },
         },
       },
       delete: {
@@ -1822,6 +1851,12 @@ export const openApiSpec: Record<string, any> = {
                   },
                   description: { type: 'string', maxLength: 500, example: 'Production HR system' },
                   verify: { type: 'boolean', description: 'Send a verification ping before persisting' },
+                  scope: {
+                    type: 'string',
+                    enum: ['self', 'self_and_descendants'],
+                    default: 'self',
+                    description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+                  },
                 },
               },
             },
@@ -1896,7 +1931,7 @@ export const openApiSpec: Record<string, any> = {
       },
       patch: {
         summary: 'Update a webhook endpoint',
-        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active}. Updating the URL re-validates SSRF protection. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
+        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active, scope}. Updating the URL re-validates SSRF protection. An omitted field is left unchanged — in particular an omitted `scope` preserves the stored value. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
         operationId: 'updateWebhookEndpoint',
         tags: ['Webhooks'],
         'x-arkova-required-scopes': ['webhooks:manage'],
@@ -1916,6 +1951,11 @@ export const openApiSpec: Record<string, any> = {
                   },
                   description: { type: 'string', maxLength: 500, nullable: true },
                   is_active: { type: 'boolean' },
+                  scope: {
+                    type: 'string',
+                    enum: ['self', 'self_and_descendants'],
+                    description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+                  },
                 },
               },
             },
@@ -2099,6 +2139,111 @@ export const openApiSpec: Record<string, any> = {
           '402': { description: 'No AI credits remaining for the semantic path (flag on, RPC not yet attempted). Retry to get a lexical result instead is NOT automatic on this status — insufficient credits is a distinct condition from a semantic RPC failure.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
           '503': { description: 'ENABLE_VERIFICATION_API is off (worker-wide gate, applies to all of /api/v1/*). No longer returned for ENABLE_SEMANTIC_SEARCH off — see the operation description.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/integrations/google_drive/folders': {
+      get: {
+        summary: 'List a Google Drive folder\'s child folders',
+        description:
+          'Connectors page folder picker (My Drive only — shared drives are not supported). ' +
+          'Session-authenticated (Supabase JWT), org-admin only; NOT reachable with an API key. ' +
+          'Metadata-only: never returns file content. `hasChildren` is always `null` (unknown) — ' +
+          'Drive has no cheap "has subfolders" signal, so every folder renders as expandable.',
+        operationId: 'listGoogleDriveFolders',
+        tags: ['Integrations'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'org_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } },
+          {
+            name: 'parent',
+            in: 'query',
+            schema: { type: 'string', default: 'root' },
+            description: 'Drive folder id to list, or the literal "root" for My Drive.',
+          },
+          { name: 'page_token', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Child folders of the requested parent',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    folders: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          name: { type: 'string' },
+                          hasChildren: { type: 'boolean', nullable: true, description: 'Always null in v1 — unknown.' },
+                          driveId: { type: 'string', nullable: true, description: 'Always null in v1 — My Drive only.' },
+                        },
+                      },
+                    },
+                    nextPageToken: { type: 'string', description: 'Omitted when there is no further page.' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: '`drive=` (shared drive) query param is not supported in v1, or the query failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { description: 'Google Drive is not connected for this organization (`not_connected`)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '409': { description: 'The stored OAuth grant cannot list folders (`insufficient_drive_scope`) or the connection needs to be re-authorized (`reconnect_required`)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '502': { description: 'Google Drive is unavailable (`drive_unavailable`) — may carry `Retry-After`', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/referrals': {
+      get: {
+        summary: 'Partner referral code and attributed organizations',
+        description:
+          'Returns the calling organization\'s active referral code, the link to share, and the organizations that code introduced. '
+          + 'The organization is derived from the API key — there is no organization parameter. '
+          + 'Identifiers are public ids only. `organization_public_id` is omitted for an organization that has no public id. '
+          + 'MEASURED: which organizations presented this code at creation, and when. '
+          + 'NOT ASSERTED: any commission, payout, discount or revenue share. No field here feeds billing.',
+        operationId: 'listReferrals',
+        tags: ['Organizations'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        responses: {
+          '200': {
+            description: 'Referral code and attributed organizations. An organization with no minted code returns `referral_code: null` and an empty list, not a 404.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['referral_code', 'share_url', 'referred', 'total'],
+                  properties: {
+                    referral_code: { type: 'string', nullable: true, description: '8 characters from ABCDEFGHJKMNPQRSTUVWXYZ23456789, or null when none has been minted.' },
+                    share_url: { type: 'string', nullable: true, description: 'Null exactly when referral_code is null.' },
+                    referred: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['display_name', 'referred_at', 'verification_status'],
+                        properties: {
+                          organization_public_id: { type: 'string', description: 'Omitted when the referred organization has no public id.' },
+                          display_name: { type: 'string' },
+                          referred_at: { type: 'string', format: 'date-time' },
+                          verification_status: { type: 'string' },
+                        },
+                      },
+                    },
+                    total: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'API key lacks the read:orgs scope', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
     },
@@ -2427,6 +2572,23 @@ export const openApiSpec: Record<string, any> = {
           is_active: { type: 'boolean' },
           last_used_at: { type: 'string', format: 'date-time', nullable: true },
           created_at: { type: 'string', format: 'date-time' },
+          expires_at: { type: 'string', format: 'date-time', nullable: true },
+          // SCRUM-5023, §1.8 additive. `is_active` is a stored column and
+          // stays exactly what it was — it is TRUE on keys the auth middleware
+          // already refuses. `status` is the server's own answer to "is this
+          // key usable?", and is the field a client should render.
+          status: {
+            type: 'string',
+            enum: ['active', 'expiring_soon', 'expired', 'revoked'],
+            description:
+              `Server-derived usability. Prefer this over is_active/expires_at: is_active is a stored flag that stays true on an expired key, while authentication rejects it. expiring_soon means live and expiring within ${EXPIRING_SOON_WINDOW_DAYS} days.`,
+          },
+          days_until_expiry: {
+            type: 'integer',
+            nullable: true,
+            description:
+              'Whole days until expiry — 0 on the final day, negative once past, null when the key does not expire. Deliberately NOT named expires_in_days: that is the REQUEST field on POST/PATCH and means a duration to set, not a countdown to read.',
+          },
         },
       },
       ApiKeyCreated: {
@@ -2643,6 +2805,11 @@ export const openApiSpec: Record<string, any> = {
           },
           is_active: { type: 'boolean' },
           description: { type: 'string', nullable: true },
+          scope: {
+            type: 'string',
+            enum: ['self', 'self_and_descendants'],
+            description: "Delivery scope (SCRUM-3972). 'self' (default) delivers only this organization's own events. 'self_and_descendants' additionally delivers events owned by organizations whose parent is this organization and whose affiliation is APPROVED — one hop, never upward; such cross-organization payloads always carry org_public_id. Additive and nullable-safe per CLAUDE.md §1.8: omitting it preserves the pre-existing behaviour exactly. The cross-organization delivery it enables is behind a server-side gate that is currently OFF, so an endpoint set to 'self_and_descendants' today behaves exactly like 'self'.",
+          },
           created_at: { type: 'string', format: 'date-time' },
           updated_at: { type: 'string', format: 'date-time' },
         },
@@ -2886,6 +3053,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },
     { name: 'AI Intelligence', description: 'AI-powered extraction, search, and fraud detection (requires Supabase JWT)' },
+    { name: 'Integrations', description: 'Third-party connector metadata endpoints (Google Drive, DocuSign) — session-authenticated, not reachable with an API key' },
   ],
 };
 
