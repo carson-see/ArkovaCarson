@@ -78,14 +78,16 @@
     },
     {
       "number": 2964,
-      "head_sha": "37759e1c6ba97b9f8317acd86f269ad78849a333",
+      "head_sha": "6b2fb15c71128377b90bff11a04fc985bad4eb04",
       "prior_reviewed_source": "e435ed175641a16442b8eecd0c56c1929f930909",
       "existing_evidence": [
         "/Volumes/Extreme/Arkova/worktrees/cto-uat-union-20260914/artifacts/uat17-email/uat17-union-20260914-1910/summary.json",
         "/Volumes/Extreme/offload/codex-release-evidence/2026-09-17/pr2964-fix",
         "ROOT-HANDOFF: 27 completed UAT17 cycles",
         "September 19 central review: refreshed prior reviewed source 8c1561f6fff5080d8ebc7cf1b6cc28f88ea491d6 to 9fb3c5760815ff9460bf67402bed17113eb7166e by merging main 129262e86fb6edca56ec5de7779469af969f43da; no content conflicts or new feature runtime. Root verified merge resolution and preserved runtime/migrations. Targeted UI/worker suites and both TypeScript checks passed. Existing observation is preserved; no new soak asserted.",
-        "Final reviewed head 37759e1c6ba97b9f8317acd86f269ad78849a333 adds only the verified production table snapshot to the preceding clean main merge. Live production pg_class confirmed organization_referrals and referral_codes with RLS and FORCE RLS enabled; Policy Lints table parity is 121/121. No runtime or SQL changes."
+        "Final reviewed head 37759e1c6ba97b9f8317acd86f269ad78849a333 adds only the verified production table snapshot to the preceding clean main merge. Live production pg_class confirmed organization_referrals and referral_codes with RLS and FORCE RLS enabled; Policy Lints table parity is 121/121. No runtime or SQL changes.",
+        "September 19 final current-main refresh: 130b460458f6556726979cf9dc62e125590daae8 cleanly merges reviewed head 37759e1c6ba97b9f8317acd86f269ad78849a333 with main 1aee5afd0dbbd2a88bf8e76769038a65d4198ecf. Root verified merge parents, no content conflict, and no runtime delta beyond the preserved feature plus merged main; 72 focused auth/signup/callback tests and root TypeScript passed. Existing observations are preserved; no new soak asserted.",
+        "September 20 docs-only conflict repair: 6b2fb15c71128377b90bff11a04fc985bad4eb04 is one commit on top of reviewed head 130b460458f6556726979cf9dc62e125590daae8 and changes ONLY supabase/migrations/agents.md (git diff --name-only 130b46045..6b2fb15c7 -> that single file; requiredTierFor = T0). It re-anchors this PR's own 0459 note to EOF so GitHub's plain-text merge no longer collides with main's SCRUM-5120 block; the moved paragraph is byte-identical. No runtime, migration SQL, test or workflow file changed; main was NOT merged into the branch. CTO verified independently: single merge base, conflict-free text-driver merge against main 67786c10c, check-doc-pointers OK."
       ],
       "residual_risk": "Interrupted observation lacked full duration and closing cycle; current-union auth trigger/signup/resend/expiry tests required."
     },
@@ -102,14 +104,15 @@
     },
     {
       "number": 2967,
-      "head_sha": "27d081abf64762b1f79770dd8a4f10148eac8b0a",
+      "head_sha": "f4a8d50e8af0cd8ca5c757164097b8497ba5d387",
       "prior_reviewed_source": "da12020a4b2eb999a6441e058f175c14a1f1cba2",
       "existing_evidence": [
         "/Volumes/Extreme/offload/codex-release-evidence/2026-09-14/oldest-review/qualification/c3-window1/summary.json",
         "PR body: native PostgreSQL rollback/reapply and description persistence/repair tests",
         "2026-09-19: corrected malformed organization UUID in RLS fixture; native PostgreSQL17 actual migration function roundtrip and rollback verified. Runtime SQL unchanged.",
         "September 19 central review: refreshed prior reviewed source aace4ce6792d66272c2e493ee12033b9cc7b0f69 to 2ded6ff47a0656225f3cd2ca6e6333d06fd6f351 by merging main 129262e86fb6edca56ec5de7779469af969f43da; no content conflicts or new feature runtime. Root verified merge resolution and preserved runtime/migrations. Targeted UI/worker suites and both TypeScript checks passed. Existing observation is preserved; no new soak asserted.",
-        "Final reviewed head 27d081abf64762b1f79770dd8a4f10148eac8b0a adds only the verified production table snapshot to the preceding clean main merge. Live production pg_class confirmed organization_referrals and referral_codes with RLS and FORCE RLS enabled; Policy Lints table parity is 121/121. No runtime or SQL changes."
+        "Final reviewed head 27d081abf64762b1f79770dd8a4f10148eac8b0a adds only the verified production table snapshot to the preceding clean main merge. Live production pg_class confirmed organization_referrals and referral_codes with RLS and FORCE RLS enabled; Policy Lints table parity is 121/121. No runtime or SQL changes.",
+        "September 19 final current-main refresh: f4a8d50e8af0cd8ca5c757164097b8497ba5d387 cleanly merges reviewed head 27d081abf64762b1f79770dd8a4f10148eac8b0a with main 1aee5afd0dbbd2a88bf8e76769038a65d4198ecf. Direct and merge-base diffs contain the same ten reviewed feature/evidence files; current-main dependency locks and notices are retained exactly. Repair tests 42/42 and worker RPC argument test 1/1 passed. Existing observations are preserved; no new soak asserted."
       ],
       "residual_risk": "C3 was interrupted without continuity/closing cycle. Production data repair remains a separately authorized action."
     },

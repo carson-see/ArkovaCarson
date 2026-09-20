@@ -1,7 +1,35 @@
 # agents.md — services/worker/src/integrations/oauth/
 
+_Last updated: 2026-09-13 (`drive.ts` gained `listChildFolders()` + `drive.metadata.readonly` scope — Connectors page folder picker, SPEC-CONNECTORS §2.1/§2.2)._
 _Last updated: 2026-08-31 (signer-backfill follow-on to PR #2474: `fetchDocusignEnvelopeRecipients` + `extractCapturedSigners`, now delegating to the shared `captureDocusignSigners` mapper)._
 _Last updated: 2026-08-30 (`adobe-sign.ts` gained the OAuth + webhook-provisioning client)._
+
+## 2026-09-13 — `drive.ts`: `listChildFolders()` + `DRIVE_DEFAULT_SCOPES` gained `drive.metadata.readonly`
+
+**Scope change** (the constant's own comment requires a security review before any addition — this
+is that review, done as part of the Connectors-page build and reviewed by the release session's
+`/codereview` pass on this PR): `DRIVE_DEFAULT_SCOPES` gained
+`https://www.googleapis.com/auth/drive.metadata.readonly`. Reason: `drive.file` alone cannot
+enumerate a user's PRE-EXISTING folders (it only sees files the app created or that were handed to
+it via the Google Picker) — a folder picker built on `drive.file` alone returns nothing for a
+newly-connecting org. `drive.metadata.readonly` is metadata-only (cannot read file bytes). Widening
+the scope does NOT widen an already-issued refresh token — every connection made BEFORE this change
+needs to re-consent before `GET /api/v1/integrations/google_drive/folders` works for it; that
+endpoint fails closed (`409 insufficient_drive_scope`) rather than silently returning `[]` for a
+stale grant. (CTO verified on prod, read-only, 2026-09-13: the Arkova org's own `google_drive` grant
+already includes `auth/drive` + `drive.file`, so the picker already works for that org today — every
+OTHER org's existing connection is the one that needs the re-consent.)
+
+**`listChildFolders()`** — new export, `files.list` scoped to `'<parent>' in parents and
+mimeType='application/vnd.google-apps.folder' and trashed=false`, `includeItemsFromAllDrives=false`
+hard-coded (D2 — My Drive only; shared drives are out of v1 because neither
+`drive-changes-runner.ts` nor `drive-changes-processor.ts` registers a per-shared-drive watch, so a
+shared-drive folder picked here would silently never fire). `parent` is escaped via
+`escapeDriveQueryLiteral()` (Drive's OWN query-language escaping — backslash and single-quote —
+distinct from the `URLSearchParams` encoding wrapping the whole `q` string) before it ever reaches
+the query, so a `'` or `\` in `parent` cannot terminate the quoted literal early. `DriveApiError`
+gained an optional `retryAfter` field so a 429/5xx can carry Google's `Retry-After` header through to
+the endpoint's own response.
 
 ## 2026-08-30 — `adobe-sign.ts` is now provider client + webhook helpers, like `docusign.ts`
 
@@ -120,3 +148,7 @@ document-bearing path. It uses `arrayBuffer()` / a `for await` over the body str
 which the `readJsonBounded` / `readTextBounded` primitives cover, and neither of which the
 `bounded-body-reads` lint flags. Bounding a size-capped streaming read needs its own primitive and
 its own soak; see the Bug Tracker row for this finding.
+
+## 2026-09-14 — Folder picker response deadline
+
+`listChildFolders` uses the shared ten-second `readDriveJson` deadline from PR #2930. A stalled folder-list response becomes a sanitized `DriveApiError` 408; malformed-response and Retry-After handling remain unchanged. A parked-body regression failed before this correction. PR #2912 requires fresh observation for the corrected runtime.

@@ -5,22 +5,11 @@
  * OrgProfile settings card without live provider credentials.
  */
 
-import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import { test, expect } from './fixtures';
+import { ROUTES } from '../src/lib/routes';
 
 test.describe('Google Drive integration', () => {
   test('org admin can start and complete the mocked OAuth happy path', async ({ orgAdminPage }) => {
-    const service = getServiceClient();
-    const { data: profile, error } = await service
-      .from('profiles')
-      .select('org_id')
-      .eq('id', SEED_USERS.orgAdmin.id)
-      .single();
-
-    if (error || !profile?.org_id) {
-      throw new Error(`Unable to resolve org admin org_id: ${error?.message ?? 'missing profile'}`);
-    }
-
-    const orgId = profile.org_id as string;
     const callbackUrl = 'http://localhost:3001/api/v1/integrations/google_drive/oauth/callback?code=mock-code&state=e2e-state';
 
     await orgAdminPage.route('http://localhost:3001/api/v1/integrations/google_drive/oauth/start', async (route) => {
@@ -45,18 +34,20 @@ test.describe('Google Drive integration', () => {
       await route.fulfill({
         status: 302,
         headers: {
-          location: `http://localhost:5173/organizations/${orgId}?tab=settings&drive=connected`,
+          location: `http://localhost:5173${ROUTES.CONNECTORS}?drive=connected`,
         },
       });
     });
 
-    await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-    await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible();
-    await expect(orgAdminPage.getByRole('heading', { name: 'Google Drive' })).toBeVisible();
+    await orgAdminPage.goto(ROUTES.CONNECTORS);
+    await expect(orgAdminPage.getByRole('heading', { name: 'Connectors' })).toBeVisible();
+    const driveHeading = orgAdminPage.getByRole('heading', { name: 'Google Drive' });
+    await expect(driveHeading).toBeVisible();
+    const driveCard = driveHeading.locator('../..');
 
-    await orgAdminPage.getByRole('button', { name: 'Connect Drive' }).click();
+    await driveCard.getByRole('button', { name: 'Connect', exact: true }).click();
 
     await expect(orgAdminPage.getByText('Google Drive connected.').first()).toBeVisible();
-    await expect(orgAdminPage).toHaveURL(new RegExp(`/organizations/${orgId}\\?tab=settings`));
+    await expect(orgAdminPage).toHaveURL((url) => new URL(url).pathname === ROUTES.CONNECTORS);
   });
 });

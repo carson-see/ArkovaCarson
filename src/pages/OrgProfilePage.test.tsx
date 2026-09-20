@@ -30,6 +30,9 @@ const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitation
 let capturedOnInvite:
   | ((email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => Promise<boolean>)
   | null = null;
+let capturedOnResend:
+  | ((invitation: { email: string; role: string }) => Promise<void>)
+  | null = null;
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
@@ -157,7 +160,12 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
 vi.mock('@/components/organization', () => ({
   OrgRegistryTable: () => null,
   MembersTable: () => null,
-  PendingInvitationsList: () => null,
+  PendingInvitationsList: (props: {
+    onResend: (invitation: { email: string; role: string }) => Promise<void>;
+  }) => {
+    capturedOnResend = props.onResend;
+    return null;
+  },
   IssueCredentialForm: () => null,
   RevokeDialog: () => null,
   AddExistingMemberModal: () => null,
@@ -182,12 +190,6 @@ vi.mock('@/components/shared/VerifiedBadge', () => ({
   OrgVerifiedBadge: () => null,
   AffiliatedBadge: () => null,
 }));
-vi.mock('@/components/integrations/DriveConnectorCard', () => ({
-  DriveConnectorCard: () => null,
-}));
-vi.mock('@/components/integrations/DocusignConnectorCard', () => ({
-  DocusignConnectorCard: () => null,
-}));
 vi.mock('@/components/integrations/MemberDocusignConnectorCard', () => ({
   MemberDocusignConnectorCard: () => null,
 }));
@@ -210,6 +212,7 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedOnInvite = null;
+    capturedOnResend = null;
     platformAdminMode.value = false;
     invitationListState.error = null;
   });
@@ -270,6 +273,58 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
     });
 
     expect(result).toBe(false);
+    expect(mockRefreshInvitations).not.toHaveBeenCalled();
+  });
+
+  it('resends a blocked admin-role invitation as an individual and refreshes on success', async () => {
+    mockInviteMember.mockResolvedValue(true);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('tab', { name: 'People' }));
+    await waitFor(() => expect(capturedOnResend).not.toBeNull());
+
+    await act(async () => {
+      await capturedOnResend!({ email: 'pending@example.com', role: 'ORG_ADMIN' });
+    });
+
+    expect(mockInviteMember).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'pending@example.com',
+      role: 'INDIVIDUAL',
+      orgId: 'org-1',
+    }));
+    expect(mockRefreshInvitations).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an admin invitation role when a platform admin resends it', async () => {
+    platformAdminMode.value = true;
+    mockInviteMember.mockResolvedValue(true);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('tab', { name: 'People' }));
+    await waitFor(() => expect(capturedOnResend).not.toBeNull());
+
+    await act(async () => {
+      await capturedOnResend!({ email: 'pending-admin@example.com', role: 'ORG_ADMIN' });
+    });
+
+    expect(mockInviteMember).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'pending-admin@example.com',
+      role: 'ORG_ADMIN',
+      orgId: 'org-1',
+    }));
+  });
+
+  it('does not refresh invitations after a resend fails', async () => {
+    mockInviteMember.mockResolvedValue(false);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('tab', { name: 'People' }));
+    await waitFor(() => expect(capturedOnResend).not.toBeNull());
+
+    await act(async () => {
+      await capturedOnResend!({ email: 'pending@example.com', role: 'INDIVIDUAL' });
+    });
+
     expect(mockRefreshInvitations).not.toHaveBeenCalled();
   });
 });

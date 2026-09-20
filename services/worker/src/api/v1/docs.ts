@@ -2142,6 +2142,63 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/integrations/google_drive/folders': {
+      get: {
+        summary: 'List a Google Drive folder\'s child folders',
+        description:
+          'Connectors page folder picker (My Drive only — shared drives are not supported). ' +
+          'Session-authenticated (Supabase JWT), org-admin only; NOT reachable with an API key. ' +
+          'Metadata-only: never returns file content. `hasChildren` is always `null` (unknown) — ' +
+          'Drive has no cheap "has subfolders" signal, so every folder renders as expandable.',
+        operationId: 'listGoogleDriveFolders',
+        tags: ['Integrations'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'org_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } },
+          {
+            name: 'parent',
+            in: 'query',
+            schema: { type: 'string', default: 'root' },
+            description: 'Drive folder id to list, or the literal "root" for My Drive.',
+          },
+          { name: 'page_token', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Child folders of the requested parent',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    folders: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          name: { type: 'string' },
+                          hasChildren: { type: 'boolean', nullable: true, description: 'Always null in v1 — unknown.' },
+                          driveId: { type: 'string', nullable: true, description: 'Always null in v1 — My Drive only.' },
+                        },
+                      },
+                    },
+                    nextPageToken: { type: 'string', description: 'Omitted when there is no further page.' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: '`drive=` (shared drive) query param is not supported in v1, or the query failed validation', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { description: 'Google Drive is not connected for this organization (`not_connected`)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '409': { description: 'The stored OAuth grant cannot list folders (`insufficient_drive_scope`) or the connection needs to be re-authorized (`reconnect_required`)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '502': { description: 'Google Drive is unavailable (`drive_unavailable`) — may carry `Retry-After`', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
     '/referrals': {
       get: {
         summary: 'Partner referral code and attributed organizations',
@@ -2996,6 +3053,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },
     { name: 'AI Intelligence', description: 'AI-powered extraction, search, and fraud detection (requires Supabase JWT)' },
+    { name: 'Integrations', description: 'Third-party connector metadata endpoints (Google Drive, DocuSign) — session-authenticated, not reachable with an API key' },
   ],
 };
 
