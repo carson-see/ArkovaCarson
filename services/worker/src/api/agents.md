@@ -603,6 +603,10 @@ organizations.
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
 
+## 2026-09-19 — queue authorization and lookup failures
+
+`GET /api/queue/collision/:externalFileId` returns filenames and fingerprints, so organization membership alone is insufficient: it now requires the canonical organization-admin authority check before reading anchors. Both its profile/org lookup and its authority lookup distinguish operational errors from negative authorization and fail with a generic 500 rather than masking the fault as a 403. `POST /api/queue/run` now makes the same distinction for its caller-profile lookup; a failed read cannot be interpreted as a missing organization.
+
 ## 2026-09-12 SCRUM-5024 — `admin-provisioning.ts`: optional `referral_code`
 
 `CreateOrganizationSchema` gained an OPTIONAL `referral_code`, validated against
