@@ -10,6 +10,10 @@ Canonical submission fixtures intercept the real worker routes, including `/api/
 
 The opt-in `uat22-platform-invite.spec.ts` distinguishes mocked GET list responses from POST create responses and checks that the sent invite appears after refresh at 1280px and 375px. This is browser transport/rendering coverage with real fixture auth, not live worker/DB proof. The real mounted-router counterpart is `services/worker/src/api/admin-invitations.local.test.ts`; both remain explicit local runs with fixture prerequisites. No skip was removed.
 
+## SCRUM-5253 — People actions stay visible on mobile
+
+`uat22-people-layout.spec.ts` drives the real organization page and CSS at 320, 375, and 1280 pixels while stubbing only its HTTP boundaries. It asserts clipping geometry, hit testing, horizontal overflow, and dialog interaction. The root suite ignores it because it owns a separate Vite server and synthetic auth; `npm run test:e2e:people-layout` invokes its standalone config, and the E2E CI job runs that command whenever app-affecting files change.
+
 _Last updated: 2026-09-13 (`ner-dev-load.spec.ts` added)._
 
 ## 2026-09-13 — `ner-dev-load.spec.ts` / `ner-dev-load.config.ts` (new)

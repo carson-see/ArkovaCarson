@@ -818,7 +818,7 @@ function zapierValidationStep(workflow: string): string {
   const validation = steps.filter((step) => /^\s+id: zapier-validation$/mu.test(step));
   expect(validation, "required Tests must actually validate the standalone Zapier package").toHaveLength(1);
   const step = validation[0];
-  expect(step).toMatch(/^\s+if: always\(\)$/mu);
+  expect(step).toMatch(/^\s+if: \$\{\{ !cancelled\(\) \}\}$/mu);
   expect(step).toMatch(/^\s+working-directory: integrations\/zapier$/mu);
   expect(step).toMatch(/^\s+timeout-minutes: 10$/mu);
   expect(step).not.toMatch(/continue-on-error|legacy-peer-deps|npm install|zapier-platform push/u);
@@ -865,6 +865,33 @@ describe("Zapier required clean-build contract", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Tests job cancellation-aware independent suites", () => {
+  const independentIds = [
+    "sdk-tests", "worker-deps", "edge-deps", "zapier-validation",
+  ];
+  const prerequisiteIds = [
+    "rls-tests", "cache-zk-artifacts", "install-circom", "build-zk-circuit",
+    "verify-zk-artifacts", "uat22-local-integration", "worker-coverage", "edge-tests",
+  ];
+
+  it("uses YAML-safe !cancelled expressions and retains the always-run aggregate", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const steps = workflowSteps(workflow);
+    for (const id of independentIds) {
+      const step = steps.find((candidate) => candidate.includes(`id: ${id}`));
+      expect(step, `missing ${id}`).toBeDefined();
+      expect(step).toMatch(/^\s+if: \$\{\{ !cancelled\(\) \}\}$/mu);
+    }
+    for (const id of prerequisiteIds) {
+      const step = steps.find((candidate) => candidate.includes(`id: ${id}`));
+      expect(step, `missing ${id}`).toBeDefined();
+      expect(step).toMatch(/^\s+if: \$\{\{ !cancelled\(\) && .+ \}\}$/mu);
+    }
+    const aggregate = steps.find((candidate) => candidate.includes("name: Aggregate test suite results"));
+    expect(aggregate).toMatch(/^\s+if: always\(\)$/mu);
   });
 });
 

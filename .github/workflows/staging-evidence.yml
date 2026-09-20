@@ -47,7 +47,7 @@ on:
     # body-only fix (e.g. correcting a Soak start/end typo) must re-run the
     # gate. The existing job-level `if:` below already skips Mergify's own
     # speculative status-edit re-writes of that body.
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
     branches: [main, staging, develop]
     paths-ignore:
       - "LICENSE"
@@ -61,13 +61,19 @@ on:
 # must neither cancel a source check nor replace its success/failure status.
 # Real source/base changes and all ordinary PR evidence edits still run.
 concurrency:
-  group: staging-evidence-${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'status-edit' || 'gate' }}
+  group: staging-evidence-${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'status-edit' || (github.event.pull_request.draft && !(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]') && 'draft' || 'gate') }}
   cancel-in-progress: true
 
 jobs:
   staging-evidence:
-    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]') }}
-    name: ${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'Staging evidence status edit' || 'Staging Soak Evidence Gate' }}
+    # Ordinary event-time drafts have not requested admission. Skip at the job
+    # boundary so GitHub allocates no runner (even a five-second runner job is
+    # billed as a full minute). The distinct job name below prevents this
+    # skipped draft status from impersonating the required ready-state gate.
+    # A genuine Mergify speculative draft retains its existing policy path.
+    # Missing/malformed draft context admits the job and fails closed inside.
+    if: ${{ !(github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]') && (!github.event.pull_request.draft || (startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')) }}
+    name: ${{ github.event.action == 'edited' && github.event.changes.body && github.event.changes.base == null && startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]' && github.event.sender.login == 'mergify[bot]' && 'Staging evidence status edit' || (github.event.pull_request.draft && !(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]') && 'Staging evidence deferred (Draft)' || 'Staging Soak Evidence Gate') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -132,6 +138,32 @@ jobs:
             exit 1
           fi
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
+          # Ordinary draft PRs have not requested admission yet. Resolve this
+          # from the live API so a frozen rerun cannot mistake a later
+          # ready/draft transition. Missing or malformed draft state evaluates
+          # fully (fail closed); only the literal boolean true defers work.
+          IS_DRAFT="$(jq -r 'if (.draft | type) == "boolean" then (.draft | tostring) else "unknown" end' <<<"${DATA}")"
+          EVENT_DRAFT="${{ github.event.pull_request.draft }}"
+          # Event-time draft runs always stay in the cheap, distinct draft
+          # bucket. If the PR is Ready now, its fresh ready_for_review event
+          # owns the required gate; this stale draft run must not duplicate or
+          # cancel it.
+          if [[ "${EVENT_DRAFT}" == "true" ]]; then
+            echo "evaluate=false" >> "${GITHUB_OUTPUT}"
+            echo "is_draft=${IS_DRAFT}" >> "${GITHUB_OUTPUT}"
+            if [[ "${IS_DRAFT}" == "false" ]]; then
+              echo "::notice::This frozen draft event now resolves to a Ready PR. Deferring this stale run; the fresh ready_for_review event owns the required Staging Soak Evidence Gate."
+            else
+              echo "::notice::Staging evidence evaluation deferred for this ordinary draft event. Mark Ready for review to mint a fresh full gate check."
+            fi
+            exit 0
+          fi
+          if [[ "${IS_DRAFT}" == "true" ]]; then
+            echo "::error::Live PR #${PR_NUMBER} is Draft, but this frozen event would publish the required Staging Soak Evidence Gate name. Refusing to reuse that required status; wait for the converted_to_draft or ready_for_review event."
+            exit 1
+          fi
+          echo "evaluate=true" >> "${GITHUB_OUTPUT}"
+          echo "is_draft=${IS_DRAFT}" >> "${GITHUB_OUTPUT}"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
           # `.base.sha` on the pull-request resource is a cached field. GitHub
           # can leave it behind the repository ref after main advances (seen
@@ -216,8 +248,14 @@ jobs:
             echo "${BODY_DELIM}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Defer ordinary draft PR
+        if: steps.live_pr.outputs.evaluate == 'false'
+        run: |
+          echo "Staging evidence is deferred for this ordinary draft PR."
+          echo "The ready_for_review event runs the complete evidence gate."
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
+        if: steps.live_pr.outputs.evaluate == 'true'
         with:
           ref: ${{ steps.live_pr.outputs.checkout_sha }}
           fetch-depth: 0
@@ -233,17 +271,17 @@ jobs:
           git merge --no-ff --no-edit "${AUTHORITATIVE_BASE_SHA}"
 
       - name: Setup Node.js
-        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
+        if: steps.live_pr.outputs.evaluate == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
 
       - name: Install root dependencies (typescript + tsx + supabase-js)
-        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
+        if: steps.live_pr.outputs.evaluate == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
       - name: Run staging-evidence check
-        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
+        if: steps.live_pr.outputs.evaluate == 'true'
         env:
           # Live-resolved (SCRUM-3026) — supersede the frozen event payload
           # for exactly the fields that go stale on a bare rerun.

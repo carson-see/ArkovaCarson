@@ -49,6 +49,7 @@ function rootLivePrSteps(workflow: string): string[] {
 function executeLivePrShell(
   prJson: unknown,
   baseJson: unknown,
+  eventDraft = false,
 ): { output: string; calls: string[] } {
   const workflow = readFileSync(WORKFLOW_PATH, "utf8");
   const step = rootLivePrSteps(workflow)[0];
@@ -59,7 +60,8 @@ function executeLivePrShell(
     .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
     .join("\n")
     .replaceAll("${{ github.event.pull_request.number }}", "42")
-    .replaceAll("${{ github.repository }}", "carson-see/ArkovaCarson");
+    .replaceAll("${{ github.repository }}", "carson-see/ArkovaCarson")
+    .replaceAll("${{ github.event.pull_request.draft }}", String(eventDraft));
   const dir = mkdtempSync(resolve(tmpdir(), "live-pr-base-"));
   const callsPath = resolve(dir, "calls");
   const outputPath = resolve(dir, "output");
@@ -276,7 +278,118 @@ function assertWorkflowContract(workflow: string): void {
   ]);
 }
 
+describe("staging-evidence draft admission contract", () => {
+  it("skips ordinary event-time drafts before allocating a runner", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const jobIf = workflow.match(/^    if: (.+)$/mu)?.[1];
+    const jobName = workflow.match(/^    name: (.+)$/mu)?.[1];
+
+    expect(jobIf).toContain("!github.event.pull_request.draft");
+    expect(jobIf).toContain("startsWith(github.head_ref, 'mergify/merge-queue/')");
+    expect(jobIf).toContain("github.event.pull_request.user.login == 'mergify[bot]'");
+    expect(jobName).toContain("'Staging evidence deferred (Draft)'");
+    expect(jobName).toContain("'Staging Soak Evidence Gate'");
+
+    // Event truth table pinned by the expression above: ordinary and forged
+    // queue drafts allocate no runner; Ready/missing-draft events and genuine
+    // Mergify speculative drafts retain their existing evaluation paths.
+    const admits = (draft: unknown, branch: string, author: string) =>
+      draft !== true ||
+      (branch.startsWith("mergify/merge-queue/") && author === "mergify[bot]");
+    expect(admits(true, "feature/human", "human")).toBe(false);
+    expect(admits(true, "mergify/merge-queue/forged", "human")).toBe(false);
+    expect(admits(false, "feature/ready", "human")).toBe(true);
+    expect(admits(undefined, "feature/missing", "human")).toBe(true);
+    expect(admits(true, "mergify/merge-queue/real", "mergify[bot]")).toBe(true);
+  });
+});
+
 describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
+  it("defers an ordinary live draft before base resolution, checkout, or dependency installation", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const { output, calls } = executeLivePrShell(
+      { draft: true },
+      { object: { sha: "b".repeat(40) } },
+      true,
+    );
+
+    expect(output).toContain("evaluate=false");
+    expect(output).toContain("is_draft=true");
+    expect(output).not.toContain("head_sha=");
+    expect(calls).toEqual(["api repos/carson-see/ArkovaCarson/pulls/42"]);
+
+    expect(workflow).toContain(
+      "types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]",
+    );
+    expect(workflow).toContain("'Staging evidence deferred (Draft)'");
+    expect(workflow).toContain("'Staging Soak Evidence Gate'");
+    expect(workflow).toContain(
+      "if [[ \"${EVENT_DRAFT}\" == \"true\" ]]",
+    );
+    expect(workflow).toContain("&& 'draft' || 'gate'");
+    expect(workflow).toContain("- name: Defer ordinary draft PR");
+    for (const stepName of [
+      "actions/checkout@",
+      "- name: Setup Node.js",
+      "- name: Install root dependencies (typescript + tsx + supabase-js)",
+      "- name: Run staging-evidence check",
+    ]) {
+      const step = rootSteps(workflow).find((candidate) =>
+        candidate.includes(stepName),
+      );
+      expect(step, `${stepName} step must exist`).toBeDefined();
+      expect(step).toContain("if: steps.live_pr.outputs.evaluate == 'true'");
+    }
+  });
+
+  it("keeps a frozen draft event cheap when the live PR is now ready", () => {
+    const { output, calls } = executeLivePrShell(
+      { draft: false },
+      { object: { sha: "b".repeat(40) } },
+      true,
+    );
+    expect(output).toContain("evaluate=false");
+    expect(output).toContain("is_draft=false");
+    expect(calls).toEqual(["api repos/carson-see/ArkovaCarson/pulls/42"]);
+  });
+
+  it("fails a frozen ready event when the live PR has since converted to draft", () => {
+    expect(() =>
+      executeLivePrShell(
+        { draft: true },
+        { object: { sha: "b".repeat(40) } },
+        false,
+      ),
+    ).toThrow();
+  });
+
+  it("evaluates missing or false draft metadata fail-closed through the complete gate", () => {
+    const base = { object: { sha: "b".repeat(40) } };
+    const common = {
+      head: { sha: "a".repeat(40) },
+      base: {
+        sha: "b".repeat(40),
+        ref: "main",
+        repo: { full_name: "carson-see/ArkovaCarson" },
+      },
+      user: { login: "human-author" },
+      merge_commit_sha: "c".repeat(40),
+      mergeable_state: "clean",
+      body: "Tier: T2",
+    };
+
+    for (const draft of [false, undefined, null, "true", { forged: true }]) {
+      const pr = { ...common, ...(draft === undefined ? {} : { draft }) };
+      const { output, calls } = executeLivePrShell(pr, base);
+      expect(output).toContain("evaluate=true");
+      expect(output).toContain(`head_sha=${"a".repeat(40)}`);
+      expect(calls).toEqual([
+        "api repos/carson-see/ArkovaCarson/pulls/42",
+        "api repos/carson-see/ArkovaCarson/git/ref/heads/main",
+      ]);
+    }
+  });
+
   it("resolves PR state live via gh api and checks out the live merge-preview SHA", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
     assertWorkflowContract(workflow);
