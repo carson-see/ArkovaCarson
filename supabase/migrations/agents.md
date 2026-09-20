@@ -1565,9 +1565,6 @@ remains held until its own production and CI requirements are satisfied.
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
 
-## 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
-
-Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.
 
 ## CTO review — atomic sub-organization offboarding (2026-09-14)
 
@@ -1621,3 +1618,15 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+
+## Recent migrations (PR #2964) — 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
+
+Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.
+
+This block is titled `(PR #2964)` and placed last among the `(PR #NNNN)` blocks
+because 2964 is the highest PR number in this file (CLAUDE.md §6). It was moved
+here from the shared anchor after the `(PR #2825)` section, where `main`'s
+`(PR #TBD — SCRUM-5120)` block landed at the same line and GitHub — which
+ignores this repo's `.gitattributes` `agents.md merge=union` driver — reported
+the PR CONFLICTING. A later author claiming a higher PR number orders after
+this block.
