@@ -11,11 +11,10 @@
  *
  * SCRUM-2907: Supabase reports a dead link (expired, already used, tampered)
  * by appending `error` / `error_code` / `error_description` to the redirect
- * URL FRAGMENT and creating no session. "No session" was previously this
- * page's only signal, so an expired confirmation link was indistinguishable
- * from "not signed in yet" and the user was bounced to a bare login form with
- * nothing explaining why. Read the error off the fragment FIRST, and say what
- * actually happened.
+ * URL FRAGMENT. A consumed link can coexist with a session established by its
+ * first visit, so only a confirmed, network-validated user matching the locally
+ * remembered signup identity may reconcile `otp_expired` as success. Other
+ * callback errors remain visible and actionable.
  */
 
 import { useEffect, useState } from 'react';
@@ -26,6 +25,10 @@ import { isEmailConfirmationPending } from '@/lib/oauthConfirmation';
 import type { Session } from '@supabase/supabase-js';
 import { ROUTES } from '@/lib/routes';
 import { AUTH_CALLBACK_LABELS } from '@/lib/copy';
+import {
+  clearPendingSignupEmail,
+  readPendingSignupEmail,
+} from '@/lib/authEmailPolicy';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -38,6 +41,8 @@ import {
 interface CallbackError {
   expired: boolean;
 }
+
+type CallbackErrorResolution = 'checking' | 'error' | 'signed_in';
 
 /**
  * Supabase puts the failure in the URL fragment, not the query string, because
@@ -62,12 +67,11 @@ export function AuthCallbackPage() {
   const [callbackError] = useState<CallbackError | null>(
     () => authLinkErrorFromUrl ?? readCallbackError(window.location.hash),
   );
+  const [callbackErrorResolution, setCallbackErrorResolution] = useState<CallbackErrorResolution>(
+    callbackError?.expired ? 'checking' : 'error',
+  );
 
   useEffect(() => {
-    // A failed link never produces a session, so none of the session plumbing
-    // below can resolve — skip it entirely and leave the explanation on screen.
-    if (callbackError) return;
-
     let redirected = false;
 
     const goToDestination = (session: Session | null) => {
@@ -82,6 +86,57 @@ export function AuthCallbackPage() {
       redirected = true;
       navigate(ROUTES.LOGIN, { replace: true });
     };
+
+    if (callbackError) {
+      if (!callbackError.expired) return;
+
+      // A link can be consumed successfully and then revisited by the browser
+      // or a mail client. Supabase reports the second visit as otp_expired even
+      // when the first visit already established this browser's session. The
+      // network-validated user and the locally remembered signup identity must
+      // both match before treating that as a completed confirmation.
+      let cancelled = false;
+      let settled = false;
+      const validationTimeout = window.setTimeout(() => {
+        if (!cancelled && !settled) {
+          settled = true;
+          setCallbackErrorResolution('error');
+        }
+      }, 3000);
+
+      void supabase.auth.getUser()
+        .then(({ data: { user }, error }) => {
+          if (cancelled || settled) return;
+          settled = true;
+          window.clearTimeout(validationTimeout);
+          if (error || !user?.email_confirmed_at) {
+            setCallbackErrorResolution('error');
+            return;
+          }
+
+          const pendingEmail = readPendingSignupEmail();
+          if (pendingEmail && user.email?.toLowerCase() === pendingEmail) {
+            clearPendingSignupEmail();
+            redirected = true;
+            window.history.replaceState(null, '', window.location.pathname);
+            navigate(ROUTES.DASHBOARD, { replace: true });
+            return;
+          }
+
+          setCallbackErrorResolution('signed_in');
+        })
+        .catch(() => {
+          if (!cancelled && !settled) {
+            settled = true;
+            window.clearTimeout(validationTimeout);
+            setCallbackErrorResolution('error');
+          }
+        });
+      return () => {
+        cancelled = true;
+        window.clearTimeout(validationTimeout);
+      };
+    }
 
     // Listen for auth state changes — handles both implicit (hash) and PKCE (code) flows.
     // INITIAL_SESSION fires when detectSessionInUrl exchanges the code/hash on page load.
@@ -127,7 +182,28 @@ export function AuthCallbackPage() {
     };
   }, [navigate, callbackError]);
 
-  if (callbackError) {
+  if (callbackError && callbackErrorResolution === 'signed_in') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md" role="status">
+          <CardHeader className="text-center">
+            <CardTitle>{AUTH_CALLBACK_LABELS.SIGNED_IN_TITLE}</CardTitle>
+            <CardDescription>{AUTH_CALLBACK_LABELS.SIGNED_IN_DESCRIPTION}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            <Button asChild className="w-full">
+              <Link to={ROUTES.DASHBOARD}>{AUTH_CALLBACK_LABELS.CONTINUE}</Link>
+            </Button>
+            <Button asChild variant="ghost" className="w-full">
+              <Link to={ROUTES.SIGNUP}>{AUTH_CALLBACK_LABELS.REQUEST_NEW_LINK}</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (callbackError && callbackErrorResolution === 'error') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
         <Card className="w-full max-w-md" role="alert">

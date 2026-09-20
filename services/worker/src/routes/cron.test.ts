@@ -1868,6 +1868,18 @@ describe('cron routes', () => {
       expect(res.body).toEqual({ recovered: 0 });
     });
 
+    it('returns a retryable failure when recovery is incomplete', async () => {
+      mockRecoverStuckBroadcasts.mockResolvedValueOnce({
+        recovered: 3,
+        passes: 20,
+        incomplete: true,
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/recover-broadcasts');
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ recovered: 3, passes: 20, incomplete: true });
+    });
+
     it('returns 500 on failure', async () => {
       mockRecoverStuckBroadcasts.mockRejectedValueOnce(new Error('fail'));
       const app = createApp();
