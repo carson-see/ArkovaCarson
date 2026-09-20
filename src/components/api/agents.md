@@ -1,3 +1,33 @@
+## 2026-09-12 — SCRUM-5023: the badge reads the SERVER's status; Extend is offered on expired keys
+
+`KeyStatusBadge` renders `apiKey.status` — the worker's own derivation
+(`services/worker/src/api/v1/keyExpiryStatus.ts`), surfaced by GET `/api/v1/keys`. **DO NOT re-derive
+it here.** A second client-side derivation is exactly how the dashboard and the auth middleware came
+to disagree (SCRUM-4515): `is_active` is a stored column that stays `true` on keys auth already
+refuses, and 13 of 19 prod rows were in that state.
+
+`resolveKeyStatus()` keeps ONE local branch, for the rollout window in which a deployed frontend can
+still be talking to a worker that does not send `status`. Without it every key renders Active for the
+length of a deploy — SCRUM-4515 again, for as long as the rollout takes. It is deliberately cruder
+(no `expiring_soon`): an old worker sends no `days_until_expiry` to label one with. **DO NOT** grow it
+into a full second derivation.
+
+**The Extend dialog confirms anything that does not plainly lengthen the key's life.** Every preset
+REPLACES the expiry, so "30 days" on a key with eleven months left cuts ten of them and any preset on
+a never-expiring key invents one — both one click from a button labelled "Extend". `shortensKey()`
+mirrors the server's 409 (`api_key_expiry_would_shorten`); the server is the authority, this only
+decides whether to ask. "Remove expiry" is confirmed for the opposite reason: it is the only option
+that makes a credential permanent. The dialog states the CURRENT expiry before offering any preset,
+because a user who cannot see it cannot tell which presets extend and which cut.
+
+- `expiring_soon` is **amber** and carries the countdown. A warning the owner can act on is the
+  deliverable; a second shade of "fine" is not. Plurality is handled (`today` / `in 1 day` /
+  `in N days`) — never "in 0 days".
+- **Extend is offered on EXPIRED keys too** — the remedy has to be reachable from the failure. Never
+  on a revoked key: revocation is terminal and the worker 409s.
+- DO: on an `onExtend` rejection show the scrubbed `API_KEY_LABELS.EXTEND_FAILED` and keep the dialog
+  open — the expiry did NOT change, and closing implies otherwise (same discipline as revoke/delete).
+
 # agents.md — components/api
 _Last updated: 2026-09-19_
 

@@ -432,6 +432,25 @@ Verification for a change to either script: `bash -n` on the file, plus
 `node --check` on the extracted `smoke.mjs` heredoc for the SDK script (its JS
 is inside a quoted heredoc, so a syntax error there surfaces only at run time,
 mid-soak).
+
+## 2026-09-14 — SCRUM-5145 UAT-17 harness trust boundary
+
+The email confirmation driver and supervisor are bound to the exact owned
+UAT-17 Supabase project, Vercel host, Cloud Run host, GCP project/region/service,
+and the approved scratch manifest. The supervisor executes only the approved
+credentials helper path after verifying its reviewed SHA-256 before each run.
+Every HTTP sink independently rejects an unlisted host or path, including
+encoded traversal. Keep the attacker-host, alternate/symlinked/modified helper,
+and alternate manifest controls when changing these pins. Updating a target or
+helper is a reviewed source change; accepting a new pattern from the manifest
+would reopen the bearer-token disclosure boundary.
+
+The credential-bearing email API client never follows redirects. Its real
+loopback regression checks that a second HTTP origin receives no request or
+credentials, while a direct JSON response still succeeds. Confirmation-link
+redirects are returned to the caller for the existing callback validation.
+The two documentation snapshots include this reviewed trust-boundary section;
+preserve the earlier sections and their individual byte pins when updating them.
 2026-09-05, PR #2519: the two exact documentation snapshots now include the Adobe webhook seed section above. Preserve every prior section, its order, and the existing per-section byte pins when updating either snapshot.
 ## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
 
