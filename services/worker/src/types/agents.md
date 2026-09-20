@@ -157,3 +157,6 @@ migration 0460, mirrored in the frontend type copy. As with this PR's 0453
 additions these signatures are hand-written; canonical generation against
 the qualified migrated database remains a release check. No types are claimed
 to have been regenerated from an unapplied migration.
+# UAT-17
+
+`database.types.ts` includes the additive `add_existing_org_member` RPC result used by the worker's atomic exact-email member-add action.

@@ -5162,6 +5162,15 @@ export const TWO_FACTOR_SETUP_LABELS = {
   LOAD_ERROR_RETRY: 'Retry',
 } as const;
 
+export const ORG_MEMBER_ADD_LABELS = {
+  TITLE: 'Add Existing Member',
+  DESCRIPTION: 'Add an existing Arkova account to your organization by exact email address.',
+  EMAIL_LABEL: 'Member email',
+  ACTION: 'Add member',
+  FAILURE: 'Failed to add member. Please try again.',
+  ROLE_CONFLICT: 'This account is already a member with a different role. Change their role from the member list.',
+} as const;
+
 // =============================================================================
 // PARTNER REFERRALS — SCRUM-5024
 //
