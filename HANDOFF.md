@@ -14,6 +14,17 @@
 
 ## Now
 
+### 2026-09-20T13:10Z — CTO review session (Claude Fable): c2ce window 2 ENDED at 12:54Z — T1/T2 satisfied, T3 NOT met; b4 rig has no soak running
+
+**Read this block first.** It supersedes the `### Soaks` block and the "window 2 RUNNING" statements below.
+
+- **Window 2 final:** 182/182 cycles ok, 2026-09-19T21:27:22.694Z → 2026-09-20T12:54:18.421Z (15.45 h), max gap 392 s, candidate `c2ce445f62814645779b24cd2bb52a7bf886a118` on `arkova-worker-cto-train-b4-0913-staging` revision `…-c2ce` (Supabase `dlfcwhljvkomeouykcwk`); qualified real-scheduler daily flush observed 07:16:40Z inside the window. Sealed log `observer-c2ce-window.window2-FINAL-20260920T125418Z.ndjson` (sha256 `b774115e9a3a3cb4ba553acf18aa00def55b1a9e23b0468849fa8a78a9ec23d9`) and receipt `window2-final-continuity.json` in `/Volumes/Extreme/offload/codex-release-evidence/2026-09-19/t3-final-qualification/`. **T1 (2 h) and T2 (4 h) floors are satisfied for #3008 / #2998 / #3000 / #3003 / #3015; the T3 24 h floor is NOT met for any migration PR in the composite.**
+- **How it ended (three supervisor deaths in 17 h, all harness defects, none caused by the candidate):** (1) 2026-09-19 ~21:19Z window 1 — supervisor bound to a Codex exec-session TTY; (2) 04:41Z — `gcloud` user credentials hit Workspace reauthentication ("cannot prompt during non-interactive execution"); bridged at 04:43:04Z with a 392 s gap by relaunching with a process-scoped `CLOUDSDK_CORE_ACCOUNT` service-account override, window stayed valid; (3) ~12:59Z — one transient `fetch failed` in a cycle, no retry in the harness, `set -e` fired the cleanup trap and cleanup PASSED at 13:00:02.945Z: observer fixture deleted (residue 0), key revoked, scheduler job `b4-daily-anchor-flush-49b` paused. The window cannot be continued on that fixture. **Before the next T3 window: add retry-once with a health gate inside `run_cycle`, stop tearing down the fixture on non-terminal exits, and launch setsid-detached with a non-interactive credential.**
+- **Plain `gcloud` is broken on the Mac mini for every session** until Carson runs `gcloud auth login carson@arkova.ai`. The service-account override used for the bridge is the key already flagged as a P0 (Owner-level); do not build on it.
+- **The Codex controller appears gone:** `controller-monitor.json` last updated 2026-09-19T21:16Z. The per-PR closes it prepared (closing harnesses, PR-body evidence blocks, `gh pr ready`) have NOT been run by anyone. Any T1/T2 prefix spec must use `first_success_at = 2026-09-19T21:27:22.694Z`; note the observer fixture those closing harnesses may rely on is now deleted.
+- Unchanged from the blocks below: 0480 is applied on prod (do not re-apply; SCRUM-5281); SCRUM-5280 has no fix yet; #3019 DO-NOT-SHIP; #2968 close as superseded.
+
+
 ### 2026-09-20T02:45Z → 03:00Z — CTO review session (Claude Fable): T1/T2 floors passed on window 2; 0480 applied on prod (SCRUM-5281)
 
 - **T1 and T2 floors PASSED on c2ce window 2** (start 2026-09-19T21:27:22.694Z): T1 2 h floor reached 23:29:59.817Z (25 cycles), T2 4 h floor reached 2026-09-20T01:27:25.411Z (48 cycles); 64/64 cycles ok at 02:49:03Z, max gap 309 s. Independent read-only continuity receipt: `/Volumes/Extreme/offload/codex-release-evidence/2026-09-19/t3-final-qualification/window2-t1-t2-prefix-continuity.json`. **Still owed for #3008 / #2998 / #3000 / #3003 / #3015:** the controller's per-PR closing harnesses, the PR-body evidence blocks, `gh pr ready` — any prefix spec must use `first_success_at = 2026-09-19T21:27:22.694Z` (the prepared #3008 spec still names window 1). Supervisor pid 85953 keeps running to the T3 floor 2026-09-20T21:27:23Z; the 03:07 America/New_York flush is required inside the window.
@@ -95,7 +106,7 @@
   running per §1.11A (do not tear down). Full trail:
   `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
 
-### Soaks — c2ce union T3/T2/T1 window 2 RUNNING on the b4 rig (started 2026-09-19T21:27:22Z) — do not push to composite heads, do not touch pgid 85953
+### Soaks — NONE running on the b4 rig as of 2026-09-20T13:00Z (c2ce window 2 ended 12:54:18Z; the paragraph below is historical)
 
 Rig `arkova-worker-cto-train-b4-0913-staging` / Supabase `dlfcwhljvkomeouykcwk` is IN USE: supervisor pid 85953, floors T1 2026-09-19T23:27:23Z, T2 2026-09-20T01:27:23Z, T3 2026-09-20T21:27:23Z. Details in the 2026-09-19 block above. The Codex controller was additionally preparing rig 1 for #3024/#3025 at 21:14Z — confirm with its evidence dir before touching rig 1.
 
