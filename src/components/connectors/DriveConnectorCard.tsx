@@ -6,14 +6,13 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle, Cloud, Loader2, PlugZap, Unplug } from 'lucide-react';
+import { CheckCircle, Cloud } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
+import { ConnectorCardStatusRow } from '../integrations/ConnectorCardStatusRow';
 
 /**
  * Worker connect-denial `code` → user-facing copy (§1.3: all user-visible
@@ -201,65 +200,29 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            {statusLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            ) : connected ? (
-              <CheckCircle className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <PlugZap className="h-5 w-5 text-muted-foreground" />
-            )}
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium">Status</p>
-                <Badge variant={connected ? 'default' : 'secondary'}>
-                  {statusLoading ? 'Checking' : connected ? 'Connected' : 'Not Connected'}
-                </Badge>
-              </div>
-              <p className="mt-1 max-w-md text-xs text-muted-foreground">
-                {connected
-                  ? 'Connected.'
-                  : 'Authorize Arkova with least-privilege Drive access.'}
-              </p>
-              {connected && subscriptionDate && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Push channel renews before {subscriptionDate}
-                </p>
-              )}
-              {connected && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {lastSyncedDate ? `Last synced ${lastSyncedDate}` : 'Not yet synced'}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {connected ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDisconnect}
-              disabled={actionLoading}
-            >
-              {actionLoading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Unplug className="mr-2 h-4 w-4" />
-              )}
-              Disconnect
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleConnect}
-              disabled={statusLoading || actionLoading}
-            >
-              {actionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Connect Drive
-            </Button>
+        <ConnectorCardStatusRow
+          statusLoading={statusLoading}
+          connected={connected}
+          actionLoading={actionLoading}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+        >
+          <p className="mt-1 max-w-md text-xs text-muted-foreground">
+            {connected
+              ? 'Connected.'
+              : 'Authorize Arkova with least-privilege Drive access.'}
+          </p>
+          {connected && subscriptionDate && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Push channel renews before {subscriptionDate}
+            </p>
           )}
-        </div>
+          {connected && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {lastSyncedDate ? `Last synced ${lastSyncedDate}` : 'Not yet synced'}
+            </p>
+          )}
+        </ConnectorCardStatusRow>
 
         {error && (
           <p className="text-sm text-destructive">{error}</p>

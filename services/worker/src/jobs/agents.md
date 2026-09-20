@@ -2008,6 +2008,12 @@ Read before changing it:
 `instant-secure.ts` accepts a generation-tagged job and compares it with `rearm_generation` before and after processing. This is not atomic generation fencing inside the batch claim. Migration 0463 must precede this worker because the selected column and retry RPC are new. Roll back the worker before removing that RPC/column. The retry RPC creates one new durable job only for a funded, never-debited NEEDS_CREDIT intent; HELD and safely refunded FAILED work stay unchanged.
 
 The instant consumer now uses the generated table/RPC types directly, replacing temporary `any` bridges. Omitting an absent error-code argument retains the SQL NULL default.
+
+## 2026-09-13 — SCRUM-5120: `batch_insert_anchors` was dropping `description`
+
+`publicRecordAnchor.ts`'s `buildPipelineAnchorInsert` has always built its RPC element with `...(description ? { description } : {})` — this file's JS side never dropped the field. The bug was entirely in `public.batch_insert_anchors` (migration `0370`/SCRUM-3031's redefinition never read `elem->>'description'`), fixed by migration `0458` (threads it through the input CTE and the INSERT column list/matching SELECT only — every other line of 0370's dedup-lookup fix is unchanged). 40,059 openalex/federal_register anchors created since 2026-08-17 landed with `description IS NULL` as a result; the text is still recoverable from the linked `public_records.metadata` row and is backfilled out-of-band by `scripts/ops/repair-pipeline-anchor-descriptions.ts` (not run against any remote database by this change — dry-run only, local stack unavailable in this worktree).
+
+New test `__tests__/publicRecordAnchor-description-rpc-argument.test.ts` pins the JS-side half of the contract (the RPC element carries `description` when the record has source text, and omits the key — not `null` — when it does not). It intentionally mocks `client.rpc(...)`; the persistence half (does the RPC actually store what it's sent) is proven against real Postgres in `tests/rls/scrum-5120-batch-insert-anchors-description.test.ts`, per `tests/rls/agents.md`'s rule that a mock may stand in for a collaborator but never for the invariant under test.
 ## 2026-09-14 — PR #2841 actionable notices and URL correction
 
 This supersedes the 2026-09-12 UNION-recipient decision above. The current key

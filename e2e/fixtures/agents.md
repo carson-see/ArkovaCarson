@@ -21,3 +21,7 @@ Playwright test fixtures providing authenticated page contexts and Supabase help
 - All E2E specs should import from `./index.ts`, not individual fixture files.
 - Auth uses pre-saved storageState (no per-test login flows).
 - `uat19-org-profile.html` / `.tsx` mount the real OrgProfilePage for loopback-only UAT-19 browser geometry. Playwright replaces authentication/data/integration boundaries, while the real route page, OrgRegistryTable, route-scoped folder hook and FolderSidebar execute unchanged. This is UI behavior evidence, not hosted authorization or database proof.
+
+## SCRUM-5145 — email confirmation development entry
+
+`uat17-email-confirmation.html`/`.tsx` mount the production signup or callback component and CSS in MemoryRouter. The root production build does not include this development-only HTML entry. Playwright simulates external Auth responses; no mock hook implementation or seeded production account is used.

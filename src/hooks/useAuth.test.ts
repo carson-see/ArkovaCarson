@@ -13,6 +13,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockSignInWithPassword = vi.hoisted(() => vi.fn());
 const mockSignUp = vi.hoisted(() => vi.fn());
+const mockResend = vi.hoisted(() => vi.fn());
 const mockSignInWithOAuth = vi.hoisted(() => vi.fn());
 const mockSignOut = vi.hoisted(() => vi.fn());
 const mockOnAuthStateChange = vi.hoisted(() => vi.fn());
@@ -30,6 +31,7 @@ vi.mock('@/lib/supabase', () => ({
       getSession: mockGetSession,
       signInWithPassword: mockSignInWithPassword,
       signUp: mockSignUp,
+      resend: mockResend,
       signInWithOAuth: mockSignInWithOAuth,
       signOut: mockSignOut,
       onAuthStateChange: mockOnAuthStateChange,
@@ -218,6 +220,44 @@ describe('useAuth', () => {
 
     expect(signUpResult?.error).toBeNull();
     expect(signUpResult?.session).toBeNull();
+  });
+
+  it('resends signup confirmation through the dedicated endpoint and preserves the callback', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockResend.mockResolvedValue({ data: {}, error: null });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.resendSignUpConfirmation('new@test.com');
+    });
+
+    expect(mockResend).toHaveBeenCalledWith({
+      type: 'signup',
+      email: 'new@test.com',
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+    });
+    expect(mockSignUp).not.toHaveBeenCalled();
+  });
+
+  it('returns a resend failure so the confirmation screen cannot report success', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    const resendError = { message: 'Email rate limit exceeded' };
+    mockResend.mockResolvedValue({ data: {}, error: resendError });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let resendResult: Awaited<ReturnType<typeof result.current.resendSignUpConfirmation>> | undefined;
+    await act(async () => {
+      resendResult = await result.current.resendSignUpConfirmation('new@test.com');
+    });
+
+    expect(resendResult?.error).toBe(resendError);
+    expect(result.current.error).toBe('Email rate limit exceeded');
   });
 
   it('signInWithGoogle calls signInWithOAuth', async () => {

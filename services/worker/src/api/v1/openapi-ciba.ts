@@ -465,7 +465,7 @@ function queuePaths(): Record<string, SpecPathItem> {
     },
     '/api/queue/collision/{externalFileId}': {
       parameters: [
-        { name: 'externalFileId', in: 'path', required: true, schema: { type: 'string' } },
+        { name: 'externalFileId', in: 'path', required: true, schema: { type: 'string', minLength: 1, maxLength: 255 } },
         { name: 'org_id', in: 'query', required: false, schema: { type: 'string', format: 'uuid' } },
       ],
       get: {

@@ -16,11 +16,12 @@
 import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { getCallerProfile } from './_org-auth.js';
+import { getCallerProfileResult } from './_org-auth.js';
 import { authorizeManualRun } from './queue-resolution.js';
 import { z } from 'zod';
 
 const MAX_CANDIDATES = 25;
+const MAX_EXTERNAL_FILE_ID_LENGTH = 255;
 
 export interface CollisionCandidate {
   public_id: string;
@@ -90,13 +91,25 @@ export async function handleCollisionContext(
   res: Response,
 ): Promise<void> {
   const externalFileId = String(req.params.externalFileId ?? '').trim();
-  if (!externalFileId) {
+  if (!externalFileId || externalFileId.length > MAX_EXTERNAL_FILE_ID_LENGTH) {
     res.status(400).json({
-      error: { code: 'invalid_request', message: 'externalFileId required' },
+      error: {
+        code: 'invalid_request',
+        message: `externalFileId must contain 1-${MAX_EXTERNAL_FILE_ID_LENGTH} characters`,
+      },
     });
     return;
   }
-  const profile = await getCallerProfile(userId);
+  // `*Result` (not the fail-closed `getCallerProfile`) so an operational
+  // profiles failure surfaces as 500 instead of masquerading as "no org" 403
+  // (SCRUM-3569 / #2998 contract, preserved across the UAT-19 exact-org work).
+  const { value: profile, error: profileError } = await getCallerProfileResult(userId);
+  if (profileError) {
+    res.status(500).json({
+      error: { code: 'lookup_failed', message: 'Unable to verify caller organization' },
+    });
+    return;
+  }
   const requestedOrg = req.query.org_id === undefined
     ? { success: true as const, data: undefined }
     : z.string().uuid().safeParse(req.query.org_id);

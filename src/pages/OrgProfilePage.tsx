@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Bell, Building2, ListChecks, Settings, Plus, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
+import { Bell, Building2, ListChecks, Settings, Plus, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, PlugZap } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -36,15 +36,13 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, CONNECTORS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs, translateWorkerError, type SubOrgCounts } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
-import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
-import { DocusignConnectorCard } from '@/components/integrations/DocusignConnectorCard';
 import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDocusignConnectorCard';
 import { AdobeSignConnectorCard, adobeSignErrorCopy } from '@/components/integrations/AdobeSignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
@@ -511,15 +509,20 @@ function OrgProfilePageInner() {
   // pending row created by the RPC alongside the stale one it doesn't touch.
   const handleResendInvitation = useCallback(async (invitation: OrgInvitation) => {
     if (!orgId) return;
-    await inviteMember({
+    const invited = await inviteMember({
       email: invitation.email,
-      role: invitation.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INDIVIDUAL',
+      // The browser invite_member RPC deliberately rejects ORG_ADMIN, but the
+      // platform-admin worker route supports it. Preserve the requested role
+      // for that authorized route; ordinary org admins still resend as members.
+      role: platformAdmin && invitation.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INDIVIDUAL',
       orgId,
       orgName: organization?.display_name ?? 'Your Organization',
       inviterName: profile?.full_name ?? undefined,
     });
-    await refreshInvitations();
-  }, [inviteMember, orgId, organization?.display_name, profile?.full_name, refreshInvitations]);
+    if (invited) {
+      await refreshInvitations();
+    }
+  }, [inviteMember, orgId, organization?.display_name, platformAdmin, profile?.full_name, refreshInvitations]);
 
   const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
     const { error } = await supabase
@@ -620,9 +623,13 @@ function OrgProfilePageInner() {
                   {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
                 </Badge>
               )}
-              <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.RULES)}>
-                <ScrollText className="mr-2 h-4 w-4" />
-                Rules
+              {/* SPEC-CONNECTORS (founder direction 2026-09-13): replaces the
+                  "Rules" nav entry. /organization/rules stays routed and
+                  reachable by direct URL — see PM-9 — this is the only nav
+                  edit. */}
+              <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.CONNECTORS)}>
+                <PlugZap className="mr-2 h-4 w-4" />
+                Connectors
               </Button>
               {isAdmin && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`${ROUTES.ANCHOR_QUEUE}?org_id=${encodeURIComponent(orgId ?? '')}`)}>
@@ -1192,12 +1199,28 @@ function OrgProfilePageInner() {
                 />
               </div>
 
+              {/* PM-11: Drive + DocuSign cards MOVED to /organization/connectors
+                  (not duplicated) — this link row replaces them. Adobe Sign and
+                  the personal DocuSign connector stay here per §1.2: Adobe's
+                  live prod state is the "unconfigured" denial (no card would
+                  just recreate the greyed "coming soon" state the founder
+                  rejected), and personal DocuSign is member-scoped, not an org
+                  connector. */}
               <div className="mt-8">
-                <DriveConnectorCard orgId={orgId} />
-              </div>
-
-              <div className="mt-8">
-                <DocusignConnectorCard orgId={orgId} />
+                <Card>
+                  <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <PlugZap className="h-5 w-5 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium">{CONNECTORS_LABELS.SETTINGS_CONNECTORS_LINK_TITLE}</p>
+                        <p className="text-xs text-muted-foreground">{CONNECTORS_LABELS.SETTINGS_CONNECTORS_LINK_DESC}</p>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.CONNECTORS)}>
+                      {CONNECTORS_LABELS.SETTINGS_CONNECTORS_LINK_BUTTON}
+                    </Button>
+                  </CardContent>
+                </Card>
               </div>
 
               <div className="mt-8">

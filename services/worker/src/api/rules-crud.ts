@@ -29,6 +29,19 @@ import {
 } from '../rules/schemas.js';
 import { evaluateRule, type TriggerEvent, type RuleRow } from '../rules/evaluator.js';
 
+/**
+ * Connectors page (SPEC-CONNECTORS §1.4) marks the rule it writes with
+ * `action_config.tag: 'connector-<provider>'` so it can recognise its own
+ * rule later. Used ONLY to scope the adopt-vs-create race guard below to
+ * connector-originated creates — never trust `tag` for anything
+ * security-relevant, it is caller-supplied.
+ */
+function isConnectorManagedActionConfig(actionConfig: unknown): boolean {
+  if (!actionConfig || typeof actionConfig !== 'object') return false;
+  const tag = (actionConfig as Record<string, unknown>).tag;
+  return typeof tag === 'string' && /^connector-[a-z0-9_]+$/.test(tag);
+}
+
 const UuidSchema = z.string().uuid();
 const ExecutionLimitSchema = z.coerce.number().int().min(1).max(100).default(25);
 
@@ -97,6 +110,19 @@ async function emitRuleAudit(
   }
 }
 
+// D4 (Connectors page — SPEC-CONNECTORS §1.5): the one-click toggle between
+// "Secure it immediately" (INSTANT_SECURE) and "Add it to the secure queue"
+// (AUTO_ANCHOR) needs a way to change an EXISTING rule's action_type without
+// DELETE + POST + PATCH, which would mint a new rule id and orphan that
+// rule's `organization_rule_executions` history. `action_type` is optional
+// and MUST be paired with `action_config` in the same PATCH — a config left
+// over from the OLD action would pass this schema but corrupt the stored
+// rule (`validateRuleConfigs` needs the pair together to catch a mismatch;
+// see `validatePatchAgainstCurrent` below). `trigger_type` stays immutable —
+// there is no field for it here, and connector rules never change trigger
+// type.
+const ACTION_TYPE_PAIRING_MESSAGE = 'action_config is required when action_type is present';
+
 export const UpdateOrgRuleInput = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
@@ -104,8 +130,28 @@ export const UpdateOrgRuleInput = z
     enabled: z.boolean().optional(),
     trigger_config: z.record(z.string(), z.unknown()).optional(),
     action_config: z.record(z.string(), z.unknown()).optional(),
+    action_type: z
+      .enum([
+        'AUTO_ANCHOR',
+        'FAST_TRACK_ANCHOR',
+        'INSTANT_SECURE',
+        'QUEUE_FOR_REVIEW',
+        'FLAG_COLLISION',
+        'NOTIFY',
+        'FORWARD_TO_URL',
+      ])
+      .optional(),
   })
-  .refine((d) => Object.keys(d).length > 0, 'At least one field required');
+  .refine((d) => Object.keys(d).length > 0, 'At least one field required')
+  .superRefine((d, ctx) => {
+    if (d.action_type !== undefined && d.action_config === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['action_config'],
+        message: ACTION_TYPE_PAIRING_MESSAGE,
+      });
+    }
+  });
 
 export type UpdateOrgRuleInputT = z.infer<typeof UpdateOrgRuleInput>;
 
@@ -583,6 +629,52 @@ export async function handleCreateRule(
     return;
   }
 
+  // Connectors-page adopt-vs-create race (CTO pre-mortem, 2026-09-13): the
+  // page reads the org's rule count for a trigger_type at load and decides
+  // create-vs-adopt client-side, but `docusign-rule-seed.ts` auto-seeds an
+  // ESIGN_COMPLETED rule on every DocuSign connect — asynchronously, on its
+  // own trigger. A seed landing in the window between the page's read and
+  // this POST would leave TWO enabled rules on the same trigger_type, and a
+  // signed envelope / Drive change would fire both (PM-5's double-anchor).
+  // Re-check SERVER-SIDE, inside this write path, immediately before the
+  // insert — narrows the race to the gap between this SELECT and the INSERT
+  // below (irreducible without a DB-level unique constraint, which is a
+  // migration and out of scope here) rather than the gap between the page
+  // load and the Save click.
+  //
+  // Scoped to CONNECTOR-MANAGED creates only (action_config.tag matches
+  // `connector-<provider>`, the marker set in SPEC-CONNECTORS §1.4) — a
+  // RulesPage/RuleBuilderPage admin building a second, differently-filtered
+  // rule on the same trigger_type on purpose is a legitimate, existing use
+  // of this endpoint and must not be blocked by a check that exists to
+  // protect ONE UI's adopt-vs-create invariant.
+  if (isConnectorManagedActionConfig(parsed.data.action_config)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: existingEnabled, error: existingErr } = await (db as any)
+      .from('organization_rules')
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('trigger_type', parsed.data.trigger_type)
+      .eq('enabled', true)
+      .limit(1)
+      .maybeSingle();
+    if (existingErr) {
+      logger.warn({ error: existingErr, orgId }, 'connector rule race-check lookup failed');
+      res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+      return;
+    }
+    if (existingEnabled?.id) {
+      res.status(409).json({
+        error: {
+          code: 'rule_exists',
+          message: 'An enabled rule for this trigger already exists — adopt it instead of creating a new one.',
+          existing_rule_id: existingEnabled.id,
+        },
+      });
+      return;
+    }
+  }
+
   try {
     // SEC-02 defense-in-depth: newly-created rules ALWAYS ship disabled
     // regardless of what the request body asks for. ARK-108 wizard + ARK-110
@@ -634,7 +726,7 @@ export async function handleCreateRule(
 }
 
 type PatchValidationResult =
-  | { kind: 'ok' }
+  | { kind: 'ok'; currentActionType?: string }
   | { kind: 'error'; status: number; body: Record<string, unknown> };
 
 type ParsedUpdateRuleRequest =
@@ -649,13 +741,21 @@ function parseUpdateRuleRequest(req: Request): ParsedUpdateRuleRequest {
 
   const bodyParsed = UpdateOrgRuleInput.safeParse(req.body);
   if (!bodyParsed.success) {
+    // D4: the action_type/action_config pairing superRefine gets its OWN
+    // code (`invalid_config`) rather than the generic `invalid_request` —
+    // it is a config-pairing rule, not a malformed-shape rule, and every
+    // other config-pairing rejection in this file (validatePatchAgainstCurrent,
+    // handleCreateRule) already uses `invalid_config`.
+    const isActionPairingIssue = bodyParsed.error.issues.some(
+      (issue) => issue.code === 'custom' && issue.path.join('.') === 'action_config' && issue.message === ACTION_TYPE_PAIRING_MESSAGE,
+    );
     return {
       kind: 'error',
       status: 400,
       body: {
         error: {
-          code: 'invalid_request',
-          message: 'Invalid body',
+          code: isActionPairingIssue ? 'invalid_config' : 'invalid_request',
+          message: isActionPairingIssue ? ACTION_TYPE_PAIRING_MESSAGE : 'Invalid body',
           details: bodyParsed.error.flatten(),
         },
       },
@@ -686,7 +786,7 @@ function validatePatchSecrets(patch: UpdateOrgRuleInputT): PatchValidationResult
 
 function buildRuleUpdate(patch: UpdateOrgRuleInputT): Record<string, unknown> {
   const update: Record<string, unknown> = {};
-  for (const k of ['name', 'description', 'enabled', 'trigger_config', 'action_config'] as const) {
+  for (const k of ['name', 'description', 'enabled', 'trigger_config', 'action_config', 'action_type'] as const) {
     if (patch[k] !== undefined) update[k] = patch[k];
   }
   return update;
@@ -728,13 +828,17 @@ async function validatePatchAgainstCurrent(
     description: patch.description,
     trigger_type: current.trigger_type,
     trigger_config: patch.trigger_config ?? current.trigger_config,
-    action_type: current.action_type,
+    // D4: an action_type patch is validated against the (also-required)
+    // patched action_config — never the stale current one, which is exactly
+    // the mismatch (INSTANT_SECURE row keeping a NOTIFY config, say) this
+    // guard exists to catch.
+    action_type: patch.action_type ?? current.action_type,
     action_config: patch.action_config ?? current.action_config,
     enabled: false,
   };
   try {
     validateRuleConfigs(merged);
-    return { kind: 'ok' };
+    return { kind: 'ok', currentActionType: current.action_type as string | undefined };
   } catch (err) {
     return {
       kind: 'error',
@@ -747,6 +851,75 @@ async function validatePatchAgainstCurrent(
       },
     };
   }
+}
+
+/**
+ * Adopt-vs-create race guard, second half (CTO pre-mortem, 2026-09-13).
+ *
+ * `handleCreateRule`'s race check only covers the INSERT: the Connectors
+ * page's create flow is actually two calls — `POST /api/rules`
+ * (SEC-02 forces `enabled=false` on every create, connector or not) then
+ * `PATCH /api/rules/:id {enabled:true}` to activate it. A rule seeded by
+ * `docusign-rule-seed.ts` can land in the gap BETWEEN those two calls just
+ * as easily as in the gap the create-time check narrows — and nothing
+ * guarded that second gap until now: `validatePatchAgainstCurrent` doesn't
+ * even read the current row for a bare `{enabled:true}` patch (no
+ * trigger_config/action_config in the body), so a plain enable-toggle had
+ * zero connector awareness. Same scoping as the create-time guard —
+ * connector-tagged rules only, `enabled: false -> true` transitions only
+ * (an already-enabled rule being re-patched is a no-op for this check) —
+ * and same limit: check-then-update, not a DB-level constraint, so this
+ * narrows the residual window rather than closing it to zero.
+ */
+async function checkConnectorEnableRace(
+  ruleId: string,
+  orgId: string,
+): Promise<PatchValidationResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: current, error: readErr } = await (db as any)
+    .from('organization_rules')
+    .select('trigger_type, action_config, enabled')
+    .eq('id', ruleId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (readErr) {
+    logger.warn({ error: readErr, orgId }, 'connector rule enable race-check read failed');
+    return { kind: 'error', status: 500, body: { error: { code: 'internal', message: 'Internal server error' } } };
+  }
+  if (!current || current.enabled === true || !isConnectorManagedActionConfig(current.action_config)) {
+    return { kind: 'ok' };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: existingEnabled, error: existingErr } = await (db as any)
+    .from('organization_rules')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('trigger_type', current.trigger_type)
+    .eq('enabled', true)
+    .limit(1)
+    .maybeSingle();
+  if (existingErr) {
+    logger.warn({ error: existingErr, orgId }, 'connector rule enable race-check lookup failed');
+    return { kind: 'error', status: 500, body: { error: { code: 'internal', message: 'Internal server error' } } };
+  }
+  // The row being enabled is still `enabled=false` as of the read above, so
+  // it can never match its own id in this second query — no self-exclusion
+  // needed.
+  if (existingEnabled?.id) {
+    return {
+      kind: 'error',
+      status: 409,
+      body: {
+        error: {
+          code: 'rule_exists',
+          message: 'An enabled rule for this trigger already exists — adopt it instead of enabling a second one.',
+          existing_rule_id: existingEnabled.id,
+        },
+      },
+    };
+  }
+  return { kind: 'ok' };
 }
 
 export async function handleUpdateRule(
@@ -780,6 +953,14 @@ export async function handleUpdateRule(
       return;
     }
 
+    if (parsed.patch.enabled === true) {
+      const raceCheck = await checkConnectorEnableRace(parsed.ruleId, orgId);
+      if (raceCheck.kind === 'error') {
+        res.status(raceCheck.status).json(raceCheck.body);
+        return;
+      }
+    }
+
     // CIBA-HARDEN-05: rely on the DB trigger `set_organization_rules_updated_at`
     // (migration 0224) instead of stamping `updated_at` here. Two sources of
     // truth meant a race could set the column to the handler's pre-commit
@@ -806,7 +987,7 @@ export async function handleUpdateRule(
       return;
     }
     res.json({ ok: true });
-    void emitUpdateAudit(userId, orgId, parsed.ruleId, parsed.patch);
+    void emitUpdateAudit(userId, orgId, parsed.ruleId, parsed.patch, validation.currentActionType);
   } catch (err) {
     logger.error({ error: err }, 'handleUpdateRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
@@ -816,12 +997,21 @@ export async function handleUpdateRule(
 /**
  * SEC-02: emit the granular audit event for a rule update. `enabled` flip is
  * the most auditor-relevant signal — dedicated event types for on/off.
+ *
+ * D4: an `action_type` patch gets its own `{from, to}` detail shape instead
+ * of the generic `{patch}` dump — that is the one field on this endpoint
+ * that changes what an already-enabled rule actually DOES (credit-funded
+ * INSTANT_SECURE vs free-queue AUTO_ANCHOR, say), so an auditor greps for the
+ * transition directly rather than parsing it back out of a raw patch blob.
+ * `currentActionType` comes from the SAME row read `validatePatchAgainstCurrent`
+ * already did — no extra query.
  */
 async function emitUpdateAudit(
   userId: string,
   orgId: string,
   ruleId: string,
   patch: UpdateOrgRuleInputT,
+  currentActionType?: string,
 ): Promise<void> {
   if (patch.enabled === true) {
     await emitRuleAudit('ORG_RULE_ENABLED', { actorId: userId, orgId, ruleId });
@@ -829,6 +1019,15 @@ async function emitUpdateAudit(
   }
   if (patch.enabled === false) {
     await emitRuleAudit('ORG_RULE_DISABLED', { actorId: userId, orgId, ruleId });
+    return;
+  }
+  if (patch.action_type !== undefined) {
+    await emitRuleAudit('ORG_RULE_UPDATED', {
+      actorId: userId,
+      orgId,
+      ruleId,
+      details: { from: currentActionType, to: patch.action_type },
+    });
     return;
   }
   await emitRuleAudit('ORG_RULE_UPDATED', {

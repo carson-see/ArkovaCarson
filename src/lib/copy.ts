@@ -10,6 +10,8 @@
  * Internal DB/code may use technical names, but UI renders approved terms only.
  */
 
+import { SIGNUP_EMAIL_LINK_LIFETIME_SECONDS } from './authEmailPolicy';
+
 // =============================================================================
 // ANCHOR STATUS
 // =============================================================================
@@ -1907,6 +1909,77 @@ export const CONNECTIONS_LABELS = {
 } as const;
 
 // =============================================================================
+// CONNECTORS PAGE (SPEC-CONNECTORS — DocSend-model folder selection, §5)
+// =============================================================================
+//
+// Every user-visible string for /organization/connectors. Extends
+// CONNECTIONS_LABELS' existing GOOGLE_DRIVE_NAME / DOCUSIGN_NAME /
+// CONNECT_BUTTON / STATUS_* keys rather than duplicating them.
+
+export const CONNECTORS_LABELS = {
+  // Page chrome
+  CONNECTORS_PAGE_TITLE: 'Connectors',
+  CONNECTORS_PAGE_SUBTITLE: 'Connect a document source and choose what happens when a new document arrives.',
+  CONNECTORS_ADVANCED_LINK: 'Advanced: manage rules',
+  CONNECTORS_EMPTY_ORG: 'Connectors are set up per organization. Open your organization to continue.',
+
+  // Drive folder selection
+  DRIVE_CHOOSE_FOLDERS: 'Choose folders',
+  DRIVE_FOLDERS_NONE: 'No folders selected yet. Arkova will not act on anything until you choose at least one.',
+  DRIVE_FOLDERS_HEADING: 'Watched folders',
+  DRIVE_FOLDERS_DIRECT_ONLY: 'Only files added directly to a selected folder are picked up. Subfolders are not included — select them too if you need them.',
+  DRIVE_FOLDERS_CAP: 'You can watch up to 20 folders.',
+  DRIVE_PICKER_TITLE: 'Choose Google Drive folders',
+  DRIVE_PICKER_ROOT: 'My Drive',
+  DRIVE_PICKER_EMPTY: 'No subfolders here.',
+  DRIVE_PICKER_LOADING: 'Loading folders…',
+  DRIVE_PICKER_LOAD_MORE: 'Load more folders',
+  DRIVE_PICKER_SHARED_DRIVES_NOTE: 'Shared drives are not supported yet. Choose a folder in My Drive.',
+  DRIVE_PICKER_REMOVE: 'Remove folder',
+  DRIVE_PICKER_DONE: 'Use these folders',
+
+  // Action choice — the only place a customer learns a credit is spent.
+  CONNECTOR_ACTION_HEADING: 'When a new document arrives',
+  CONNECTOR_ACTION_INSTANT: 'Secure it immediately',
+  CONNECTOR_ACTION_INSTANT_HELP: 'Uses 1 credit per document. If you run out of credits, documents move to the secure queue instead and we email your administrators.',
+  CONNECTOR_ACTION_QUEUE: 'Add it to the secure queue',
+  CONNECTOR_ACTION_QUEUE_HELP: 'No credit used. Queued documents are secured in the next scheduled batch.',
+  CONNECTOR_SAVE: 'Save',
+  CONNECTOR_SAVING: 'Saving…',
+  CONNECTOR_SAVED_TOAST: 'Settings saved. New documents will follow this setting.',
+
+  // Errors — each maps a real worker `code`; no copy for a code that cannot happen.
+  DRIVE_FOLDERS_SCOPE_MISSING: 'Arkova needs permission to see your folder names. Reconnect Google Drive to continue.',
+  DRIVE_FOLDERS_RECONNECT: 'Your Google Drive connection expired. Reconnect to choose folders.',
+  DRIVE_FOLDERS_FORBIDDEN: 'You do not have permission to open that folder in Google Drive.',
+  DRIVE_FOLDERS_NOT_FOUND: 'That folder no longer exists in Google Drive.',
+  DRIVE_FOLDERS_UNAVAILABLE: 'Google Drive is not responding right now. Please try again in a moment.',
+  DRIVE_FOLDERS_NOT_CONNECTED: 'Connect Google Drive before choosing folders.',
+  CONNECTOR_SAVE_FAILED: 'Could not save those settings. Please try again.',
+  CONNECTOR_MANAGED_IN_RULES: 'This connector is set up with more than one rule, so it is managed in Rules.',
+  CONNECTOR_MANAGE_IN_RULES_LINK: 'Manage in Rules',
+  CONNECTOR_FOLDER_MISSING: 'This folder was removed or renamed in Google Drive.',
+  CONNECTOR_LOAD_FAILED: 'Could not load your connector settings. Please try again.',
+  CONNECTOR_RECONNECT_BUTTON: 'Reconnect Google Drive',
+  CONNECTOR_RETRY_BUTTON: 'Retry',
+
+  // OrgProfile Settings tab — link row replacing the moved cards (PM-11).
+  SETTINGS_CONNECTORS_LINK_TITLE: 'Connectors',
+  SETTINGS_CONNECTORS_LINK_DESC: 'Google Drive, DocuSign — manage connectors',
+  SETTINGS_CONNECTORS_LINK_BUTTON: 'Manage connectors',
+
+  // OAuth return-trip toasts (Drive leg — DocuSign reuses CONNECTIONS_LABELS'
+  // TOAST_CONNECTED / TOAST_ERROR_PREFIX, which are DocuSign-worded).
+  DRIVE_TOAST_CONNECTED: 'Google Drive connected. New files will now trigger rules.',
+  DRIVE_TOAST_ERROR: 'Google Drive connection was not completed.',
+
+  // Connector card badges/sections (§1.3 — every string here, none inline in JSX).
+  CONNECTOR_MANAGED_BADGE: 'Managed in Rules',
+  DOCUSIGN_ENVELOPES_HEADING: 'Envelopes',
+  DOCUSIGN_ENVELOPES_DESC: 'All completed envelopes from this account.',
+} as const;
+
+// =============================================================================
 // ACCOUNT DELETION (PII-02 — GDPR Art. 17)
 // =============================================================================
 
@@ -2677,6 +2750,19 @@ export const AUTH_FORM_LABELS = {
   CREATING_ACCOUNT: 'Creating account...',
 } as const;
 
+export const SIGNUP_EMAIL_CONFIRMATION_LABELS = {
+  TITLE: 'Check your email',
+  DESCRIPTION: 'We sent a verification link to confirm your account.',
+  INSTRUCTION: 'Click the link in the email to verify your account and sign in.',
+  EXPIRY: `The link expires in ${SIGNUP_EMAIL_LINK_LIFETIME_SECONDS / 60} minutes. If you don't see the email, check your spam folder.`,
+  RESEND: 'Resend email',
+  RESENDING: 'Sending...',
+  RESEND_WAIT: 'Resend in',
+  RESEND_SUCCESS: 'A new verification link was sent.',
+  RESEND_ERROR: 'We could not send a new verification link. Please try again when the timer ends.',
+  BACK: 'Back to sign up',
+} as const;
+
 // =============================================================================
 // ACCEPT INVITE (SCRUM-3012) — /accept-invite?token=...
 // =============================================================================
@@ -2761,10 +2847,10 @@ export const ACTIVATE_ACCOUNT_LABELS = {
 /**
  * SCRUM-2907 — copy for a confirmation link that did not work.
  *
- * Supabase signals a dead link with `error`/`error_code` on the redirect hash
- * and creates no session. Previously the app could not tell that apart from
- * "not signed in yet" and silently redirected to the login form, so a user
- * whose link had expired saw no explanation and had no route forward.
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash.
+ * A consumed link can coexist with an existing browser session, so the callback
+ * distinguishes a correlated confirmed user from an unrelated or unconfirmed
+ * session and gives every state an honest route forward.
  */
 export const AUTH_CALLBACK_LABELS = {
   COMPLETING: 'Completing sign in...',
@@ -2774,6 +2860,10 @@ export const AUTH_CALLBACK_LABELS = {
   FAILED_TITLE: 'We could not complete sign in',
   FAILED_DESCRIPTION:
     'Something went wrong verifying this link. Try again, or request a new link.',
+  SIGNED_IN_TITLE: 'This link is no longer valid',
+  SIGNED_IN_DESCRIPTION:
+    'You are already signed in. Continue to your account, or request a new link for the account you were verifying.',
+  CONTINUE: 'Continue to your account',
   REQUEST_NEW_LINK: 'Request a new link',
   BACK_TO_SIGN_IN: 'Back to sign in',
 } as const;
