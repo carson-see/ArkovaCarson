@@ -30,11 +30,11 @@ import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
-import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
 import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
-import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { detectReorgs, monitorStuckTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { runLeasedRebroadcastSweep, runLeasedRevocationSweep } from '../jobs/leased-chain-jobs.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { runCreditConservationReconciler } from '../jobs/credit-conservation-reconciler.js';
@@ -99,7 +99,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     'check-confirmations', '*/2 * * * *', checkSubmittedConfirmations,
   );
   const monitoredRevocations = withCronMonitoring(
-    'process-revocations', '*/5 * * * *', processRevokedAnchors,
+    'process-revocations', '*/5 * * * *', runLeasedRevocationSweep,
   );
   const monitoredWebhookRetries = withCronMonitoring(
     'webhook-retries', '*/2 * * * *', processWebhookRetries,
@@ -317,7 +317,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   // NET-3: Rebroadcast dropped TXs every 6 hours
   scheduleInProcess('rebroadcast-dropped-transactions', '0 */6 * * *', async () => {
     try {
-      await trackOperation(rebroadcastDroppedTransactions());
+      await trackOperation(runLeasedRebroadcastSweep());
     } catch (error) {
       logger.error({ error }, 'TX rebroadcast cron failed');
     }

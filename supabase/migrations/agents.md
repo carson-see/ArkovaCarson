@@ -1619,6 +1619,7 @@ The native harness asserts exact balances across both serialization orders and
 zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
 for the final C3 source review and fresh qualification.
 
+- `0468_allocate_monthly_credits_singleton.sql` — preserves the integer RPC contract while taking transaction advisory lock `(8675309,3)` before the monthly credit scan. A concurrent caller returns `0`; the winner row-locks eligible credits, advances `cycle_end`, and writes the existing expiry/allocation ledger rows once. Sequential re-entry returns `0` because no row remains eligible.
 ## 2026-09-19 — Referral RPC empty-claims guard (0466)
 
 Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both
