@@ -319,6 +319,38 @@ The original `agentPassport.machine.ts` prose claimed graph equivalence but omit
 
 The current `agentKeyAuthority.machine.ts` removes the retired compensating-cleanup path: admission now commits agent, key and audits in one transaction. The remaining direct-mint/PATCH model passes at 20 states / 32 edges. New `passportAdmission.machine.ts` models absent-row serialization, two organizations, terminal provider authority, rollback, unknown responses and mandatory audits; its PR proof and graph equivalence pass at 525 states / 1681 edges. Five negative controls reproduce missing sentinel locks, global-revocation bypass, missing audits, late mint and stale PATCH. These are bounded design proofs with real SQL tests, not generated runtime adapters.
 
+## 2026-09-12 — `apiKeyExpiry.machine.ts` (SCRUM-5023, PR #2841 CTO review): revocation survives the PATCH read/write gap
+
+New machine for the owner-controlled expiry that `PATCH /api/v1/keys/:keyId` now exposes. `expiry` is
+an ORDER, not a clock — `PAST < SOON < FAR < NONE` (NONE = no expiry = infinity) — so every property
+is about remaining life rather than arithmetic the DSL does not have.
+
+**The one thing TLC adds, and it is an interleaving.** `keys.ts` reads the row
+(`select id, org_id, revoked_at, expires_at, is_active`), decides, then UPDATEs by id **with no
+`revoked_at IS NULL` predicate on the UPDATE**. A revoke committing between those two statements
+leaves a row that is revoked AND carries a fresh future expiry (`applyStalePatch`). That is a real
+reachable state in prod today. It is benign — but only because the stale write touches `expires_at`
+ALONE and `deriveKeyStatus` ranks `revoked` above every expiry state, so nothing reports the key
+usable. `revocationRemainsTerminal` is where that ranking stops being a style preference: reverse it,
+or widen the stale UPDATE to touch `is_active`, and the invariant fails with the exact trace.
+
+**What it deliberately does NOT claim.** The no-silent-shortening rule (409
+`api_key_expiry_would_shorten` unless `allow_shorten`) is a single-statement PRECONDITION on one
+handler — no interleaving makes it true or false, so a model checker can only hand the guard back.
+`keys-expiry.test.ts` pins it instead. The guards are still transcribed faithfully into the actions
+(`setFar` shortens only from NONE; `setSoon` from NONE and FAR; neither from PAST, which is exempt by
+design because every forward move rescues an already-refusing key) — a state graph admitting
+transitions the route refuses would make the terminal-revocation result a proof about a different
+program. Also not modelled: the notice job's dedupe ledger (state lives in `audit_events`, not the key
+row), org scoping, authorization.
+
+No adapter metadata — this machine documents and checks an existing handler, it does not own a table,
+so `check` is the whole contract and `build` is deliberately not run.
+
+Certificate (tier `pr`, 1 key): proofPassed true; invariants `revocationRemainsTerminal`,
+`revokedOnlyByRevocation`; graph equivalence true (32/32 states, 138/138 edges); TLC 149 generated /
+32 distinct, depth 6; deadlock check off (no terminal-state requirement). Picked up automatically by
+`npm run verify:machines` / the `tla-verify` CI job (the script globs).
 ## subOrgAffiliationLifecycle.machine.ts (SCRUM-3971, review U1)
 
 - Models `parent_approval_status` x `suspended` x "still holds parent credits", per child, and the five transitions that move them: `request` (JWT child-side), `approve`, `revoke`, `allocate`, `offboard`. Written during the CTO review of PR #2844 because that PR introduced a per-ACTION child predicate set and had no formal model of it.
@@ -338,6 +370,15 @@ The current `agentKeyAuthority.machine.ts` removes the retired compensating-clea
 - Authorization (who may sign which half) is **out of scope** — actor identity is not in this state. It is proven empirically instead, checks 5 and 9 of `docs/staging/hakichain-suborgs-2026-09/verify-0429.sql`.
 - Documentation-only, like `partnerProvisioning` and `calibrationWorkflow`: no `runtimeAdapter`. The consent columns live on `organizations`, which this machine does not own, so the adapter subset does not fit. Runtime enforcement is the `protect_org_tenancy_fields()` trigger; this spec proves that trigger's reset rule is sufficient.
 
+## subOrgWebhookFanout.machine.ts (SCRUM-3972, added by CTO review 2026-09-12)
+
+- Models the cross-organization webhook fan-out decision in `services/worker/src/webhooks/suborg-fanout.ts`: `parentOf`, `approved`, `suspended`, `wantsDescendants` per org, plus the scalar `flagOn` (`ENABLE_SUBORG_WEBHOOK_FANOUT`). Actions mirror the real mutators — `affiliate` (guarded exactly as `check_sub_org_depth` is written), `approve`, `revoke`, `suspend`/`unsuspend` (which move `suspended` and leave `approved` alone, as `suspend_suborg` does), endpoint `optIn`/`optOut`, and the founder's flag flip.
+- Verified 2026-09-12: `proofPassed: true`, `equivalent: true`, 2704 states / 21664 edges, invariants `darkMeansDark` and `noSelfFanout`, deadlock checked, symmetry used.
+- **`darkMeansDark` is the property the dark ship rests on**: with the flag off, no `(owner, recipient)` pair is eligible in any reachable affiliation shape. It is what would break if a later refactor moved the flag check below a cache or into a per-endpoint branch.
+- **The one-hop justification in the module header was wrong and is now corrected.** `check_sub_org_depth` only rejects a row whose *proposed parent* already has a parent; it never asks whether the row being re-parented already has children. TLC reproduces `affiliate(o2,o1)` then `affiliate(o1,o3)` → `o2 -> o1 -> o3` in three states, matching what `subOrgListingConsent.machine.ts` found independently. Deeper chains are reachable; the fan-out reads exactly one hop **by choice**, which is narrower than the graph (safe), but the picker copy had to stop promising a subtree.
+- **Also not asserted: that an APPROVED affiliate is never suspended.** It can be, which is exactly why `suborg-fanout.ts` needs the `NOT suspended` conjunct in addition to the approval one — without divergence that conjunct would be dead code.
+- Out of scope: the 60 s lineage cache (a liveness bound, stated in `docs/api/webhooks.md`), per-endpoint event subscription (a narrowing filter applied after this decision) and payload attribution (`org_public_id`, proven in `delivery.suborgScope.test.ts`).
+- Documentation-only, no `runtimeAdapter`: the state spans `organizations` and `webhook_endpoints`. Run `scripts/verify-machines.sh subOrgWebhookFanout`.
 ## webhookPayloadRefusal (SCRUM-3982, CTO review ruling Z1)
 
 Models the two properties the banned-field ratchet has to hold at once, because
@@ -370,6 +411,19 @@ CI automatically; no workflow edit was needed.
 - The A1/A2/AMAX ladder stands in for `MAX_RETRIES = 5`: the model proves the SHAPE of the ladder, not its depth. Circuit breaker, per-resource head-of-line ordering (SCRUM-2250) and idempotency-key dedupe are **out of scope** — they are covered by `webhooks/delivery.test.ts`.
 - `SUCCESS` and `FAILED` are terminal by design, so `checks: { deadlock: false }` — same resolution as `partnerProvisioning` and `drainRunAccounting`. Documentation-only: no `runtimeAdapter`; the rows live on `webhook_delivery_logs` / `webhook_dead_letter_queue`, which this machine does not own.
 
+## 2026-09-14 — PR #2841 expiry model review correction
+
+The 2026-09-12 assertion that no interleaving affects no-shortening was incorrect:
+two requests can validate one snapshot and overwrite a farther extension.
+`apiKeyExpiry.machine.ts` now has two independent read/validate/commit requests,
+nullable expiry ordered SOON/FAR/NONE, explicit shortening acknowledgement,
+revocation and rejected stale writes. Commit compares the captured expiry and
+current revocation state atomically, matching the handler's UPDATE predicates.
+Removing the expiry comparison while retaining the revocation check produces a
+TLC counterexample to `expiryWritesRespectCurrentState` in which a later write
+shortens a concurrent extension. Graph equivalence is explicitly requested.
+This finite model covers the write protocol, not tenant authorization, elapsed
+clock arithmetic, notice delivery or liveness. No generated adapter is claimed.
 
 ## CTO #2844 — offboarding interleaving correction (2026-09-14)
 

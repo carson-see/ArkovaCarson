@@ -45,6 +45,12 @@ function getBreadcrumbs(pathname: string): BreadcrumbSegment[] {
       { label: NAV_POLISH_LABELS.BREADCRUMB_API_KEYS },
     ];
   }
+  if (pathname === ROUTES.SETTINGS_REFERRALS) {
+    return [
+      { label: NAV_POLISH_LABELS.BREADCRUMB_SETTINGS, to: ROUTES.SETTINGS },
+      { label: NAV_POLISH_LABELS.BREADCRUMB_REFERRALS },
+    ];
+  }
 
   // Billing sub-pages
   if (pathname.startsWith('/billing/')) {

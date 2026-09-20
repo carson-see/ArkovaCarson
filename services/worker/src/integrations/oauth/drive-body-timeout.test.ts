@@ -45,6 +45,7 @@ const {
   getFileMetadata,
   getSharedDriveName,
   listChanges,
+  listChildFolders,
   refreshAccessToken,
   revokeOAuthToken,
   stopDriveChannel,
@@ -179,6 +180,13 @@ describe('drive.ts body reads are bounded (F-D0-5)', () => {
       }),
     ).rejects.toMatchObject({ name: 'DriveApiError', status: 408 });
   });
+
+  it('listChildFolders abandons a parked folder-page body', async () => {
+    await expect(listChildFolders({
+      accessToken: 'local-only', parent: 'root',
+      deps: { fetchImpl: (async () => parkedBody()) as typeof fetch },
+    })).rejects.toMatchObject({ name: 'DriveApiError', status: 408 });
+  }, 1000);
 
   it('getSharedDriveName falls back to the drive id on a parked body rather than hanging', async () => {
     // Documented contract: "Falls back to the ID on failure." A body-read

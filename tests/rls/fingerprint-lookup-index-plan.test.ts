@@ -169,10 +169,15 @@ describe('0441 — fingerprint lookup keeps idx_anchors_fingerprint_lookup usabl
     )).toContain('character(64)');
     expect(sql(`SELECT count(*) FROM pg_class WHERE relname=${quote(INDEX)}`).trim()).toContain('1');
 
-    sql(`BEGIN;
+    // The restored auth trigger creates the profile before this fixture's
+    // upsert. Use the same transaction-local service identity as teardown so
+    // the real privileged-field guard permits our owned org/role setup.
+    sql(`BEGIN; SET LOCAL request.jwt.claims = '{"role":"service_role"}';
       INSERT INTO public.organizations (id, legal_name, display_name) VALUES (${quote(ORG_ID)}::uuid, ${quote(`fp-plan-${RUN}`)}, ${quote(`fp-plan-${RUN}`)});
       INSERT INTO auth.users (id, email) VALUES (${quote(USER_ID)}::uuid, ${quote(`fp-plan-${RUN}@arkova.local`)});
-      INSERT INTO public.profiles (id, email, org_id, role) VALUES (${quote(USER_ID)}::uuid, ${quote(`fp-plan-${RUN}@arkova.local`)}, ${quote(ORG_ID)}::uuid, 'ORG_ADMIN');
+      INSERT INTO public.profiles (id, email, org_id, role)
+      VALUES (${quote(USER_ID)}::uuid, ${quote(`fp-plan-${RUN}@arkova.local`)}, ${quote(ORG_ID)}::uuid, 'ORG_ADMIN')
+      ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, org_id = EXCLUDED.org_id, role = EXCLUDED.role;
       COMMIT;`);
     seed(securedFingerprint, 'SECURED');
     seed(pendingFingerprint, 'PENDING');

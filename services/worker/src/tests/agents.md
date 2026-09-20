@@ -25,3 +25,8 @@ PostgREST body. Used by the poison suites in `utils/jobQueue.test.ts`,
 `tests/webhook-delivery-roundtrip.test.ts`, `api/v1/{webhooks-test-ping,webhooks-self-service,
 compliance-audit,credentials-ctdl-registry-anchor,nessie-query}.test.ts`, and
 `lib/credential-source-import.test.ts`. Not a `.test.ts` itself — vitest include globs skip it.
+
+
+## 2026-09-14 — SCRUM-3972 review correction
+
+Webhook roundtrip tests mock the fan-out flag off so the established own-organization delivery path stays isolated from configuration bootstrap. Dedicated fan-out tests cover its enabled path.

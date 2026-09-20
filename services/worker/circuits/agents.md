@@ -39,3 +39,11 @@ is an Arkova-owned mirror (a GCS bucket in `arkova1` or a release asset — the 
 fetched and hash-checked yourself. Local dev: `build.sh` skips the download when
 `artifacts/powersOfTau28_hez_final_14.ptau` is already present, so copy a pinned-hash copy in from
 any existing checkout and run `npm run build:circuit`.
+
+## 2026-09-19 — Arkova-owned cold-cache recovery
+
+`fetch-pinned-ptau.sh` fetches the immutable Arkova Cloud Storage object. Bytes enter `artifacts/`
+only after matching the existing repository SHA-256 pin, through an atomic same-filesystem rename.
+The historical zkEVM and Hermez public URLs still return HTTP 403 and are not fallbacks. If the
+Arkova source is unavailable or corrupt, the build fails closed without leaving partial bytes at
+the path consumed by snarkjs.

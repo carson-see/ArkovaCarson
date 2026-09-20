@@ -61,6 +61,8 @@ export const ROUTES = {
   SETTINGS_API_KEYS: '/settings/api-keys',
   SETTINGS_WEBHOOKS: '/settings/webhooks',
   CREDENTIAL_TEMPLATES: '/settings/credential-templates',
+  // SCRUM-5024 — partner referral code + the organizations it introduced.
+  SETTINGS_REFERRALS: '/settings/referrals',
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
@@ -86,6 +88,11 @@ export const ROUTES = {
   // Rules Engine (ARK-108)
   RULES: '/organization/rules',
   RULE_BUILDER: '/organization/rules/new',
+
+  // Connectors page (SPEC-CONNECTORS, founder direction 2026-09-13): replaces
+  // the org header's "Rules" nav entry. RULES/RULE_BUILDER stay routed and
+  // reachable by direct URL — see PM-9, no code deletion in v1.
+  CONNECTORS: '/organization/connectors',
 
   // Admin Onboarding Wizard (UX-01 — SCRUM-1027)
   ADMIN_ONBOARDING: '/organization/onboarding',

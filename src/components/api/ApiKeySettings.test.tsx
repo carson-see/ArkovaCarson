@@ -31,6 +31,9 @@ const defaultProps = {
   onCreate: vi.fn().mockResolvedValue({} as ApiKeyCreated) as unknown as (name: string, scopes: string[], expiresInDays?: number) => Promise<ApiKeyCreated>,
   onRevoke: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string) => Promise<void>,
   onDelete: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string) => Promise<void>,
+  // SCRUM-5023 — expiry extension. Its own behaviour is covered in
+  // ApiKeySettings.expiry.test.tsx; here it only satisfies the prop contract.
+  onExtend: vi.fn().mockResolvedValue(undefined) as unknown as (keyId: string, expiresInDays: number | null) => Promise<void>,
 };
 
 describe('ApiKeySettings', () => {
@@ -116,6 +119,27 @@ describe('ApiKeySettings', () => {
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledWith('Affiliates Key', ['read:search', 'orgs:manage'], undefined);
     });
+  });
+
+  it('offers every currently enforced machine-to-machine capability', async () => {
+    render(<ApiKeySettings {...defaultProps} />);
+    fireEvent.click(screen.getByText('Create API Key'));
+
+    expect(await screen.findByLabelText('Verify')).toBeInTheDocument();
+    expect(screen.getByLabelText('Batch')).toBeInTheDocument();
+    expect(screen.getByLabelText('Usage')).toBeInTheDocument();
+    expect(screen.getByLabelText('Webhook management')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent management')).toBeInTheDocument();
+  });
+
+  it('does not offer reserved or currently unenforced grants', async () => {
+    render(<ApiKeySettings {...defaultProps} />);
+    fireEvent.click(screen.getByText('Create API Key'));
+
+    expect(await screen.findByLabelText('Search')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Admin rules')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Manage API keys')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Write attestations')).not.toBeInTheDocument();
   });
 
   it('shows scope badges on key cards', () => {
