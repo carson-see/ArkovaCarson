@@ -155,20 +155,21 @@ describe('SCRUM-4514: GET /admin/webhook-dlq (list/counts)', () => {
 
 describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', () => {
   /** A tiny in-memory `webhook_dlq` stand-in shared across chained mock calls. */
-  function makeTable(rows: Array<{ id: string; resolved_at: string | null }>) {
+  function makeTable(rows: Array<{ id: string; resolved_at: string | null; resolved_note?: string; resolved_by?: string; resolved_request_id?: string }>) {
     function chainFor() {
       return {
-        update: (patch: { resolved_at: string }) => ({
+        update: (patch: { resolved_at: string; resolved_note: string; resolved_by: string; resolved_request_id: string }) => ({
           in: (_col: string, ids: string[]) => ({
             is: () => {
               const justResolved = rows.filter((r) => ids.includes(r.id) && r.resolved_at === null);
-              for (const r of justResolved) r.resolved_at = patch.resolved_at;
-              return { select: () => ({ data: justResolved.map((r) => ({ id: r.id })), error: null }) };
+              for (const r of justResolved) Object.assign(r, patch);
+              return { error: null };
             },
           }),
         }),
         select: () => ({
           in: (_col: string, ids: string[]) => ({
+            eq: (_column: string, value: string) => ({ data: rows.filter((r) => ids.includes(r.id) && r.resolved_request_id === value).map((r) => ({ id: r.id })), error: null }),
             not: (_col2: string, _op: string, _val: unknown) => ({
               data: rows.filter((r) => ids.includes(r.id) && r.resolved_at !== null).map((r) => ({ id: r.id })),
               error: null,
@@ -181,7 +182,7 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
   }
 
   it('resolves unresolved rows and returns resolved count, already_resolved 0', async () => {
-    const rows = [
+    const rows: Array<{ id: string; resolved_at: string | null; resolved_note?: string; resolved_by?: string }> = [
       { id: ID_1, resolved_at: null },
       { id: ID_2, resolved_at: null },
     ];
@@ -193,6 +194,7 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ resolved: 2, already_resolved: 0 });
     expect(rows.every((r) => r.resolved_at !== null)).toBe(true);
+    expect(rows.every((r) => r.resolved_note === NOTE && r.resolved_by === ADMIN)).toBe(true);
   });
 
   it('idempotency: calling resolve twice on the same ids reports already_resolved on the second call, never double-counts', async () => {
@@ -209,6 +211,22 @@ describe('SCRUM-4514: POST /admin/webhook-dlq/resolve — idempotent resolve', (
     const second = mockRes();
     await handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1, ID_2], note: NOTE }), second);
     expect(second.body).toEqual({ resolved: 0, already_resolved: 2 });
+  });
+
+  it('keeps the first operator as owner when a second resolve races its read-back', async () => {
+    const rows = [{ id: ID_1, resolved_at: null as string | null }];
+    mockFrom.mockImplementation(() => makeTable(rows)());
+    const first = mockRes();
+    const second = mockRes();
+
+    await Promise.all([
+      handleWebhookDlqResolve(ADMIN, mockReq({ ids: [ID_1], note: 'first operator' }), first),
+      handleWebhookDlqResolve('22222222-2222-4222-8222-222222222222', mockReq({ ids: [ID_1], note: 'second operator' }), second),
+    ]);
+
+    expect(first.body).toEqual({ resolved: 1, already_resolved: 0 });
+    expect(second.body).toEqual({ resolved: 0, already_resolved: 1 });
+    expect(rows[0]).toMatchObject({ resolved_by: ADMIN, resolved_note: 'first operator' });
   });
 
   it('mixed batch: some ids already resolved, some not — both counts correct in one call', async () => {

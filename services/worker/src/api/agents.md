@@ -1,5 +1,9 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-19 — inbound webhook DLQ resolution audit
+
+Migration 0469 adds bounded `resolved_note` and `resolved_by` columns to `webhook_dlq`. The platform-admin resolve endpoint writes both atomically with `resolved_at` only for unresolved rows, so retries cannot overwrite the first operator's audit record. Notes remain absent from logs and list responses because they may contain partner-identifying context.
+
 ## UAT-22 selected-org invitation list (2026-09-14)
 
 `handleAdminListInvitations` independently requires platform-admin authority and validates the selected UUID before service-role reads. It returns at most 100 unaccepted invitations newest first using explicit public columns and a separate response whitelist; the accept token and private row fields never leave this endpoint. No schema or RLS change.
