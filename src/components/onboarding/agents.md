@@ -24,3 +24,7 @@ User onboarding flow components: stepper, org setup, plan selection, role select
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 Getting-started checklist org steps reworded via copy.ts (document template / Secure your first document). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-09-14 — SCRUM-5145 signup email resend
+
+`EmailConfirmation` renders the shared 15-minute policy, counts down the 90-second resend interval, and reports only the result supplied by the owning form. The timer is UX guidance; Supabase Auth `smtp_max_frequency` remains the server control.

@@ -13,6 +13,15 @@ import type { Request, Response } from 'express';
 
 const profilesMaybeSingle = vi.fn();
 const anchorsList = vi.fn();
+const adminResult = vi.fn();
+
+vi.mock('./_org-auth.js', () => ({
+  getCallerOrgIdResult: async () => {
+    const result = await profilesMaybeSingle();
+    return { value: result.data?.org_id ?? null, error: result.error != null };
+  },
+  isCallerOrgAdminResult: (...args: unknown[]) => adminResult(...args),
+}));
 
 vi.mock('../config.js', () => ({ config: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -70,6 +79,7 @@ function buildReq(externalFileId: string): Request {
 beforeEach(() => {
   vi.clearAllMocks();
   profilesMaybeSingle.mockResolvedValue({ data: { org_id: ORG_ID }, error: null });
+  adminResult.mockResolvedValue({ value: true, error: false });
   anchorsList.mockResolvedValue({ data: [], error: null });
 });
 
@@ -102,6 +112,26 @@ describe('suggestTerminalVersion (SCRUM-1150)', () => {
 });
 
 describe('handleCollisionContext (SCRUM-1150)', () => {
+  it('rejects an ordinary organization member with 403 before reading anchors', async () => {
+    adminResult.mockResolvedValueOnce({ value: false, error: false });
+    const ctx = buildRes();
+    await handleCollisionContext(USER_ID, buildReq('drive-123'), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(403);
+    expect(anchorsList).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when caller identity or admin authority cannot be read', async () => {
+    profilesMaybeSingle.mockResolvedValueOnce({ data: null, error: { message: 'timeout' } });
+    const profileCtx = buildRes();
+    await handleCollisionContext(USER_ID, buildReq('drive-123'), profileCtx.res);
+    expect(profileCtx.status).toHaveBeenCalledWith(500);
+
+    adminResult.mockResolvedValueOnce({ value: false, error: true });
+    const adminCtx = buildRes();
+    await handleCollisionContext(USER_ID, buildReq('drive-123'), adminCtx.res);
+    expect(adminCtx.status).toHaveBeenCalledWith(500);
+    expect(anchorsList).not.toHaveBeenCalled();
+  });
   it('rejects callers without an organization with 403', async () => {
     profilesMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
     const ctx = buildRes();
@@ -109,10 +139,18 @@ describe('handleCollisionContext (SCRUM-1150)', () => {
     expect(ctx.status).toHaveBeenCalledWith(403);
   });
 
-  it('400s when externalFileId param is missing/empty', async () => {
+  it.each(['', '   ', 'x'.repeat(256)])('400s before querying for an invalid externalFileId', async (externalFileId) => {
     const ctx = buildRes();
-    await handleCollisionContext(USER_ID, buildReq(''), ctx.res);
+    await handleCollisionContext(USER_ID, buildReq(externalFileId), ctx.res);
     expect(ctx.status).toHaveBeenCalledWith(400);
+    expect(anchorsList).not.toHaveBeenCalled();
+  });
+
+  it('accepts the shared resolution contract maximum of 255 characters', async () => {
+    const ctx = buildRes();
+    await handleCollisionContext(USER_ID, buildReq('x'.repeat(255)), ctx.res);
+    expect(ctx.statusCode).toBe(200);
+    expect(anchorsList).toHaveBeenCalledOnce();
   });
 
   it('returns empty candidates + null suggestion when no collision exists', async () => {

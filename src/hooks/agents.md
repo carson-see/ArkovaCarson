@@ -256,3 +256,6 @@ its query key includes both user and selected organization to prevent stale scop
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
 
 UAT-23 bulk imports use only the JWT canonical HTTP bridge; preserve prior-chunk receipts, never auto-retry an ambiguous write, and keep the invocation's original organization scope.
+## 2026-09-14 — SCRUM-5145 signup resend API
+
+Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.

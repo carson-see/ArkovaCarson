@@ -541,12 +541,13 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## `seed.ts` seeds `org_integrations.webhook_id` for adobe_sign rows (2026-08-30)',
       '## Provisioner repairs found by standing up a real rig (consolidated-mm-2026-08, 2026-08-30)',
       '## Operator MCP/SDK probes were calling names that no longer exist (PR #2589 review, 2026-09-05)',
+      '## 2026-09-14 — SCRUM-5145 UAT-17 harness trust boundary',
       '## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner',
     ]);
     // The merged document retains both Adobe webhook seed guidance and the
     // MCP/SDK operator guidance. Pin their complete ordered union above and
-    // require all 20 headings to remain unique.
-    expect(new Set(headings).size).toBe(20);
+    // require all 21 headings, including UAT-17 trust boundaries, to remain unique.
+    expect(new Set(headings).size).toBe(21);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {

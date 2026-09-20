@@ -1569,6 +1569,11 @@ remains held until its own production and CI requirements are satisfied.
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
 
+## Recent migrations (PR #TBD — SCRUM-5120)
+
+| Prefix | Branch | Ticket | File | Status |
+|---|---|---|---|---|
+| `0458` | `fix/scrum-5120-batch-insert-anchors-description` | SCRUM-5120 (parent epic SCRUM-5104) | `0458_scrum5120_batch_insert_anchors_description.sql` | RESERVED — file-only, **NOT applied to prod or any rig**. T3 (SECURITY DEFINER function change on the `anchors` hot-table surface, CLAUDE.md §1.12). Number derived 2026-09-13: `origin/main` numeric head is `0450`; the highest reservation in this file is also `0450`; the task's stated floor (`0456` exists on `feat/scrum-5024-partner-referral-attribution`, `0457` reserved-in-intent for SCRUM-3864 and deliberately skipped) pushed the search past both. A full `git branch -r` (`git ls-tree --name-only <branch> -- supabase/migrations/`, 116 remote branches) scan for prefixes `0450`-`0469` found: `0450` on every branch (main head), `0451_uat04_mandatory_mfa.sql` (3 branches), `0452_scrum4888_provision_org_quota_enforcement.sql` (3 branches), `0453_scrum3971_orgs_manage_scope_api_key_suborg_authority.sql` (`feat/scrum-3971-suborg-api-key-parity`), `0454_scrum3972_webhook_endpoint_scope.sql` (`feat/scrum-3972-suborg-webhook-events`), `0455_scrum5024_partner_referral_attribution.sql` + `0456_scrum5024_referral_rpc_tenant_authority.sql` (`feat/scrum-5024-partner-referral-attribution`) — no branch carries `0457`, `0458`, or higher. `0458` is therefore the first free prefix at or above the task's `0456` floor, skipping the explicitly-reserved `0457`. **Next author claims `0459` — re-derive, do not trust this line.** Fixes `public.batch_insert_anchors(jsonb)` silently dropping `elem->>'description'` (last redefined in `0370`/SCRUM-3031); threads `description` through the input CTE and the INSERT column list/matching SELECT only — every other line of 0370's dedup-lookup fix (the `::text`/`::character(64)` cast split, `NOT EXISTS` anti-join, SECURITY DEFINER, `search_path`, `statement_timeout`) is byte-identical. `0377`'s `REVOKE ALL ... FROM PUBLIC, anon, authenticated; GRANT EXECUTE ... TO service_role` posture is NOT preserved automatically — an earlier draft of this file assumed a same-signature `CREATE OR REPLACE FUNCTION` leaves ACLs alone, which the repo-wide `secdef-function-grants` CI ratchet (`scripts/ci/feedback-rules/secdef-function-grants.ts`) caught locally before this migration was ever committed: `CREATE OR REPLACE FUNCTION` RE-TRIGGERS `ALTER DEFAULT PRIVILEGES` on Supabase regardless of signature, which is the exact mechanism behind five prior anon-callable-RLS-bypass incidents (0364, 0377, 0378, 0388, 0406). `0458` therefore reissues the identical `REVOKE ALL ... FROM PUBLIC, anon, authenticated; GRANT EXECUTE ... TO service_role` in the same file, immediately after the redefinition, and the ROLLBACK comment does the same after restoring 0370's body. Companion backfill for the ~40,059 pre-existing NULL-description pipeline anchors is a separate tool, `scripts/ops/repair-pipeline-anchor-descriptions.ts` — not part of this migration. No local Supabase stack was available in this worktree to run `db reset --local`; see the PR body / commit message for exactly what was and was not executed. |
 
 ## CTO review — atomic sub-organization offboarding (2026-09-14)
 
@@ -1644,3 +1649,14 @@ The initial review incorrectly equated matching old production/B4 RPC hashes
 with canonical 0474. Both were still on the older 0461-era body. Migration 0475
 is based on immutable 0474 file SHA256 `00a15bd4...e6e64bb`; B4 first received
 0474 during qualification, and production application remained pending.
+## Recent migrations (PR #2964) — 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
+
+Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.
+
+This block is titled `(PR #2964)` and placed last among the `(PR #NNNN)` blocks
+because 2964 is the highest PR number in this file (CLAUDE.md §6). It was moved
+here from the shared anchor after the `(PR #2825)` section, where `main`'s
+`(PR #TBD — SCRUM-5120)` block landed at the same line and GitHub — which
+ignores this repo's `.gitattributes` `agents.md merge=union` driver — reported
+the PR CONFLICTING. A later author claiming a higher PR number orders after
+this block.

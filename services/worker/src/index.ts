@@ -43,6 +43,7 @@ import { orgVerificationRouter } from './api/v1/orgVerification.js';
 import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
+import { driveFoldersRouter } from './api/v1/integrations/drive-folders.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
 import { docusignInheritanceRouter } from './api/v1/integrations/docusign-inheritance.js';
@@ -573,6 +574,17 @@ app.use(
   pathScopedMiddleware('/google_drive', rateLimiters.api),
   pathScopedMiddleware('/google_drive', integrationsAuthGate),
   pathScopedMiddleware('/google_drive', driveOAuthRouter),
+);
+// Connectors page folder picker (SPEC-CONNECTORS §2.2) — same kill switch,
+// rate limiter and auth gate as the OAuth router above: the picker dies with
+// the connector, and there is no separate feature flag (it reuses
+// ENABLE_DRIVE_OAUTH, per the Doc Update Matrix: Switchboard is NOT touched).
+app.use(
+  '/api/v1/integrations',
+  pathScopedKillSwitch('/google_drive', 'ENABLE_DRIVE_OAUTH'),
+  pathScopedMiddleware('/google_drive', rateLimiters.api),
+  pathScopedMiddleware('/google_drive', integrationsAuthGate),
+  pathScopedMiddleware('/google_drive', driveFoldersRouter),
 );
 app.use(
   '/api/v1/integrations',
