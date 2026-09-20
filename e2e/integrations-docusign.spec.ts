@@ -11,6 +11,7 @@
 
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import { ROUTES } from '../src/lib/routes';
 
 type DocusignConnectionFixture = {
   id: string;
@@ -25,7 +26,7 @@ async function routeDocusignConnection(page: Page, orgId: string, connection: Do
     const url = new URL(route.request().url());
     const provider = url.searchParams.get('provider');
 
-    // A SIBLING signature connector now renders on this same settings page
+    // A SIBLING signature connector now renders on this same Connectors page
     // (`AdobeSignConnectorCard`, added with the Adobe Sign OAuth connect flow)
     // and issues an identically shaped `org_integrations` query through the
     // shared `useSignatureConnection` hook — same `select`, same
@@ -97,9 +98,9 @@ test.describe('DocuSign integration', () => {
   test.describe('desktop viewport (1280px)', () => {
     test.use({ viewport: { width: 1280, height: 720 } });
 
-    test('DocuSign card is visible on org settings page', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible();
+    test('DocuSign card is visible on the Connectors page', async ({ orgAdminPage }) => {
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Connectors' })).toBeVisible();
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('DocuSign')).toBeVisible();
     });
@@ -107,7 +108,7 @@ test.describe('DocuSign integration', () => {
     test('disconnected state shows Connect button', async ({ orgAdminPage }, testInfo) => {
       await routeDocusignConnection(orgAdminPage, orgId, null);
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Not connected')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
@@ -123,7 +124,7 @@ test.describe('DocuSign integration', () => {
         scope: 'signature extended openid email',
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Connected')).toBeVisible();
       await expect(docusignCard.getByText(/Account: Arkova Demo/)).toBeVisible();
@@ -147,7 +148,7 @@ test.describe('DocuSign integration', () => {
         });
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Connected')).toBeVisible();
 
@@ -190,18 +191,18 @@ test.describe('DocuSign integration', () => {
         });
       });
 
-      // Mock callback endpoint — redirect back to org settings with success param
+      // Mock callback endpoint — redirect back to Connectors with success param
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/callback**', async (route) => {
         await route.fulfill({
           status: 302,
           headers: {
-            location: `http://localhost:5173/organizations/${orgId}?tab=settings&docusign=connected`,
+            location: `http://localhost:5173${ROUTES.CONNECTORS}?docusign=connected`,
           },
         });
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible();
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await docusignCard.getByRole('button', { name: 'Connect' }).click();
@@ -209,7 +210,7 @@ test.describe('DocuSign integration', () => {
       // After mocked OAuth round-trip, verify success toast and URL
       await expect(orgAdminPage.getByText('DocuSign connected.').first()).toBeVisible();
       await expect(orgAdminPage).toHaveURL(
-        (url) => new URL(url).pathname === `/organizations/${orgId}` && new URL(url).searchParams.get('tab') === 'settings',
+        (url) => new URL(url).pathname === ROUTES.CONNECTORS,
       );
     });
 
@@ -236,7 +237,7 @@ test.describe('DocuSign integration', () => {
         });
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
 
       // Use waitForRequest to capture the outbound navigation request
@@ -251,15 +252,15 @@ test.describe('DocuSign integration', () => {
 
     test('OAuth happy path transitions card from disconnected to connected after provisioning', async ({ orgAdminPage }) => {
       const callbackUrl = `http://localhost:3001/api/v1/integrations/docusign/oauth/callback?code=mock-code&state=e2e-state`;
-      let integrationQueryCount = 0;
+      let oauthCompleted = false;
 
-      // First queries return disconnected; after OAuth redirect, return connected.
-      // Threshold is 2 to tolerate React StrictMode double-mount in dev.
+      // Return disconnected until the mocked callback actually completes, then
+      // return the provisioned connection. Request-count thresholds are brittle:
+      // StrictMode and sibling connector hooks may legitimately re-read status.
       await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
         const url = route.request().url();
         if (url.includes('provider=eq.docusign')) {
-          integrationQueryCount += 1;
-          if (integrationQueryCount <= 2) {
+          if (!oauthCompleted) {
             // Initial load: not connected
             await route.fulfill({
               status: 200,
@@ -311,16 +312,17 @@ test.describe('DocuSign integration', () => {
       // before issuing this redirect. The provisioning result does not affect the
       // redirect — the UI always shows connected if the DB upsert succeeded.
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/callback**', async (route) => {
+        oauthCompleted = true;
         await route.fulfill({
           status: 302,
           headers: {
-            location: `http://localhost:5173/organizations/${orgId}?tab=settings&docusign=connected`,
+            location: `http://localhost:5173${ROUTES.CONNECTORS}?docusign=connected`,
           },
         });
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible({ timeout: 10000 });
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Connectors' })).toBeVisible({ timeout: 10000 });
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
 
       // Starts disconnected — wait for Supabase query to resolve through route mock
@@ -354,10 +356,10 @@ test.describe('DocuSign integration', () => {
         }
       });
 
-      // Simulate landing back on the settings page with a docusign_error param
+      // Simulate landing back on Connectors with a docusign_error param
       // (e.g., when DB upsert failed or token exchange failed during callback)
       await orgAdminPage.goto(
-        `/organizations/${orgId}?tab=settings&docusign_error=save_failed`,
+        `${ROUTES.CONNECTORS}?docusign_error=save_failed`,
       );
 
       // Error toast is shown with the error code
@@ -383,7 +385,7 @@ test.describe('DocuSign integration', () => {
         });
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await docusignCard.getByRole('button', { name: 'Connect' }).click();
 
@@ -405,7 +407,7 @@ test.describe('DocuSign integration', () => {
         }
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       await expect(orgAdminPage.getByText('Unable to load DocuSign connection status.')).toBeVisible();
     });
   });
@@ -416,7 +418,7 @@ test.describe('DocuSign integration', () => {
     test('DocuSign card is visible and functional at mobile width', async ({ orgAdminPage }, testInfo) => {
       await routeDocusignConnection(orgAdminPage, orgId, null);
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('DocuSign')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
@@ -432,7 +434,7 @@ test.describe('DocuSign integration', () => {
         scope: 'signature openid',
       });
 
-      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await orgAdminPage.goto(ROUTES.CONNECTORS);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Connected')).toBeVisible();
       await expect(docusignCard.getByText(/Account: Mobile Test Org/)).toBeVisible();
@@ -441,10 +443,10 @@ test.describe('DocuSign integration', () => {
   });
 
   test.describe('non-admin access', () => {
-    test('individual user sees the settings page but Connect is disabled or hidden', async ({ individualPage }) => {
-      // Non-admin navigates to org settings — org admin features should not be
+    test('individual user sees the Connectors page but Connect is disabled or hidden', async ({ individualPage }) => {
+      // Non-admin navigates to Connectors — org admin features should not be
       // accessible. If the individual user has no org, that itself is a valid
-      // security posture (they can't reach org settings at all).
+      // security posture (they can't reach organization Connectors at all).
       const service = getServiceClient();
       const { data: profile, error } = await service
         .from('profiles')
@@ -454,10 +456,10 @@ test.describe('DocuSign integration', () => {
       expect(error).toBeNull();
 
       // If individual has their own org, navigate to its settings. Otherwise,
-      // navigate to the org admin's org settings as the individual user to test
+      // navigate to the org Connectors page as the individual user to test
       // the authz boundary (they shouldn't be able to connect).
       if (profile?.org_id) {
-        await individualPage.goto(`/organizations/${profile.org_id}?tab=settings`);
+        await individualPage.goto(ROUTES.CONNECTORS);
       } else {
         const { data: adminProfile } = await service
           .from('profiles')
@@ -467,10 +469,10 @@ test.describe('DocuSign integration', () => {
         if (!adminProfile?.org_id) {
           throw new Error('Missing org admin org_id to exercise the non-admin DocuSign authz boundary');
         }
-        await individualPage.goto(`/organizations/${adminProfile.org_id}?tab=settings`);
+        await individualPage.goto(ROUTES.CONNECTORS);
       }
 
-      // Either the settings tab redirects/hides the connector, or the API
+      // Either the Connectors page redirects/hides the connector, or the API
       // returns 403 and the card shows an error. Both are valid security postures.
       const connectButton = individualPage.getByRole('button', { name: 'Connect' });
       const docusignCard = individualPage.getByText('DocuSign');

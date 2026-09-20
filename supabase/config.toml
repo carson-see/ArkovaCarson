@@ -49,6 +49,10 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
+# SCRUM-5145: confirmation links remain valid for 15 minutes and Auth enforces
+# the same 90-second resend boundary shown by the signup UI.
+otp_expiry = 900
+max_frequency = "90s"
 # SCRUM-2907: prod REQUIRES email confirmation. The previous comment here
 # claimed prod auto-confirms and turned this off to match — that claim was
 # false, and it pointed local/CI at the opposite of production.

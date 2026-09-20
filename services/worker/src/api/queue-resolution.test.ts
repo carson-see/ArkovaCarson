@@ -379,6 +379,19 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 
+  it('returns 500 when the caller profile lookup fails', async () => {
+    installFromMock({ profiles: { data: null, error: { message: 'timeout' } } });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'lookup_failed', message: 'Unable to verify caller organization' },
+    });
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
+  });
+
   it('owner of own org → 2xx, runs the batch + writes a manual-run audit event', async () => {
     const { auditInserts } = installFromMock({
       profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },

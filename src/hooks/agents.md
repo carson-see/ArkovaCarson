@@ -254,3 +254,6 @@ explicit personal scope, poll only active instant intents, and refresh on focus.
 `usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
 its query key includes both user and selected organization to prevent stale scope
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
+## 2026-09-14 — SCRUM-5145 signup resend API
+
+Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.
