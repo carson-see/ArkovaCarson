@@ -87,7 +87,11 @@ export async function workerRequest(
   headers.set('x-serverless-authorization', `Bearer ${iamToken}`);
   if (auth.jwt) headers.set('authorization', `Bearer ${auth.jwt}`);
   if (auth.apiKey) headers.set('x-api-key', auth.apiKey);
-  const response = await fetch(`${VERIFIED_WORKER_ORIGIN}${path}`, { ...init, headers, redirect: 'error' });
+  // Resolve against the pinned origin and re-check it: a path such as
+  // `//host` or `@host` must never retarget the request.
+  const target = new URL(path, VERIFIED_WORKER_ORIGIN);
+  assert(target.origin === VERIFIED_WORKER_ORIGIN, 'refusing request outside the verified worker origin');
+  const response = await fetch(target, { ...init, headers, redirect: 'error' });
   const body = await response.json().catch(() => ({})) as Json;
   return { status: response.status, body };
 }
