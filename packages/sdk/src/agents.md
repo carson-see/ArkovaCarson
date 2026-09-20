@@ -127,3 +127,9 @@ applying it only in `request()` leaves typed methods able to forward
 `X-API-Key` when Fetch follows a cross-origin redirect. SDK unit tests and the
 API CLI's two-origin integration suite cover direct and `probe`
 health/read/verify/folder paths.
+## 2026-09-19 — UAT-12 receipt/status parity
+
+`AnchorReceipt` maps wire `credit_state` and `idempotent`; `getAnchorSubmissionStatus(publicId)` maps the bounded durable status response. Preserve every enum value and camelCase mapping when the worker contract changes.
+The client validates both lifecycle and instant status enums at the JSON boundary before returning
+the typed result; unknown persisted values fail closed as `ArkovaError(502, invalid_response)` rather
+than being asserted into the public union or rendered as a known state.

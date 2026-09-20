@@ -239,11 +239,49 @@ vi.mock('../billing/entitlements.js', () => ({
 import {
   handleStripeWebhook,
   handleCheckoutComplete,
+  handleAnchorCreditCheckoutComplete,
   handleSubscriptionUpdated,
   handleSubscriptionDeleted,
   handlePaymentFailed,
   handlePaymentSucceeded,
 } from './handlers.js';
+
+describe('handleAnchorCreditCheckoutComplete', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('fulfills a paid exact-total personal checkout through the atomic grant RPC', async () => {
+    mockCallRpc.mockResolvedValue({ data: { success: true }, error: null });
+    const event = makeStripeEvent('checkout.session.completed', {
+      id: 'cs_anchor_1', mode: 'payment', payment_status: 'paid', amount_total: 600, currency: 'usd',
+      metadata: {
+        purchase_kind: 'anchor_credits', purchaser_user_id: 'user-001', target_user_id: 'user-001',
+        target_org_id: '', quantity: '3', unit_price_cents: '200',
+      },
+    });
+    await handleAnchorCreditCheckoutComplete(event);
+    expect(mockCallRpc).toHaveBeenCalledWith(expect.anything(), 'grant_purchased_anchor_credits', expect.objectContaining({
+      p_stripe_event_id: 'evt_test_001', p_stripe_session_id: 'cs_anchor_1', p_quantity: 3,
+      p_target_user_id: 'user-001', p_target_org_id: null, p_amount_paid_cents: 600,
+    }));
+  });
+
+  it('rejects unpaid or amount-mismatched checkouts without granting', async () => {
+    for (const object of [
+      { id: 'cs_unpaid', mode: 'payment', payment_status: 'unpaid', amount_total: 200, currency: 'usd' },
+      { id: 'cs_wrong', mode: 'payment', payment_status: 'paid', amount_total: 201, currency: 'usd' },
+    ]) {
+      const event = makeStripeEvent('checkout.session.completed', { ...object, metadata: {
+        purchase_kind: 'anchor_credits', purchaser_user_id: 'user-001', target_user_id: 'user-001',
+        target_org_id: '', quantity: '1', unit_price_cents: '200',
+      } });
+      await expect(handleAnchorCreditCheckoutComplete(event)).rejects.toThrow();
+    }
+    expect(mockCallRpc).not.toHaveBeenCalled();
+  });
+});
 
 // ---- Test fixtures ----
 

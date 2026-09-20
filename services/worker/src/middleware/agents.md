@@ -567,3 +567,10 @@ constant-time compare, the allowlist boundary conditions, and that no log call a
 header or secret value) and `index.test.ts`'s "origin guard mount" block (the real app, real mount
 order, exemptions proven through the composed application rather than a hand-built one — same
 reasoning as the BUG-024 proof-keys mount test above).
+
+## 2026-09-19 — atomic anchor creation reuses quota response helpers
+
+`setQuotaHeaders` and `denyOverQuota` are exported so canonical anchor creation preserves the
+established daily-quota wire contract after reservation moves into PostgreSQL. They remain the
+authority for both `X-Org-Quota-Anchors*` stems, the denying `X-RateLimit-*` override,
+`Retry-After`, and the nested `ORG_QUOTA_EXCEEDED` body. Middleware behavior is unchanged.

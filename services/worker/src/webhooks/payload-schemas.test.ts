@@ -86,6 +86,11 @@ describe('AnchorSecuredPayloadSchema (SCRUM-1268)', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects private tags and metadata from the secured lifecycle projection', () => {
+    expect(AnchorSecuredPayloadSchema.safeParse({ ...valid, private_tags: { user: ['legal'] } }).success).toBe(false);
+    expect(AnchorSecuredPayloadSchema.safeParse({ ...valid, metadata: { securing_path: 'instant' } }).success).toBe(false);
+  });
+
   it('accepts org_public_id when provided', () => {
     const result = AnchorSecuredPayloadSchema.safeParse({ ...valid, org_public_id: 'pub_org_xyz' });
     expect(result.success).toBe(true);
@@ -142,6 +147,11 @@ describe('AnchorSubmittedPayloadSchema', () => {
   it('rejects a SUBMITTED payload that includes fingerprint', () => {
     const result = AnchorSubmittedPayloadSchema.safeParse({ ...valid, fingerprint: 'a'.repeat(64) });
     expect(result.success).toBe(false);
+  });
+
+  it('rejects private tags and metadata from the submitted lifecycle projection', () => {
+    expect(AnchorSubmittedPayloadSchema.safeParse({ ...valid, private_tags: { user: ['legal'] } }).success).toBe(false);
+    expect(AnchorSubmittedPayloadSchema.safeParse({ ...valid, metadata: { securing_path: 'instant' } }).success).toBe(false);
   });
 });
 

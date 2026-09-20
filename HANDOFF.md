@@ -129,6 +129,58 @@ reclaimed automatically.
 
 
 
+### 2026-09-19 — UAT-12 completion follow-up preparation
+
+- **Publication authority:** Carson explicitly authorized reuse of existing
+  PR2966 only, including returning it to Draft after ownership/queue checks.
+  The zero-new-PR cap remains; no other PR reuse, merge or deployment is
+  authorized. Preserve `do-not-merge` and the prior release history. Publication
+  readback belongs on the canonical story page; the old no-resoak decision for
+  head `2cc5c46` does not qualify these new corrections.
+- Founder-directed session order is UAT-12, then UAT-23, then UAT-17, one issue at
+  a time with Sol subagents and independent CTO review. The session gate is a
+  reviewed/debugged Draft PR, proportionate verification, a premortemed soak
+  plan, and Jira/Confluence/source-document updates—not production release.
+- Follow-up branch `cto/uat12-completion-20260919` starts from PR2966 head
+  `2cc5c46ba47b71e288924e6733366d778525a3bc`; publication targets only the existing
+  PR2966 branch `cto/uat12-submit-20260914` by fast-forward. Its pre-publication
+  audit found it held/dequeued, not queued.
+  Corrections cover canonical single-document submission, scoped
+  private-tag suggestions, honest status/recovery and public-description copy,
+  API/SDK/CLI/MCP parity, purchase conservation (0473), and atomic daily creation
+  quota (0474). Both new migrations remain unapplied candidate changes.
+- Real local PostgreSQL checks reproduced and corrected the purchase-principal
+  divergence and proved quota boundary/duplicate contention; frontend browser
+  checks use a standalone mocked-boundary fixture, not a hosted full-stack soak.
+  Final review corrected false instant-completion promises during HELD, failed,
+  missing and first-read/error states; the captured submit action survives status
+  outages and retry renders once. Final focused frontend checks passed 53/53;
+  the standalone desktop/mobile/keyboard browser selection passed 10/10.
+  Python async status and MCP bounded-error coverage were added; OpenAPI and
+  SDK/MCP usage docs now describe the status path and backward-compatible
+  receipt optionality. The interrupted broad suite remains inconclusive.
+  Final exact-head evidence belongs in the reused Draft PR2966 and the
+  [canonical UAT-12 page](https://arkova.atlassian.net/wiki/spaces/A/pages/148275201).
+- [Proposed T3 plan](docs/staging/uat12-completion-20260919/PLAN.md) requires an
+  exclusively assigned clean rig, pinned identity, a full observation window,
+  targeted quota/credit/privacy/recovery probes and coordinated rollback.
+  No rig, production database, release queue or existing soak is changed here.
+- The founder's proposed personal-three / organization-twenty-five zero-before-
+  refill purchase rule remains a policy decision pending exact scope and
+  pending-payment/refundable-attempt semantics. No cap, expiry, price or queue
+  schedule is silently changed. Existing three-hour age-trigger behavior differs
+  from the newly described daily-or-10,000 policy and needs explicit disposition.
+- Tracking: [SCRUM-5139](https://arkova.atlassian.net/browse/SCRUM-5139) remains
+  In Progress; source/local findings are recorded in the
+  [master bug log](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
+  Build/review subtasks SCRUM-5140 and SCRUM-5141 are verified In Progress;
+  candidate-only Data Model, Payments and Webhooks topic updates were read back.
+  Identity & Access and the final-review bug-log supplement were also read back;
+  the Uyiosa Google Doc now records the zero-new-PR freeze in its UAT-12 row.
+  UAT-23 and UAT-17 remain queued behind this preparation gate.
+
+_Last refreshed: 2026-09-19 by CTO completion session — claims verified against gcloud/MCP/CI output (historical runtime entries retain their own dated evidence; this refresh records local candidate checks and tracking readbacks only, not new runtime state)._
+
 ### 2026-09-13T15:10Z → 15:45Z — CTO release session (Claude Fable): B3b live on prod, standing-rig pair unblocked, GitHub cleaned, PRs 4–6 of 8 opened
 
 **Read this block first.** Earlier blocks stay accurate except where this one supersedes them.

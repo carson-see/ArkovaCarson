@@ -60,6 +60,24 @@ describe('arkova API CLI', () => {
     expect(output.stderr()).not.toContain('ak_secret');
   });
 
+  it('reads the caller-scoped durable submission status', async () => {
+    const api = client();
+    vi.mocked(api.request).mockResolvedValue({
+      public_id: 'ARK-1', action: 'instant', anchor_status: 'PENDING',
+      credit_state: 'pending', instant_status: 'NEEDS_CREDIT', retryable: true,
+      updated_at: '2026-09-19T00:00:00Z',
+    });
+    const output = io();
+
+    const code = await main(['status', 'ARK-1'], output.value, { client: api });
+
+    expect(code).toBe(0);
+    expect(api.request).toHaveBeenCalledWith('/api/v1/anchor/ARK-1/submission-status');
+    expect(JSON.parse(output.stdout())).toMatchObject({
+      public_id: 'ARK-1', instant_status: 'NEEDS_CREDIT', retryable: true,
+    });
+  });
+
   it('uses exact folder list, create, and bulk move contracts', async () => {
     const api = client();
     vi.mocked(api.request)

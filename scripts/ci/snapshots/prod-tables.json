@@ -504,6 +504,18 @@
       {
         "name": "webhook_idempotency",
         "reason": "created in 0116, dropped out-of-band — verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
+      },
+      {
+        "name": "anchor_credit_purchases",
+        "reason": "created by unapplied migration 0461 in PR #2966; held behind corrected-head T3 qualification and production migration approval"
+      },
+      {
+        "name": "anchor_instant_intents",
+        "reason": "created by unapplied migration 0461 in PR #2966; held behind corrected-head T3 qualification and production migration approval"
+      },
+      {
+        "name": "anchor_private_tags",
+        "reason": "created by unapplied migration 0461 in PR #2966; held behind corrected-head T3 qualification and production migration approval"
       }
     ],
     "in_prod_only": [

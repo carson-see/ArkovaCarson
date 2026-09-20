@@ -130,6 +130,19 @@
       "soak": "must-be-on",
       "why": "Rule action fan-out. Paired with ENABLE_RULES_ENGINE; either OFF silences the automation path."
     },
+    "ENABLE_INSTANT_SECURE": {
+      "sources": [
+        "env"
+      ],
+      "resolvers": [
+        "config.ts enableInstantSecure (default false)"
+      ],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Production stays dark until the exact-claim, credit, journal and recovery path completes its separate isolated T3 candidate soak."
+    },
     "ENABLE_SUBORG_WEBHOOK_FANOUT": {
       "sources": ["env"],
       "resolvers": ["config.ts enableSubOrgWebhookFanout", "flagRegistry ENV_FLAG_GETTERS (log-only)"],

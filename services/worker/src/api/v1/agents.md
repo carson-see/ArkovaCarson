@@ -10,6 +10,13 @@ additions so either undocumented mount still fails the harness.
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-09-14 — SCRUM-5212: suspension guard covers existing-anchor instant retries
+
+When `ENABLE_ORG_SUSPENSION_GUARD=true`, `POST /api/v1/anchor` checks the selected organization
+before either rearming or first publishing an instant intent for an existing `PENDING` anchor. A
+suspended organization therefore cannot create a durable instant job through the idempotent submit
+path. Ordinary duplicate reads remain side-effect free and continue to return their existing receipt.
+
 
 ## 2026-09-12 — SCRUM-4507: `source.provider` on the verification response, and what it deliberately omits
 
@@ -1780,6 +1787,19 @@ two-call offboard traffic sharing the database. The native harness preserves
 a negative control proving that migration application alone does not close
 the old worker's transaction gap. Existing unsafe offboard handlers must not
 be restored as a rollback target.
+## 2026-09-19 — UAT-12 submission status and retry truthfulness
+
+`GET /anchor/{publicId}/submission-status` is exact API-key actor/org scoped and returns only public id plus bounded anchor, intent, credit, retry, and timestamp state. It never returns internal ids, private tags, metadata, debit reasons, or last errors; absent and cross-tenant rows are the same 404. Concurrent same-fingerprint insert races re-read that exact scope and return the idempotent receipt instead of a false 409. Descriptions are public verification metadata; only `private_tags` are private.
+
+Every single-document shape, including queue submissions without tags, goes through
+`create_anchor_submission`; do not restore a direct `anchors.insert` fast path. The database's
+active uniqueness invariant remains user-global `(user_id, fingerprint)`, while idempotent receipts
+are scope-local `(user_id, org_id/null, fingerprint)`: a collision in another scope is the bounded
+409 `fingerprint_conflict` and must expose neither that row's public id nor its tags. Explicit tags on
+a scope-local replay must normalize to the exact stored user/org sets; otherwise return 409
+`submission_metadata_conflict` before retry/enqueue side effects. Omitted tags mean transport replay,
+not tag replacement. The canonical transaction owns org daily-quota accounting; personal scope
+skips that org-only quota, and HTTP must not pre-increment or compensate usage around the RPC.
 
 ## PR #2904 integration with #2844 atomic offboarding
 

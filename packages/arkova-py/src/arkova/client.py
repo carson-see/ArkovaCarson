@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
 import httpx
@@ -17,6 +17,7 @@ from .errors import ArkovaError
 from .models import (
     Anchor,
     AnchorReceipt,
+    AnchorSubmissionStatus,
     BulkAnchorDuplicateStrategy,
     BulkAnchorInput,
     BulkAnchorResponse,
@@ -296,6 +297,10 @@ class Arkova:
         data: str | bytes | None = None,
         *,
         fingerprint: str | None = None,
+        description: str | None = None,
+        action: Literal["queue", "instant"] = "queue",
+        user_tags: Sequence[str] | None = None,
+        organization_tags: Sequence[str] | None = None,
     ) -> AnchorReceipt:
         """Anchor a document (HAKI-REQ-02) — `POST /api/v1/anchor`.
 
@@ -308,10 +313,26 @@ class Arkova:
         """
         fp = _resolve_anchor_fingerprint(data=data, fingerprint=fingerprint)
         path = _versioned_path(str(self._client.base_url), "v1", "/anchor")
+        body: dict[str, object] = {"fingerprint": fp}
+        if action != "queue":
+            body["action"] = action
+        if description is not None:
+            body["description"] = description
+        if user_tags is not None or organization_tags is not None:
+            body["private_tags"] = {"user": list(user_tags or ()), "organization": list(organization_tags or ())}
         return _parse_json(
-            self._request("POST", path, json={"fingerprint": fp}),
+            self._request("POST", path, json=body),
             AnchorReceipt,
         )
+
+    def get_anchor_submission_status(self, public_id: str) -> AnchorSubmissionStatus:
+        """Read this API key actor's durable queue/instant submission state."""
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/anchor/{quote(public_id, safe='')}/submission-status",
+        )
+        return _parse_json(self._request("GET", path), AnchorSubmissionStatus)
 
     def anchor_bulk(
         self,
@@ -475,6 +496,10 @@ class AsyncArkova:
         data: str | bytes | None = None,
         *,
         fingerprint: str | None = None,
+        description: str | None = None,
+        action: Literal["queue", "instant"] = "queue",
+        user_tags: Sequence[str] | None = None,
+        organization_tags: Sequence[str] | None = None,
     ) -> AnchorReceipt:
         """Anchor a document (HAKI-REQ-02) — `POST /api/v1/anchor`.
 
@@ -484,10 +509,26 @@ class AsyncArkova:
         """
         fp = _resolve_anchor_fingerprint(data=data, fingerprint=fingerprint)
         path = _versioned_path(str(self._client.base_url), "v1", "/anchor")
+        body: dict[str, object] = {"fingerprint": fp}
+        if action != "queue":
+            body["action"] = action
+        if description is not None:
+            body["description"] = description
+        if user_tags is not None or organization_tags is not None:
+            body["private_tags"] = {"user": list(user_tags or ()), "organization": list(organization_tags or ())}
         return _parse_json(
-            await self._request("POST", path, json={"fingerprint": fp}),
+            await self._request("POST", path, json=body),
             AnchorReceipt,
         )
+
+    async def get_anchor_submission_status(self, public_id: str) -> AnchorSubmissionStatus:
+        """Read this API key actor's durable queue/instant submission state."""
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/anchor/{quote(public_id, safe='')}/submission-status",
+        )
+        return _parse_json(await self._request("GET", path), AnchorSubmissionStatus)
 
     async def anchor_bulk(
         self,

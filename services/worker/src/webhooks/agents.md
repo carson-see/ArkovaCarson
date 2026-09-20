@@ -397,6 +397,13 @@ pre-check and the pin). Webhook fan-out is the first hot path on this primitive;
 keyed by pinned IP and a shared resolve are the follow-up. IPv6-literal hosts (`https://[…]/`) pass
 the bracketed hostname as TLS `servername` (SCRUM-5038).
 
+## 2026-09-19 — UAT-12 canonical submission event applicability
+
+Queue and instant submissions both use the canonical batch path. Their supported lifecycle event is
+the existing per-anchor `anchor.secured` confirmation fan-out; pre-confirmation intent states are
+authenticated polling-only. `anchor.submitted` remains valid for the legacy direct-anchor processor,
+but is not emitted by canonical batch/instant submission. Payload-schema regressions pin that neither
+submitted nor secured projections can carry private tags or metadata.
 ## 2026-09-19 — SCRUM-5063 finality event disposition
 
 `anchor.revocation_anchored` and `attestation.active` now have strict,

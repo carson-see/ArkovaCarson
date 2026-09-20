@@ -4,6 +4,9 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 
 ## Files
 
+- **`uat12-completion-20260919/PLAN.md`** — proposed, not-started T3 plan and premortem for the UAT-12 completion follow-up. Keeps draft preparation distinct from release and prior PR2966 evidence; requires native quota/accounting contention, exact-scope privacy and desktop/mobile recovery checks.
+- **`uat12-completion-20260919/screenshots/`** — mocked-boundary desktop/mobile HELD and initial unavailable-status screenshots from the final local UAT-12 browser run; not hosted or network-completion evidence. Included in reused Draft PR2966, with its merge hold retained.
+
 - **`README.md`** — staging rig setup guide: Supabase preview branch, Cloud Run service, cost estimates.
 - **`PR_TEMPLATE.md`** — risk-tiered staging evidence PR body template with tier matrix fields.
 - **`train-c-soak-readiness-*.md`** — non-authoritative release-prep notes that freeze candidate heads, tier assumptions, merge order, and start gates before a real RC manifest exists. These files do not approve a soak or replace `rc-manifests/rc-*.json`.

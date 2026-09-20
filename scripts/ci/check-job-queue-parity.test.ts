@@ -41,6 +41,34 @@ describe('scanJobQueueUsage', () => {
     expect(runJobQueueParityCheck(scan).ok).toBe(true);
   });
 
+  it('recognizes an explicitly audited atomic SQL producer', () => {
+    const scan = scanJobQueueUsage(sources({
+      'supabase/migrations/9999_atomic.sql': `
+        -- job-queue-producer: anchor.instant_secure
+        INSERT INTO public.job_queue(type, payload)
+        VALUES ('anchor.instant_secure', '{}'::jsonb);
+      `,
+      'services/worker/src/jobs/consume.ts': `
+        await processNextJob('anchor.instant_secure', async () => {});
+      `,
+    }));
+
+    expect(scan.producers.map((p) => p.type)).toEqual(['anchor.instant_secure']);
+    expect(runJobQueueParityCheck(scan).ok).toBe(true);
+  });
+
+  it('fails closed when an atomic SQL producer directive does not match its insert', () => {
+    const scan = scanJobQueueUsage(sources({
+      'supabase/migrations/9999_atomic.sql': `
+        -- job-queue-producer: expected.type
+        INSERT INTO public.job_queue(type, payload) VALUES ('wrong.type', '{}'::jsonb);
+      `,
+      'services/worker/src/jobs/consume.ts': `await processNextJob('expected.type', async () => {});`,
+    }));
+    expect(scan.producers[0]?.type).toBeNull();
+    expect(runJobQueueParityCheck(scan).ok).toBe(false);
+  });
+
   it('resolves an identifier constant to its literal (the repo convention)', () => {
     const scan = scanJobQueueUsage(sources({
       'services/worker/src/jobs/types.ts': `

@@ -67,8 +67,8 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 
 | Event | Fired When | Status |
 |---|---|---|
-| `anchor.submitted` | Anchor transitions from `PENDING` → `SUBMITTED` (transaction broadcast to chain). Subscribable since SCRUM-1794. | Stable |
-| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Stable |
+| `anchor.submitted` | Legacy direct-anchor processing transitions from `PENDING` → `SUBMITTED` (transaction broadcast to chain). Canonical queue and instant submissions use batch processing and do **not** emit this event. | Stable on the legacy direct path only |
+| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation. This is the supported webhook event for canonical queue and instant submissions. | Stable |
 | `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
 | `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
 | `anchor.superseded` | A `SECURED` anchor is atomically replaced by a re-issued child (`SECURED` → `SUPERSEDED`), via `POST /api/anchor/:id/supersede`. Offered as a listed subscription option since SCRUM-3538; the CRUD allowlist has accepted it since SCRUM-2937. | Stable |
@@ -129,6 +129,14 @@ Both obey the same allowlist as every other family: public ids only, no internal
 **Credential-event delivery status:** `credential.issued` and `credential.status_changed` are live — subscribed endpoints receive them today. `credential.verified` is the one exception: its payload schema, dispatch validation, HMAC signing, and CRUD acceptance are all live, and you can register a subscription for it now via `POST /webhooks` (or update an existing subscription), but emission is behind a production feature gate that has not been enabled — deliveries begin when that gate opens, with no re-registration needed. All three schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
+
+For submissions created through `POST /api/v1/anchor` (including `action: queue` and
+`action: instant`), use authenticated submission-status reads for pre-confirmation state and
+subscribe to `anchor.secured` for confirmed finality. `QUEUED`, `PROCESSING`, `NEEDS_CREDIT`,
+`RETRYABLE`, and `HELD` are polling-only intent states; Arkova does not invent webhook events for
+them. Credit purchase completion arrives through Arkova's signed, idempotent Stripe webhook path,
+but the caller must explicitly re-submit the same fingerprint with `action: instant` to rearm a
+never-debited `NEEDS_CREDIT` intent.
 
 ### Affiliated Organizations (SCRUM-3972)
 

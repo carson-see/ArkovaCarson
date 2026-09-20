@@ -257,6 +257,14 @@ promise is removed and the unavailable error is `offboard_unavailable`.
 Current hierarchy scope remains direct affiliates; depth 3 in the database
 does not imply this API enumerates all descendants. No live rollout is claimed.
 
+## 2026-09-19 — UAT-12 webhook applicability
+
+Canonical single-document queue and instant submissions both enter the batch processor. Their
+supported lifecycle webhook is the existing per-anchor `anchor.secured` fan-out after confirmation;
+pre-confirmation instant states are available through authenticated submission-status polling only.
+`anchor.submitted` remains registrable because the legacy direct processor emits it, but the docs
+must not promise it for `POST /api/v1/anchor`. The strict lifecycle payload schemas continue to ban
+fingerprints, private tags, metadata, and internal ids.
 ## 2026-09-19 — Finality webhook contracts
 
 The public guide documents subscribable `anchor.revocation_anchored` and

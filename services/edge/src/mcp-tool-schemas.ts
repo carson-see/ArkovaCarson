@@ -84,10 +84,16 @@ export const anchorDocumentSchema = z
     record_type: z.string().max(50).optional(),
     source: z.string().max(50).optional(),
     title: z.string().max(500).optional(),
+    description: z.string().max(1000).optional(),
     source_url: z.string().url().max(2048).optional(),
+    action: z.enum(['queue', 'instant']).optional(),
+    user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+    organization_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
     idempotency_key: idempotencyKeySchema.optional(),
   })
   .strict();
+
+export const submissionStatusSchema = z.object({ public_id: publicIdSchema }).strict();
 
 export const verifyDocumentSchema = z
   .object({
@@ -145,6 +151,7 @@ export const MCP_TOOL_SCHEMAS = {
   arkova_search_anchors: searchCredentialsSchema,
   nessie_query: nessieQuerySchema,
   arkova_anchor_document: anchorDocumentSchema,
+  arkova_get_submission_status: submissionStatusSchema,
   arkova_verify_document: verifyDocumentSchema,
   arkova_verify_batch: verifyBatchSchema,
   arkova_search: agentSearchSchema,

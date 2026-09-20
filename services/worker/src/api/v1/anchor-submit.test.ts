@@ -6,12 +6,13 @@
  * and only accepts the frozen schema (CLAUDE.md §1.8).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas } = vi.hoisted(() => {
+const { mockSelectChain, mockPrivateTagsQuery, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas, mockProcessAnchor } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
+  const mockPrivateTagsQuery = vi.fn();
   const mockInsertChain = { single: vi.fn() };
   const mockInsert = vi.fn((_value?: unknown) => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -20,14 +21,16 @@ const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mo
   const mockRpc = vi.fn();
   const mockDeleteEq = vi.fn();
   const mockQuotaDeltas: number[] = [];
+  const mockProcessAnchor = vi.fn();
   // Mock the worker config so transitive import (anchor-submit → orgCredits →
   // config.js) doesn't try to load required env vars in the test env and
   // throw "Invalid worker configuration" before any test runs.
   const mockConfig = {
     enableOrgCreditEnforcement: false,
     enableProfessionalEducationSchemaReady: true,
+    enableInstantSecure: true,
   };
-  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas };
+  return { mockSelectChain, mockPrivateTagsQuery, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas, mockProcessAnchor };
 });
 
 vi.mock('../../config.js', () => ({
@@ -38,16 +41,12 @@ vi.mock('../../config.js', () => ({
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 
-vi.mock('../../middleware/perOrgRateLimit.js', () => ({
-  requireOrgQuota: (options: { getDelta?: (req: unknown) => number | Promise<number> }) =>
-    async (req: unknown, _res: unknown, next: () => void) => {
-      mockQuotaDeltas.push(options.getDelta ? await options.getDelta(req) : 1);
-      next();
-    },
-}));
-
 vi.mock('../../utils/jobQueue.js', () => ({
   submitJob: vi.fn().mockResolvedValue('job-1'),
+}));
+
+vi.mock('../../jobs/anchor.js', () => ({
+  processAnchor: mockProcessAnchor,
 }));
 
 vi.mock('../../utils/db.js', () => {
@@ -58,7 +57,14 @@ vi.mock('../../utils/db.js', () => {
 
   return {
     db: {
-      from: vi.fn(() => ({
+      from: vi.fn((table: string) => table === 'anchor_private_tags' ? ({
+        select: vi.fn(() => {
+          const chain: Record<string, unknown> = {};
+          chain.eq = vi.fn(() => chain);
+          chain.then = (resolve: (value: unknown) => unknown) => resolve(mockPrivateTagsQuery());
+          return chain;
+        }),
+      }) : ({
         select: vi.fn(() => eqChain),
         insert: mockInsert,
         delete: vi.fn(() => ({ eq: mockDeleteEq })),
@@ -82,17 +88,17 @@ interface InsertCallArg {
   metadata?: Record<string, unknown>;
 }
 
-function makeApp(scopes = ['anchor:write']) {
+function makeApp(scopes = ['anchor:write'], orgId: string | null = 'org-1', keyPrefix = 'arkv_test_') {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as express.Request & { apiKey?: unknown }).apiKey = {
+    req.apiKey = {
       keyId: 'key-1',
       userId: 'user-1',
-      orgId: 'org-1',
+      orgId: orgId as string,
       scopes,
       rateLimitTier: 'paid',
-      keyPrefix: 'arkv_test_',
+      keyPrefix,
     };
     next();
   });
@@ -124,7 +130,9 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuotaDeltas.length = 0;
+    mockPrivateTagsQuery.mockReturnValue({ data: [], error: null });
     mockConfig.enableProfessionalEducationSchemaReady = true;
+    mockConfig.enableInstantSecure = true;
     mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
     mockInsertChain.single.mockResolvedValue({
@@ -135,6 +143,31 @@ describe('POST /api/v1/anchor — Zod validation', () => {
         created_at: '2026-04-27T00:00:00Z',
       },
       error: null,
+    });
+    mockProcessAnchor.mockResolvedValue(true);
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'create_anchor_submission') {
+        const args = mockRpc.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+        const inserted = await mockInsert({
+          fingerprint: args.p_fingerprint,
+          public_id: args.p_public_id,
+          user_id: args.p_user_id,
+          org_id: args.p_org_id,
+          filename: args.p_filename,
+          file_size: args.p_file_size,
+          file_mime: args.p_file_mime,
+          credential_type: args.p_credential_type,
+          description: args.p_description,
+          metadata: args.p_metadata,
+          fingerprint_source: args.p_fingerprint_source,
+        }).select().single();
+        return {
+          data: inserted.data ? { ...inserted.data, success: true, intent_id: null } : null,
+          error: inserted.error,
+        };
+      }
+      if (fn === 'enqueue_existing_anchor_instant_intent') return { data: { success: true, status: 'QUEUED', intent_id: 'intent-1' }, error: null };
+      return { data: { success: true }, error: null };
     });
   });
 
@@ -153,6 +186,22 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.status).toBe(400);
     expect(res.body.details[0].path).toBe('fingerprint');
     expect(res.body.details[0].message).toContain('64-character hex');
+  });
+
+  it('preserves dashboard extraction metadata while stripping reserved and private keys', async () => {
+    const res = await request(makeApp(['anchor:write'], 'org-1', 'jwt-session')).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      action: 'instant',
+      private_tags: { user: ['audit'], organization: ['quarterly'] },
+      metadata: { ai_summary: 'safe summary', jurisdiction: 'MI', _claimed_by: 'attacker', email: 'private@example.test' },
+    });
+    expect(res.status).toBe(201);
+    expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.objectContaining({
+      p_org_id: 'org-1',
+      p_metadata: { ai_summary: 'safe summary', jurisdiction: 'MI', securing_path: 'instant' },
+      p_user_tags: ['audit'], p_org_tags: ['quarterly'],
+      p_fingerprint_source: 'document_bytes',
+    }));
   });
 
   it('rejects unknown credential_type via Zod enum', async () => {
@@ -192,8 +241,53 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.fingerprint).toBe(VALID_FINGERPRINT);
     expect(res.body.status).toBe('PENDING');
     expect(res.body.record_uri).toContain('/verify/');
-    expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+    expect(mockInsert.mock.calls[0]?.[0]).toHaveProperty('metadata.securing_path', 'queue');
     expect(submitJob).not.toHaveBeenCalled();
+  });
+
+  it('queues without reserving a credit and persists bounded private tags separately', async () => {
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      action: 'queue',
+      private_tags: {
+        user: ['Contract', 'Smith v Austin'],
+        organization: ['Financial statement'],
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ action: 'queue', credit_state: null });
+    expect(mockRpc).not.toHaveBeenCalledWith('reserve_anchor_credit', expect.anything());
+    expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.objectContaining({
+      p_action: 'queue',
+      p_metadata: expect.objectContaining({ securing_path: 'queue' }),
+      p_user_tags: ['Contract', 'Smith v Austin'],
+      p_fingerprint_source: null,
+      p_org_tags: ['Financial statement'],
+    }));
+  });
+
+  it('rejects duplicate, blank and oversized private tags before any write', async () => {
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      private_tags: { user: ['Contract', ' contract ', ''] },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_request');
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects instant requests while the trusted server capability is disabled', async () => {
+    mockConfig.enableInstantSecure = false;
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      action: 'instant',
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('instant_secure_unavailable');
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 
   it('returns an existing idempotent receipt without consuming anchor quota', async () => {
@@ -215,6 +309,170 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.public_id).toBe('ARK-2026-EXISTING');
     expect(mockQuotaDeltas).toEqual([]);
     expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('create_anchor_submission', expect.anything());
+  });
+
+  it('accepts omitted or normalized-equal private tags on an idempotent replay', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockPrivateTagsQuery.mockReturnValueOnce({ data: [
+      { scope: 'user', normalized_tag: 'contract' },
+      { scope: 'organization', normalized_tag: 'finance' },
+    ], error: null });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      private_tags: { user: ['Contract'], organization: ['FINANCE'] },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.idempotent).toBe(true);
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects differing private tags on an existing actor-and-tenant submission without writes', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockPrivateTagsQuery.mockReturnValueOnce({
+      data: [{ scope: 'user', normalized_tag: 'original' }], error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      action: 'instant',
+      private_tags: { user: ['replacement'], organization: [] },
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('submission_metadata_conflict');
+    expect(mockRpc).not.toHaveBeenCalledWith('retry_anchor_instant_intent', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('preserves ordinary duplicate reads while the organization suspension guard is enabled', async () => {
+    process.env.ENABLE_ORG_SUSPENSION_GUARD = 'true';
+    try {
+      mockSelectChain.maybeSingle.mockResolvedValueOnce({
+        data: {
+          public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+          status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+        },
+        error: null,
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+      expect(res.status).toBe(200);
+      expect(res.body.public_id).toBe('ARK-2026-EXISTING');
+      expect(mockRpc).not.toHaveBeenCalled();
+      expect(mockInsert).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.ENABLE_ORG_SUSPENSION_GUARD;
+    }
+  });
+
+  it('atomically rearms a never-debited NEEDS_CREDIT intent on explicit instant resubmission', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'retry_anchor_instant_intent') return {
+        data: { success: true, status: 'QUEUED', intent_id: 'intent-1', job_id: 'job-2', idempotent: false }, error: null,
+      };
+      throw new Error(`unexpected RPC ${fn}`);
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ action: 'instant', instant_status: 'QUEUED', idempotent: true });
+    expect(mockRpc).toHaveBeenCalledWith('retry_anchor_instant_intent', {
+      p_anchor_id: 'anchor-existing', p_user_id: 'user-1', p_org_id: 'org-1',
+    });
+    expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+  });
+
+  it('falls back to first-time instant publication when no intent exists', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'anchor-existing', public_id: 'ARK-2026-EXISTING', fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING', created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'retry_anchor_instant_intent') return { data: { success: false, error: 'intent_not_found' }, error: null };
+      if (fn === 'enqueue_existing_anchor_instant_intent') return {
+        data: { success: true, status: 'QUEUED', intent_id: 'intent-1', job_id: 'job-1' }, error: null,
+      };
+      throw new Error(`unexpected RPC ${fn}`);
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+    expect(res.status).toBe(200);
+    expect(mockRpc).toHaveBeenNthCalledWith(1, 'retry_anchor_instant_intent', expect.anything());
+    expect(mockRpc).toHaveBeenNthCalledWith(2, 'enqueue_existing_anchor_instant_intent', expect.anything());
+  });
+
+  it('denies a suspended organization before any existing-anchor instant side effect', async () => {
+    process.env.ENABLE_ORG_SUSPENSION_GUARD = 'true';
+    try {
+      mockSelectChain.maybeSingle.mockResolvedValueOnce({
+        data: { id: 'anchor-existing', public_id: 'ARK-EXISTING', fingerprint: VALID_FINGERPRINT, status: 'PENDING', created_at: '2026-04-26T00:00:00Z' },
+        error: null,
+      });
+      mockRpc.mockImplementation(async (fn: string) => fn === 'is_org_suspended'
+        ? { data: true, error: null }
+        : { data: { success: true }, error: null });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('org_suspended');
+      expect(mockRpc).not.toHaveBeenCalledWith('retry_anchor_instant_intent', expect.anything());
+      expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+    } finally {
+      delete process.env.ENABLE_ORG_SUSPENSION_GUARD;
+    }
+  });
+
+  it('allows an active organization to rearm an existing instant intent', async () => {
+    process.env.ENABLE_ORG_SUSPENSION_GUARD = 'true';
+    try {
+      mockSelectChain.maybeSingle.mockResolvedValueOnce({
+        data: { id: 'anchor-existing', public_id: 'ARK-EXISTING', fingerprint: VALID_FINGERPRINT, status: 'PENDING', created_at: '2026-04-26T00:00:00Z' },
+        error: null,
+      });
+      mockRpc.mockImplementation(async (fn: string) => {
+        if (fn === 'is_org_suspended') return { data: false, error: null };
+        if (fn === 'retry_anchor_instant_intent') return { data: { success: true, status: 'QUEUED' }, error: null };
+        throw new Error(`unexpected RPC ${fn}`);
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+
+      expect(res.status).toBe(200);
+      expect(mockRpc).toHaveBeenNthCalledWith(1, 'is_org_suspended', { p_org_id: 'org-1' });
+      expect(mockRpc).toHaveBeenNthCalledWith(2, 'retry_anchor_instant_intent', expect.anything());
+    } finally {
+      delete process.env.ENABLE_ORG_SUSPENSION_GUARD;
+    }
   });
 
   it('accepts the compatibility submit path with the canonical write:anchors scope', async () => {
@@ -415,7 +673,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       // this to `metadata: null` would also work but breaks downstream
       // Postgres-defaults-aware tooling (e.g. row-level-security policies
       // that distinguish "explicitly null" from "not provided").
-      expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+      expect(mockInsert.mock.calls[0]?.[0]).toHaveProperty('metadata.securing_path', 'queue');
     });
   });
 
@@ -524,6 +782,52 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       );
     });
 
+    it('resolves a concurrent same-fingerprint insert race to an idempotent receipt', async () => {
+      mockSelectChain.maybeSingle
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: 'race-anchor', public_id: 'ARK-RACE', fingerprint: VALID_FINGERPRINT,
+            status: 'PENDING', created_at: '2026-09-19T00:00:00Z', metadata: { securing_path: 'queue' },
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: null });
+      mockInsertChain.single.mockResolvedValueOnce({ data: null, error: { code: '23505' } });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ public_id: 'ARK-RACE', action: 'queue', idempotent: true });
+    });
+
+    it('rejects differing tags when a concurrent same-scope fingerprint insert wins', async () => {
+      mockSelectChain.maybeSingle
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: 'race-anchor', public_id: 'ARK-RACE', fingerprint: VALID_FINGERPRINT,
+            status: 'PENDING', created_at: '2026-09-19T00:00:00Z', metadata: { securing_path: 'queue' },
+          },
+          error: null,
+        });
+      mockPrivateTagsQuery.mockReturnValueOnce({
+        data: [{ scope: 'user', normalized_tag: 'winner' }], error: null,
+      });
+      mockInsertChain.single.mockResolvedValueOnce({ data: null, error: { code: '23505' } });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        private_tags: { user: ['loser'], organization: [] },
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('submission_metadata_conflict');
+      expect(mockRpc).not.toHaveBeenCalledWith('enqueue_existing_anchor_instant_intent', expect.anything());
+    });
+
     it('returns structured error on NOT NULL violation without leaking db_code', async () => {
       mockInsertChain.single.mockResolvedValueOnce({
         data: null,
@@ -559,153 +863,148 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   });
 });
 
-describe('POST /api/v1/anchor — credit-gate reference_id (SCRUM-2970)', () => {
-  // BUG-2026-07-17-012 + independent-review rework: the gate previously
-  // called deduct_org_credit with p_reference_id=null (0326 ledger bypassed,
-  // retries double-deducted). A first fix derived the reference_id from
-  // (org, fingerprint), but the review found that a PERMANENT ledger row
-  // keyed on the fingerprint + the soft-delete-aware dedup lookup = free
-  // re-anchor forever after soft-delete. Final design (repo pattern, see
-  // credential-sources.ts): insert the PENDING anchor row FIRST, then deduct
-  // with reference_id = the new row's id — a fresh uuid per anchoring event,
-  // so a soft-delete + re-anchor is a NEW billable event, while an HTTP
-  // retry of the same logical request is absorbed by the dedup lookup
-  // BEFORE the gate. On deduct failure the never-paid row is hard-deleted
-  // (compensation) and the 402/503 bodies are unchanged.
-
-  interface DeductRpcArgs {
-    p_org_id: string;
-    p_amount: number;
-    p_reason: string;
-    p_reference_id: string | null;
-  }
-
+describe('POST /api/v1/anchor — durable instant intent (SCRUM-5139)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockConfig.enableOrgCreditEnforcement = true;
+    mockQuotaDeltas.length = 0;
+    mockConfig.enableInstantSecure = true;
     mockConfig.enableProfessionalEducationSchemaReady = true;
-    mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
-    // No pre-existing (non-deleted) anchor row → the request reaches the gate.
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
-    mockInsertChain.single.mockResolvedValue({
-      data: {
-        id: 'row-1',
-        public_id: 'ARK-2026-ABCD1234',
-        fingerprint: VALID_FINGERPRINT,
-        status: 'PENDING',
-        created_at: '2026-04-27T00:00:00Z',
-      },
-      error: null,
+    mockRpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
+      if (fn === 'create_anchor_submission') return { data: {
+        success: true, id: 'row-1', public_id: args.p_public_id,
+        fingerprint: args.p_fingerprint, status: 'PENDING', created_at: '2026-04-27T00:00:00Z',
+        credential_type: 'OTHER', metadata: args.p_metadata, intent_id: 'intent-1',
+      }, error: null };
+      return { data: { success: true }, error: null };
     });
-    mockRpc.mockResolvedValue({ data: { success: true, balance: 9 }, error: null });
-    mockDeleteEq.mockResolvedValue({ error: null });
   });
 
-  afterEach(() => {
-    mockConfig.enableOrgCreditEnforcement = false;
-  });
-
-  function deductCalls(): DeductRpcArgs[] {
-    return mockRpc.mock.calls
-      .filter(([fn]) => fn === 'deduct_org_credit')
-      .map(([, args]) => args as DeductRpcArgs);
-  }
-
-  function insertedRow(id: string) {
-    return {
-      data: {
-        id,
-        public_id: 'ARK-2026-ABCD1234',
-        fingerprint: VALID_FINGERPRINT,
-        status: 'PENDING',
-        created_at: '2026-04-27T00:00:00Z',
-      },
-      error: null,
-    };
-  }
-
-  it('soft-delete then re-anchor is a NEW billable event (distinct row-id reference_ids, SECOND deduction)', async () => {
-    // Reviewer scenario: anchor F → pay 1 → soft-delete → resubmit F. The
-    // dedup lookup filters .is('deleted_at', null) so the resubmit MISSES
-    // dedup and must deduct a SECOND credit. Because reference_id is the
-    // fresh anchor row id (not a fingerprint-derived value), the 0326
-    // ledger does NOT idempotently absorb the second deduction.
-    mockInsertChain.single
-      .mockResolvedValueOnce(insertedRow('row-1'))
-      .mockResolvedValueOnce(insertedRow('row-2'));
-
-    const first = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
-    // Simulates the post-soft-delete resubmit: dedup lookup returns null
-    // again because the old row has deleted_at set.
-    const reAnchor = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
-    expect(first.status).toBe(201);
-    expect(reAnchor.status).toBe(201);
-
-    const calls = deductCalls();
-    expect(calls).toHaveLength(2); // second deduction actually happened
-    expect(calls[0].p_reference_id).toBe('row-1');
-    expect(calls[1].p_reference_id).toBe('row-2');
-    expect(calls[0].p_reference_id).not.toBeNull();
-    expect(calls[1].p_reference_id).not.toBe(calls[0].p_reference_id);
-    for (const call of calls) {
-      expect(call.p_org_id).toBe('org-1');
-      expect(call.p_amount).toBe(1);
-      expect(call.p_reason).toBe('anchor.create');
-    }
-  });
-
-  it('HTTP retry of the same logical request deducts exactly once (absorbed by dedup before the gate)', async () => {
-    const first = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
-    expect(first.status).toBe(201);
-
-    // Retry: the anchor row now exists (deleted_at null) → dedup lookup
-    // hits → 200 with the existing receipt, never reaching insert or gate.
-    mockSelectChain.maybeSingle.mockResolvedValue({
-      data: {
-        public_id: 'ARK-2026-ABCD1234',
-        fingerprint: VALID_FINGERPRINT,
-        status: 'PENDING',
-        created_at: '2026-04-27T00:00:00Z',
-      },
-      error: null,
+  it('atomically publishes an instant anchor, private tags, intent and durable job without broadcasting in HTTP', async () => {
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      action: 'instant',
+      private_tags: { user: ['Contract'], organization: ['Finance'] },
     });
-    const retry = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
-    expect(retry.status).toBe(200);
-
-    expect(deductCalls()).toHaveLength(1); // exactly ONE deduction
-    expect(mockInsert).toHaveBeenCalledTimes(1);
-    expect(mockDeleteEq).not.toHaveBeenCalled();
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ status: 'PENDING', action: 'instant', credit_state: 'pending', instant_status: 'QUEUED' });
+    expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.objectContaining({
+      p_action: 'instant', p_user_id: 'user-1', p_org_id: 'org-1',
+      p_user_tags: ['Contract'], p_org_tags: ['Finance'],
+      p_fingerprint_source: null,
+    }));
+    expect(mockProcessAnchor).not.toHaveBeenCalled();
   });
 
-  it('compensates a 402 deduct failure by hard-deleting the just-inserted row (frozen body unchanged)', async () => {
-    mockRpc.mockResolvedValue({
-      data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
-      error: null,
+  it('keeps the queue action free even when legacy org credit enforcement is enabled', async () => {
+    mockConfig.enableOrgCreditEnforcement = true;
+    mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: vi.fn().mockResolvedValue({
+      data: { id: 'row-q', public_id: 'ARK-2026-Q', fingerprint: VALID_FINGERPRINT, status: 'PENDING', created_at: '2026-04-27T00:00:00Z' }, error: null,
+    }) })) }));
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'queue' });
+    expect(res.status).toBe(201);
+    expect(mockRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockRpc).not.toHaveBeenCalledWith('debit_and_enqueue_anchor', expect.anything());
+  });
+
+  it('preserves personal scope in the durable submission contract', async () => {
+    const res = await request(makeApp(['anchor:write'], null)).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT, action: 'instant' });
+    expect(res.status).toBe(201);
+    expect(mockQuotaDeltas).toEqual([]);
+    expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.objectContaining({
+      p_user_id: 'user-1', p_org_id: null, p_action: 'instant',
+    }));
+  });
+
+  it('maps a user-global cross-scope fingerprint collision without leaking the existing record', async () => {
+    mockRpc.mockResolvedValueOnce({ data: { success: false, error: 'duplicate' }, error: null });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: 'fingerprint_conflict',
+      message: 'This fingerprint already exists in another scope for this API-key actor.',
+    });
+  });
+
+  it('maps the canonical transaction quota denial without creating a receipt', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'quota_exceeded', limit: 100, current: 100 }, error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(429);
+    expect(res.body).toMatchObject({ error: {
+      code: 'ORG_QUOTA_EXCEEDED', quota_type: 'anchors_created', limit: 100, current: 101,
+    } });
+    expect(res.body).not.toHaveProperty('public_id');
+    expect(res.headers['x-org-quota-anchors-limit']).toBe('100');
+    expect(res.headers['x-org-quota-anchors-remaining']).toBe('0');
+    expect(res.headers['x-org-quota-anchors-created-limit']).toBe('100');
+    expect(res.headers['x-ratelimit-limit']).toBe('100');
+    expect(res.headers['x-ratelimit-remaining']).toBe('0');
+    expect(res.headers['retry-after']).toMatch(/^\d+$/);
+  });
+
+  it('maps an atomic contractual-cap denial to the established partner response', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'contractual_quota_exceeded', limit: 2, current: 2 }, error: null,
     });
 
     const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
 
     expect(res.status).toBe(402);
+    expect(res.type).toBe('application/problem+json');
     expect(res.body).toEqual({
-      error: 'insufficient_credits',
-      message: 'Organization has insufficient anchor credits for this cycle.',
-      balance: 0,
-      required: 1,
+      type: 'https://arkova.ai/errors/quota-exhausted',
+      title: 'Anchor quota exhausted',
+      status: 402,
+      error: 'quota_exhausted',
+      message: 'This sandbox org has used all 2 of its allotted anchors. Contact Arkova for a top-up.',
+      used: 2,
+      quota: 2,
     });
-    // Insert-then-deduct: the row WAS inserted, then compensated away.
-    expect(mockInsert).toHaveBeenCalledTimes(1);
-    expect(mockDeleteEq).toHaveBeenCalledWith('id', 'row-1');
   });
 
-  it('compensates a 503 RPC failure the same way (frozen body unchanged)', async () => {
-    mockRpc.mockResolvedValue({ data: null, error: { message: 'connection refused' } });
+  it('fails closed with the established unavailable response when the contractual denial is malformed', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'contractual_quota_exceeded', limit: null, current: null }, error: null,
+    });
 
     const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
 
     expect(res.status).toBe(503);
-    expect(res.body).toEqual({ error: 'credit_check_unavailable' });
-    expect(mockInsert).toHaveBeenCalledTimes(1);
-    expect(mockDeleteEq).toHaveBeenCalledWith('id', 'row-1');
+    expect(res.type).toBe('application/problem+json');
+    expect(res.body).toEqual({
+      type: 'https://arkova.ai/errors/quota-check-unavailable',
+      title: 'Anchor quota check unavailable',
+      status: 503,
+      error: 'quota_check_unavailable',
+      message: 'Anchor capacity could not be verified. Retry the request.',
+    });
+  });
+
+  it('emits the legacy quota headers from the canonical transaction result', async () => {
+    mockRpc.mockResolvedValueOnce({ data: {
+      success: true, id: 'row-1', public_id: 'ARK-1', fingerprint: VALID_FINGERPRINT,
+      status: 'PENDING', created_at: '2026-09-19T00:00:00Z', quota_limit: 100, quota_current: 12,
+    }, error: null });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(201);
+    expect(res.headers['x-org-quota-anchors-limit']).toBe('100');
+    expect(res.headers['x-org-quota-anchors-remaining']).toBe('88');
+    expect(res.headers['x-org-quota-anchors-created-limit']).toBe('100');
+  });
+
+  it('maps an unavailable organization to a bounded 503', async () => {
+    mockRpc.mockResolvedValueOnce({ data: { success: false, error: 'organization_unavailable' }, error: null });
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'organization_unavailable' });
   });
 });
 
@@ -746,8 +1045,8 @@ describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)'
   });
 
   function persistedMetadata(): Record<string, unknown> | undefined {
-    const insertArg = mockInsert.mock.calls[0]?.[0] as InsertCallArg | undefined;
-    return insertArg?.metadata;
+    const createCall = mockRpc.mock.calls.find(([fn]) => fn === 'create_anchor_submission');
+    return (createCall?.[1] as { p_metadata?: Record<string, unknown> } | undefined)?.p_metadata;
   }
 
   it.each(['issuer_anchored', 'source_signed'])(
@@ -760,7 +1059,7 @@ describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)'
       });
 
       expect(res.status).toBe(201);
-      expect(mockInsert).toHaveBeenCalledTimes(1);
+      expect(mockRpc).toHaveBeenCalledWith('create_anchor_submission', expect.anything());
       // The claim never reaches the DB, so get_public_anchor can never serve it
       // and EvidenceLevelBadge can never render the issuer treatment.
       expect(persistedMetadata()).not.toHaveProperty('verification_level');
@@ -804,6 +1103,6 @@ describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)'
     expect(res.status).toBe(201);
     // Not `metadata: {}` — the column is left off so Postgres applies its NULL
     // default, matching the SCRUM-1732 no-metadata contract.
-    expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+    expect(persistedMetadata()).toHaveProperty('securing_path', 'queue');
   });
 });

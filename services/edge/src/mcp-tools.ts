@@ -35,6 +35,9 @@ const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
 /** Request timeout for the worker-proxied semantic credential search (ms). */
 const SEARCH_WORKER_FETCH_TIMEOUT_MS = 15_000;
 
+/** Timeout for authenticated worker writes and status reads (ms). */
+const AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS = 10_000;
+
 /**
  * Search mode reported on every `arkova_search_anchors` result payload.
  *
@@ -82,7 +85,8 @@ export interface ToolDefinition {
 
 export interface ToolInputSchemaProperty {
   type: string;
-  description: string;
+  description?: string;
+  enum?: string[];
   format?: string;
   items?: ToolInputSchemaProperty;
   minItems?: number;
@@ -118,8 +122,60 @@ export interface AnchorDocumentInput {
   record_type?: string;
   source?: string;
   title?: string;
+  description?: string;
   source_url?: string;
+  action?: 'queue' | 'instant';
+  user_tags?: string[];
+  organization_tags?: string[];
   idempotency_key?: string;
+}
+
+export interface SubmissionStatusInput { public_id: string }
+
+// Standalone edge build: mirror the worker's accepted anchor credential enum.
+// Unknown legacy MCP record types normalize to OTHER instead of making the
+// canonical worker reject an otherwise valid fingerprint submission.
+const WORKER_CREDENTIAL_TYPES = new Set([
+  'DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE',
+  'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL', 'INSURANCE', 'SEC_FILING', 'PATENT',
+  'REGULATION', 'PUBLICATION', 'CHARITY', 'ACCREDITATION', 'FINANCIAL_ADVISOR',
+  'BUSINESS_ENTITY', 'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY',
+  'CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING', 'OTHER',
+]);
+
+function workerCredentialType(recordType: string | undefined): string {
+  const normalized = recordType?.trim().toUpperCase();
+  return normalized && WORKER_CREDENTIAL_TYPES.has(normalized) ? normalized : 'OTHER';
+}
+
+const WORKER_PROVIDER_SLUG = /^[a-z][a-z0-9_-]{1,63}$/;
+
+function workerSafeSourceUrl(rawUrl: string | undefined): string | undefined {
+  if (!rawUrl) return undefined;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+    const hostname = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+    if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
+      return undefined;
+    }
+    // The worker accepts public IPv6, but reproducing its complete IP parser in
+    // the standalone edge bundle would create a second security authority.
+    // Omit all IPv6 literals here; the worker remains the final validator.
+    if (hostname.includes(':')) return undefined;
+    const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+    if (ipv4) {
+      const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+      if (ipv4.slice(1).some((part) => Number(part) > 255)
+        || a === 0 || a === 10 || a === 127 || a >= 224
+        || (a === 100 && b >= 64 && b <= 127)
+        || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168)) return undefined;
+    }
+    return rawUrl;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface VerifyDocumentInput {
@@ -393,8 +449,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       'Submit a document fingerprint for anchoring to the public ledger. ' +
       'The document itself is never sent — only its SHA-256 fingerprint. ' +
-      'Anchoring is asynchronous (batched), so this returns a submission receipt, ' +
-      'NOT a completed anchor: public_id is null and no network receipt exists yet. ' +
+      'Choose queue for asynchronous batching or instant to reserve one anchor credit and start now. ' +
+      'Both actions return a submission receipt rather than completed network evidence. ' +
+      'Descriptions are public verification metadata; user and organization tags are private. ' +
       'Follow up with arkova_verify_document using the SAME content_hash — it reports ' +
       'status UNKNOWN until anchoring completes, then returns the public_id and proof.',
     inputSchema: {
@@ -416,9 +473,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Title of the document',
         },
+        description: {
+          type: 'string',
+          description: 'Public description included in verification responses',
+        },
         source_url: {
           type: 'string',
           description: 'URL of the original document',
+        },
+        action: {
+          type: 'string',
+          enum: ['queue', 'instant'],
+          description: 'Queue for batch anchoring or spend one anchor credit to start now',
+        },
+        user_tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Private tags visible only to the submitting user',
+        },
+        organization_tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Private tags visible only within the submitting organization',
         },
         idempotency_key: {
           type: 'string',
@@ -427,6 +503,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ['content_hash'],
+    },
+  },
+  {
+    name: 'arkova_get_submission_status',
+    description: 'Read the caller-scoped durable queue or instant submission state, including bounded credit and retry state. Returns no private tags, metadata, or internal identifiers.',
+    inputSchema: {
+      type: 'object',
+      properties: { public_id: { type: 'string', description: 'Arkova public identifier returned by submission' } },
+      required: ['public_id'],
     },
   },
   {
@@ -1113,7 +1198,8 @@ async function searchAgentOrgs(
   const matches: Array<Record<string, unknown>> = [];
   const seenPublicIds = new Set<string>();
 
-  for (let offset = 0; matches.length < limit; offset += pageSize) {
+  let offset = 0;
+  while (matches.length < limit) {
     const params = new URLSearchParams({
       user_id: `eq.${config.userId}`,
       select: 'role,organizations(public_id,display_name,description,domain,website_url,verification_status)',
@@ -1149,6 +1235,7 @@ async function searchAgentOrgs(
     }
 
     if (memberships.length < pageSize) break;
+    offset += pageSize;
   }
 
   return matches.map((org) => ({
@@ -1580,138 +1667,70 @@ async function nessieTextFallback(
 }
 
 /**
- * Anchor a document by its content hash (PH1-SDK-03).
- *
- * Submits the fingerprint to public_records for batch anchoring.
+ * Submit every hosted-MCP document through the API-key worker route. This is
+ * the single tenant, idempotency, quota, private-tag, and instant-intent
+ * boundary; there is deliberately no direct database compatibility fallback.
  */
-/**
- * BUG-028 — the submission receipt must name a handle that actually resolves.
- *
- * The old shape read `public_id: record?.public_id`. `public_records` has no
- * `public_id` column (see the CREATE TABLE in the baseline migration: id,
- * source, source_id, source_url, record_type, title, content_hash, anchor_id,
- * metadata, timestamps, training_exported), so that expression was always
- * `undefined` and `JSON.stringify` dropped the key outright — the tool
- * description promised "a public identifier for later verification" and the
- * response carried no identifier at all.
- *
- * A public_id cannot be returned here, and not merely because of a missing
- * column: public_ids live on `anchors`, and an MCP submission only becomes an
- * anchor when the batch pipeline links the `public_records` row (that is what
- * `anchor_id` is for). At submission time no anchor exists, so there is no
- * public_id in existence to return. Manufacturing one, or echoing the internal
- * `public_records.id` UUID, would both be worse: the first is a fabricated
- * identifier, the second leaks an internal row id (CLAUDE.md §6).
- *
- * The handle that IS durable and IS accepted by the documented follow-up is the
- * fingerprint: `arkova_verify_document` takes `content_hash`, never a public_id. So
- * the receipt states the fingerprint as the handle, states `public_id: null`
- * explicitly rather than omitting the key (an agent gets a decidable answer
- * instead of a missing field), and says plainly that verification resolves only
- * once anchoring completes — measured vs asserted vs NOT asserted, per §1.5.
- */
-function anchorSubmittedResult(
-  _record: Record<string, unknown> | undefined,
-  contentHash: string,
-  status: 'submitted' | 'already_submitted' = 'submitted',
-): ToolResult {
-  return textResult({
-    status,
-    // No anchor exists yet, so no public_id exists yet. Explicit null, not a
-    // dropped key: the absence is a fact about the lifecycle, not an omission.
-    public_id: null,
-    content_hash: contentHash,
-    // The handle the documented follow-up actually accepts.
-    verify_with: { tool: 'arkova_verify_document', content_hash: contentHash },
-    message: status === 'already_submitted'
-      ? 'Document was already submitted within the last 5 minutes; returning the existing '
-        + 'submission. Call arkova_verify_document with this content_hash. It reports '
-        + 'verified:false / status:UNKNOWN until batch anchoring completes and the '
-        + 'record is secured; a public_id is assigned at that point, not now.'
-      : 'Document fingerprint submitted for batch anchoring. Call arkova_verify_document with '
-        + 'this content_hash to check status. It reports verified:false / status:UNKNOWN '
-        + 'until batch anchoring completes and the record is secured; a public_id is '
-        + 'assigned at that point, not now.',
-  });
-}
-
-async function findRecentAnchorSubmission(
-  config: SupabaseConfig,
-  contentHash: string,
-): Promise<ToolResult | null> {
-  const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
-  const lookupResp = await supabaseFetch(
-    config,
-    `/rest/v1/public_records?content_hash=eq.${contentHash}&created_at=gte.${fiveMinAgo}&order=created_at.desc&limit=1`,
-  );
-  if (!lookupResp.ok) return null;
-
-  const existing = await lookupResp.json() as Array<Record<string, unknown>>;
-  if (!Array.isArray(existing) || existing.length === 0) return null;
-
-  // BUG-028: same receipt shape as a fresh submission — this path had the
-  // identical always-undefined `public_id` read.
-  return anchorSubmittedResult(existing[0], contentHash, 'already_submitted');
-}
-
-async function submitAnchorViaRpc(
+async function submitAnchorViaWorker(
   input: AnchorDocumentInput,
   config: SupabaseConfig,
 ): Promise<ToolResult | undefined> {
-  const rpcResponse = await supabaseFetch(config, '/rest/v1/rpc/mcp_anchor_document', {
+  if (!config.workerBaseUrl || !config.callerApiKey) return undefined;
+  const credentialType = workerCredentialType(input.record_type);
+  const sourceUrl = workerSafeSourceUrl(input.source_url);
+  const { response, body } = await authenticatedWorkerJson(config, '/api/v1/anchor', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      p_user_id: config.userId,
-      p_content_hash: input.content_hash,
-      p_record_type: input.record_type ?? 'document',
-      p_source: input.source ?? 'mcp',
-      p_title: input.title ?? null,
-      p_source_url: input.source_url ?? null,
+      fingerprint: input.content_hash,
+      credential_type: credentialType,
+      description: input.description ?? input.title,
+      action: input.action ?? 'queue',
+      private_tags: input.user_tags || input.organization_tags ? {
+        user: input.user_tags ?? [],
+        organization: input.organization_tags ?? [],
+      } : undefined,
+      metadata: {
+        credential_type: credentialType,
+        ...(input.source && WORKER_PROVIDER_SLUG.test(input.source)
+          ? { source_provider: input.source }
+          : {}),
+        ...(sourceUrl ? { source_url: sourceUrl } : {}),
+      },
     }),
   });
-  if (!rpcResponse.ok) {
-    if (rpcResponse.status === 404) return undefined;
-    const errorText = await rpcResponse.text().catch(() => '');
-    return errorResult(safeErrorText(
-      new Error(`HTTP ${rpcResponse.status}: ${errorText}`),
-      'arkova_anchor_document (rpc)',
-    ));
+  if (!response.ok) {
+    const message = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
+    return errorResult(`Anchor submission failed: ${message}`);
   }
-
-  const records = await rpcResponse.json() as Array<Record<string, unknown>>;
-  const record = Array.isArray(records) ? records[0] : records;
-  return anchorSubmittedResult(record, input.content_hash);
+  return textResult(body);
 }
 
-async function submitAnchorDirect(
-  input: AnchorDocumentInput,
+async function authenticatedWorkerJson(
   config: SupabaseConfig,
-): Promise<ToolResult> {
-  const response = await supabaseFetch(config, '/rest/v1/public_records', {
-    method: 'POST',
-    headers: { Prefer: 'return=representation' },
-    body: JSON.stringify({
-      content_hash: input.content_hash,
-      record_type: input.record_type ?? 'document',
-      source: input.source ?? 'mcp',
-      title: input.title ?? null,
-      source_url: input.source_url ?? null,
-      source_id: input.content_hash,
-      metadata: {},
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    return errorResult(safeErrorText(
-      new Error(`HTTP ${response.status}: ${errorText}`),
-      'arkova_anchor_document (direct)',
-    ));
+  path: string,
+  init: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<{ response: Response; body: Record<string, unknown> | null }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS);
+  const base = config.workerBaseUrl!.replace(/\/$/, '');
+  try {
+    const response = await fetch(`${base}${path}`, {
+      ...init,
+      redirect: 'error',
+      headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },
+      signal: controller.signal,
+    });
+    let body: Record<string, unknown> | null = null;
+    try {
+      body = await response.json() as Record<string, unknown>;
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+    }
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
   }
-
-  const records = await response.json() as Array<Record<string, unknown>>;
-  const record = Array.isArray(records) ? records[0] : records;
-  return anchorSubmittedResult(record, input.content_hash);
 }
 
 export async function handleAnchorDocument(
@@ -1727,23 +1746,37 @@ export async function handleAnchorDocument(
   }
 
   try {
-    if (input.idempotency_key) {
-      const duplicate = await findRecentAnchorSubmission(config, input.content_hash);
-      if (duplicate) return duplicate;
-    }
-
-    // MCP-SEC-03: Use scoped RPC instead of direct service-role INSERT.
-    // Falls back to direct INSERT if the RPC doesn't exist yet (pre-0223).
-    const rpcResult = await submitAnchorViaRpc(input, config);
-    if (rpcResult) return rpcResult;
-
-    // Fallback: direct INSERT (pre-migration-0223 compat)
-    return submitAnchorDirect(input, config);
+    const workerResult = await submitAnchorViaWorker(input, config);
+    if (workerResult) return workerResult;
+    return errorResult(
+      'Anchor submissions require API-key authentication and the Arkova API endpoint.',
+    );
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       return errorResult('Anchor submission timed out');
     }
     return errorResult(safeErrorText(error, 'arkova_anchor_document'));
+  }
+}
+
+export async function handleGetSubmissionStatus(
+  input: SubmissionStatusInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  if (!config.workerBaseUrl || !config.callerApiKey) {
+    return errorResult('Submission status requires API-key authentication and the Arkova API endpoint.');
+  }
+  try {
+    const { response, body } = await authenticatedWorkerJson(config, `/api/v1/anchor/${encodeURIComponent(input.public_id)}/submission-status`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      const code = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
+      return errorResult(`Submission status unavailable: ${code}`);
+    }
+    return textResult(body);
+  } catch (error) {
+    return errorResult(safeErrorText(error, 'arkova_get_submission_status'));
   }
 }
 

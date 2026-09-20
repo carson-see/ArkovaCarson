@@ -736,6 +736,7 @@ ANECDOTES_CLIENT_SECRET=            # Anecdotes OAuth client secret (Secret Mana
 ENABLE_GRC_INTEGRATIONS=false       # umbrella flag for all 3 GRC connectors
 ENABLE_ATS_WEBHOOK=false            # ATS webhook intake; default off pending tenant-isolation validation
 ENABLE_RULE_ACTION_DISPATCHER=true  # 2-min cron that fans rule executions out to actions
+ENABLE_INSTANT_SECURE=false         # manual/API instant intent consumer; enable only on a qualified rig
 ```
 
 ### eIDAS / qualified-signature stack

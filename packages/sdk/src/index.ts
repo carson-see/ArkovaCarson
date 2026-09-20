@@ -36,6 +36,10 @@ export { BULK_ANCHOR_CREDENTIAL_TYPES } from './types';
 export type {
   ArkovaConfig,
   AnchorReceipt,
+  AnchorSubmitOptions,
+  AnchorSubmissionStatus,
+  AnchorInstantStatus,
+  AnchorLifecycleStatus,
   RichVerificationFields,
   VerificationResult,
   BulkAnchorInput,

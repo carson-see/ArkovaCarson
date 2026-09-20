@@ -1,5 +1,7 @@
 # agents.md — e2e/
 
+Canonical submission fixtures intercept the real worker routes, including `/api/v1/anchor-self-service` and `/api/v1/anchor/bulk/self-service`. Failure scenarios must fail those routes. Hold only the operation under test, never capability reads; pending route fixtures must not leave a `page.evaluate` promise alive at test teardown. Provenance is derived by the worker, so browser requests must not assert `fingerprint_source`.
+
 ## API key/webhook dashboard targeted UAT (2026-09-19)
 
 `uat-api-webhook-dashboard.spec.ts` and its standalone config exercise the real settings routes/components at 1280px and 375px with auth, Supabase, and worker I/O stubbed only at the browser network boundary. It proves scope/event controls, scrubbed retryable endpoint-read failure, and responsive geometry. It is targeted frontend evidence, not backend/RLS integration proof; the ordinary CI E2E project retains that responsibility. The spec self-skips under every named shared project and runs only with its dedicated config.
@@ -622,6 +624,14 @@ The sign-out test uses its own real UI login and MFA enrollment, so signing out
 cannot revoke a later test's saved seed session. Intentional AAL1 rejection tests
 and `loginViaUi` retain their original authentication level.
 
+## 2026-09-19 — UAT-12 secure-dialog acceptance
+
+`secure-dialog-layout.spec.ts` verifies canonical self-service submission for
+untagged and tagged child-organization documents, exact private-tag partitions,
+instant/queue keyboard actionability, purchase/admin guidance, and durable
+NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
+only account and network boundaries; submissions are captured at the worker HTTP
+boundary and rearm must reuse the original fingerprint.
 ## 2026-09-14 — SCRUM-5145 email confirmation browser regressions
 
 `uat17-email-confirmation.spec.ts` drives the actual SignUpForm, useAuth, EmailConfirmation and AuthCallbackPage through the development-only fixture at1280/375. Auth signup/resend HTTP responses are simulated; the tests assert one signup, dedicated password-free resend, truthful outcomes, idle-time cooldown reset, long-address containment and actionable expired links. They use empty storageState and do not need seeded sessions. Run locally with `npx playwright test --config=e2e/uat17-email-confirmation.config.ts`; the dedicated config owns port5197 and uses placeholder local Auth configuration. The spec also runs in the ordinary CI Chromium project. Screenshots are Playwright attachments. This proves browser behavior, not real SMTP, server expiry, organization association or MFA; the isolated hosted driver and actual browser UAT cover those release gates.

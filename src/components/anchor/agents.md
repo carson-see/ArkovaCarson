@@ -1,5 +1,14 @@
 # agents.md — components/anchor
 
+## 2026-09-19 — UAT-12 frontend completion
+
+`SecureDocumentDialog` sends every single-document queue or instant action through
+the authenticated `/api/v1/anchor-self-service` bridge. Do not restore a direct
+`anchors.insert()` fallback: it bypasses the canonical permission, idempotency,
+private-tag, and child-organization checks. User and organization tag suggestions
+are separate; organization suggestions are pinned to the exact selected org.
+Description copy explicitly states that descriptions appear on public verification.
+
 
 ## SCRUM-4507 — Drive source link-back on `AssetDetailView`
 

@@ -338,3 +338,8 @@ signed pending-role rejection before any user/KV/tool lookup can rescue it.
 
 Hosted MCP Supabase bearer verification requires AAL2 for human JWTs and rejects
 email/MFA pending roles. `X-API-Key` machine authentication is unchanged.
+## 2026-09-19 — UAT-12 MCP status parity
+
+The write-gated MCP surface includes `arkova_get_submission_status`, proxied to the caller-scoped worker route with the caller API key. Descriptions are public verification metadata; user/org tags remain private. Keep tool definition, Zod registry, live registration, and server card synchronized.
+Status-handler tests retain safe string error codes but collapse structured upstream bodies to the
+HTTP status; internal provider messages must never reach MCP output.

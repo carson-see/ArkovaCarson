@@ -22,6 +22,14 @@ dialog open instead of implying a change that did not happen.
 
 # agents.md — hooks
 
+## 2026-09-19 — UAT-12 capability and tag suggestions
+
+`useSecuringCapability` validates the worker response with Zod and fails closed on
+malformed or unavailable data. `usePrivateTagSuggestions` relies on RLS for the
+tenant boundary, then partitions user tags from organization tags and filters the
+latter to the exact selected org. Its React Query key includes both user and org,
+preventing a prior scope's response from becoming the next scope's suggestions.
+
 ## UAT-22 platform invitation list (2026-09-14)
 
 `useOrgInvitations(orgId, platformAdmin)` uses the authenticated admin worker list for platform administrators and the existing tenant RLS query otherwise. Cache keys include actor mode, preventing reuse of privileged foreign-org results in tenant mode. Expiry and revoked-status display semantics remain shared.
@@ -238,6 +246,14 @@ an `else if` so the fallback cannot attribute the same organization twice.
 a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
 the query; account switches and AAL downgrades mask cached data immediately.
 
+## 2026-09-19 — UAT-12 submission authority
+
+`useSecuringCapability` and `useAnchorSubmissionStatus` parse worker payloads
+strictly and fail closed. Status reads use the selected exact organization or an
+explicit personal scope, poll only active instant intents, and refresh on focus.
+`usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
+its query key includes both user and selected organization to prevent stale scope
+reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
 ## 2026-09-14 — SCRUM-5145 signup resend API
 
 Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.

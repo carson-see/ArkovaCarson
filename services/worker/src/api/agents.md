@@ -664,3 +664,9 @@ worker-only PR.
 Drive OAuth permits multiple active account IDs in an organization; connect does not retire older accounts and renewal processes each active row. The provider health card must evaluate every active Google row and retain any failure, using renewal, cursor, fetch-job and processing precedence, then connection timestamp and stable row ID for a deterministic explanation. Revoked accounts cannot hide active health; only an all-revoked set is disconnected. Expiry, renewal timestamp and sanitized account label come from that same explanation row. Order reversal and mixed healthy/failed/revoked regression cases exercise the API output. The separate disconnect multi-account cleanup mismatch is logged for follow-up and is outside this repair.
 
 Integration and enabled-rule inventories now use shared scanAllPages with complete-page validation, total ordering, a five-second abort signal and row/page budgets. An error or incomplete inventory returns503 rather than a partial healthy response. Cursor health shares the pure driveFolderIds binding parser with the actual runner: an enabled rule with empty configuration is not a watched folder; later configured rows are scanned too.
+## 2026-09-19 — atomic contractual anchor-cap denial
+
+The canonical create RPC can now return `contractual_quota_exceeded` after its
+transactional final-slot decision. `v1/anchor-submit.ts` maps it back to the
+existing partner-facing 402 `quota_exhausted` problem response. The distinct
+`quota_exceeded` result remains the tier daily limit and keeps its 429 response.

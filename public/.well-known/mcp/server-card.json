@@ -379,7 +379,7 @@
     },
     {
       "name": "arkova_anchor_document",
-      "description": "Submit a document fingerprint for anchoring to the public ledger. The document itself is never sent — only its SHA-256 fingerprint. Anchoring is asynchronous (batched), so this returns a submission receipt, NOT a completed anchor: public_id is null and no network receipt exists yet. Follow up with arkova_verify_document using the SAME content_hash — it reports status UNKNOWN until anchoring completes, then returns the public_id and proof. Conditionally available: registered only when MCP_ENABLE_ANCHOR_DOCUMENT=true and the caller holds a write:anchors or anchor:write scope. Absent that, this tool will not appear in a live tools/list call even though it is part of the documented server surface.",
+      "description": "Submit a document fingerprint for anchoring to the public ledger. The document itself is never sent — only its SHA-256 fingerprint. Choose queue for asynchronous batching or instant to reserve one anchor credit and start now. Both actions return a submission receipt rather than completed network evidence. Descriptions are public verification metadata; user and organization tags are private. Follow up with arkova_verify_document using the SAME content_hash — it reports status UNKNOWN until anchoring completes, then returns the public_id and proof. Conditionally available: registered only when MCP_ENABLE_ANCHOR_DOCUMENT=true and the caller holds a write:anchors or anchor:write scope. Absent that, this tool will not appear in a live tools/list call even though it is part of the documented server surface.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -405,11 +405,38 @@
             "maxLength": 500,
             "description": "Title of the document"
           },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Public description included in verification responses"
+          },
           "source_url": {
             "type": "string",
             "format": "uri",
             "maxLength": 2048,
             "description": "URL of the original document"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "queue",
+              "instant"
+            ],
+            "description": "Queue for batch anchoring or spend one anchor credit to start now"
+          },
+          "user_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Private tags visible only to the submitting user"
+          },
+          "organization_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Private tags visible only within the submitting organization"
           },
           "idempotency_key": {
             "type": "string",
@@ -420,6 +447,21 @@
         "required": [
           "content_hash"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "arkova_get_submission_status",
+      "description": "Read the caller-scoped durable queue or instant submission state, including bounded credit and retry state. Returns no private tags, metadata, or internal identifiers. Conditionally available with the same write-scope gate as arkova_anchor_document.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_id": {
+            "type": "string",
+            "description": "Arkova public identifier returned by submission"
+          }
+        },
+        "required": ["public_id"],
         "additionalProperties": false
       }
     }

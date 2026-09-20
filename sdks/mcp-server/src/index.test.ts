@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 describe('Tool Definitions', () => {
-  it('should define exactly the 6 registered tools', () => {
+  it('should define exactly the registered tools', () => {
     // Exact-name ratchet: adding or removing a tool must update this list
     // deliberately. The 4 nessie_-prefixed tools (NCE-19) were removed
     // 2026-09-02 — three 401'd for every real caller (the worker's
@@ -24,6 +24,8 @@ describe('Tool Definitions', () => {
     // (nessie_ask) was already a standing 503 by founder directive. See
     // sdks/mcp-server/agents.md.
     expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
+      'arkova_submit_anchor',
+      'arkova_get_submission_status',
       'arkova_verify_anchor',
       'arkova_anchor_status',
       'arkova_search_anchors',
@@ -31,6 +33,77 @@ describe('Tool Definitions', () => {
       'arkova_batch_verify',
       'arkova_verify_signature',
     ]);
+  });
+
+  it('submits queue/instant choice and private tags to the canonical anchor route', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ public_id: 'ark_test', action: 'instant', credit_state: 'pending' }),
+    });
+
+    const result = await handleToolCall('arkova_submit_anchor', {
+      fingerprint: 'a'.repeat(64),
+      description: 'Quarterly filing',
+      action: 'instant',
+      user_tags: '["tax"]',
+      organization_tags: '["audit"]',
+    });
+
+    expect(result.isError).toBeUndefined();
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/v1/anchor');
+    expect(init.redirect).toBe('error');
+    expect(JSON.parse(String(init.body))).toEqual({
+      fingerprint: 'a'.repeat(64),
+      description: 'Quarterly filing',
+      action: 'instant',
+      private_tags: { user: ['tax'], organization: ['audit'] },
+    });
+  });
+
+  it('passes through a terminal idempotent submission status without relabeling it', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ public_id: 'ark_test', status: 'REVOKED', idempotent: true }),
+    });
+
+    const result = await handleToolCall('arkova_submit_anchor', { fingerprint: 'a'.repeat(64) });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'REVOKED', idempotent: true });
+  });
+
+  it('reads bounded durable submission status from the canonical route', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ public_id: 'ARK-1', action: 'instant', instant_status: 'NEEDS_CREDIT' }),
+    });
+    const result = await handleToolCall('arkova_get_submission_status', { public_id: 'ARK-1' });
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/anchor/ARK-1/submission-status'),
+      expect.any(Object),
+    );
+    expect(result.content[0]?.text).toContain('NEEDS_CREDIT');
+  });
+
+  it.each([
+    [404, { error: 'submission_not_found' }, 'submission_not_found'],
+    [503, { error: { code: 'db_error', message: 'secret internal detail' } }, 'HTTP 503'],
+  ])('bounds submission-status upstream HTTP %s errors', async (status, body, expected) => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status,
+      json: () => Promise.resolve(body),
+    });
+
+    const result = await handleToolCall('arkova_get_submission_status', { public_id: 'ARK-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain(expected);
+    expect(result.content[0]?.text).not.toContain('secret internal detail');
+    expect(result.content[0]?.text).not.toContain('db_error');
   });
 
   it('should have valid input schemas', () => {

@@ -124,13 +124,30 @@ console.log(r1);
 // {
 //   publicId: "ARK-2026-001",
 //   fingerprint: "abc123...",  // SHA-256 hex
-//   status: "PENDING",          // PENDING → SUBMITTED → SECURED
+//   status: "PENDING",          // May be any lifecycle state on an idempotent replay
 //   createdAt: "2026-04-11T10:30:00.000Z",
 //   networkReceiptId: undefined  // populated once SECURED
 // }
 ```
 
 **Idempotency:** the same fingerprint returns the same `publicId`. Anchoring identical content twice is a no-op.
+The replay receipt reports the existing record's current lifecycle state, including
+`REVOKED`, `EXPIRED`, `SUPERSEDED`, or `PENDING_RESOLUTION`; it does not reset the
+status to `PENDING`.
+
+### `arkova.getAnchorSubmissionStatus(publicId)`
+
+Read the API-key caller's durable queue or instant-processing state. This is authenticated submission state, not the public verification result.
+
+```typescript
+const submission = await arkova.getAnchorSubmissionStatus(r1.publicId);
+console.log(submission.action, submission.anchorStatus, submission.instantStatus);
+if (submission.retryable) {
+  // Re-submit the same fingerprint with action: 'instant' after restoring credit.
+}
+```
+
+New server responses always include wire fields `action`, `credit_state`, `instant_status`, and `idempotent`; the SDK maps them to `action`, `creditState`, `instantStatus`, and `idempotent`. Those receipt fields remain optional in the SDK so applications can also parse receipts retained from older deployments; the dedicated status method validates its lifecycle enums strictly.
 
 ### `arkova.fingerprint(data)`
 

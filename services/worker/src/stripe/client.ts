@@ -117,6 +117,59 @@ export async function createCheckoutSession(params: {
   return { sessionId: session.id, url: session.url };
 }
 
+const ANCHOR_CREDIT_UNIT_PRICE_CENTS = 200;
+
+/** Create a one-time Stripe checkout for the canonical anchor-credit pools. */
+export async function createAnchorCreditCheckoutSession(params: {
+  purchaserUserId: string;
+  targetUserId: string | null;
+  targetOrgId: string | null;
+  quantity: number;
+}): Promise<{ sessionId: string; url: string }> {
+  const metadata = {
+    purchase_kind: 'anchor_credits',
+    purchaser_user_id: params.purchaserUserId,
+    target_user_id: params.targetUserId ?? '',
+    target_org_id: params.targetOrgId ?? '',
+    quantity: String(params.quantity),
+    unit_price_cents: String(ANCHOR_CREDIT_UNIT_PRICE_CENTS),
+  };
+  const checkoutParams: Stripe.Checkout.SessionCreateParams = {
+    mode: 'payment',
+    payment_method_types: ['card'],
+    line_items: [{
+      quantity: params.quantity,
+      price_data: {
+        currency: 'usd',
+        unit_amount: ANCHOR_CREDIT_UNIT_PRICE_CENTS,
+        product_data: { name: 'Instant secure credit' },
+      },
+    }],
+    success_url: `${config.frontendUrl}/vault?credit_purchase=success`,
+    cancel_url: `${config.frontendUrl}/vault?credit_purchase=canceled`,
+    metadata,
+  };
+  const session = config.useMocks
+    ? await mockStripeClient.createCheckoutSession({
+        mode: 'payment',
+        payment_method_types: ['card'],
+        line_items: [{
+          quantity: params.quantity,
+          price_data: {
+            currency: 'usd',
+            unit_amount: ANCHOR_CREDIT_UNIT_PRICE_CENTS,
+            product_data: { name: 'Instant secure credit' },
+          },
+        }],
+        success_url: checkoutParams.success_url ?? '',
+        cancel_url: checkoutParams.cancel_url ?? '',
+        metadata,
+      })
+    : await stripe.checkout.sessions.create(checkoutParams);
+  if (!session.url) throw new Error('Stripe did not return a checkout URL');
+  return { sessionId: session.id, url: session.url };
+}
+
 /**
  * Create a Stripe Billing Portal Session for subscription management.
  *

@@ -6,6 +6,7 @@
  *
  * Tools (all prefixed with arkova_ for namespace consistency — DX-04):
  *   - arkova_verify_anchor: Verify an anchored record by public ID
+ *   - arkova_get_submission_status: Read durable queue/instant submission state
  *   - arkova_anchor_status: Get anchor status and proof details
  *   - arkova_search_anchors: Search verified records by query
  *   - arkova_create_attestation: Create a third-party attestation
@@ -50,6 +51,7 @@ const TIMEOUT_MS = 10000;
 async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Response> {
   return fetch(`${BASE_URL}${path}`, {
     ...options,
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': API_KEY,
@@ -137,6 +139,30 @@ function disabledCapabilityMessage(
 // ─── Tool Definitions ──────────────────────────────────────────────────
 
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
+  {
+    name: 'arkova_submit_anchor',
+    description: 'Submit a client-computed document fingerprint. Choose the free queue or spend one anchor credit for immediate processing. Descriptions are public verification metadata; private tags remain visible only to the submitting user or exact organization. ' + API_ONLY_NOTE,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fingerprint: { type: 'string', description: 'A 64-character SHA-256 document fingerprint computed before calling this tool' },
+        description: { type: 'string', description: 'Optional document description, up to 1,000 characters' },
+        action: { type: 'string', description: 'Submission path', enum: ['queue', 'instant'] },
+        user_tags: { type: 'string', description: 'Optional JSON array of private user tags' },
+        organization_tags: { type: 'string', description: 'Optional JSON array of private organization tags' },
+      },
+      required: ['fingerprint'],
+    },
+  },
+  {
+    name: 'arkova_get_submission_status',
+    description: 'Read the caller-scoped durable queue or instant submission state without private tags, metadata, or internal identifiers. ' + API_ONLY_NOTE,
+    inputSchema: {
+      type: 'object',
+      properties: { public_id: { type: 'string', description: 'Arkova public identifier returned by submission' } },
+      required: ['public_id'],
+    },
+  },
   {
     name: 'arkova_verify_anchor',
     description: 'Verify an anchored record on the Arkova network by its public ID. Returns the verification result including issuer, record type, and anchor proof. ' + API_ONLY_NOTE,
@@ -256,6 +282,10 @@ export async function handleToolCall(
 ): Promise<McpToolResult> {
   try {
     switch (name) {
+      case 'arkova_submit_anchor':
+        return await handleSubmitAnchor(args);
+      case 'arkova_get_submission_status':
+        return await handleSubmissionStatus(args.public_id);
       case 'arkova_verify_anchor':
         return await handleVerifyCredential(args.public_id);
       case 'arkova_anchor_status':
@@ -274,6 +304,53 @@ export async function handleToolCall(
   } catch (err) {
     return errorResult(err instanceof Error ? err.message : 'Unknown error');
   }
+}
+
+async function handleSubmissionStatus(publicId: string): Promise<McpToolResult> {
+  if (!publicId) return errorResult('public_id is required');
+  const res = await arkovaFetch(`/api/v1/anchor/${encodeURIComponent(publicId)}/submission-status`);
+  const body = await res.json().catch(() => null) as Record<string, unknown> | null;
+  if (!res.ok) {
+    const code = typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`;
+    return errorResult(`Submission status unavailable: ${code}`);
+  }
+  return textResult(JSON.stringify(body ?? {}));
+}
+
+function parsePrivateTags(raw: string | undefined, scope: string): string[] {
+  if (!raw) return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed) || parsed.some((tag) => typeof tag !== 'string')) {
+    throw new Error(`${scope} must be a JSON array of strings`);
+  }
+  return parsed;
+}
+
+async function handleSubmitAnchor(args: Record<string, string>): Promise<McpToolResult> {
+  let userTags: string[];
+  let organizationTags: string[];
+  try {
+    userTags = parsePrivateTags(args.user_tags, 'user_tags');
+    organizationTags = parsePrivateTags(args.organization_tags, 'organization_tags');
+  } catch (error) {
+    return errorResult(error instanceof Error ? error.message : 'Invalid private tags');
+  }
+  const res = await arkovaFetch('/api/v1/anchor', {
+    method: 'POST',
+    body: JSON.stringify({
+      fingerprint: args.fingerprint,
+      action: args.action,
+      ...(args.description ? { description: args.description } : {}),
+      ...((userTags.length || organizationTags.length) ? { private_tags: { user: userTags, organization: organizationTags } } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await readErrorBody(res);
+    const disabled = disabledCapabilityMessage(res.status, body, 'Document submission');
+    if (disabled) return errorResult(disabled);
+    return errorResult(body?.message ?? body?.error ?? `API returned ${res.status}`);
+  }
+  return textResult(JSON.stringify(await res.json(), null, 2));
 }
 
 /**

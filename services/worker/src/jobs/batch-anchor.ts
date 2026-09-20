@@ -585,6 +585,12 @@ export interface ProcessBatchAnchorOptions {
   force?: boolean;
   /** Restrict pending-anchor discovery and claims to a single organization. */
   orgId?: string;
+  /**
+   * SCRUM-5139: claim exactly the anchor owned by this durable instant intent.
+   * The claim RPC also reserves its exact user/org credit. Mutually exclusive
+   * with orgId so a missing tenant can never widen into a global batch.
+   */
+  instantIntentId?: string;
 }
 
 /**
@@ -731,7 +737,7 @@ export interface IntentReconcileResult {
   rejectedReason?: string;
 }
 
-interface TxidJournalDbRow {
+export interface TxidJournalDbRow {
   id: string;
   batch_id: string;
   txid: string;
@@ -1014,15 +1020,18 @@ async function resolveTxidJournal(
   return true;
 }
 
-function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
+export function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
   if (!Array.isArray(row.leaf_order)) {
     throw new Error('leaf_order is not an array');
   }
   const leaves = row.leaf_order.map((leaf) => {
     const candidate = leaf as { anchor_id?: unknown; fingerprint?: unknown };
+    if (typeof candidate.anchor_id !== 'string' || typeof candidate.fingerprint !== 'string') {
+      throw new Error('leaf_order entries require string anchor_id and fingerprint');
+    }
     return {
-      anchorId: String(candidate.anchor_id ?? ''),
-      fingerprint: String(candidate.fingerprint ?? ''),
+      anchorId: candidate.anchor_id,
+      fingerprint: candidate.fingerprint,
     };
   });
   const entry = buildTxidJournalEntry({
@@ -1656,6 +1665,15 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     logger.error({ orgId: opts.orgId }, 'Invalid empty orgId for org-scoped batch processing');
     return EMPTY;
   }
+  const instantIntentId = typeof opts.instantIntentId === 'string' ? opts.instantIntentId.trim() : null;
+  if (opts.instantIntentId !== undefined && !instantIntentId) {
+    logger.error({ instantIntentId: opts.instantIntentId }, 'Invalid empty instantIntentId');
+    return EMPTY;
+  }
+  if (instantIntentId && orgId) {
+    logger.error({ instantIntentId, orgId }, 'Exact instant intent cannot be combined with org batch scope');
+    return EMPTY;
+  }
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
   const chainClient = await getChainClientAsync();
@@ -1706,7 +1724,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
   // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
   let oldestPendingAgeMs = 0;
-  try {
+  if (!instantIntentId) try {
     // These reads are independent; keep them bounded to indexed threshold
     // probes rather than exact counts on the hot anchors table.
     let oldestQuery = db
@@ -1801,7 +1819,31 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   const allClaimed: ClaimedAnchor[] = [];
   let remaining = BATCH_SIZE;
 
-  while (remaining > 0) {
+  if (instantIntentId) {
+    let exactResult: { data: unknown; error: unknown };
+    try {
+      // The production-generated worker types lag this additive migration until
+      // it is promoted; the runtime RPC is covered by the migration contract.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      exactResult = await withDbTimeout(() => (db.rpc as any)('claim_anchor_instant_intent', {
+        p_intent_id: instantIntentId,
+        p_worker_id: `instant-${process.pid}`,
+      }), 30_000);
+    } catch (error) {
+      logger.error({ error, instantIntentId }, 'Exact instant intent claim timed out');
+      return emptyResult();
+    }
+    if (exactResult.error) {
+      logger.error({ error: exactResult.error, instantIntentId }, 'Exact instant intent claim failed');
+      return emptyResult();
+    }
+    const exactRows = Array.isArray(exactResult.data) ? exactResult.data : exactResult.data ? [exactResult.data] : [];
+    if (exactRows.length !== 1) return emptyResult();
+    allClaimed.push(exactRows[0] as ClaimedAnchor);
+    remaining = 0;
+  }
+
+  while (!instantIntentId && remaining > 0) {
     const chunkSize = Math.min(remaining, POSTGREST_ROW_LIMIT);
     // Wrapped in 30s timeout to prevent batch job from hanging
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

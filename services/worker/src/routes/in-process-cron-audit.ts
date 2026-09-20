@@ -322,6 +322,17 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
       + 'idempotent on the anchor id.',
   },
   {
+    jobName: 'instant-secure-intents',
+    entrypointModule: 'jobs/instant-secure.ts',
+    guard: 'atomic-claim',
+    doubleFireImpact: 'wasted-work',
+    rationale:
+      'Each pass drains through processNextJob, whose claim_next_job RPC atomically moves one '
+      + 'anchor.instant_secure row from pending to processing. Concurrent in-process and Cloud '
+      + 'Scheduler drains therefore claim distinct jobs; settlement is additionally bound to '
+      + 'the intent attempt and rearm generation.',
+  },
+  {
     jobName: 'drive-file-changed',
     entrypointModule: 'jobs/drive-file-changed.ts',
     guard: 'atomic-claim',

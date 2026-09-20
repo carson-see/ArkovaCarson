@@ -346,3 +346,6 @@ Wired in `index.ts`'s `healthCheckHandler` deps as `getOriginGuardStats: () =>
 getOriginGuardStats()`. Counters are process-local (Cloud Run runs multiple instances), so this is
 a quick per-instance signal, not a durable audit trail — the `origin_guard_would_block` /
 `origin_guard_blocked` structured log lines are that.
+## 2026-09-19 — UAT-12 JWT status bridge
+
+`anchor-self-service.ts` accepts status GETs only with one explicit scope: `?scope=user` or `?org_id=<uuid>`. It re-derives profile/membership before delegating to the canonical anchor router; never infer GET scope from a body or trust a client organization id without membership.

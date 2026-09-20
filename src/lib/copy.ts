@@ -1619,8 +1619,8 @@ export const EXPLORER_LABELS = {
 
 export const DESCRIPTION_LABELS = {
   FIELD_LABEL: 'Description',
-  FIELD_PLACEHOLDER: 'Brief description of what this document represents (max 500 characters)',
-  FIELD_HELP: 'This description will be permanently associated with your record.',
+  FIELD_PLACEHOLDER: 'Brief description of what this document represents (max 1,000 characters)',
+  FIELD_HELP: 'This description will be permanently associated with your record and shown on its public verification page.',
 } as const;
 
 // =============================================================================
@@ -4586,9 +4586,38 @@ export const SECURE_QUEUE_LABELS = {
   EMPTY_DESC: 'Documents you add to the queue will appear here until they are secured.',
   COST_PREVIEW: 'Uses 1 credit. You have {n} remaining this cycle.',
   INSUFFICIENT_CREDITS: 'Not enough credits. Add credits or add to the queue (free).',
+  BUY_ONE_CREDIT: 'Buy 1 credit for $2',
+  PURCHASE_FAILED: 'Could not start credit checkout. Please try again.',
+  POPUP_BLOCKED: 'Your browser blocked the secure checkout window. Allow pop-ups and try again.',
+  PURCHASE_STARTING: 'Opening checkout…',
+  REARM_INSTANT: 'Try instant securing again',
+  REARMING: 'Retrying…',
+  STATUS_ERROR: 'Securing status could not be refreshed. Try again in a moment.',
+  INSTANT_SAVED_TITLE: 'Instant securing request saved',
+  INSTANT_SAVED_BODY: 'The request was saved. Its current network-submission state appears below.',
+  INSTANT_HELD_BODY: 'The request is on hold for reconciliation. No network receipt or completion time is promised.',
+  INSTANT_NEEDS_CREDIT_BODY: 'The document was saved, but instant securing has not started. Add a credit before retrying.',
+  INSTANT_FAILED_BODY: 'The document was saved, but instant securing stopped safely. This does not confirm network submission.',
+  INSTANT_STATUS_UNKNOWN_BODY: 'The document was saved, but its network-submission state is unavailable. Refresh the status before acting.',
+  USER_TAGS: 'Private tags',
+  ORG_TAGS: 'Organization tags',
+  TAGS_PLACEHOLDER: 'Add tags separated by commas',
+  TAG_TOO_LONG: 'Each tag must be 64 characters or fewer.',
+  TOO_MANY_TAGS: 'Add no more than 10 tags in each field.',
+  AVAILABILITY_ERROR: 'Instant securing availability could not be loaded. You can still add this document to the free queue.',
+  INSTANT_STATUS: {
+    QUEUED: 'Instant securing is queued.',
+    PROCESSING: 'Instant securing is in progress.',
+    NEEDS_CREDIT: 'This request needs a credit before it can continue.',
+    RETRYABLE: 'The request is ready to retry safely.',
+    HELD: 'The request is on hold while network evidence is checked. No retry is available yet.',
+    SUBMITTED: 'The record was submitted and is awaiting confirmation.',
+    FAILED: 'Instant securing stopped safely. Review the credit status before trying again.',
+  },
   NOT_CHARGED_FAILURE: 'We couldn’t secure your document right now. You were not charged. Please try again or add it to the queue.',
   QUEUED_TOAST: 'Added to the queue. No credits used.',
   SECURED_TOAST: 'Your document has been secured.',
+  INSTANT_STARTED_TOAST: 'Instant securing started. Your credit is charged only when processing begins.',
 } as const;
 
 // ─── SCRUM-2481 badge honesty (Lane 3) ───────────────────────────────────────

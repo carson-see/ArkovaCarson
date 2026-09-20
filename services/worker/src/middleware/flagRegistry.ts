@@ -69,6 +69,7 @@ const ENV_FLAG_GETTERS = {
   // must not be re-openable by a switchboard_flags DB write.
   ENABLE_SUBORG_WEBHOOK_FANOUT: () => config.enableSubOrgWebhookFanout,
   ENABLE_RULE_ACTION_DISPATCHER: () => config.enableRuleActionDispatcher,
+  ENABLE_INSTANT_SECURE: () => config.enableInstantSecure,
   ENABLE_ALLOCATION_ROLLOVER: () => config.enableAllocationRollover,
   ENABLE_VISUAL_FRAUD_DETECTION: () => config.enableVisualFraudDetection,
   ENABLE_GRC_INTEGRATIONS: () => config.enableGrcIntegrations,

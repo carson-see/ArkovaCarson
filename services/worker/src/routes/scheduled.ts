@@ -41,6 +41,7 @@ import { runCreditConservationReconciler } from '../jobs/credit-conservation-rec
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
+import { runInstantSecureJobs } from '../jobs/instant-secure.js';
 import { runDriveSubscriptionRenewal } from '../jobs/drive-subscription-renewal-deps.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
@@ -73,6 +74,7 @@ const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   // charges credits + anchors to Bitcoin. Joins the anchor-table allowlist so a
   // paused pipeline during a migration window doesn't materialize/charge rows.
   'drain-connector-artifacts',
+  'instant-secure-intents',
 ]);
 
 function scheduleInProcess(jobName: string, expression: string, task: CronTask): void {
@@ -389,6 +391,17 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
         }
       } catch (error) {
         logger.error({ err: errMsg(error) }, 'Connector-artifact drain cron failed');
+      }
+    });
+  }
+
+  if (config.enableInstantSecure) {
+    scheduleInProcess('instant-secure-intents', '* * * * *', async () => {
+      try {
+        const result = await trackOperation(runInstantSecureJobs());
+        if (result.claimed > 0) logger.info({ ...result }, 'Instant-secure intent jobs processed');
+      } catch (error) {
+        logger.error({ err: errMsg(error) }, 'Instant-secure intent drain failed');
       }
     });
   }
