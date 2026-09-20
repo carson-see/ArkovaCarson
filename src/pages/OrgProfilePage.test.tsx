@@ -12,9 +12,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { OrgProfilePage } from './OrgProfilePage';
+import { OrgProfilePage, retainFailedMoveIds } from './OrgProfilePage';
 
-const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitationMode, platformAdminMode, invitationListState } = vi.hoisted(() => ({
+const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitationMode, platformAdminMode, invitationListState, memberRoleState } = vi.hoisted(() => ({
   mockInviteMember: vi.fn(),
   mockInvitationMode: vi.fn(),
   platformAdminMode: { value: false },
@@ -23,6 +23,7 @@ const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitation
   // Records every .eq(column, value) on the supabase mock chain so scoping
   // of the page's queries can be asserted (arkova/no-unscoped-service-test).
   mockSupabaseEq: vi.fn(),
+  memberRoleState: { value: 'admin' as 'owner' | 'admin' | 'member' },
 }));
 
 // Captured from the mocked InviteMemberModal below — this is exactly the
@@ -30,6 +31,11 @@ const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitation
 let capturedOnInvite:
   | ((email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => Promise<boolean>)
   | null = null;
+let capturedSecureOrgId: string | null | undefined;
+
+it('retains only failed selections after a partial folder move', () => {
+  expect(retainFailedMoveIds(['anchor-a', 'anchor-b'], [{ anchor_id: 'anchor-b' }])).toEqual(['anchor-b']);
+});
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
@@ -60,6 +66,9 @@ vi.mock('@/hooks/useOrganization', () => ({
       domain: 'acme.example',
       verification_status: 'UNVERIFIED',
       created_at: '2026-01-01T00:00:00Z',
+      website_url: 'https://acme.example/about',
+      linkedin_url: 'https://linkedin.com/company/acme',
+      twitter_url: 'javascript:alert(1)',
     },
     updating: false,
     updateOrganization: vi.fn(),
@@ -102,6 +111,14 @@ vi.mock('@/hooks/useIssueCredentialSplit', () => ({
   useIssueCredentialSplit: () => ({ enabled: false, loading: false }),
 }));
 
+vi.mock('@/hooks/useOrgProfileFolders', () => ({
+  descendantFolderIds: () => [],
+  useOrgProfileFolders: () => ({
+    folders: [], loading: false, createFolder: vi.fn(), renameFolder: vi.fn(),
+    deleteFolder: vi.fn(), moveRecords: vi.fn(),
+  }),
+}));
+
 vi.mock('@/lib/workerClient', () => ({
   WORKER_URL: 'http://localhost:8080',
   workerFetch: vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }),
@@ -124,7 +141,9 @@ vi.mock('@/lib/supabase', () => {
       mockSupabaseEq(...args);
       return c;
     };
-    c.single = () => Promise.resolve(result);
+    c.single = () => Promise.resolve(table === 'org_members'
+      ? { data: { role: memberRoleState.value }, error: null }
+      : result);
     // The anchors count query awaits the builder itself (thenable).
     c.then = (
       resolve: (v: unknown) => unknown,
@@ -170,7 +189,10 @@ vi.mock('@/components/organization', () => ({
 }));
 
 vi.mock('@/components/anchor', () => ({
-  SecureDocumentDialog: () => null,
+  SecureDocumentDialog: (props: { orgId?: string | null }) => {
+    capturedSecureOrgId = props.orgId;
+    return null;
+  },
 }));
 
 vi.mock('@/components/org/OrgVerification', () => ({ OrgVerification: () => null }));
@@ -210,14 +232,37 @@ describe('OrgProfilePage — handleInvite result handling (SCRUM-3524)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedOnInvite = null;
+    capturedSecureOrgId = undefined;
     platformAdminMode.value = false;
     invitationListState.error = null;
+    memberRoleState.value = 'admin';
   });
 
   it('passes platform-admin mode when listing invitations for the selected org', async () => {
     platformAdminMode.value = true;
     renderPage();
     await waitFor(() => expect(mockInvitationMode).toHaveBeenCalledWith('org-1', true));
+  });
+
+  it('shows safe organization social links and drops non-HTTPS values', async () => {
+    renderPage();
+    expect(await screen.findByRole('link', { name: 'Website' })).toHaveAttribute('href', 'https://acme.example/about');
+    expect(screen.getByRole('link', { name: 'LinkedIn' })).toHaveAttribute('href', 'https://linkedin.com/company/acme');
+    expect(screen.queryByRole('link', { name: 'X (Twitter)' })).not.toBeInTheDocument();
+  });
+
+  it('binds Secure Document to the exact route organization', async () => {
+    renderPage();
+    await waitFor(() => expect(capturedSecureOrgId).toBe('org-1'));
+  });
+
+  it('keeps queue and organization write actions hidden from ordinary members', async () => {
+    memberRoleState.value = 'member';
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Member')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Queue' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open queue notifications' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Secure Document/i })).not.toBeInTheDocument();
   });
 
   it('shows a curated invitation-list failure instead of an apparently empty list', async () => {

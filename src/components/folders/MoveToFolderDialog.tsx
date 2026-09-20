@@ -37,17 +37,26 @@ export function MoveToFolderDialog({
   onSelect,
 }: Readonly<MoveToFolderDialogProps>) {
   const [pendingId, setPendingId] = useState<string | null | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
 
   const handleOpenChange = (next: boolean) => {
     if (pendingId !== undefined) return;
+    setFailed(false);
     onOpenChange(next);
   };
 
   const handleSelect = async (folderId: string | null) => {
     if (pendingId !== undefined) return;
+    setFailed(false);
     setPendingId(folderId);
     try {
-      if (await onSelect(folderId) !== false) onOpenChange(false);
+      if (await onSelect(folderId) !== false) {
+        onOpenChange(false);
+      } else {
+        setFailed(true);
+      }
+    } catch {
+      setFailed(true);
     } finally {
       setPendingId(undefined);
     }
@@ -61,6 +70,7 @@ export function MoveToFolderDialog({
           <DialogDescription className="sr-only">{FOLDER_LABELS.ASSIGN_TITLE}</DialogDescription>
         </DialogHeader>
 
+        {failed && <p role="alert" className="text-sm text-destructive">{FOLDER_LABELS.ERR_ASSIGN}</p>}
         <div className="space-y-1 py-2 max-h-80 overflow-y-auto">
           <FolderRow
             label={FOLDER_LABELS.UNFILED}

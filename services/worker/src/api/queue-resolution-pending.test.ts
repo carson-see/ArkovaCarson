@@ -25,6 +25,8 @@ const { mockDbFrom, mockLogger } = vi.hoisted(() => ({
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const eqCalls: Array<[string, unknown]> = [];
+
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/rpc.js', () => ({ callRpc: vi.fn() }));
@@ -38,13 +40,20 @@ import type { Request, Response } from 'express';
 
 /** Chainable query mock: methods return the builder; `.maybeSingle()` resolves to
  *  `result`; the builder is thenable so an awaited terminal query resolves too. */
-function chain(result: unknown) {
+function chain(result: unknown | ((filters: Array<[string, unknown]>) => unknown)) {
   const builder: Record<string, unknown> = {};
+  const filters: Array<[string, unknown]> = [];
   const pass = () => builder;
-  for (const m of ['select', 'eq', 'is', 'not', 'order', 'limit', 'gte', 'in']) builder[m] = pass;
-  builder.maybeSingle = () => Promise.resolve(result);
+  for (const m of ['select', 'is', 'not', 'order', 'limit', 'gte', 'in']) builder[m] = pass;
+  builder.eq = (column: string, value: unknown) => {
+    eqCalls.push([column, value]);
+    filters.push([column, value]);
+    return builder;
+  };
+  const resolved = () => typeof result === 'function' ? result(filters) : result;
+  builder.maybeSingle = () => Promise.resolve(resolved());
   builder.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
-    Promise.resolve(result).then(resolve, reject);
+    Promise.resolve(resolved()).then(resolve, reject);
   return builder;
 }
 
@@ -66,10 +75,16 @@ function routeTables(map: Record<string, unknown>) {
   mockDbFrom.mockImplementation((table: string) => chain(map[table]));
 }
 
+function membershipByOrg(roles: Record<string, string | null>) {
+  return (filters: Array<[string, unknown]>) => {
+    const orgId = filters.find(([column]) => column === 'org_id')?.[1];
+    const role = typeof orgId === 'string' ? roles[orgId] : null;
+    return { data: role ? { role } : null, error: null };
+  };
+}
+
 /**
- * A caller who administers `orgId` via the profile-level `ORG_ADMIN` role —
- * the cheapest admissible admin signal, so the non-authz tests below can use
- * it without also having to stage an `org_members` row.
+ * Profile fixture used to prove profile role alone is not authoritative.
  */
 function adminProfile(orgId: string | null) {
   return { data: { org_id: orgId, role: 'ORG_ADMIN', is_platform_admin: false }, error: null };
@@ -80,7 +95,10 @@ function memberProfile(orgId: string | null) {
   return { data: { org_id: orgId, role: 'ORG_MEMBER', is_platform_admin: false }, error: null };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  eqCalls.length = 0;
+});
 
 describe('handleListPendingResolution (GET /api/queue/pending)', () => {
   it('401s when no authenticated caller is provided', async () => {
@@ -88,6 +106,71 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
     await handleListPendingResolution(mockReq(), res, undefined);
     expect(res.statusCode).toBe(401);
     expect((res.body as { error: { code: string } }).error.code).toBe('authentication_required');
+  });
+
+  it('400s a malformed explicit organization before reading authorization tables', async () => {
+    const res = mockRes();
+    await handleListPendingResolution(mockReq({ org_id: 'not-a-uuid' }), res, 'user-1');
+    expect(res.statusCode).toBe(400);
+    expect(mockDbFrom).not.toHaveBeenCalled();
+  });
+
+  it('lets an exact secondary-org admin list that queue and scopes anchors to it', async () => {
+    const parentOrg = '11111111-1111-4111-8111-111111111111';
+    const childOrg = '22222222-2222-4222-8222-222222222222';
+    routeTables({
+      profiles: adminProfile(parentOrg),
+      organizations: { data: { parent_org_id: null, parent_approval_status: null }, error: null },
+      org_members: membershipByOrg({ [childOrg]: 'admin' }),
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq({ org_id: childOrg }), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+    expect(eqCalls).toContainEqual(['org_id', childOrg]);
+  });
+
+  it('allows an exact-org admin whose profile has no primary organization', async () => {
+    const selectedOrg = '22222222-2222-4222-8222-222222222222';
+    routeTables({
+      profiles: memberProfile(null),
+      org_members: membershipByOrg({ [selectedOrg]: 'owner' }),
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq({ org_id: selectedOrg }), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+    expect(eqCalls).toContainEqual(['org_id', selectedOrg]);
+  });
+
+  it('denies a primary-org admin who is only a member of the selected organization', async () => {
+    const primaryOrg = '11111111-1111-4111-8111-111111111111';
+    const selectedOrg = '22222222-2222-4222-8222-222222222222';
+    routeTables({
+      profiles: adminProfile(primaryOrg),
+      org_members: membershipByOrg({ [selectedOrg]: 'member' }),
+      organizations: { data: { parent_org_id: null, parent_approval_status: null }, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq({ org_id: selectedOrg }), res, 'user-1');
+    expect(res.statusCode).toBe(403);
+    expect(mockDbFrom).not.toHaveBeenCalledWith('anchors');
+  });
+
+  it('denies an unrelated explicit organization before reading anchors', async () => {
+    const parentOrg = '11111111-1111-4111-8111-111111111111';
+    const unrelatedOrg = '33333333-3333-4333-8333-333333333333';
+    routeTables({
+      profiles: adminProfile(parentOrg),
+      organizations: { data: { parent_org_id: null, parent_approval_status: null }, error: null },
+      org_members: { data: null, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq({ org_id: unrelatedOrg }), res, 'user-1');
+    expect(res.statusCode).toBe(403);
+    expect(mockDbFrom).not.toHaveBeenCalledWith('anchors');
   });
 
   it('500s when the profile lookup errors', async () => {
@@ -120,7 +203,7 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
   it('returns pending items with sibling_count computed over the full set', async () => {
     routeTables({
       profiles: adminProfile('org-1'),
-      org_members: { data: null, error: null },
+      org_members: { data: { role: 'admin' }, error: null },
       anchors: {
         data: [
           { public_id: 'p1', metadata: { external_file_id: 'A' }, filename: 'f1', fingerprint: 'h1', created_at: '2026-05-30T03:00:00Z' },
@@ -147,7 +230,7 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
   it('applies the display limit but computes sibling_count over the full pending set', async () => {
     routeTables({
       profiles: adminProfile('org-1'),
-      org_members: { data: null, error: null },
+      org_members: { data: { role: 'admin' }, error: null },
       anchors: {
         data: [
           { public_id: 'p1', metadata: { external_file_id: 'A' }, filename: 'f1', fingerprint: 'h1', created_at: '2026-05-30T03:00:00Z' },
@@ -177,18 +260,15 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
  * published OpenAPI contract (`openapi-ciba.ts`, tags `['Queue','OrgAdmin']`,
  * `security: [{ OrgAdminBearer: [] }]`) already promised this gate existed.
  *
- * Admin precedence is NOT re-implemented here: it delegates to the canonical
- * `_org-auth.ts` resolver (`isCallerOrgAdminResult`) that `handleRunOrgAnchorQueue`
- * in this same module and the `requireOrgAdmin` middleware already use, so all
- * three admissible signals below stay in lockstep with the rest of the worker.
- * `_org-auth.js` is deliberately NOT `vi.mock`ed — these drive the real resolver
- * through the table-dispatching `db` double, mirroring `queue-resolution.test.ts`.
+ * These tests drive the real exact-membership queue resolver through the
+ * table-dispatching `db` double; profile role alone must stay denied.
  */
 describe('ORG_ADMIN authorization (SCRUM-3569)', () => {
   it('403s a plain org member and never reaches the anchors table', async () => {
     routeTables({
       profiles: memberProfile('org-1'),
       org_members: { data: { role: 'member' }, error: null },
+      organizations: { data: null, error: null },
       anchors: {
         data: [
           { public_id: 'p1', metadata: { external_file_id: 'A' }, filename: 'payroll-2026.pdf', fingerprint: 'h1', created_at: '2026-05-30T03:00:00Z' },
@@ -211,6 +291,7 @@ describe('ORG_ADMIN authorization (SCRUM-3569)', () => {
     routeTables({
       profiles: memberProfile('org-1'),
       org_members: { data: null, error: null },
+      organizations: { data: null, error: null },
       anchors: { data: [], error: null },
     });
     const res = mockRes();
@@ -242,15 +323,17 @@ describe('ORG_ADMIN authorization (SCRUM-3569)', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it('allows a profile-level ORG_ADMIN of their OWN org', async () => {
+  it('denies a stale profile-level ORG_ADMIN without an authoritative membership', async () => {
     routeTables({
       profiles: adminProfile('org-1'),
       org_members: { data: null, error: null },
+      organizations: { data: null, error: null },
       anchors: { data: [], error: null },
     });
     const res = mockRes();
     await handleListPendingResolution(mockReq(), res, 'user-1');
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(403);
+    expect(mockDbFrom).not.toHaveBeenCalledWith('anchors');
   });
 
   it('allows a platform admin', async () => {
@@ -280,14 +363,14 @@ describe('ORG_ADMIN authorization (SCRUM-3569)', () => {
   it('resolves admin status WITHOUT a second profiles round-trip', async () => {
     routeTables({
       profiles: adminProfile('org-1'),
-      org_members: { data: null, error: null },
+      org_members: { data: { role: 'admin' }, error: null },
       anchors: { data: [], error: null },
     });
     const res = mockRes();
     await handleListPendingResolution(mockReq(), res, 'user-1');
     expect(res.statusCode).toBe(200);
     // The handler already loaded the profile; it must hand that row to
-    // `isCallerOrgAdminResult` rather than making the resolver re-fetch it.
+    // the exact membership check rather than re-fetching it.
     const profileReads = mockDbFrom.mock.calls.filter(([t]) => t === 'profiles');
     expect(profileReads).toHaveLength(1);
   });

@@ -16,7 +16,9 @@
 import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { getCallerOrgId } from './_org-auth.js';
+import { getCallerProfile } from './_org-auth.js';
+import { authorizeManualRun } from './queue-resolution.js';
+import { z } from 'zod';
 
 const MAX_CANDIDATES = 25;
 
@@ -87,11 +89,6 @@ export async function handleCollisionContext(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const orgId = await getCallerOrgId(userId);
-  if (!orgId) {
-    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
-    return;
-  }
   const externalFileId = String(req.params.externalFileId ?? '').trim();
   if (!externalFileId) {
     res.status(400).json({
@@ -99,13 +96,33 @@ export async function handleCollisionContext(
     });
     return;
   }
-
+  const profile = await getCallerProfile(userId);
+  const requestedOrg = req.query.org_id === undefined
+    ? { success: true as const, data: undefined }
+    : z.string().uuid().safeParse(req.query.org_id);
+  if (!requestedOrg.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'org_id must be a valid UUID' } });
+    return;
+  }
+  const orgId = requestedOrg.data ?? profile?.org_id;
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+  const authorization = await authorizeManualRun(userId, orgId, profile);
+  if (!authorization.ok) {
+    res.status(authorization.status).json({
+      error: { code: authorization.code, message: authorization.message },
+    });
+    return;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
     .from('anchors')
     .select('public_id, fingerprint, filename, created_at, metadata')
     .eq('org_id', orgId)
     .eq('status', 'PENDING_RESOLUTION')
+    .is('deleted_at', null)
     .eq('metadata->>external_file_id', externalFileId)
     .order('created_at', { ascending: false })
     .limit(MAX_CANDIDATES);

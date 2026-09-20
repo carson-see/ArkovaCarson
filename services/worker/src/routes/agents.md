@@ -359,3 +359,4 @@ a quick per-instance signal, not a durable audit trail — the `origin_guard_wou
 ## 2026-09-19 — UAT-12 JWT status bridge
 
 `anchor-self-service.ts` accepts status GETs only with one explicit scope: `?scope=user` or `?org_id=<uuid>`. It re-derives profile/membership before delegating to the canonical anchor router; never infer GET scope from a body or trust a client organization id without membership.
+- **2026-09-19 (UAT-19):** `queue-resolution-mounted.test.ts` exercises the real queue handlers through Express JSON/query parsing and the real `extractAuthUserId`/`verifyAuthToken` path using locally signed JOSE tokens. It pins missing/AAL1/expired/malformed 401 with no DB, malformed selected-org 400/no DB, exact secondary owner with no primary org, stale primary-role denial, and selected-anchor/org conflict before the resolution RPC.

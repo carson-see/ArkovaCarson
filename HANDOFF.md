@@ -14,6 +14,25 @@
 
 ## Now
 
+### UAT-19 completion preparation — exact-org review follow-up
+
+- Canonical tracking: [SCRUM-5268](https://arkova.atlassian.net/browse/SCRUM-5268)
+  and [Confluence153256009](https://arkova.atlassian.net/wiki/spaces/A/pages/153256009).
+  This candidate remains draft preparation, not staging/release completion.
+- Exact-org folders, registry/export and queue operations now preserve secondary
+  membership authority without stale primary-profile escalation. Review fixes
+  cover partial moves, stale reads/mutations, notification failure after a durable
+  response, queue polling versus mutation completion and no-primary-org access.
+- Additive0477 serializes logical collision sets, rechecks authority after waits,
+  supports same-selection replay and rejects competing terminal selections.
+  Local native checks include unrelated-set progress while another set is locked.
+- [Proposed T3 plan](docs/staging/uat19-completion-20260919/PLAN.md) is independently
+  premortemed; browser fixtures mock authentication/network and Secure dialog
+  internals. No hosted configuration, deployment, payment, email or soak occurred.
+- Founder cap is30 open PRs including drafts and parallel Sol implementation is
+  authorized. Root owns integration, independent verification and held-Draft
+  publication; historical parent evidence does not qualify this new runtime.
+
 ### UAT-24 completion follow-up — active preparation
 
 - Founder continuation covers UAT-24, UAT-19, UAT-16, UAT-14 and UAT-15; the

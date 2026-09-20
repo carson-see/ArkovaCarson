@@ -1,5 +1,14 @@
 # agents.md — e2e/
 
+## 2026-09-19 — UAT-19 exact-organization dashboard fixture
+
+`uat19-org-profile.spec.ts` and its dedicated config render the real `OrgProfilePage`,
+registry, route-scoped folder hook, and folder sidebar at 1280px and 375px. External
+auth/data boundaries are intercepted; the fixture is not Supabase/RLS evidence. It
+pins exact route-organization folders/search/social/secure controls and verifies an
+ordinary member cannot see queue, secure, or folder-management actions. Keep motion
+disabled and await settled animations before screenshot capture.
+
 Canonical submission fixtures intercept the real worker routes, including `/api/v1/anchor-self-service` and `/api/v1/anchor/bulk/self-service`. Failure scenarios must fail those routes. Hold only the operation under test, never capability reads; pending route fixtures must not leave a `page.evaluate` promise alive at test teardown. Provenance is derived by the worker, so browser requests must not assert `fingerprint_source`.
 
 ## API key/webhook dashboard targeted UAT (2026-09-19)

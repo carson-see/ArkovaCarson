@@ -57,10 +57,37 @@ describe('MoveToFolderDialog', () => {
     });
   });
 
+  it('keeps the dialog open when a partial move reports incomplete', async () => {
+    const onOpenChange = vi.fn();
+    const onSelect = vi.fn().mockResolvedValue(false);
+    render(<MoveToFolderDialog
+      {...defaultProps}
+      onOpenChange={onOpenChange}
+      onSelect={onSelect}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Invoices/ }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('folder-1'));
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not move the record. Please try again.');
+  });
+
   it('shows an empty state with no folders yet', () => {
     render(<MoveToFolderDialog {...defaultProps} folders={[]} />);
 
     expect(screen.getByText('No folders yet')).toBeInTheDocument();
+  });
+
+  it('contains rejected moves, keeps selection open and allows an explicit retry', async () => {
+    const onSelect = vi.fn().mockRejectedValueOnce(new Error('private internal detail')).mockResolvedValueOnce(true);
+    const onOpenChange = vi.fn();
+    render(<MoveToFolderDialog {...defaultProps} onSelect={onSelect} onOpenChange={onOpenChange} />);
+    fireEvent.click(screen.getByRole('button', { name: /Invoices/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not move the record. Please try again.');
+    expect(screen.queryByText('private internal detail')).not.toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Invoices/ }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
   it('marks the currently-assigned folder as selected', () => {

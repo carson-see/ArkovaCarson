@@ -166,6 +166,7 @@ const schemas: Record<string, unknown> = {
       external_file_id: { type: 'string', minLength: 1, maxLength: 255 },
       selected_public_id: { type: 'string', minLength: 1, maxLength: 50 },
       reason: { type: 'string', maxLength: 2000 },
+      org_id: { type: 'string', format: 'uuid', description: 'Optional exact selected organization; selected anchor must match.' },
     },
     additionalProperties: false,
   },
@@ -401,6 +402,7 @@ function queuePaths(): Record<string, SpecPathItem> {
         summary: 'List PENDING_RESOLUTION anchors (SCRUM-1011, public_id-keyed per SCRUM-1121)',
         description:
           'Source-of-truth Zod is `services/worker/src/api/queue-resolution.ts`. Returns rows with `public_id` (not internal `anchors.id`) per CLAUDE.md §6. Org-scoped AND ORG_ADMIN-only (SCRUM-3569): rows carry filenames and fingerprints, so a rank-and-file member gets 403. A caller with no organization gets an empty 200, not a 403.',
+        parameters: [{ name: 'org_id', in: 'query', required: false, schema: { type: 'string', format: 'uuid' } }],
         responses: {
           '200': {
             description: 'OK',
@@ -450,11 +452,22 @@ function queuePaths(): Record<string, SpecPathItem> {
         tags: ['Queue', 'OrgAdmin'],
         security: [{ OrgAdminBearer: [] }],
         summary: 'Force a batch-anchor run for caller org',
+        requestBody: {
+          required: false,
+          content: { 'application/json': { schema: {
+            type: 'object',
+            properties: { org_id: { type: 'string', format: 'uuid' } },
+            additionalProperties: false,
+          } } },
+        },
         responses: { '200': { description: 'OK' } },
       },
     },
     '/api/queue/collision/{externalFileId}': {
-      parameters: [{ name: 'externalFileId', in: 'path', required: true, schema: { type: 'string' } }],
+      parameters: [
+        { name: 'externalFileId', in: 'path', required: true, schema: { type: 'string' } },
+        { name: 'org_id', in: 'query', required: false, schema: { type: 'string', format: 'uuid' } },
+      ],
       get: {
         tags: ['Queue', 'OrgAdmin'],
         security: [{ OrgAdminBearer: [] }],
