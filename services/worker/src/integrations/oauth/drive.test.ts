@@ -21,11 +21,53 @@ import {
   DriveConfigError,
   DriveApiError,
   DRIVE_FOLDER_LISTING_SCOPES,
+  driveGrantExcessScopes,
 } from './drive.js';
 import { assertValidFieldsMask } from './__test-helpers__/fields-mask.js';
 
 beforeEach(() => {
   // Intentionally blank — each test sets its own env.
+});
+
+// SCRUM-5287 (P1 security, fix-round item 5): prod holds a 32-scope grant
+// (full drive, gmail.modify, contacts) for the one connected org, because
+// the OAuth callback persisted whatever Google returned without checking it
+// against DRIVE_DEFAULT_SCOPES. driveGrantExcessScopes is the shared
+// detector both the callback (refuse+don't persist) and connector-health.ts
+// (flag an EXISTING over-scoped row) build on.
+describe('driveGrantExcessScopes', () => {
+  it('returns [] for an EXACT match of the full requested scope set', () => {
+    expect(driveGrantExcessScopes(DRIVE_DEFAULT_SCOPES.join(' '))).toEqual([]);
+  });
+
+  it('returns [] for a SUBSET of the requested scopes (Google not echoing every granted scope back)', () => {
+    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.file')).toEqual([]);
+  });
+
+  it('normalizes the `email`/`profile` short aliases Google sometimes echoes instead of the full URI', () => {
+    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.file email')).toEqual([]);
+  });
+
+  it('allows `openid` without counting it as excess (harmless OIDC bookkeeping, no data access)', () => {
+    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.file openid')).toEqual([]);
+  });
+
+  it('flags a SUPERSET grant — the exact prod incident shape', () => {
+    const excess = driveGrantExcessScopes(
+      'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/drive.file',
+    );
+    expect(excess).toEqual([
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/contacts',
+    ]);
+  });
+
+  it('returns [] for null/undefined/empty (nothing to flag when Google returned no scope string)', () => {
+    expect(driveGrantExcessScopes(null)).toEqual([]);
+    expect(driveGrantExcessScopes(undefined)).toEqual([]);
+    expect(driveGrantExcessScopes('')).toEqual([]);
+  });
 });
 
 describe('assertValidFieldsMask (shared test helper)', () => {

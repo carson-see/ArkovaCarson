@@ -18,6 +18,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
+import { driveGrantExcessScopes } from '../integrations/oauth/drive.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
 import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
 import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
@@ -26,6 +27,17 @@ export type ConnectorKind = 'live' | 'demo' | 'gated';
 export type ConnectorState = 'connected' | 'degraded' | 'disconnected';
 export type HealthReason =
   | 'vendor_auth_revoked'
+  // SCRUM-5287 (P1 security, fix-round item 5): the stored `scope` on this
+  // integration EXCEEDS `DRIVE_DEFAULT_SCOPES` — a leaked refresh token for
+  // this connection can reach more than the connector was ever meant to
+  // touch. The OAuth callback now refuses to persist a NEW over-scoped
+  // grant (drive-oauth.ts), but that guard is forward-only; an EXISTING row
+  // connected before it (or before this connector's own scope allowlist was
+  // last narrowed) needs its own visible signal so an admin can see it and
+  // force a re-consent. Ranked ABOVE every other Drive reason — an
+  // over-permissioned live grant is a standing security exposure, not an
+  // operational degradation.
+  | 'grant_exceeds_requested'
   | 'subscription_expiry'
   // P0-2 (2026-09-14 hardening audit): a stuck/410 Drive changes cursor —
   // the exact condition that hid the #2903 class of bug. Distinct from
@@ -186,6 +198,14 @@ interface IntegrationRow {
   // while the channel is otherwise healthy is exactly the #2903-class
   // stuck-cursor symptom the audit found invisible to this dashboard.
   last_token_advanced_at: string | null;
+  // SCRUM-5287 (P1 security fix-round item 5): the space-delimited scope
+  // string Google actually granted at connect time, persisted verbatim by
+  // drive-oauth.ts's callback. Selected for every provider but only ACTED
+  // on for google_drive, in classify() — checked against
+  // `driveGrantExcessScopes` so an EXISTING over-scoped row (the callback
+  // guard only protects NEW connections going forward) is still visible in
+  // the admin view.
+  scope: string | null;
 }
 
 /**
@@ -378,6 +398,18 @@ export function hasDriveChangesNeverSucceeded(
   return now.getTime() - connectedAtMs > thresholdMs;
 }
 
+/**
+ * SCRUM-5287 (P1 security, fix-round item 5): `driveGrantExcessScopes`
+ * returns `[]` for "within bounds" — this adapts that to `undefined` so
+ * `DriveHealthSignals.grantExceedsRequested` reads as a clean "is there a
+ * finding at all" check (`if (driveSignals?.grantExceedsRequested)`)
+ * without every caller re-checking `.length > 0`.
+ */
+function excessScopesOrUndefined(storedScope: string | null): string[] | undefined {
+  const excess = driveGrantExcessScopes(storedScope);
+  return excess.length > 0 ? excess : undefined;
+}
+
 interface DriveHealthSignals {
   /**
    * True only when: the cursor has not advanced past the threshold, AND the
@@ -397,6 +429,15 @@ interface DriveHealthSignals {
   neverSucceeded: boolean;
   /** Count of failed/dead google_drive.file_changed job_queue rows for this org. */
   fetchJobFailureCount: number;
+  /**
+   * SCRUM-5287 (P1 security, fix-round item 5): non-empty array of excess
+   * scope names (`driveGrantExcessScopes(integration.scope)`) when the
+   * stored grant exceeds `DRIVE_DEFAULT_SCOPES`; `undefined` when it does
+   * not. No false-positive guard needed here (unlike cursorStale/
+   * neverSucceeded) — an over-grant is a real finding regardless of
+   * whether any rule is enabled.
+   */
+  grantExceedsRequested?: string[];
 }
 
 function classify(
@@ -420,6 +461,17 @@ function classify(
   }
   if (integration.revoked_at) {
     return { state: 'disconnected', reason: 'vendor_auth_revoked', lastError: null };
+  }
+  // SCRUM-5287 (P1 security, fix-round item 5): checked BEFORE every other
+  // reason — a security exposure on a live, active grant outranks an
+  // operational degradation. Only computed for google_drive (driveSignals
+  // is undefined for every other connector).
+  if (driveSignals?.grantExceedsRequested) {
+    return {
+      state: 'degraded',
+      reason: 'grant_exceeds_requested',
+      lastError: `Granted OAuth scope exceeds what this connection requested: ${driveSignals.grantExceedsRequested.join(', ')}`,
+    };
   }
   if (subscription?.status === 'degraded') {
     return {
@@ -474,7 +526,7 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  subscription_expiry: 5, changes_list_never_succeeded: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
+  grant_exceeds_requested: 6, subscription_expiry: 5, changes_list_never_succeeded: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
 
@@ -517,7 +569,7 @@ export async function handleConnectorHealth(
       scanAllPages<IntegrationRow>((offset, limit) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (db as any).from('org_integrations')
-          .select('id, provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at, last_token_advanced_at')
+          .select('id, provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at, last_token_advanced_at, scope')
           .eq('org_id', orgId)
           .order('created_at', { ascending: true }).order('id', { ascending: true })
           .range(offset, offset + limit - 1).abortSignal(signal), budget),
@@ -631,6 +683,7 @@ export async function handleConnectorHealth(
         neverSucceeded: hasEnabledDriveRules
           && hasDriveChangesNeverSucceeded(integration.last_token_advanced_at, integration.connected_at),
         fetchJobFailureCount: driveFetchJobFailureCount,
+        grantExceedsRequested: excessScopesOrUndefined(integration.scope),
       }
       : undefined;
     let classification = classify(entry, integration, subscription, lastFailed, driveSignals);
@@ -645,6 +698,7 @@ export async function handleConnectorHealth(
             neverSucceeded: hasEnabledDriveRules
               && hasDriveChangesNeverSucceeded(row.last_token_advanced_at, row.connected_at, now),
             fetchJobFailureCount: driveFetchJobFailureCount,
+            grantExceedsRequested: excessScopesOrUndefined(row.scope),
           }),
         };
       }).sort(compareDriveHealth);

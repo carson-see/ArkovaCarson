@@ -763,6 +763,80 @@ describe('connector-health (SCRUM-1146)', () => {
       expect(body.connectors.find((c) => c.id === 'docusign')?.health_reason).toBe('none');
     });
   });
+
+  // SCRUM-5287 (P1 security, fix-round item 5): the OAuth callback guard
+  // (drive-oauth.ts) only protects NEW connections going forward — an
+  // EXISTING over-scoped row (like the flagged prod org) needs its own
+  // visible signal so an admin can see it and force a re-consent.
+  describe('grant_exceeds_requested signal (SCRUM-5287)', () => {
+    function overScopedDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        // The flagged prod shape: full drive + gmail.modify + contacts, far
+        // beyond DRIVE_DEFAULT_SCOPES.
+        scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/contacts',
+        ...overrides,
+      };
+    }
+
+    it('an existing row whose stored scope exceeds DRIVE_DEFAULT_SCOPES reads degraded/grant_exceeds_requested', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [overScopedDriveRow()], error: null });
+      // No rule needed — unlike cursor_stale/changes_list_never_succeeded,
+      // an over-grant is a finding regardless of whether anything is
+      // actively watching.
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('grant_exceeds_requested');
+      expect(drive?.last_error).toContain('gmail.modify');
+    });
+
+    it('outranks every other Drive reason, including subscription_expiry', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [overScopedDriveRow({ last_renewal_error: 'invalid_grant' })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('grant_exceeds_requested');
+    });
+
+    it('a row whose scope is within DRIVE_DEFAULT_SCOPES (including the `email` alias) is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [overScopedDriveRow({
+          scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly email',
+        })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('grant_exceeds_requested');
+    });
+
+    it('a row with no stored scope (null) is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [overScopedDriveRow({ scope: null })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('grant_exceeds_requested');
+    });
+  });
 });
 
 describe('Drive health across multiple accounts', () => {

@@ -95,6 +95,54 @@ export const DRIVE_DEFAULT_SCOPES = [
 ];
 
 /**
+ * Scopes Google may bundle onto an identity-scoped consent WITHOUT it being
+ * an over-grant — `openid` carries no Drive/Gmail/Contacts data access on
+ * its own, it is Google's own OIDC bookkeeping. Every OTHER scope beyond
+ * `DRIVE_DEFAULT_SCOPES` is treated as excess.
+ */
+const DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES = new Set(['openid']);
+
+/**
+ * SCRUM-5287 (P1 security, FULLSOAK 2026-08 register #9 follow-up): the
+ * shared OAuth client this connector uses can carry scopes from an
+ * UNRELATED prior consent — prod holds a 32-scope grant (full `drive`,
+ * `gmail.modify`, `contacts`, …) for the one connected org today, persisted
+ * because the OAuth callback wrote whatever Google returned without
+ * checking it against what was actually requested. `include_granted_scopes`
+ * is already never sent (see `buildAuthorizationUrl`'s doc comment), which
+ * stops a NEW consent from inheriting old scopes going forward — this is
+ * the other half: verifying the grant Google actually returned doesn't
+ * exceed `DRIVE_DEFAULT_SCOPES` before persisting it at all.
+ *
+ * Returns the excess scope NAMES (empty array = grant is within bounds).
+ * Never logs/returns anything else from the scope string — scope names are
+ * public OAuth constants, not secrets, but the token itself never flows
+ * through this function.
+ */
+/**
+ * Google's token-exchange response echoes SOME well-known OIDC scopes back
+ * as short aliases rather than the full URI that was requested (observed:
+ * `email` for `.../auth/userinfo.email`; `profile` for
+ * `.../auth/userinfo.profile`) — this is Google's own response shape, not
+ * an over-grant. Normalize before comparing against `DRIVE_DEFAULT_SCOPES`,
+ * which is always written in full-URI form.
+ */
+const DRIVE_GRANT_SCOPE_ALIASES: Record<string, string> = {
+  email: 'https://www.googleapis.com/auth/userinfo.email',
+  profile: 'https://www.googleapis.com/auth/userinfo.profile',
+};
+
+export function driveGrantExcessScopes(grantedScope: string | null | undefined): string[] {
+  if (!grantedScope) return [];
+  const requested = new Set(DRIVE_DEFAULT_SCOPES);
+  return grantedScope
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((scope) => DRIVE_GRANT_SCOPE_ALIASES[scope] ?? scope)
+    .filter((scope) => !requested.has(scope) && !DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
+}
+
+/**
  * Scopes that make `GET /api/v1/integrations/google_drive/folders` listable.
  * `drive.file` is deliberately NOT in this set — it cannot enumerate a user's
  * pre-existing folders, so a connection carrying only that scope must be
