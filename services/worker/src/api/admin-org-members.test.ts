@@ -42,6 +42,7 @@ import {
   handleAdminOrgMembers,
   handleAdminUserSearch,
   handleAdminAddOrgMember,
+  handleOrgAdminAddExistingMember,
 } from './admin-org-members.js';
 import type { Request, Response } from 'express';
 import { encodedInFilterBytesFor } from '../test-utils/postgrestWire.js';
@@ -76,6 +77,70 @@ const TARGET_USER = '22222222-2222-2222-2222-222222222222';
 describe('Admin Org Members API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('organization-admin exact-email add', () => {
+    it('calls the atomic RPC without a separate profile lookup', async () => {
+      const rpc = vi.fn().mockResolvedValue({
+        data: [{ user_id: TARGET_USER, email: 'found@acme.com', full_name: 'Found User', idempotent: false }],
+        error: null,
+      });
+      const res = mockRes();
+
+      await handleOrgAdminAddExistingMember(
+        'actor-1',
+        ORG_ID,
+        mockReq({}, { email: ' Found@Acme.com ', role: 'INDIVIDUAL' }),
+        res,
+        { rpc } as never,
+      );
+
+      expect(rpc).toHaveBeenCalledWith('add_existing_org_member', {
+        p_actor_id: 'actor-1',
+        p_org_id: ORG_ID,
+        p_email: 'found@acme.com',
+        p_role: 'INDIVIDUAL',
+      });
+      expect(mockDbFrom).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        member: { id: TARGET_USER, email: 'found@acme.com', fullName: 'Found User' },
+        idempotent: false,
+      });
+    });
+
+    it('maps forbidden and missing users to bounded responses', async () => {
+      for (const [message, status, body] of [
+        ['forbidden', 403, { error: 'Forbidden' }],
+        ['user_not_found', 404, { error: 'No existing account found for that email' }],
+        ['membership_role_conflict', 409, { error: 'membership_role_conflict' }],
+      ] as const) {
+        const res = mockRes();
+        await handleOrgAdminAddExistingMember(
+          'actor-1', ORG_ID,
+          mockReq({}, { email: 'person@example.com', role: 'INDIVIDUAL' }),
+          res,
+          { rpc: vi.fn().mockResolvedValue({ data: null, error: { message } }) } as never,
+        );
+        expect(res.statusCode).toBe(status);
+        expect(res.body).toEqual(body);
+      }
+    });
+
+    it('rejects unknown fields before invoking the RPC', async () => {
+      const rpc = vi.fn();
+      const res = mockRes();
+      await handleOrgAdminAddExistingMember(
+        'actor-1', ORG_ID,
+        mockReq({}, { email: 'person@example.com', role: 'INDIVIDUAL', user_id: TARGET_USER }),
+        res,
+        { rpc } as never,
+      );
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toEqual({ error: 'Invalid request' });
+      expect(rpc).not.toHaveBeenCalled();
+    });
   });
 
   describe('auth gating', () => {

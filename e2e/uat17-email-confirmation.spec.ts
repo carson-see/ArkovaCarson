@@ -92,5 +92,20 @@ for (const width of [1280, 375]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await capture(page, testInfo, `expired-link-${width}`);
     });
+
+    test('exact-email member add remains click and keyboard actionable', async ({ page }, testInfo) => {
+      await page.goto(`${fixture}?view=member`);
+      const input = page.getByLabel('Member email');
+      const action = page.getByRole('button', { name: 'Add member' });
+      await input.fill('member@example.invalid');
+      await expect(action).toBeEnabled();
+      await action.click();
+      await expect(page.getByRole('alert')).toContainText('Failed to add member');
+      await input.fill('member@example.invalid');
+      await input.press('Enter');
+      await expect(page.getByRole('alert')).toContainText('Failed to add member');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await capture(page, testInfo, `member-add-${width}`);
+    });
   });
 }

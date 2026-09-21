@@ -8,6 +8,7 @@ describe('admin router path guard', () => {
     expect(isAdminRouterPath('/treasury/status')).toBe(true);
     expect(isAdminRouterPath('/queue/pending')).toBe(true);
     expect(isAdminRouterPath('/rules/test')).toBe(true);
+    expect(isAdminRouterPath('/organization-members/org-id/existing')).toBe(true);
   });
 
   it('does not let /api/v1 traffic enter the admin checkout limiter', () => {

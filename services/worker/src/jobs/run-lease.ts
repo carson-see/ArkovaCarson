@@ -199,6 +199,26 @@ export const CHECK_CONFIRMATIONS_RUN_LEASE: RunLeaseSpec = {
   maxRunMs: 45 * MINUTES,
 };
 
+/** Five-minute in-process and Cloud Scheduler revocation sweeps. */
+export const REVOCATION_RUN_LEASE: RunLeaseSpec = {
+  leaseId: 'a6f27310-5d4b-4b0c-9d8e-71a6403fdb21',
+  leaseType: 'revocation-sweep:lease',
+  ttlMs: 15 * MINUTES,
+  label: 'revocation sweep',
+  slowestRecordedCadenceMs: 5 * MINUTES,
+  maxRunMs: 30 * MINUTES,
+};
+
+/** Six-hour in-process sweep; TTL bounds crash recovery below the shared one-hour request ceiling. */
+export const REBROADCAST_RUN_LEASE: RunLeaseSpec = {
+  leaseId: 'c13eb469-df1f-4a50-86b7-f2b09c75a184',
+  leaseType: 'rebroadcast-sweep:lease',
+  ttlMs: 50 * MINUTES,
+  label: 'transaction rebroadcast sweep',
+  slowestRecordedCadenceMs: 6 * 60 * MINUTES,
+  maxRunMs: 60 * MINUTES,
+};
+
 /**
  * `drive-subscription-renewal` (GH #1835/#1836) — Drive `changes.watch`
  * channel renewal + GH #1836 legacy-token rotation.
@@ -252,6 +272,7 @@ export const RUN_LEASE_SPECS: readonly RunLeaseSpec[] = [
   PUBLIC_RECORD_ANCHOR_RUN_LEASE,
   BATCH_ANCHOR_RUN_LEASE,
   CHECK_CONFIRMATIONS_RUN_LEASE,
+  REVOCATION_RUN_LEASE,
 ];
 
 /**

@@ -2003,11 +2003,6 @@ Read before changing it:
 ## 2026-09-14 — connector folder routing
 
 `defaultMaterializeAnchor` selects DS-04 member `owner_user_id` for member-scoped artifacts. Migration 0462 revalidates the locked artifact against the active member connection and exact membership before publication; org-scoped artifacts retain owner/admin actor resolution. Do not split 0445's locked anchor publication and artifact link.
-## SCRUM-5212 — retried instant jobs
-
-`instant-secure.ts` accepts a generation-tagged job and compares it with `rearm_generation` before and after processing. This is not atomic generation fencing inside the batch claim. Migration 0463 must precede this worker because the selected column and retry RPC are new. Roll back the worker before removing that RPC/column. The retry RPC creates one new durable job only for a funded, never-debited NEEDS_CREDIT intent; HELD and safely refunded FAILED work stay unchanged.
-
-The instant consumer now uses the generated table/RPC types directly, replacing temporary `any` bridges. Omitting an absent error-code argument retains the SQL NULL default.
 
 ## 2026-09-13 — SCRUM-5120: `batch_insert_anchors` was dropping `description`
 
@@ -2029,6 +2024,13 @@ Notice links trim trailing slashes from the configured frontend URL before addin
 `/settings/api-keys`; otherwise valid configuration produced an unmatched `//` route.
 Tests cover normal, single-slash and repeated-slash base URLs using the actual deps
 factory and a mocked email transport. No email was sent by these tests.
+
+## SCRUM-5212 — retried instant jobs
+
+`instant-secure.ts` accepts a generation-tagged job and compares it with `rearm_generation` before and after processing. This is not atomic generation fencing inside the batch claim. Migration 0463 must precede this worker because the selected column and retry RPC are new. Roll back the worker before removing that RPC/column. The retry RPC creates one new durable job only for a funded, never-debited NEEDS_CREDIT intent; HELD and safely refunded FAILED work stay unchanged.
+
+The instant consumer now uses the generated table/RPC types directly, replacing temporary `any` bridges. Omitting an absent error-code argument retains the SQL NULL default.
+
 ## 2026-09-19 — Public-only finality webhooks (SCRUM-5063)
 
 The revocation and attestation anchoring jobs emit registered finality events

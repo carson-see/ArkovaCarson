@@ -32,7 +32,7 @@ const mockConfig = vi.hoisted(() => ({
 const mockState = vi.hoisted(() => ({
   /** Row returned for organization_field_policies, or null for "no policy". */
   policyRow: null as Record<string, unknown> | null,
-  /** Anchors inserted through the routers during a test. */
+  /** Anchor payloads written through direct bulk inserts or the atomic single-submit RPC. */
   inserts: [] as unknown[],
   /** Reads of the policy table, to prove the guard actually consulted it. */
   policyReads: 0,
@@ -97,7 +97,26 @@ vi.mock('../../utils/db.js', () => {
     chain.delete = vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) }));
     return chain;
   };
-  return { db: { from: vi.fn((table: string) => makeChain(table)), rpc: vi.fn() } };
+  const rpc = vi.fn((name: string, payload: Record<string, unknown>) => {
+    if (name === 'create_anchor_submission') {
+      mockState.inserts.push(payload);
+      return Promise.resolve({
+        data: [{
+          success: true,
+          id: 'anchor-uuid',
+          public_id: 'ARK-2026-TEST0001',
+          fingerprint: payload.p_fingerprint,
+          status: 'PENDING',
+          created_at: '2026-08-10T00:00:00.000Z',
+          credential_type: payload.p_credential_type,
+          metadata: payload.p_metadata,
+        }],
+        error: null,
+      });
+    }
+    return Promise.resolve({ data: null, error: null });
+  });
+  return { db: { from: vi.fn((table: string) => makeChain(table)), rpc } };
 });
 
 import { anchorSubmitRouter } from './anchor-submit.js';
@@ -211,7 +230,14 @@ describe('POST /api/v1/anchor (single) — org field policy', () => {
 
     expect(res.body.public_id).toBe('ARK-2026-TEST0001');
     expect(mockState.inserts).toHaveLength(1);
-    expect((mockState.inserts[0] as { description?: string }).description).toBe('perfectly fine');
+    expect(mockState.inserts[0]).toMatchObject({
+      p_description: 'perfectly fine',
+      p_credential_type: 'LEGAL',
+      p_fingerprint: FINGERPRINT,
+      p_org_id: 'org-1',
+      p_user_id: 'user-1',
+      p_action: 'queue',
+    });
   });
 
   it('accepts the three permitted fields for the policy-configured org', async () => {
@@ -221,6 +247,13 @@ describe('POST /api/v1/anchor (single) — org field policy', () => {
       .send({ fingerprint: FINGERPRINT, credential_type: 'LEGAL', metadata: { matter_or_case_ref: 'HK-2026-114' } })
       .expect(201);
     expect(mockState.inserts).toHaveLength(1);
+    expect(mockState.inserts[0]).toMatchObject({
+      p_description: null,
+      p_credential_type: 'LEGAL',
+      p_metadata: { securing_path: 'queue' },
+      p_user_tags: [],
+      p_org_tags: [],
+    });
   });
 });
 

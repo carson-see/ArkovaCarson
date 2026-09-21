@@ -5,8 +5,8 @@
  * Searches profiles by email and adds them directly (no invitation needed).
  */
 
-import { useState, useCallback } from 'react';
-import { Users, Loader2, Mail, AlertCircle, CheckCircle2, Search } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Users, Loader2, Mail, AlertCircle, CheckCircle2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,22 +27,31 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { z } from 'zod';
-import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
+import { ORG_MEMBER_ADD_LABELS } from '@/lib/copy';
 
 const addMemberSchema = z.object({
-  userId: z.string().uuid(),
   orgId: z.string().uuid(),
+  email: z.string().trim().email().max(320),
   role: z.enum(['INDIVIDUAL', 'ORG_ADMIN']),
 });
 
 type MemberRole = 'INDIVIDUAL' | 'ORG_ADMIN';
 
-interface FoundUser {
-  id: string;
+interface AddedUser {
   email: string;
-  full_name: string | null;
+  fullName: string | null;
 }
+
+const addMemberResponse = z.object({
+  success: z.literal(true),
+  member: z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    fullName: z.string().nullable(),
+  }).strict(),
+  idempotent: z.boolean(),
+}).strict();
 
 interface AddExistingMemberModalProps {
   open: boolean;
@@ -50,11 +59,8 @@ interface AddExistingMemberModalProps {
   orgId: string;
   onMemberAdded: () => void;
   /**
-   * When true, search + add go through the service_role worker admin endpoints
-   * instead of the browser's RLS-scoped Supabase queries. Set by OrgProfilePage
-   * when the viewer is a platform admin who is NOT a member of this org — their
-   * RLS-scoped `profiles`/`org_members` reads return 0 rows, so the client-side
-   * path can't find users or detect existing members.
+   * Retained for caller compatibility. Both platform and organization admins
+   * now use the same exact-org-authorized worker action.
    */
   useAdminEndpoints?: boolean;
 }
@@ -64,23 +70,37 @@ export function AddExistingMemberModal({
   onOpenChange,
   orgId,
   onMemberAdded,
-  useAdminEndpoints = false,
 }: Readonly<AddExistingMemberModalProps>) {
   const [searchEmail, setSearchEmail] = useState('');
   const [role, setRole] = useState<MemberRole>('INDIVIDUAL');
-  const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [foundUser, setFoundUser] = useState<FoundUser | null>(null);
+  const addPendingRef = useRef(false);
+  const requestScopeRef = useRef(0);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [addedUser, setAddedUser] = useState<AddedUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const resetForm = useCallback(() => {
+    requestScopeRef.current += 1;
+    addPendingRef.current = false;
+    setAdding(false);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     setSearchEmail('');
     setRole('INDIVIDUAL');
-    setFoundUser(null);
+    setAddedUser(null);
     setError(null);
     setSuccess(false);
   }, []);
+
+  useEffect(() => {
+    resetForm();
+    return () => {
+      requestScopeRef.current += 1;
+      addPendingRef.current = false;
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, [orgId, open, resetForm]);
 
   const handleOpenChange = useCallback(
     (newOpen: boolean) => {
@@ -94,92 +114,11 @@ export function AddExistingMemberModal({
     [adding, onOpenChange, resetForm]
   );
 
-  const handleSearch = useCallback(async () => {
-    const trimmed = searchEmail.trim().toLowerCase();
-    if (!trimmed) {
-      setError('Please enter an email address to search.');
-      return;
-    }
-
-    setSearching(true);
-    setError(null);
-    setFoundUser(null);
-    setSuccess(false);
-
-    try {
-      if (useAdminEndpoints) {
-        // Platform admin viewing a foreign org: RLS hides profiles/org_members
-        // from them, so search via the service_role worker endpoint. The
-        // endpoint also tells us if the user already belongs (its add path
-        // returns 409), but we surface the cleaner "already a member" message
-        // up-front by relying on the add call's response.
-        const res = await workerFetch(
-          `/api/admin/users/search?email=${encodeURIComponent(trimmed)}`,
-          { method: 'GET' },
-        );
-        if (!res.ok) {
-          setError('Search failed. Please try again.');
-          return;
-        }
-        const body = (await res.json().catch(() => ({}))) as { user: FoundUser | null };
-        if (!body.user) {
-          setError('No user found with that email. Use "Invite Member" to send them an invitation instead.');
-          return;
-        }
-        setFoundUser(body.user);
-        return;
-      }
-
-      // Standard org-member path: search for user by email
-      const { data: profiles, error: searchError } = await supabase
-        .from('profiles')
-        .select('id, email, full_name')
-        .eq('email', trimmed)
-        .limit(1);
-
-      if (searchError) {
-        setError('Search failed. Please try again.');
-        return;
-      }
-
-      if (!profiles || profiles.length === 0) {
-        setError('No user found with that email. Use "Invite Member" to send them an invitation instead.');
-        return;
-      }
-
-      // Check if already a member.
-      // The table is `org_members` (id, user_id, org_id, role, joined_at,
-      // invited_by) — NOT `org_memberships`, which does not exist and returned
-      // PGRST205 "table not found" (silently swallowed, so the guard never
-      // fired).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any)
-        .from('org_members')
-        .select('id')
-        .eq('user_id', profiles[0].id)
-        .eq('org_id', orgId)
-        .limit(1);
-
-      if (existing && existing.length > 0) {
-        setError('This user is already a member of your organization.');
-        return;
-      }
-
-      setFoundUser(profiles[0]);
-    } catch {
-      setError('Search failed. Please try again.');
-    } finally {
-      setSearching(false);
-    }
-  }, [searchEmail, orgId, useAdminEndpoints]);
-
   const handleAdd = useCallback(async () => {
-    if (!foundUser) return;
-
-    // Validate inputs with Zod before calling RPC
+    if (addPendingRef.current) return;
     const parsed = addMemberSchema.safeParse({
-      userId: foundUser.id,
       orgId,
+      email: searchEmail,
       role,
     });
 
@@ -188,51 +127,49 @@ export function AddExistingMemberModal({
       return;
     }
 
+    addPendingRef.current = true;
+    const requestScope = ++requestScopeRef.current;
     setAdding(true);
     setError(null);
 
     try {
-      if (useAdminEndpoints) {
-        // Platform-admin path: the add_org_member RPC checks auth.uid() against
-        // org_members and would reject a platform admin who isn't a member of
-        // this org. Use the service_role worker endpoint instead.
-        const res = await workerFetch(`/api/admin/organizations/${parsed.data.orgId}/members`, {
-          method: 'POST',
-          body: JSON.stringify({ user_id: parsed.data.userId, role: parsed.data.role }),
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          setError(body.error || 'Failed to add member.');
-          return;
-        }
-      } else {
-        // Standard org-admin path: add via SECURITY DEFINER RPC — no direct insert fallback
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: addError } = await (supabase as any).rpc('add_org_member', {
-          p_user_id: parsed.data.userId,
-          p_org_id: parsed.data.orgId,
-          p_role: parsed.data.role,
-        });
-
-        if (addError) {
-          setError(addError.message || 'Failed to add member.');
-          return;
-        }
+      const res = await workerFetch(`/api/organization-members/${parsed.data.orgId}/existing`, {
+        method: 'POST',
+        body: JSON.stringify({ email: parsed.data.email, role: parsed.data.role }),
+      });
+      const rawBody: unknown = await res.json().catch(() => ({}));
+      if (requestScope !== requestScopeRef.current) return;
+      if (!res.ok) {
+        const errorBody = z.object({ error: z.string().max(200) }).safeParse(rawBody);
+        setError(errorBody.success && errorBody.data.error === 'membership_role_conflict'
+          ? ORG_MEMBER_ADD_LABELS.ROLE_CONFLICT
+          : errorBody.success ? errorBody.data.error : ORG_MEMBER_ADD_LABELS.FAILURE);
+        return;
+      }
+      const body = addMemberResponse.safeParse(rawBody);
+      if (!body.success) {
+        setError(ORG_MEMBER_ADD_LABELS.FAILURE);
+        return;
       }
 
+      setAddedUser(body.data.member);
       setSuccess(true);
       onMemberAdded();
 
       // Auto-close after brief delay
-      setTimeout(() => {
+      closeTimerRef.current = setTimeout(() => {
+        if (requestScope !== requestScopeRef.current) return;
         handleOpenChange(false);
       }, 1500);
     } catch {
       setError('Failed to add member. Please try again.');
     } finally {
-      setAdding(false);
+      if (requestScope === requestScopeRef.current) {
+        addPendingRef.current = false;
+        setAdding(false);
+      }
     }
-  }, [foundUser, orgId, role, onMemberAdded, handleOpenChange, useAdminEndpoints]);
+  }, [searchEmail, orgId, role, onMemberAdded, handleOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -242,10 +179,10 @@ export function AddExistingMemberModal({
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
               <Users className="h-5 w-5 text-primary" />
             </div>
-            <DialogTitle>Add Existing Member</DialogTitle>
+            <DialogTitle>{ORG_MEMBER_ADD_LABELS.TITLE}</DialogTitle>
           </div>
           <DialogDescription>
-            Search for an existing platform user by email and add them to your organization.
+            {ORG_MEMBER_ADD_LABELS.DESCRIPTION}
           </DialogDescription>
         </DialogHeader>
 
@@ -261,14 +198,14 @@ export function AddExistingMemberModal({
             <Alert className="border-green-200 bg-green-50 text-green-800">
               <CheckCircle2 className="h-4 w-4" />
               <AlertDescription>
-                {foundUser?.full_name || foundUser?.email} has been added to your organization!
+                {addedUser?.fullName || addedUser?.email} has been added to your organization!
               </AlertDescription>
             </Alert>
           )}
 
           {/* Search */}
           <div className="space-y-2">
-            <Label htmlFor="search-email">Search by email</Label>
+            <Label htmlFor="search-email">{ORG_MEMBER_ADD_LABELS.EMAIL_LABEL}</Label>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -279,50 +216,37 @@ export function AddExistingMemberModal({
                   value={searchEmail}
                   onChange={(e) => {
                     setSearchEmail(e.target.value);
-                    setFoundUser(null);
+                    setAddedUser(null);
                     setError(null);
                     setSuccess(false);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      handleSearch();
+                      handleAdd();
                     }
                   }}
-                  disabled={searching || adding || success}
+                  disabled={adding || success}
                   className="pl-9"
                 />
               </div>
               <Button
                 type="button"
-                variant="outline"
-                aria-label="Search"
-                onClick={handleSearch}
-                disabled={searching || adding || !searchEmail.trim() || success}
+                onClick={handleAdd}
+                disabled={adding || !searchEmail.trim() || success}
               >
-                {searching ? (
+                {adding ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Search className="h-4 w-4" />
+                  ORG_MEMBER_ADD_LABELS.ACTION
                 )}
               </Button>
             </div>
           </div>
 
-          {/* Found user display */}
-          {foundUser && !success && (
+          {!success && (
             <div className="rounded-lg border p-4 bg-muted/30">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-                  {(foundUser.full_name?.[0] || foundUser.email[0]).toUpperCase()}
-                </div>
-                <div>
-                  <p className="font-medium">{foundUser.full_name || 'No name set'}</p>
-                  <p className="text-sm text-muted-foreground">{foundUser.email}</p>
-                </div>
-              </div>
-
-              <div className="mt-3 space-y-2">
+              <div className="space-y-2">
                 <Label htmlFor="member-role">Role</Label>
                 <Select
                   value={role}
@@ -351,21 +275,6 @@ export function AddExistingMemberModal({
           >
             {success ? 'Close' : 'Cancel'}
           </Button>
-          {foundUser && !success && (
-            <Button onClick={handleAdd} disabled={adding}>
-              {adding ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                <>
-                  <Users className="mr-2 h-4 w-4" />
-                  Add to Organization
-                </>
-              )}
-            </Button>
-          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

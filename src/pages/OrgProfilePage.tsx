@@ -833,7 +833,7 @@ function OrgProfilePageInner() {
 
         {/* People Tab */}
         <TabsContent value="people" className="p-4 md:p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               People
               {!membersLoading && members.length > 0 && (
@@ -841,7 +841,7 @@ function OrgProfilePageInner() {
               )}
             </h2>
             {isAdmin && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={() => setAddMemberOpen(true)}>
                   <Users className="mr-2 h-4 w-4" />
                   Add Member

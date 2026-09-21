@@ -25,3 +25,4 @@ Playwright test fixtures providing authenticated page contexts and Supabase help
 ## SCRUM-5145 — email confirmation development entry
 
 `uat17-email-confirmation.html`/`.tsx` mount the production signup or callback component and CSS in MemoryRouter. The root production build does not include this development-only HTML entry. Playwright simulates external Auth responses; no mock hook implementation or seeded production account is used.
+The UAT-17 fixture supports `?view=member` for the production exact-email member-add dialog. It supplies no hosted session or DB and must not be cited as end-to-end membership proof.
