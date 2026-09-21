@@ -75,6 +75,7 @@ you cite `memory/x.md`, the file has to be in this directory.
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
 | `feedback_no_prs_for_t0.md` | Documentation only (tier is computed by `requiredTierFor()`; no detector can tell a T0 that *should* have skipped the PR from one that legitimately opened it) | 📖 docs only |
+| `feedback_actions_spend_discipline.md` | Documentation only (CLAUDE.md §0 rule 11); Dependabot cap enforced by `.github/dependabot.yml` | Active — limit-sum CI lint intended |
 
 ## Failure-class notes
 
