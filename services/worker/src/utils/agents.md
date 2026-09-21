@@ -811,3 +811,15 @@ must not receive the action link. Empty eligible results stay visible through
 the job's `noRecipients` count; database errors propagate as failures.
 
 - 2026-09-14 (SCRUM-5023 review): API-key recipients retain stable ID-ordered pagination through `scanAllPages`; a server cap below the requested width cannot truncate delivery silently. Page failures and row/page budget exhaustion fail the org lookup without returning partial recipients. Regression covers 1,205 administrators across 400-row pages, a later-page failure, and a 25,001-row budget overflow.
+
+## 2026-09-21 — captureRecipientPepperUnavailableAlert (PR #3034, SCRUM-5265 S7)
+
+`hashRecipientEmail` fails closed when `RECIPIENT_IDENTIFIER_PEPPER` is unset
+(SCRUM-2484 — a bare sha256 would re-open offline enumeration). Failing closed
+was silent: every recipient link in the deployment stopped working and the only
+trace was a per-row reason code in a 207 body. The new helper follows the same
+shape as `captureStuckAnchorAlert`/`captureCreditRpcFailureAlert`: error level,
+fixed fingerprint `recipient-identifier-pepper-unavailable` so repeated imports
+collapse into one issue, and PII-free extra (`operation`, `org_id`,
+`affected_rows`). Callers raise it ONCE per request with the affected-row count
+— a 100-row import is one config outage, not 100 alerts.

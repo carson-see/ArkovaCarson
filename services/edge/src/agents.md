@@ -348,3 +348,47 @@ Hosted contract tests cover every mutation action, explicit root/connector clear
 The write-gated MCP surface includes `arkova_get_submission_status`, proxied to the caller-scoped worker route with the caller API key. Descriptions are public verification metadata; user/org tags remain private. Keep tool definition, Zod registry, live registration, and server card synchronized.
 Status-handler tests retain safe string error codes but collapse structured upstream bodies to the
 HTTP status; internal provider messages must never reach MCP output.
+
+UAT-23 `arkova_import_rows` is registered only inside the same flag-and-write-scope branch as `arkova_anchor_document`; its strict schema rejects unknown/raw fields and forwards 1–100 rows only to `/api/v1/anchor/import` with the validated caller API key.
+
+## 2026-09-21 — arkova_import_rows describes the recipient-link statuses (PR #3034)
+
+The tool description now tells an agent that a `created_recipient_failed` /
+`skipped_recipient_failed` row is already anchored and must not be re-imported —
+an agent is the caller most likely to retry a row it reads as failed. The
+description is byte-identical in `public/.well-known/mcp/server-card.json`
+(manifest parity asserts exact equality). The response is passed through
+untouched, and the malformed-response guard still checks only the four original
+counters, so the additive counter needs no change there.
+
+## 2026-09-21 — arkova_import_rows discloses the recipient side effect (PR #3034)
+
+S6: the description now states plainly that a row may carry `recipient_email` /
+`recipient_name`, that this assigns the record to that third party, and that it
+can cause an activation email to be sent to that address. An agent is the caller
+most likely to paste a spreadsheet straight in, so the side effect belongs in the
+tool description, not only in the REST docs.
+
+S3: it no longer implies the recipient was not linked. `anchor_recipients`
+commits BEFORE the activation email, so the description points at the row's
+reason code for whether the recipient was linked and whether the invitation was
+sent. The text is byte-identical in `public/.well-known/mcp/server-card.json`
+(mcp-manifest-parity asserts exact equality) and mirrored in the npm stdio
+server; `check-mcp-claim-parity.ts` and `mcp-manifest-parity.test.ts` both stay
+green.
+
+## 2026-09-21 — import rows: local recipient pairing + bounded result (PR #3034)
+
+`importRowsSchema` now mirrors the worker's own `superRefine` and rejects
+`recipient_name` without `recipient_email`. The worker rejects the WHOLE request
+for that pair, so catching it locally saves a round trip that could only ever
+return 400.
+
+`handleImportRows` no longer passes the API response through untouched.
+`projectImportResponse` returns an allowlisted, bounded projection: five
+counters and, per row, `fingerprint` / `status` / `public_id` / `reason` /
+`instant_status`, each validated against a shape, `results` capped at 100, all
+unknown keys dropped. `reason` survives only when it already matches the bounded
+machine-code regex. The raw body is issuer-/user-influenced, and MCP output is
+model context — free text must not flow straight in. The npm stdio server has
+the identical function.

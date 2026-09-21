@@ -536,6 +536,22 @@
       }
     },
     {
+      "name": "arkova_import_rows",
+      "description": "Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant path. Never accepts file bytes. Descriptions are public; tags are private. A row may carry recipient_email and recipient_name, which assigns the record to that third party and can cause an activation email to be sent to that address. A row reported created_recipient_failed or skipped_recipient_failed is already anchored: do not re-import it. Its reason code says whether the recipient was linked and whether the invitation was sent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": { "type": "array", "description": "Rows containing fingerprint, filename, and fingerprint_provided", "maxItems": 100 },
+          "action": { "type": "string", "enum": ["queue", "instant"], "description": "Submission path" },
+          "description": { "type": "string", "maxLength": 1000, "description": "Shared public description" },
+          "user_tags": { "type": "array", "maxItems": 10, "description": "Private user tags" },
+          "organization_tags": { "type": "array", "maxItems": 10, "description": "Private organization tags" }
+        },
+        "required": ["rows", "action"],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "arkova_get_submission_status",
       "description": "Read the caller-scoped durable queue or instant submission state, including bounded credit and retry state. Returns no private tags, metadata, or internal identifiers.",
       "inputSchema": {

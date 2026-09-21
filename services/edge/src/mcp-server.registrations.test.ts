@@ -128,11 +128,12 @@ describe('UAT-12 hosted submission tool registration gate', () => {
     )).toBe(expected);
   });
 
-  it('registers status beside anchor_document inside the same enabled branch', () => {
+  it('registers status and row import beside anchor_document inside the same enabled branch', () => {
     const gatedBlock = MCP_SERVER_SOURCE.match(
       /if \(telemetry\.anchorDocumentEnabled\) \{([\s\S]*?)\n  \}\n\n  tool\(\n    'arkova_verify_document'/,
     )?.[1];
     expect(gatedBlock).toContain("'arkova_anchor_document'");
     expect(gatedBlock).toContain("'arkova_get_submission_status'");
+    expect(gatedBlock).toContain("'arkova_import_rows'");
   });
 });

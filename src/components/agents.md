@@ -63,3 +63,22 @@ Domain-specific React components organized by feature area. Each subfolder has a
 - `@/lib/routes.ts` — named route constants
 - `@/lib/validators.ts` — Zod schemas
 - `@/lib/supabase.ts` — Supabase client
+
+## 2026-09-21 — BulkUploadWizard recipient summary (PR #3034)
+
+S3: `CompleteStep` rendered ONE badge + ONE body for every recipient failure,
+and that body asserted the recipient "could not be linked, so no invitation was
+sent" — false for every activation reason code, where the link committed first.
+It now renders one badge + one body per distinct outcome class from
+`countRecipientOutcomes` (`src/lib/bulkRecipientOutcome.ts`). B1(c): the
+forbidden case has its own copy naming organization owner/admin authority, not
+a generic link failure the user cannot act on.
+
+Two nits from the same review:
+- `hasFailures` now includes `recipientLinkFailed`, so a batch where every
+  recipient failed no longer renders the green all-clear title.
+- `handleExtractionComplete` resolved `submissionOptions()` a SECOND time after
+  a successful import. It throws on invalid private tags, so that turned a
+  completed batch into "Failed to process records" and sent the user back to
+  review with every record already secured. It is now resolved once, before the
+  import, inside its own try.

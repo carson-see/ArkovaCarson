@@ -154,7 +154,17 @@ retries.
 reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
 
+UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–100 fingerprint rows, API-key-derived tenant, and no automatic write retry.
 ## 2026-09-19 — Finality webhook event types
 
 The SDK webhook union includes `anchor.revocation_anchored` and
 `attestation.active`, matching the worker registry.
+
+## 2026-09-21 — anchorImport rejects file_size 0 (PR #3034)
+
+The worker requires a POSITIVE `file_size`; the SDK only rejected `< 0`, so a
+zero-size row failed the WHOLE request server-side with a generic 400. It now
+throws `invalid_request` locally with a message naming the field. The
+`AnchorImportResultRow.reason` doc comment also now enumerates which codes mean
+the recipient was NOT linked and which mean it WAS linked but the invitation
+did not go out — the link commits before the email is sent.

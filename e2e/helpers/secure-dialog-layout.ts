@@ -41,11 +41,11 @@ export async function openLayoutFixture(page: Page, scenario = 'review', instant
   const modules: Record<string, string> = {
     '/src/hooks/useAuth.ts': `export const useAuth = () => ({user:{id:'${USER_ID}'}});`,
     '/src/hooks/useAuth.tsx': `export const useAuth = () => ({user:{id:'${USER_ID}'}});`,
-    '/src/hooks/useProfile.ts': `export const useProfile = () => ({profile:{org_id:['selected-child','child-instant','member-zero'].includes(window.__layout.scenario)?'${PARENT_ORG_ID}':null}});`,
-    '/src/hooks/useProfile.tsx': `export const useProfile = () => ({profile:{org_id:['selected-child','child-instant','member-zero'].includes(window.__layout.scenario)?'${PARENT_ORG_ID}':null}});`,
+    '/src/hooks/useProfile.ts': `export const useProfile = () => ({profile:{org_id:window.__layout.scenario==='org-review'?'${CHILD_ORG_ID}':['selected-child','child-instant','member-zero'].includes(window.__layout.scenario)?'${PARENT_ORG_ID}':null}});`,
+    '/src/hooks/useProfile.tsx': `export const useProfile = () => ({profile:{org_id:window.__layout.scenario==='org-review'?'${CHILD_ORG_ID}':['selected-child','child-instant','member-zero'].includes(window.__layout.scenario)?'${PARENT_ORG_ID}':null}});`,
     '/src/hooks/useAuditorMode.ts': 'export const useAuditorMode = () => ({isAuditorMode:false});',
     '/src/hooks/useAuditorMode.tsx': 'export const useAuditorMode = () => ({isAuditorMode:false});',
-    '/src/hooks/useSecuringCapability.ts': `const child=['selected-child','child-instant','member-zero'].includes(window.__layout.scenario);
+    '/src/hooks/useSecuringCapability.ts': `const child=['org-review','selected-child','child-instant','member-zero'].includes(window.__layout.scenario);
       const scope=child?'org_id=${CHILD_ORG_ID}':'scope=user';
       const capability=await fetch('http://localhost:3001/api/v1/anchor-credits/status?'+scope,{headers:{Authorization:'Bearer ${AAL2_TOKEN}'}}).then(r=>r.json());
       export const useSecuringCapability=()=>({capability,loading:false,error:null,refresh:async()=>({data:capability})});`,

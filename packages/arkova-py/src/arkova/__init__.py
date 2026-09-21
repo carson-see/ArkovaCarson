@@ -1,7 +1,10 @@
-from .client import BULK_ANCHOR_MAX_ROWS, Arkova, AsyncArkova
+from .client import ANCHOR_IMPORT_MAX_ROWS, BULK_ANCHOR_MAX_ROWS, Arkova, AsyncArkova
 from .errors import ArkovaError
 from .models import (
     Anchor,
+    AnchorImportResponse,
+    AnchorImportResultRow,
+    AnchorImportRow,
     AnchorReceipt,
     AnchorSubmissionStatus,
     BulkAnchorCredentialType,
@@ -34,9 +37,13 @@ from .proofs import (
 )
 
 __all__ = [
+    "ANCHOR_IMPORT_MAX_ROWS",
     "BULK_ANCHOR_MAX_ROWS",
     "REASON_CODES",
     "Anchor",
+    "AnchorImportResponse",
+    "AnchorImportResultRow",
+    "AnchorImportRow",
     "AnchorReceipt",
     "AnchorSubmissionStatus",
     "Arkova",

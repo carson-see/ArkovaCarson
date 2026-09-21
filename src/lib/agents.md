@@ -896,6 +896,7 @@ Two differences from the DocuSign module, both deliberate:
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
 
+UAT-23 user-facing import and per-row instant-state strings live in `copy.ts`; keep one-credit-per-row and partial-status language truthful.
 
 ## 2026-09-14 — SCRUM-5145 signup email policy
 
@@ -917,3 +918,21 @@ takes an optional `publicMirror`: the mirror upload is part of the same unit
 removes BOTH new objects, and old-object cleanup is best-effort AFTER the
 commit and confined to the caller's owner prefix. Every accepted input is
 re-encoded to PNG — there is no per-format extension.
+
+## 2026-09-21 — BULK_IMPORT_LABELS recipient-link copy (PR #3034)
+
+`RECIPIENT_LINK_FAILED` / `RECIPIENT_LINK_FAILED_BODY` describe a row that IS
+secured but whose recipient could not be linked. The body text must keep saying
+"Do not upload these rows again" — the whole point of the status is to stop a
+re-upload of an anchor that already exists. No §1.3 banned terms.
+
+## 2026-09-21 — bulkRecipientOutcome.ts (PR #3034, S3)
+
+`anchor_recipients` commits BEFORE `deliverBulkActivationOnce`, so a
+`*_recipient_failed` row does NOT always mean "not linked". This module maps the
+worker's reason codes to what actually happened — `notPermitted`, `notLinked`,
+`linkedNotSent`, `linkedUnconfirmed`, `unknown` — with every entry pinned to a
+throw site in `services/worker/src/api/bulk-recipient.ts`. An unrecognised or
+absent code is `unknown`, which asserts nothing, so a newer worker's reason
+code can never make the UI claim something we did not measure (§1.5).
+Classification lives here, not in `copy.ts`: the copy layer stays copy.

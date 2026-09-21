@@ -162,3 +162,7 @@ against the qualified migrated database, matching the explicit 0453 caveat.
 # UAT-17
 
 `database.types.ts` mirrors the additive `add_existing_org_member` RPC contract; receipt and existing API types remain unchanged.
+
+## UAT-23 activation delivery receipt — 2026-09-19
+
+Added the generated-shape table entry for `recipient_activation_deliveries` from migration 0471, mirrored in the worker type copy. Canonical regeneration against a qualified migrated database remains a release check.

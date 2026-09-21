@@ -40,9 +40,17 @@ import {
 import { CsvUploader } from './CsvUploader';
 import { AIExtractionStep, type BatchExtractionResult } from './AIExtractionStep';
 import { toast } from 'sonner';
-import { TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
+import { BULK_IMPORT_LABELS, TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useBulkAnchors } from '@/hooks/useBulkAnchors';
+import { useBulkAnchors, type CreateBulkAnchorsOptions } from '@/hooks/useBulkAnchors';
+import { parsePrivateTags } from '@/hooks/usePrivateTagSuggestions';
+import { useSecuringCapability } from '@/hooks/useSecuringCapability';
+import type { SecuringPath } from '@/lib/queueContract';
+import {
+  RECIPIENT_OUTCOME_CLASSES,
+  countRecipientOutcomes,
+  type RecipientOutcomeCounts,
+} from '@/lib/bulkRecipientOutcome';
 import {
   type ParsedCsv,
   type ColumnMapping,
@@ -59,6 +67,35 @@ interface ProcessingResult {
   created: number;
   skipped: number;
   failed: number;
+  needsCredit: number;
+  held: number;
+  instantFailed: number;
+  instantPending: number;
+  instantUnknown: number;
+  /** Secured rows whose recipient link failed; never counted as failed. */
+  recipientLinkFailed: number;
+  /** The same rows, split by what actually happened (S3). */
+  recipientOutcomes: RecipientOutcomeCounts;
+  partial: boolean;
+  action: SecuringPath;
+}
+
+function toProcessingResult(bulkResult: Awaited<ReturnType<ReturnType<typeof useBulkAnchors>['createBulkAnchors']>>, action: SecuringPath): ProcessingResult | null {
+  if (!bulkResult) return null;
+  const statuses = bulkResult.results ?? [];
+  return {
+    total: bulkResult.total, created: bulkResult.created, skipped: bulkResult.skipped, failed: bulkResult.failed,
+    needsCredit: statuses.filter((row) => row.instant_status === 'NEEDS_CREDIT').length,
+    held: statuses.filter((row) => row.instant_status === 'HELD').length,
+    instantFailed: statuses.filter((row) => row.instant_status === 'FAILED').length,
+    instantPending: statuses.filter((row) => ['QUEUED', 'PROCESSING', 'RETRYABLE'].includes(row.instant_status ?? '')).length,
+    instantUnknown: action === 'instant' ? statuses.filter((row) => row.status !== 'failed' && !row.instant_status).length : 0,
+    recipientLinkFailed: bulkResult.recipient_link_failed
+      ?? statuses.filter((row) => row.status === 'created_recipient_failed' || row.status === 'skipped_recipient_failed').length,
+    recipientOutcomes: countRecipientOutcomes(statuses),
+    partial: bulkResult.partial === true,
+    action,
+  };
 }
 
 const STEPS: { key: Step; label: string }[] = [
@@ -96,8 +133,12 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
   // R19 (CTO ruling 2026-07-28): issuer-attestation acknowledgement, required
   // whenever no fingerprint column is mapped (record-derived rows).
   const [attested, setAttested] = useState(false);
-  const [_extractionResults, setExtractionResults] = useState<BatchExtractionResult[] | null>(null);
+  const [extractionResults, setExtractionResults] = useState<BatchExtractionResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [action, setAction] = useState<SecuringPath>('queue');
+  const [description, setDescription] = useState('');
+  const [userTagsInput, setUserTagsInput] = useState('');
+  const [organizationTagsInput, setOrganizationTagsInput] = useState('');
   const [queuedInitialFile, setQueuedInitialFile] = useState<File | null>(
     () => initialFiles.find(isSpreadsheetUploadFile) ?? null
   );
@@ -109,6 +150,15 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     totalCount,
     error: bulkError,
   } = useBulkAnchors({ orgId });
+  const { capability } = useSecuringCapability(orgId);
+  const instantAvailable = capability.canSecureInstantly && capability.creditBalance >= capability.instantSecureCost;
+
+  const submissionOptions = useCallback(() => {
+    const userTags = parsePrivateTags(userTagsInput);
+    const organizationTags = parsePrivateTags(organizationTagsInput);
+    if (!userTags.ok || !organizationTags.ok) throw new Error('Private tags are invalid. Use no more than 10 tags of 64 characters each.');
+    return { attested, action, description, privateTags: { user: userTags.tags, organization: organizationTags.tags } };
+  }, [action, attested, description, organizationTagsInput, userTagsInput]);
 
   // Sync hook error into component error state — derived inline instead of effect
   // to avoid cascading renders from synchronous setState in useEffect.
@@ -140,19 +190,19 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     setError(null);
 
     try {
+      const options = submissionOptions();
       // Enrich valid records with extraction results if available
       // Uses async version to auto-generate fingerprints when not in CSV
-      const records = await extractAnchorRecordsAsync(validation.valid, columns, mapping);
+      const extractedRecords = await extractAnchorRecordsAsync(validation.valid, columns, mapping);
+      const records = extractionResults
+        ? mergeExtractionResults(extractedRecords, extractionResults)
+        : extractedRecords;
 
-      const bulkResult = await createBulkAnchors(records, { attested });
+      const bulkResult = await createBulkAnchors(records, options);
 
       if (bulkResult) {
-        const processingResult: ProcessingResult = {
-          total: bulkResult.total,
-          created: bulkResult.created,
-          skipped: bulkResult.skipped,
-          failed: bulkResult.failed,
-        };
+        const processingResult = toProcessingResult(bulkResult, options.action);
+        if (!processingResult) return;
         setResult(processingResult);
         setStep('complete');
         onComplete?.(processingResult);
@@ -168,7 +218,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
       setError(message);
       setStep('review');
     }
-  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete, attested]);
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, extractionResults, onComplete, submissionOptions]);
 
   const handleExtractionComplete = useCallback((results: BatchExtractionResult[]) => {
     setExtractionResults(results);
@@ -177,16 +227,27 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     setError(null);
     // Trigger processing via the already-defined handler
     if (parsedCsv && mapping && validation) {
+      // Resolved ONCE, before the import. `submissionOptions()` throws on
+      // invalid private tags, and calling it again AFTER a successful import
+      // would turn a completed batch into a thrown "Failed to process records"
+      // that sends the user back to review — with every record already secured
+      // (#3034 review).
+      let options: CreateBulkAnchorsOptions;
+      try {
+        options = submissionOptions();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to process records';
+        toast.error(message);
+        setError(message);
+        setStep('review');
+        return;
+      }
       extractAnchorRecordsAsync(validation.valid, columns, mapping)
-        .then((records) => createBulkAnchors(records, { attested }))
+        .then((records) => createBulkAnchors(mergeExtractionResults(records, results), options))
         .then((bulkResult) => {
           if (bulkResult) {
-            const processingResult: ProcessingResult = {
-              total: bulkResult.total,
-              created: bulkResult.created,
-              skipped: bulkResult.skipped,
-              failed: bulkResult.failed,
-            };
+            const processingResult = toProcessingResult(bulkResult, options.action ?? 'queue');
+            if (!processingResult) return;
             setResult(processingResult);
             setStep('complete');
             onComplete?.(processingResult);
@@ -202,7 +263,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
           setStep('review');
         });
     }
-  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete, attested]);
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete, submissionOptions]);
 
   const handleSkipExtraction = useCallback(() => {
     setExtractionResults(null);
@@ -220,6 +281,10 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     setError(null);
     setQueuedInitialFile(null);
     setAttested(false);
+    setAction('queue');
+    setDescription('');
+    setUserTagsInput('');
+    setOrganizationTagsInput('');
   }, []);
 
   const handleUpdateMapping = useCallback(
@@ -329,6 +394,16 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
             onProcess={handleGoToExtraction}
             attested={attested}
             onAttestedChange={setAttested}
+            action={action}
+            onActionChange={setAction}
+            instantAvailable={instantAvailable}
+            description={description}
+            onDescriptionChange={setDescription}
+            userTagsInput={userTagsInput}
+            onUserTagsInputChange={setUserTagsInput}
+            organizationTagsInput={organizationTagsInput}
+            onOrganizationTagsInputChange={setOrganizationTagsInput}
+            showOrganizationTags={Boolean(orgId)}
           />
         )}
 
@@ -362,6 +437,24 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
   );
 }
 
+export function mergeExtractionResults(records: import('@/lib/csvParser').BulkAnchorRecord[], results: BatchExtractionResult[]) {
+  const allowedFields = new Set([
+    'credentialType', 'subType', 'issuerName', 'issuedDate', 'expiryDate',
+    'fieldOfStudy', 'degreeLevel', 'licenseNumber', 'accreditingBody',
+    'jurisdiction', 'creditHours', 'creditType', 'barNumber', 'activityNumber',
+    'providerName', 'approvedBy', 'description',
+  ]);
+  const byIndex = new Map(results.filter((result) => result.success && result.fields).map((result) => [result.index, result.fields!]));
+  return records.map((record, index) => {
+    const fields = byIndex.get(index);
+    if (!fields) return record;
+    const trustedFields = Object.fromEntries(
+      Object.entries(fields).filter(([key, value]) => allowedFields.has(key) && typeof value === 'string'),
+    );
+    return { ...record, metadata: { ...trustedFields, ...(record.metadata ?? {}) } };
+  });
+}
+
 // Sub-components
 
 function ReviewStep({
@@ -373,6 +466,16 @@ function ReviewStep({
   onProcess,
   attested,
   onAttestedChange,
+  action,
+  onActionChange,
+  instantAvailable,
+  description,
+  onDescriptionChange,
+  userTagsInput,
+  onUserTagsInputChange,
+  organizationTagsInput,
+  onOrganizationTagsInputChange,
+  showOrganizationTags,
 }: Readonly<{
   validation: ValidationResult;
   columns: CsvColumn[];
@@ -382,11 +485,22 @@ function ReviewStep({
   onProcess: () => void;
   attested: boolean;
   onAttestedChange: (attested: boolean) => void;
+  action: SecuringPath;
+  onActionChange: (action: SecuringPath) => void;
+  instantAvailable: boolean;
+  description: string;
+  onDescriptionChange: (value: string) => void;
+  userTagsInput: string;
+  onUserTagsInputChange: (value: string) => void;
+  organizationTagsInput: string;
+  onOrganizationTagsInputChange: (value: string) => void;
+  showOrganizationTags: boolean;
 }>) {
   // R19 (CTO ruling 2026-07-28): no fingerprint column mapped → every valid
   // row will be record-derived (issuer attestation), never document-derived.
   const requiresAttestation = mapping.fingerprint === null;
-  const canProcess = validation.valid.length > 0 && (!requiresAttestation || attested);
+  const instantSelectionUnavailable = action === 'instant' && !instantAvailable;
+  const canProcess = validation.valid.length > 0 && (!requiresAttestation || attested) && !instantSelectionUnavailable;
   const renderSelect = (
     label: string,
     value: number | null,
@@ -545,6 +659,35 @@ function ReviewStep({
         </div>
       )}
 
+      <div className="space-y-3 rounded-lg border p-4">
+        <label className="block space-y-1 text-sm font-medium">
+          {BULK_IMPORT_LABELS.DESCRIPTION}
+          <textarea value={description} maxLength={1000} onChange={(event) => onDescriptionChange(event.target.value)} className="mt-1 w-full rounded-md border bg-background px-3 py-2" />
+        </label>
+        <label className="block space-y-1 text-sm font-medium">
+          {BULK_IMPORT_LABELS.USER_TAGS}
+          <input value={userTagsInput} onChange={(event) => onUserTagsInputChange(event.target.value)} className="mt-1 w-full rounded-md border bg-background px-3 py-2" placeholder="Add tags separated by commas" />
+        </label>
+        {showOrganizationTags && <label className="block space-y-1 text-sm font-medium">
+          {BULK_IMPORT_LABELS.ORGANIZATION_TAGS}
+          <input value={organizationTagsInput} onChange={(event) => onOrganizationTagsInputChange(event.target.value)} className="mt-1 w-full rounded-md border bg-background px-3 py-2" placeholder="Add tags separated by commas" />
+        </label>}
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" variant={action === 'queue' ? 'default' : 'outline'} onClick={() => onActionChange('queue')}>{BULK_IMPORT_LABELS.QUEUE_ACTION}</Button>
+          <Button type="button" disabled={!instantAvailable && action !== 'instant'} variant={action === 'instant' ? 'default' : 'outline'} onClick={() => onActionChange('instant')}>{BULK_IMPORT_LABELS.INSTANT_ACTION}</Button>
+        </div>
+        {instantSelectionUnavailable && (
+          <p className="text-xs text-amber-700" role="alert">
+            {BULK_IMPORT_LABELS.INSTANT_UNAVAILABLE}
+          </p>
+        )}
+        {action === 'instant' && instantAvailable && (
+          <p className="text-xs text-muted-foreground">
+            {BULK_IMPORT_LABELS.INSTANT_CREDIT_COST(validation.valid.length)}
+          </p>
+        )}
+      </div>
+
       <div className="flex flex-col gap-2 pt-4 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={onBack}>
           <ArrowLeft className="mr-2 h-4 w-4" />
@@ -594,7 +737,16 @@ function CompleteStep({
   result: ProcessingResult;
   onReset: () => void;
 }>) {
-  const hasFailures = result.failed > 0;
+  const hasInstantIssues = result.needsCredit + result.held + result.instantFailed + result.instantUnknown > 0;
+  // A batch where every recipient failed is not an all-clear: the records are
+  // secured, but something the user asked for did not happen and the summary
+  // must not open with a green "Upload Complete" (#3034 review).
+  const hasFailures = result.failed > 0 || result.partial || hasInstantIssues || result.recipientLinkFailed > 0;
+  // Only the classes actually present are rendered, so a clean import shows
+  // nothing and a mixed one shows one badge + one body per distinct outcome.
+  const recipientOutcomes = RECIPIENT_OUTCOME_CLASSES
+    .map((name) => ({ name, count: result.recipientOutcomes[name] }))
+    .filter((entry) => entry.count > 0);
 
   return (
     <div className="space-y-4 py-4 text-center">
@@ -614,28 +766,48 @@ function CompleteStep({
       </div>
       <div>
         <h3 className="text-lg font-semibold">
-          {hasFailures ? 'Upload Completed with Issues' : 'Upload Complete'}
+          {hasFailures ? BULK_IMPORT_LABELS.COMPLETE_WITH_ISSUES : BULK_IMPORT_LABELS.COMPLETE}
         </h3>
         <p className="text-sm text-muted-foreground">
-          Your records have been processed.
+          {result.partial ? BULK_IMPORT_LABELS.PARTIAL_BODY : BULK_IMPORT_LABELS.SAVED_BODY}
         </p>
       </div>
 
       <div className="flex justify-center gap-4 pt-2 flex-wrap">
         <Badge variant="default" className="text-base px-4 py-1 bg-green-600">
-          {result.created} Created
+          {BULK_IMPORT_LABELS.CREATED(result.created)}
         </Badge>
         {result.skipped > 0 && (
           <Badge variant="secondary" className="text-base px-4 py-1">
-            {result.skipped} Skipped
+            {BULK_IMPORT_LABELS.SKIPPED(result.skipped)}
           </Badge>
         )}
         {result.failed > 0 && (
           <Badge variant="destructive" className="text-base px-4 py-1">
-            {result.failed} Failed
+            {BULK_IMPORT_LABELS.FAILED(result.failed)}
           </Badge>
         )}
+        {result.needsCredit > 0 && (
+          <Badge variant="outline" className="text-base px-4 py-1">
+            {BULK_IMPORT_LABELS.NEEDS_CREDIT(result.needsCredit)}
+          </Badge>
+        )}
+        {result.held > 0 && <Badge variant="outline" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.HELD(result.held)}</Badge>}
+        {result.instantFailed > 0 && <Badge variant="destructive" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_FAILED(result.instantFailed)}</Badge>}
+        {result.instantPending > 0 && <Badge variant="secondary" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_PENDING(result.instantPending)}</Badge>}
+        {result.instantUnknown > 0 && <Badge variant="outline" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_UNKNOWN(result.instantUnknown)}</Badge>}
+        {recipientOutcomes.map((entry) => (
+          <Badge key={entry.name} variant="outline" className="text-base px-4 py-1">
+            {BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_LABEL[entry.name](entry.count)}
+          </Badge>
+        ))}
       </div>
+
+      {recipientOutcomes.map((entry) => (
+        <p key={entry.name} className="text-xs text-muted-foreground">
+          {BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY[entry.name]}
+        </p>
+      ))}
 
       {result.skipped > 0 && (
         <p className="text-xs text-muted-foreground">

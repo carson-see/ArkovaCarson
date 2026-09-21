@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, shouldSendCronCheckIns, PROD_SERVICE_NAME, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, captureCreditRpcFailureAlert, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, shouldSendCronCheckIns, PROD_SERVICE_NAME, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, captureCreditRpcFailureAlert, captureRecipientPepperUnavailableAlert, RECIPIENT_PEPPER_UNAVAILABLE_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -940,5 +940,56 @@ describe('captureCreditRpcFailureAlert', () => {
     expect(serialized).not.toMatch(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i); // no emails
     expect(serialized).not.toContain('fingerprint');
     expect(serialized).not.toMatch(/sk_(live|test)_/); // no Stripe-shaped secret keys
+  });
+});
+
+// SCRUM-5265 (S7): RECIPIENT_IDENTIFIER_PEPPER missing in production is a
+// config outage, not a per-row defect. It must page, and repeated re-fires
+// must collapse into one issue rather than one per bulk import.
+describe('captureRecipientPepperUnavailableAlert (SCRUM-5265)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('captures at error level with a stable fingerprint and bounded context', () => {
+    captureRecipientPepperUnavailableAlert({
+      operation: 'anchor-self-service-bulk.linkBulkRecipient',
+      orgId: '22222222-2222-4222-8222-222222222222',
+      affectedRows: 7,
+    });
+
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [message, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(message).toContain('RECIPIENT_IDENTIFIER_PEPPER');
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        fingerprint: RECIPIENT_PEPPER_UNAVAILABLE_FINGERPRINT,
+        extra: {
+          operation: 'anchor-self-service-bulk.linkBulkRecipient',
+          org_id: '22222222-2222-4222-8222-222222222222',
+          affected_rows: 7,
+        },
+      }),
+    );
+  });
+
+  it('exposes a single fixed fingerprint key', () => {
+    expect(RECIPIENT_PEPPER_UNAVAILABLE_FINGERPRINT).toEqual(['recipient-identifier-pepper-unavailable']);
+  });
+
+  it('carries no recipient PII — only a UUID org id and aggregate counts (§1.4/§1.6A)', () => {
+    captureRecipientPepperUnavailableAlert({
+      operation: 'anchor-self-service-bulk.linkBulkRecipient',
+      orgId: null,
+      affectedRows: 1,
+    });
+
+    const [message, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    const serialized = JSON.stringify([message, scope]);
+    expect(serialized).not.toMatch(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+    expect(serialized).not.toContain('fingerprint_hex');
   });
 });

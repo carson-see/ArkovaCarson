@@ -44,14 +44,16 @@ describe('packages/sdk package.json metadata', () => {
 
   // 3.0.0 (2026-09-02) was the breaking key-hygiene release. 3.1.0 adds the
   // canonical folder management client without changing existing methods.
+  // 3.2.0 adds `anchorImport()` and the recipient-link result surface, again
+  // additive: no existing method changes shape.
   // In 3.0.0, `apiKey`/`x402Config` moved to
   // ECMAScript `#`-private fields (P3, key-hygiene fix; a TS `private`
   // field is still enumerable and was leaking the raw key through
   // `JSON.stringify`/`Object.keys`), and the retry-safety fix (P2) changes
   // observable behavior for non-idempotent methods on 429/5xx. Versions are
   // released independently from the npm MCP and Python packages.
-  it('is version 3.1.0', () => {
-    expect(pkg.version).toBe('3.1.0');
+  it('is version 3.2.0', () => {
+    expect(pkg.version).toBe('3.2.0');
   });
 
   it('has a repository field pointing at the monorepo, matching the sibling mcp-server package', () => {
