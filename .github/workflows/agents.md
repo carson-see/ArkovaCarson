@@ -47,10 +47,16 @@ this file). What's load-bearing for future edits:
   see the file's own note below; it is `disabled_manually` and untouched.
 - **`revision-drift.yml`**: cron cadence changed; see the file's own header
   comment for the current interval and why.
-- **`edge-deploy.yml`**: gained a `concurrency:` group so a burst of merges
-  to `services/edge/**` deploys only the newest commit once, not once per
-  merge; see the workflow's own comment for the `cancel-in-progress`
-  reasoning (queue-of-one, not cancel-in-flight).
+- **`edge-deploy.yml`**: the `concurrency: { group: deploy-edge,
+  cancel-in-progress: false }` group already existed (queue-of-one, mirroring
+  `deploy-worker.yml`) but only serialized a push burst, never coalesced it —
+  every queued push still ran a full deploy. `cancel-in-progress: true` was
+  rejected (the deploy + parity-check split across two later steps in one job
+  means a mid-flight cancel can leave a live-but-unverified deploy). Instead
+  `deploy-gate`'s "Evaluate DEPLOY_EDGE_PAUSED" step now also checks whether
+  its push commit is still the tip of `main` and skips (not fails) if a later
+  push has already superseded it — see that step's own comment. Contract:
+  `scripts/ci/edge-deploy-workflow-contract.test.ts`.
 - **`sonatype-scan.yml`**: trigger fix; see the file's own header comment.
 
 ## 2026-09-19 — staging evidence defers ordinary drafts before install
