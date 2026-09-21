@@ -1764,6 +1764,87 @@ Tier T3 (migration). No hosted or prod application asserted by this PR; the only
 execution to date is the local scratch-database run of
 `scripts/scrum4939/native-pg-credit-rpc-followups.sh`.
 
+### `0485` reserved — successor to the `0483`/`0484` reservation above
+
+Prefix `0485` is ALSO reserved by this PR, for the same immutability reason the
+0483/0484 split records: independent review found two defects in 0484's function
+after 0484 was committed, and an existing `supabase/migrations/*.sql` cannot be
+edited. Inventory re-taken 2026-09-21 after `git fetch origin`: `origin/main`
+still tops out at `0480`, and a sweep of all 98 remote branches (`git ls-tree`
+over `git branch -r`) shows no `0485` anywhere. Appended directly after the 0484
+note, inside this PR's own block, so it cannot collide with another PR's block
+(CLAUDE.md §6).
+
+### `0485_scrum4939_refund_ai_credits_period_and_amount.sql`
+
+Replaces 0484's `public.refund_ai_credits(uuid,uuid,integer) -> boolean` with
+`public.refund_ai_credits(uuid,uuid,integer,timestamptz) -> integer`. DROP then
+CREATE, not CREATE OR REPLACE: the return type changes, and keeping the
+3-argument form alongside would be an overload differing only by a defaulted
+trailing parameter (CLAUDE.md §6). Grants are therefore re-issued AFTER the
+create — the DROP takes the old ACL with it, and a fresh CREATE re-triggers
+Supabase's `ALTER DEFAULT PRIVILEGES`, which grants anon/authenticated EXECUTE
+directly.
+
+Two findings, both in 0484:
+
+1. **The return value could not distinguish a refund from a no-op.** 0484
+   returned `true` whenever a covering row was UPDATEd, including when
+   `GREATEST(used_this_month - p_amount, 0)` clamped the decrement to nothing
+   because the period had already been fully refunded by an earlier retry. The
+   reconciler logged "AI credit refund reconciled" and completed a job that
+   moved zero credit. 0485 returns the number of credits ACTUALLY returned:
+   `1..p_amount` refunded, `0` clamped (nothing moved), `NULL` nothing attempted
+   (no covering period row, or invalid arguments — which 0484 also answered
+   `false` for, conflating all three).
+2. **A refund after month rollover hit the wrong period.** 0484 selected the row
+   with `period_start <= now() AND period_end > now()` — the period the REFUND
+   lands in, not the one the DEBIT was taken from. Since
+   `ai_credits.reconcile_refund` retries with exponential backoff, a debit taken
+   near a month boundary was refunded against the NEW period: the old one stayed
+   overcharged forever and the new one was credited for consumption it never
+   had. 0485 scopes the window by `coalesce(p_debited_at, now())`, and the
+   worker captures `debited_at` at debit time and carries it through all three
+   refund sites and the job payload. `p_debited_at` defaults to NULL, which
+   reproduces 0484's behaviour exactly — required, because jobs enqueued before
+   this shipped carry no `debitedAt`.
+
+Everything else is unchanged from 0484 and re-asserted by the harness:
+service_role-only twice (GRANT plus the `coalesce(get_caller_role() =
+'service_role', false)` in-body guard that fails CLOSED on absent claims), the
+1000 cap, the same row predicate and `ORDER BY created_at,id LIMIT 1 FOR UPDATE`
+as `deduct_ai_credits`, the floor that still bounds a double refund, and
+`SET lock_timeout='5s'`.
+
+**Deploy-window hazard, stated rather than discovered.** PostgREST resolves a
+3-named-argument call to the new function (the 4th is defaulted), so a worker
+revision predating 0485 keeps working — but it reads the result as
+`data === true`, and an integer is never `true`: a refund COMMITS while the old
+worker logs it failed and enqueues a reconciliation. Apply the migration and
+deploy the worker together; if they must be ordered, worker FIRST is the safe
+order, because the new `refundAICredits()` handles both shapes (a boolean `true`
+from 0484 is read as "refunded, amount unknown"). The ROLLBACK block restores
+0484's function verbatim and says the same thing in reverse.
+
+Native proof extends the same harness: RED (0484 answers `true` for a
+fully-clamped refund; 0484 refunds a last-month debit against THIS month's row,
+leaving the expired period at 7 and taking the current one 3 -> 2), then GREEN
+(signature and ACL, over-refund returns 2 of 5 requested, clamped refund returns
+0, invalid args and no-covering-row return NULL, `p_debited_at` in the expired
+period takes that row 7 -> 6 while the current row stays at 3, omitting
+`p_debited_at` behaves exactly as 0484 did, 55P03 in ~5 s with nothing moved,
+and interleaved debits/refunds conserving by the sum of returned amounts).
+
+The harness also stopped leaking scratch databases: its `dropdb` now uses
+`--force` (PG13+) with a `pg_terminate_backend` fallback, and the lock-contention
+probe terminates the holder BACKEND rather than only its psql client — the
+client kill left the backend inside `pg_sleep(20)` still holding the row, so
+whatever ran next against that org failed with a spurious 55P03.
+
+Tier T3 (migration). No hosted or prod application asserted by this PR; the only
+execution to date is the local scratch-database run of
+`scripts/scrum4939/native-pg-credit-rpc-followups.sh`.
+
 ## 2026-09-19 — Referral RPC empty-claims guard (0466)
 
 Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both

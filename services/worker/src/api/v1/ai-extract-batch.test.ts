@@ -39,7 +39,10 @@ vi.mock('../../ai/cost-tracker.js', () => ({
     hasCredits: true,
   }),
   deductAICredits: vi.fn().mockResolvedValue(true),
-  refundAICredits: vi.fn().mockResolvedValue(true),
+  refundAICredits: vi.fn().mockResolvedValue({ status: 'refunded', amount: 1 }),
+  recordAICreditDebit: vi.fn((orgId?: string, userId?: string) => ({
+    orgId, userId, debitedAt: '2026-09-21T00:00:00.000Z',
+  })),
   ensureAICreditsPeriod: vi.fn().mockResolvedValue(true),
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -171,7 +174,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
       hasCredits: true,
     });
     vi.mocked(deductAICredits).mockResolvedValue(true);
-    vi.mocked(refundAICredits).mockResolvedValue(true);
+    vi.mocked(refundAICredits).mockResolvedValue({ status: 'refunded', amount: 1 });
     vi.mocked(ensureAICreditsPeriod).mockResolvedValue(true);
     vi.mocked(submitJob).mockResolvedValue('job-1');
   });
@@ -468,12 +471,18 @@ describe('POST /api/v1/ai/extract-batch', () => {
     // never reappear: 0467's `p_amount <= 0 -> RETURN false` made it a no-op.
     const refundCalls = vi.mocked(refundAICredits).mock.calls;
     expect(refundCalls).toHaveLength(1);
-    expect(refundAICredits).toHaveBeenCalledWith('org-1', 'user-1', 1);
+    // S8 / S2: the refund is addressed by the DEBIT's record — both ids as
+    // captured at debit time, plus the instant the charge was taken — so it
+    // cannot land on a different ai_credits row or a different period.
+    expect(refundAICredits).toHaveBeenCalledWith(
+      { orgId: 'org-1', userId: 'user-1', debitedAt: expect.any(String) },
+      1,
+    );
     expect(
       vi.mocked(deductAICredits).mock.calls.filter(([, , amount]) => (amount ?? 1) < 0),
     ).toHaveLength(0);
     // Never a batch-level blanket refund.
-    expect(refundAICredits).not.toHaveBeenCalledWith('org-1', 'user-1', 2);
+    expect(refundAICredits).not.toHaveBeenCalledWith(expect.anything(), 2);
   });
 
   it('logs a failed row refund at ERROR with the ids before enqueueing reconciliation', async () => {
@@ -488,7 +497,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
         tokensUsed: 50,
       });
     });
-    vi.mocked(refundAICredits).mockResolvedValue(false);
+    vi.mocked(refundAICredits).mockResolvedValue({ status: 'rpc_failed' });
 
     const app = createApp();
     const res = await request(app)
@@ -521,7 +530,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
         tokensUsed: 50,
       });
     });
-    vi.mocked(refundAICredits).mockResolvedValue(false); // refund fails
+    vi.mocked(refundAICredits).mockResolvedValue({ status: 'rpc_failed' }); // refund fails
     vi.mocked(deductAICredits).mockResolvedValue(true); // debits succeed
 
     const app = createApp();
@@ -602,7 +611,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
       // refund is a POSITIVE amount through refund_ai_credits; a negative
       // deduct is the 0467 regression and refunds nothing.
       const debits = vi.mocked(deductAICredits).mock.calls.filter(([, , a]) => a === 1);
-      const refunds = vi.mocked(refundAICredits).mock.calls.filter(([, , a]) => a === 1);
+      const refunds = vi.mocked(refundAICredits).mock.calls.filter(([, a]) => a === 1);
       expect(debits).toHaveLength(1);
       expect(refunds).toHaveLength(1);
     } finally {

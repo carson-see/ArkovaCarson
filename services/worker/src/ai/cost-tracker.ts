@@ -44,17 +44,107 @@ export interface UsageEvent {
 
 /**
  * Upper bound on a single refund, enforced here AND in
- * `public.refund_ai_credits` (migration 0483).
+ * `public.refund_ai_credits` (migrations 0484/0485).
  *
  * It is the same 1000 the reconcile job's Zod schema has always enforced on
  * this operation (`MAX_RECONCILABLE_AMOUNT` in `jobs/ai-credit-reconcile.ts`),
  * for the same reason: every real caller refunds exactly 1 (one row's credit),
  * so anything near this ceiling is already a bug, and the bound exists so a
- * corrupted caller cannot mint an arbitrary balance. Duplicated rather than
- * imported to keep `cost-tracker.ts` free of a job-module dependency; the two
- * are pinned equal by test.
+ * corrupted caller cannot mint an arbitrary balance.
+ *
+ * S6: this used to be an independent `1000` described as "pinned equal by
+ * test", while the only test asserted `MAX_REFUNDABLE_AMOUNT === 1000` — a
+ * literal, not a pin. `cost-tracker.test.ts` now imports BOTH constants and
+ * asserts they are equal, so raising one and not the other fails the build.
+ * The duplication of the value is kept (rather than importing the job module
+ * here) so the credit accounting does not gain a dependency on the job layer.
  */
 export const MAX_REFUNDABLE_AMOUNT = 1000;
+
+/**
+ * The ids and the instant of a debit, captured ONCE at debit time and carried
+ * unchanged to whatever refunds it.
+ *
+ * S8 — WHY THE IDS TRAVEL TOGETHER. Both credit RPCs select their row with an
+ * OR across the two owner columns:
+ *
+ *     (p_org_id IS NOT NULL AND org_id = p_org_id)
+ *  OR (p_user_id IS NOT NULL AND user_id = p_user_id)
+ *
+ * so the row a call lands on depends on WHICH ids the caller supplied. A debit
+ * issued with (org, user) and a refund issued with only (user) — or only
+ * (org), which is what happens when a producer's `orgId` is undefined on one
+ * path and not the other — can therefore resolve to two DIFFERENT `ai_credits`
+ * rows: the debit is taken from one and the credit returned to another. Nothing
+ * in either RPC detects that; both report success. Passing this record instead
+ * of loose arguments makes the divergence unrepresentable.
+ *
+ * S2 — WHY THE INSTANT TRAVELS WITH THEM. `refund_ai_credits` (0485) picks the
+ * period with `coalesce(p_debited_at, now())`. Without the debit's instant a
+ * refund that crosses a month boundary — routine, since the reconcile queue
+ * retries with backoff — decrements the NEW period and leaves the old one
+ * overcharged forever.
+ */
+export interface AICreditDebit {
+  readonly orgId?: string;
+  readonly userId?: string;
+  /**
+   * ISO-8601 instant the debit was taken. Optional only so that reconcile jobs
+   * enqueued before 0485 shipped still run: omitted, the RPC falls back to
+   * `now()`, i.e. exactly 0484's behaviour.
+   */
+  readonly debitedAt?: string;
+}
+
+/**
+ * What a refund actually did. S1 — 0484 returned `boolean` and answered TRUE
+ * for a refund that moved NOTHING (the floor clamped it, because the period had
+ * already been fully refunded by an earlier retry). The caller logged "refund
+ * reconciled" and completed the job, so the one outcome an operator most needs
+ * to see was the one that looked like success. 0485 returns the number of
+ * credits actually returned, and these four states are that number's meaning.
+ */
+export type AICreditRefundOutcome =
+  /** `amount` credits came back. `amount` may be LESS than requested. */
+  | { status: 'refunded'; amount: number }
+  /** The floor clamped the decrement to nothing. NOTHING moved. Retrying cannot help. */
+  | { status: 'clamped' }
+  /** No covering period row for the debit's instant, so there was nothing to refund. */
+  | { status: 'no_period' }
+  /** The RPC failed or was refused locally. Nothing moved; the org stays overcharged. */
+  | { status: 'rpc_failed' };
+
+/** Capture the owner ids and the instant of a debit that has just succeeded. */
+export function recordAICreditDebit(
+  orgId?: string,
+  userId?: string,
+  at: Date = new Date(),
+): AICreditDebit {
+  return { orgId, userId, debitedAt: at.toISOString() };
+}
+
+/**
+ * The shared tail of both money paths' error handling: one log line carrying
+ * the SQLSTATE, because `55P03` ("a stuck holder is sitting on this org's
+ * credit row") and a generic connection failure need different operator
+ * responses and were previously indistinguishable in the log stream.
+ *
+ * Deliberately ONLY the logging. `deductAICredits` and `refundAICredits` stay
+ * separate functions with separate guards, bounds and return types: they move
+ * money in opposite directions, and merging them is how a refund ends up
+ * reachable through the debit's door — the 0467 regression this PR exists to
+ * fix.
+ */
+function logCreditRpcFailure(
+  error: unknown,
+  context: { orgId?: string; userId?: string; amount: number },
+  message: string,
+): void {
+  logger.error(
+    { error, code: (error as { code?: string })?.code, ...context },
+    message,
+  );
+}
 
 /** Default credit allocations per billing tier */
 export const CREDIT_ALLOCATIONS = {
@@ -142,25 +232,13 @@ export async function deductAICredits(
     });
 
     if (error) {
-      logger.error(
-        {
-          error,
-          code: (error as { code?: string }).code,
-          orgId,
-          userId,
-          amount,
-        },
-        'Failed to deduct AI credits',
-      );
+      logCreditRpcFailure(error, { orgId, userId, amount }, 'Failed to deduct AI credits');
       return false;
     }
 
     return data === true;
   } catch (err) {
-    logger.error(
-      { error: err, code: (err as { code?: string })?.code, orgId, userId, amount },
-      'Failed to deduct AI credits',
-    );
+    logCreditRpcFailure(err, { orgId, userId, amount }, 'Failed to deduct AI credits');
     return false;
   }
 }
@@ -168,7 +246,7 @@ export async function deductAICredits(
 /**
  * Return AI credits to an org/user after work that was charged for did not
  * happen (a failed or timed-out extraction), via `public.refund_ai_credits`
- * (migration 0483).
+ * (migration 0484, re-shaped by 0485).
  *
  * This is the other half of the AI-credit refund regression from 0467. The
  * three refund sites — `api/v1/ai-extract.ts`, `api/v1/ai-extract-batch.ts`
@@ -178,57 +256,70 @@ export async function deductAICredits(
  * no-op. `deduct_ai_credits` deliberately stays closed to negative amounts;
  * returning credit is a separate, separately-bounded operation.
  *
- * Returns true only when a row was actually credited. False means NOTHING was
- * refunded — the org is still overcharged — and every caller must log that at
- * `error` level with the org/user ids and, where it has one, fall back to the
- * `ai_credits.reconcile_refund` queue. It must never be turned into a 5xx for
- * the end user: a failed refund is an ops problem, not a request failure.
+ * It takes the DEBIT RECORD rather than loose ids, because the row the RPC
+ * lands on depends on which ids are supplied and on which instant the period
+ * window is evaluated at — see {@link AICreditDebit} for both failure modes.
+ *
+ * Anything other than `{ status: 'refunded' }` means the org is still
+ * overcharged. Every caller must log that at `error` (or `warn` for a clamp,
+ * which cannot be retried into success) with the org/user ids and, where it has
+ * one, fall back to the `ai_credits.reconcile_refund` queue. It must never be
+ * turned into a 5xx for the end user: a failed refund is an ops problem, not a
+ * request failure.
  *
  * The RPC floors `used_this_month` at zero, so a refund can never mint credit
- * beyond what the period actually consumed.
+ * beyond what the period actually consumed — which remains the entire bound on
+ * a double refund, since the operation still has no idempotency key.
  */
 export async function refundAICredits(
-  orgId?: string,
-  userId?: string,
+  debit: AICreditDebit,
   amount: number = 1,
-): Promise<boolean> {
+): Promise<AICreditRefundOutcome> {
+  const { orgId, userId, debitedAt } = debit;
+
   if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_REFUNDABLE_AMOUNT) {
     logger.error(
       { orgId, userId, amount, max: MAX_REFUNDABLE_AMOUNT },
       'refundAICredits called with an out-of-range amount — refusing to move credit',
     );
-    return false;
+    return { status: 'rpc_failed' };
   }
   if (!orgId && !userId) {
     logger.error(
       { orgId, userId, amount },
       'refundAICredits called with neither org nor user — credit would be unattributable',
     );
-    return false;
+    return { status: 'rpc_failed' };
   }
 
   try {
-    const { data, error } = await callRpc<boolean>(db, 'refund_ai_credits', {
+    // `number | null` since 0485; `boolean` on a database still on 0484. Both
+    // are handled below — see the deploy-window note in 0485's header.
+    const { data, error } = await callRpc<number | boolean | null>(db, 'refund_ai_credits', {
       p_org_id: orgId ?? null,
       p_user_id: userId ?? null,
       p_amount: amount,
+      p_debited_at: debitedAt ?? null,
     });
 
     if (error) {
-      logger.error(
-        { error, code: (error as { code?: string }).code, orgId, userId, amount },
-        'Failed to refund AI credits',
-      );
-      return false;
+      logCreditRpcFailure(error, { orgId, userId, amount }, 'Failed to refund AI credits');
+      return { status: 'rpc_failed' };
     }
 
-    return data === true;
+    // 0484 compatibility: `true` credited a row by an amount it never reported,
+    // so the requested amount is the only honest reading; `false` covered both
+    // "no covering row" and invalid arguments, which 0485 splits out as NULL.
+    if (data === true) return { status: 'refunded', amount };
+    if (data === false) return { status: 'no_period' };
+
+    // 0485: NULL = nothing attempted (no covering period row, or the RPC's own
+    // argument guard). 0 = attempted and clamped to nothing by the floor.
+    if (typeof data !== 'number') return { status: 'no_period' };
+    return data > 0 ? { status: 'refunded', amount: data } : { status: 'clamped' };
   } catch (err) {
-    logger.error(
-      { error: err, code: (err as { code?: string })?.code, orgId, userId, amount },
-      'Failed to refund AI credits',
-    );
-    return false;
+    logCreditRpcFailure(err, { orgId, userId, amount }, 'Failed to refund AI credits');
+    return { status: 'rpc_failed' };
   }
 }
 

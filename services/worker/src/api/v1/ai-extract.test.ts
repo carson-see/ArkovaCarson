@@ -32,13 +32,21 @@ vi.mock('../../ai/gemini.js', () => ({
 vi.mock('../../ai/cost-tracker.js', () => ({
   checkAICredits: vi.fn(),
   deductAICredits: vi.fn(),
-  refundAICredits: vi.fn().mockResolvedValue(true),
+  refundAICredits: vi.fn().mockResolvedValue({ status: 'refunded', amount: 1 }),
+  recordAICreditDebit: vi.fn((orgId?: string, userId?: string) => ({
+    orgId, userId, debitedAt: '2026-09-21T00:00:00.000Z',
+  })),
   ensureAICreditsPeriod: vi.fn().mockResolvedValue(true),
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
 vi.mock('../../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
+// S9: the single-extraction path now enqueues the same reconciliation job the
+// batch path does when a refund fails after a successful debit.
+const enqueueRefundReconciliation = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../../ai/credit-refund-reconciliation.js', () => ({ enqueueRefundReconciliation }));
 
 import { db } from '../../utils/db.js';
 import { createExtractionProvider } from '../../ai/factory.js';
@@ -354,12 +362,18 @@ describe('AI Extraction Endpoint', () => {
     it('refunds via refund_ai_credits with a POSITIVE amount, not a negative debit', async () => {
       await runFailingExtraction();
 
-      expect(refundAICredits).toHaveBeenCalledWith('org-456', 'user-123', 1);
+      // S8 / S2: addressed by the DEBIT's record — both ids exactly as the
+      // debit used them, plus the instant the charge was taken — so the refund
+      // cannot resolve to a different ai_credits row or a different period.
+      expect(refundAICredits).toHaveBeenCalledWith(
+        { orgId: 'org-456', userId: 'user-123', debitedAt: expect.any(String) },
+        1,
+      );
       expect(deductAICredits).not.toHaveBeenCalledWith('org-456', 'user-123', -1);
     });
 
     it('logs a failed refund at ERROR with the ids and still answers the caller', async () => {
-      (refundAICredits as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+      (refundAICredits as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ status: 'rpc_failed' });
 
       const res = await runFailingExtraction();
 
@@ -371,6 +385,51 @@ describe('AI Extraction Endpoint', () => {
       // degraded-fallback response is unchanged.
       expect(res.status).not.toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalled();
+    });
+
+    // S9. This path raised the credit-RPC Sentry alert and stopped there. An
+    // alert is a NOTIFICATION, not a remedy: the customer stayed overcharged
+    // and nothing would ever return the credit — while the identical failure
+    // in `ai-extract-batch.ts` was reconciled automatically through the
+    // `ai_credits.reconcile_refund` queue. Same failure, same queue now.
+    it('enqueues a reconciliation job when the refund fails', async () => {
+      (refundAICredits as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ status: 'rpc_failed' });
+
+      await runFailingExtraction();
+
+      expect(enqueueRefundReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // S8 / S2: the SAME record the refund used, so the out-of-band retry
+          // addresses the debit's row and the debit's period.
+          debit: { orgId: 'org-456', userId: 'user-123', debitedAt: expect.any(String) },
+          amount: 1,
+          source: 'ai-extract',
+        }),
+      );
+      expect(captureCreditRpcFailureAlert).toHaveBeenCalled();
+    });
+
+    it('does NOT enqueue a reconciliation when the refund succeeded', async () => {
+      await runFailingExtraction();
+
+      expect(enqueueRefundReconciliation).not.toHaveBeenCalled();
+    });
+
+    // S1. A clamped refund returned ZERO credits because the period floor was
+    // already at the bottom — the credit was back. Nothing is owed, so no
+    // reconciliation and no alert; but it is not an ordinary success either,
+    // so it is visible at `warn`.
+    it('treats a clamped refund as its own outcome: warn, no alert, no reconciliation', async () => {
+      (refundAICredits as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ status: 'clamped' });
+
+      await runFailingExtraction();
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: 'org-456', userId: 'user-123' }),
+        expect.stringContaining('ZERO credits'),
+      );
+      expect(enqueueRefundReconciliation).not.toHaveBeenCalled();
+      expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
     });
   });
 
@@ -768,8 +827,11 @@ describe('AI Extraction Endpoint', () => {
       );
       // A latency-budget overrun is a failed extraction: the credit comes back
       // through refund_ai_credits, not a negative debit (0467 closed that door
-      // and nothing refunded for three weeks as a result).
-      expect(refundAICredits).toHaveBeenCalledWith('org-456', 'user-123', 1);
+      // and nothing refunded since 0467 (prod 2026-09-19) as a result).
+      expect(refundAICredits).toHaveBeenCalledWith(
+        { orgId: 'org-456', userId: 'user-123', debitedAt: expect.any(String) },
+        1,
+      );
     } finally {
       vi.useRealTimers();
     }

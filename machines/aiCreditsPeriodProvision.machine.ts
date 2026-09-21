@@ -1,5 +1,6 @@
 /**
- * `ai_credits` period provisioning + debit (SCRUM-4939; migrations 0467/0483).
+ * `ai_credits` period provisioning + debit (SCRUM-4939; migrations 0467/0483,
+ * refunds 0484/0485).
  *
  * REWRITTEN — the previous version of this machine modeled a protocol that no
  * longer exists. It checked the application-level
@@ -24,9 +25,11 @@
  * that makes a second overlapping period impossible even if the guard above
  * were ever bypassed.
  *
- * `public.refund_ai_credits(uuid,uuid,integer)` (0484) returns credit after work
- * that was charged for did not happen. It locks the SAME row with the SAME
- * predicate as the debit and floors `used_this_month` at zero. It exists
+ * `public.refund_ai_credits(uuid,uuid,integer,timestamptz)` (0484, re-shaped by
+ * 0485) returns credit after work that was charged for did not happen. It locks
+ * the SAME row with the SAME predicate as the debit — and, since 0485, over the
+ * period window of `coalesce(p_debited_at, now())` rather than the refund's own
+ * instant — and floors `used_this_month` at zero. It exists
  * because 0467 closed `deduct_ai_credits` to non-positive amounts while three
  * call sites were issuing refunds through exactly that door — the AI-credit
  * refund regression from 0467, in which every failed extraction stayed charged
@@ -71,9 +74,30 @@
  *
  * MODELING CHOICES, stated so the proof is not read as stronger than it is:
  *   - One domain element = one concurrent request for ONE org's ONE period.
- *     Cross-org and cross-period independence is structural (the advisory-lock
- *     key is `'ai_credits:org:'||org_id` and every statement is scoped by
- *     `org_id` + the covering-period window) and is not modeled.
+ *     CROSS-ORG independence is structural and is not modeled: the
+ *     advisory-lock key is `'ai_credits:org:'||org_id` and every statement is
+ *     scoped by `org_id`.
+ *
+ *     CROSS-PERIOD independence is NOT the same claim, and an earlier version
+ *     of this note asserted both at once. It was true of the DEBIT and false of
+ *     the REFUND. `deduct_ai_credits` evaluates its window at the instant it
+ *     charges, so a debit is always in the period it belongs to. 0484's
+ *     `refund_ai_credits` evaluated ITS window at the instant it refunded —
+ *     which for a reconciled refund is minutes to days after the debit — so a
+ *     refund crossing a month boundary decremented the NEW period and left the
+ *     old one overcharged. That is a cross-period interaction the single-period
+ *     domain here cannot represent, and calling it structural made it invisible.
+ *
+ *     0485 makes it structural again by scoping the refund's window with
+ *     `coalesce(p_debited_at, now())`, the instant captured at DEBIT time and
+ *     carried through every refund site and the reconcile payload. A refund now
+ *     addresses the period its debit was taken from, so debit and refund act on
+ *     ONE row — which is the premise this single-period domain rests on, and
+ *     therefore the premise `refundNeverExceedsDebits` and `usedNeverNegative`
+ *     rest on. The residual, still unmodelled, is a caller that supplies a
+ *     WRONG `p_debited_at`; that is a type-level property of the worker
+ *     (`AICreditDebit` carries the ids and the instant together, captured once),
+ *     not of this protocol.
  *   - Each racer runs the provision stage and then the debit stage, which is
  *     the real request shape (`ensureAICreditsPeriod` then `checkAICredits`
  *     then `deductAICredits`). `checkAICredits` is not modeled: it is a
