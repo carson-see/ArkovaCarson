@@ -1890,6 +1890,47 @@ export async function handleAnchorDocument(
   }
 }
 
+const IMPORT_BOUNDED_CODE_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
+const IMPORT_RESULT_STATUSES = new Set(['created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed']);
+const IMPORT_INSTANT_STATUSES = new Set(['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED']);
+
+/**
+ * Allowlisted, bounded projection of an import response (#3034 review).
+ *
+ * The raw body is issuer-/user-influenced: filenames, reason strings and any
+ * field a future worker adds would otherwise flow verbatim into the model's
+ * context. Only the five counters and five per-row fields below survive, each
+ * length-capped; `reason` survives ONLY when it is already a bounded machine
+ * code, `results` is capped at the documented 100-row maximum, and every
+ * unknown key is dropped. Kept byte-for-byte equivalent to the npm stdio
+ * server's `projectImportResponse`.
+ */
+export function projectImportResponse(body: Record<string, unknown>): Record<string, unknown> {
+  const counter = (key: string): number => (Number.isInteger(body[key]) ? body[key] as number : 0);
+  const rows = Array.isArray(body.results) ? body.results.slice(0, 100) : [];
+  return {
+    total: counter('total'),
+    created: counter('created'),
+    skipped: counter('skipped'),
+    failed: counter('failed'),
+    recipient_link_failed: counter('recipient_link_failed'),
+    results: rows.map((entry) => {
+      const row = (entry ?? {}) as Record<string, unknown>;
+      const fingerprint = typeof row.fingerprint === 'string' && /^[a-fA-F0-9]{64}$/.test(row.fingerprint) ? row.fingerprint : '';
+      const status = typeof row.status === 'string' && IMPORT_RESULT_STATUSES.has(row.status) ? row.status : 'failed';
+      const publicId = typeof row.public_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(row.public_id) ? row.public_id : undefined;
+      const reason = typeof row.reason === 'string' && IMPORT_BOUNDED_CODE_RE.test(row.reason) ? row.reason : undefined;
+      const instantStatus = typeof row.instant_status === 'string' && IMPORT_INSTANT_STATUSES.has(row.instant_status) ? row.instant_status : undefined;
+      return {
+        fingerprint, status,
+        ...(publicId ? { public_id: publicId } : {}),
+        ...(reason ? { reason } : {}),
+        ...(instantStatus ? { instant_status: instantStatus } : {}),
+      };
+    }),
+  };
+}
+
 export async function handleImportRows(input: ImportRowsInput, config: SupabaseConfig): Promise<ToolResult> {
   if (!config.workerBaseUrl || !config.callerApiKey) return errorResult('Row import requires API-key authentication and the Arkova API endpoint.');
   try {
@@ -1904,7 +1945,7 @@ export async function handleImportRows(input: ImportRowsInput, config: SupabaseC
     if (!body || !Array.isArray(body.results) || !['total', 'created', 'skipped', 'failed'].every((key) => Number.isInteger(body[key]))) {
       return errorResult('Row import failed: malformed response');
     }
-    return textResult(body);
+    return textResult(projectImportResponse(body));
   } catch (error) {
     return errorResult(safeErrorText(error, 'arkova_import_rows'));
   }

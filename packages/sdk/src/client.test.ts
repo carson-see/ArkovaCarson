@@ -160,6 +160,18 @@ describe('anchorImport', () => {
     expect(result.created + result.skipped + result.failed).toBe(result.total);
   });
 
+  // NIT (#3034 review): the worker requires a POSITIVE file_size, so a 0 was
+  // accepted client-side and then rejected server-side for the WHOLE request.
+  // Reject it here, with a message that names the field.
+  it('rejects a zero file_size before any request, naming the field', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    await expect(client.anchorImport(
+      [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true, fileSize: 0 }],
+      { action: 'queue' },
+    )).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('file_size') });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('fails closed above 100 rows and never retries a write response', async () => {
     const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 3, sleep: vi.fn() } });
     const row = { fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true };

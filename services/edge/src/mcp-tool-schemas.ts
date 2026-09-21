@@ -105,7 +105,18 @@ export const importRowsSchema = z.object({
     metadata: z.record(z.string(), z.unknown()).optional(),
     recipient_email: z.string().email().optional(),
     recipient_name: z.string().max(255).optional(),
-  }).strict()).min(1).max(100),
+  }).strict().superRefine((row, context) => {
+    // Mirrors the worker's own superRefine. The worker rejects the WHOLE
+    // request for this pair, so catching it locally saves a round trip that
+    // can only ever come back 400 (#3034 review).
+    if (row.recipient_name && !row.recipient_email) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recipient_name'],
+        message: 'recipient_email is required when recipient_name is provided',
+      });
+    }
+  })).min(1).max(100),
   action: z.enum(['queue', 'instant']),
   description: z.string().max(1000).optional(),
   user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),

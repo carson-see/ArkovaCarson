@@ -89,6 +89,17 @@ describe('arkova API CLI', () => {
     expect(output.stdout() + output.stderr()).not.toContain('private bytes');
   });
 
+  it('rejects a zero file_size from import JSON before any request', async () => {
+    const api = client();
+    const output = io();
+    const readFile = vi.fn().mockResolvedValue(Buffer.from(JSON.stringify([{
+      fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true, file_size: 0,
+    }])));
+    expect(await main(['import', './rows.json', '--action', 'queue'], output.value, { client: api, readFile })).toBe(2);
+    expect(api.request).not.toHaveBeenCalled();
+    expect(output.stdout() + output.stderr()).toContain('file_size');
+  });
+
   it('uses exact folder CRUD, nesting, connector, and bulk move contracts', async () => {
     const api = client();
     vi.mocked(api.request)

@@ -344,8 +344,13 @@ export class Arkova {
     if (options.action !== 'queue' && options.action !== 'instant') throw new ArkovaError('anchorImport action must be queue or instant', 400, 'invalid_request');
     const credentialTypes = new Set<string>(BULK_ANCHOR_CREDENTIAL_TYPES);
     const wireRows = rows.map((row, index) => {
+      // The worker requires a POSITIVE file_size, so a 0 used to pass here and
+      // then fail server-side for the WHOLE request (#3034 review).
+      if (row.fileSize !== undefined && (!Number.isInteger(row.fileSize) || row.fileSize < 1)) {
+        throw new ArkovaError(`anchorImport row ${index}: file_size must be a positive integer`, 400, 'invalid_request');
+      }
       if (!/^[a-fA-F0-9]{64}$/.test(row.fingerprint) || row.filename.length < 1 || row.filename.length > 255
-        || typeof row.fingerprintProvided !== 'boolean' || (row.fileSize !== undefined && (!Number.isInteger(row.fileSize) || row.fileSize < 0))
+        || typeof row.fingerprintProvided !== 'boolean'
         || (row.credentialType !== undefined && !credentialTypes.has(row.credentialType))) {
         throw new ArkovaError(`anchorImport row ${index} is invalid`, 400, 'invalid_request');
       }

@@ -98,10 +98,14 @@ function validateImportRows(value: unknown): Array<Record<string, unknown>> {
     if (!row || typeof row !== 'object' || Array.isArray(row)) throw new UsageError(`import row ${index} must be an object`);
     const record = row as Record<string, unknown>;
     if (Object.keys(record).some((key) => !IMPORT_ROW_KEYS.has(key))) throw new UsageError(`import row ${index} contains an unsupported field`);
+    // The worker requires a POSITIVE file_size, so a 0 used to be forwarded and
+    // then rejected server-side for the WHOLE request (#3034 review).
+    if (record.file_size !== undefined && (typeof record.file_size !== 'number' || !Number.isInteger(record.file_size) || record.file_size < 1)) {
+      throw new UsageError(`import row ${index}: file_size must be a positive integer`);
+    }
     if (typeof record.fingerprint !== 'string' || !/^[a-fA-F0-9]{64}$/.test(record.fingerprint)
       || typeof record.filename !== 'string' || record.filename.length < 1 || record.filename.length > 255
       || typeof record.fingerprint_provided !== 'boolean'
-      || (record.file_size !== undefined && (typeof record.file_size !== 'number' || !Number.isInteger(record.file_size) || record.file_size < 0))
       || (record.credential_type !== undefined && (typeof record.credential_type !== 'string' || !IMPORT_CREDENTIAL_TYPES.has(record.credential_type)))
       || (record.metadata !== undefined && (!record.metadata || typeof record.metadata !== 'object' || Array.isArray(record.metadata)))
       || (record.recipient_email !== undefined && typeof record.recipient_email !== 'string')

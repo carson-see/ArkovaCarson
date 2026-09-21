@@ -74,3 +74,11 @@ while this section preserves the old text as history.
   the **local/stdio** MCP server — the **hosted** MCP endpoint is `edge.arkova.ai`
   (`services/edge/`), a completely separate implementation with its own tool set; do not confuse
   the two or assume a fix to one reaches the other.
+
+## 2026-09-21 — anchorImport rejects file_size 0 client-side (PR #3034)
+
+The worker's row schema requires a POSITIVE `file_size`, but the TypeScript SDK,
+the API CLI and the npm stdio MCP server all accepted `0` and only checked
+`< 0`. A single zero-size row therefore failed the WHOLE request server-side
+with a generic 400. All three now reject it locally with a message that names
+the field. The hosted edge schema already required positive.

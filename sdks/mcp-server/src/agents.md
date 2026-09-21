@@ -46,3 +46,15 @@ activation email to be sent to that address, and the row's reason code — not i
 status — says whether the recipient was linked and whether the invitation was
 sent. Wording differs only where it already did (`document bytes`, the trailing
 API_ONLY_NOTE); the recipient sentences are identical on both servers.
+
+## 2026-09-21 — arkova_import_rows returns a bounded projection (PR #3034)
+
+`projectImportResponse` replaces the raw `JSON.stringify(body)`: allowlisted
+counters plus per-row `fingerprint` / `status` / `public_id` / `reason` /
+`instant_status`, each shape-validated, `results` capped at 100, unknown keys
+dropped, and `reason` kept only when it already matches
+`/^[a-zA-Z0-9_.-]{1,80}$/`. Issuer-/user-controlled text must not reach the
+model verbatim. The hosted edge handler has the identical function — change both
+together. The row validator also now rejects `file_size: 0` and a
+`recipient_name` with no `recipient_email`, both of which the worker rejects for
+the whole request.

@@ -376,3 +376,19 @@ sent. The text is byte-identical in `public/.well-known/mcp/server-card.json`
 (mcp-manifest-parity asserts exact equality) and mirrored in the npm stdio
 server; `check-mcp-claim-parity.ts` and `mcp-manifest-parity.test.ts` both stay
 green.
+
+## 2026-09-21 — import rows: local recipient pairing + bounded result (PR #3034)
+
+`importRowsSchema` now mirrors the worker's own `superRefine` and rejects
+`recipient_name` without `recipient_email`. The worker rejects the WHOLE request
+for that pair, so catching it locally saves a round trip that could only ever
+return 400.
+
+`handleImportRows` no longer passes the API response through untouched.
+`projectImportResponse` returns an allowlisted, bounded projection: five
+counters and, per row, `fingerprint` / `status` / `public_id` / `reason` /
+`instant_status`, each validated against a shape, `results` capped at 100, all
+unknown keys dropped. `reason` survives only when it already matches the bounded
+machine-code regex. The raw body is issuer-/user-influenced, and MCP output is
+model context — free text must not flow straight in. The npm stdio server has
+the identical function.
