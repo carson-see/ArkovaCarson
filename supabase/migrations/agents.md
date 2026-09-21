@@ -1653,6 +1653,18 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+| `0477` | `0477_uat19_queue_resolve_authorization.sql` | SCRUM-5268 / UAT-19 | PRE-PUBLICATION | Replaces only the service-role four-argument `resolve_anchor_queue_by_public_id` body. Tenant and collision scope come from the selected public anchor; authorization is exact `org_members` owner/admin, platform admin, or exact owner/admin of one APPROVED direct parent (no profile-role fallback or recursive ancestry). A tenant+collision advisory transaction lock precedes deterministic row locks, so different-winner races cannot deadlock; the durable receipt is rechecked under lock. ACL/signature stay service-role-only/unchanged. Native proof: `scripts/uat19/native-pg-queue-resolution.sh`. |
+
+## 2026-09-19 — UAT-24 global-personal folder privacy (0480)
+
+`0480_uat24_global_personal_folder_privacy.sql` is an additive correction to
+0462/0464. It narrows only `folders_select_user`: platform administrators and
+approved ancestor administrators can read another user's personal folder only
+when `context_org_id IS NOT NULL`; a globally personal row remains visible only
+to its owner. No insert/update/delete policy or worker RPC changes. The native
+UAT-24 harness executes the effective 0462 + 0464 + 0480 stack under forced RLS
+and proves owner, platform-context, ancestor-context, peer-denial, global
+privacy, and NULL-identity behavior. File-only, not applied to any hosted DB.
 ## 2026-09-19 — 0475 atomic contractual anchor-cap conservation
 
 `0475_atomic_contractual_anchor_cap.sql` compensates for the final-slot race

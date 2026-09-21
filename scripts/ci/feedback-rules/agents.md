@@ -26,3 +26,7 @@ Per-rule CI enforcement scripts for `memory/feedback_*.md` rules (R0-7 / SCRUM-1
 ## 2026-09-14 — SCRUM-3972 review correction
 
 create_webhook_endpoint is deliberately authenticated for WebhookSettingsPage. The exception is pinned to the exact immutable 0454 bytes (live prod/C2 ACL and auth.uid/home-org/ORG_ADMIN guards verified 2026-09-14); changed bodies, new overloads and anonymous re-grants remain violations. Migration 0454 is unchanged.
+
+## 2026-09-19 — queue resolver baseline burn-down
+
+Migration 0477 explicitly closes the squashed-baseline `resolve_anchor_queue_by_public_id` ACL. Its stale squashed-baseline exception is removed; the numbered-definition and replay-terminal-state checks remain unchanged.

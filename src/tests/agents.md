@@ -25,6 +25,9 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `f5c-monthly-count-null-identity-guard.test.ts` — pins migration 0392 (F-5c) and the `scripts/ci/check-null-identity-guard.ts` lint. Migration layer asserts the identity is resolved into a local and NULL-checked **before** the comparison, plus the added `service_role` bypass and the SCRUM-1278 wrap. Lint layer is a **failure-mode** suite: it writes throwaway migrations into a temp git repo and asserts the lint EXITS 1 on the bad shape (bare, wrapped, and `get_user_org_id()` variants) and EXITS 0 on the fixed shape, on comment-only occurrences, below the grandfather prefix, on the baseline, under the override label, and on NULL-safe `= auth.uid()` RLS quals / `EXISTS` admin checks
 
 ## Subdirectories
+
+- `migrations/0480-uat24-global-personal-folder-privacy.test.ts` — static guard that 0480 keeps platform/ancestor reads behind a non-NULL organization context, preserves owner reads, and does not broaden or replace folder mutation policy.
+
 - `edge/` — Cloudflare edge worker security tests (JWT verify, HMAC, rate-limit)
 - `pages/` — page-level contract tests (URL param parsing, deep-link contracts)
 - `rls/` — RLS policy tests with authenticated Supabase clients

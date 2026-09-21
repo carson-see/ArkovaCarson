@@ -1573,6 +1573,167 @@ paths:
             or api_key_principal_unresolved (the key is authorized, but the
             principal it must stamp on the row could not be resolved).
 
+  /folders:
+    get:
+      operationId: listFolders
+      summary: List canonical record folders
+      tags: [Folders]
+      security: [{ apiKey: [] }, { bearerAuth: [] }]
+      parameters:
+        - { name: owner_scope, in: query, schema: { type: string, enum: [USER, ORG] } }
+        - { name: owner_user_id, in: query, schema: { type: string, format: uuid } }
+        - { name: org_id, in: query, schema: { type: string, format: uuid } }
+        - { name: context_org_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Folder tree rows
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [folders]
+                properties: { folders: { type: array, items: { $ref: "#/components/schemas/Folder" } } }
+        "401": { description: Authentication required }
+        "403": { description: Folder scope forbidden }
+    post:
+      operationId: createFolder
+      summary: Create a folder or subfolder
+      tags: [Folders]
+      security: [{ apiKey: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, owner_scope]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                owner_scope: { type: string, enum: [USER, ORG] }
+                org_id: { type: string, format: uuid, nullable: true }
+                context_org_id: { type: string, format: uuid, nullable: true }
+                parent_folder_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: Folder created
+          content: { application/json: { schema: { type: object, properties: { folder: { $ref: "#/components/schemas/Folder" } } } } }
+        "400": { description: Invalid request }
+        "401": { description: Authentication required }
+        "403": { description: Folder scope forbidden }
+
+  /folders/member-context:
+    get:
+      summary: Read an authorized organization member context
+      operationId: getFolderMemberContext
+      tags: [Folders]
+      security:
+        - SupabaseJWT: []
+      description: Internal dashboard drill-down requiring an AAL2 user session and exact or approved-ancestor organization administration. API keys are rejected and org_members is authoritative.
+      parameters:
+        - { name: owner_user_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: context_org_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Bounded member identity in the requested membership context }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /folders/member-contexts:
+    get:
+      summary: List authorized organization member contexts
+      operationId: listFolderMemberContexts
+      tags: [Folders]
+      security:
+        - SupabaseJWT: []
+      description: Internal AAL2 dashboard roster derived from exact org_members rows. API keys are rejected.
+      parameters:
+        - { name: context_org_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Bounded exact-membership roster }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /folders/{folderId}:
+    parameters:
+      - { name: folderId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: updateFolder
+      summary: Rename or reparent a folder
+      tags: [Folders]
+      security: [{ apiKey: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                parent_folder_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "200": { description: Folder updated, content: { application/json: { schema: { type: object, properties: { folder: { $ref: "#/components/schemas/Folder" } } } } } }
+        "400": { description: Invalid request }
+        "404": { description: Folder not found or forbidden }
+    delete:
+      operationId: deleteFolder
+      summary: Delete an empty folder
+      tags: [Folders]
+      security: [{ apiKey: [] }, { bearerAuth: [] }]
+      responses:
+        "204": { description: Folder deleted; its records become Unfiled }
+        "404": { description: Folder not found or forbidden }
+        "409": { description: Folder still has child folders }
+
+  /folders/{folderId}/connector:
+    put:
+      operationId: bindFolderConnector
+      summary: Bind or clear a connector auto-sort destination
+      tags: [Folders]
+      security: [{ apiKey: [] }, { bearerAuth: [] }]
+      parameters:
+        - { name: folderId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, source_id, connection_id]
+              properties:
+                provider: { type: string, enum: [google_drive, docusign], nullable: true }
+                source_id: { type: string, minLength: 1, maxLength: 500, nullable: true }
+                connection_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "200": { description: Connector destination updated, content: { application/json: { schema: { type: object, properties: { folder: { $ref: "#/components/schemas/Folder" } } } } } }
+        "400": { description: Invalid request }
+        "403": { description: Folder scope forbidden }
+        "404": { description: Folder not found or forbidden }
+        "409": { description: Connector source already has a canonical destination }
+
+  /folders/bulk-move:
+    post:
+      operationId: bulkMoveFolderRecords
+      summary: Move up to 100 records with partial results
+      tags: [Folders]
+      security: [{ apiKey: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folder_id]
+              oneOf: [{ required: [anchor_ids] }, { required: [record_public_ids] }]
+              properties:
+                anchor_ids: { type: array, minItems: 1, maxItems: 100, items: { type: string, format: uuid } }
+                record_public_ids: { type: array, minItems: 1, maxItems: 100, items: { type: string, pattern: "^ARK-" } }
+                folder_id: { type: string, format: uuid, nullable: true }
+      responses:
+        "200": { description: Every record moved, content: { application/json: { schema: { $ref: "#/components/schemas/FolderMoveResult" } } } }
+        "207": { description: Partial move with per-record outcomes, content: { application/json: { schema: { $ref: "#/components/schemas/FolderMoveResult" } } } }
+        "400": { description: Invalid request }
+        "401": { description: Authentication required }
+
   /jobs/{jobId}:
     get:
       operationId: getJobStatus
@@ -1609,6 +1770,46 @@ components:
       description: Base64-encoded x402 payment proof
 
   schemas:
+    Folder:
+      type: object
+      required: [id, public_id, name, owner_scope, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        public_id: { type: string, pattern: "^FLD-[A-F0-9]{16}$" }
+        name: { type: string }
+        owner_scope: { type: string, enum: [USER, ORG] }
+        user_id: { type: string, format: uuid, nullable: true }
+        org_id: { type: string, format: uuid, nullable: true }
+        context_org_id: { type: string, format: uuid, nullable: true }
+        parent_folder_id: { type: string, format: uuid, nullable: true }
+        connector_provider: { type: string, enum: [google_drive, docusign], nullable: true }
+        connector_source_id: { type: string, nullable: true }
+        connector_connection_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FolderMoveResult:
+      type: object
+      required: [moved, failed]
+      properties:
+        moved:
+          type: array
+          items:
+            oneOf:
+              - { type: string, format: uuid }
+              - { type: string, pattern: "^ARK-" }
+        failed:
+          type: array
+          items:
+            type: object
+            required: [anchor_id, code]
+            properties:
+              anchor_id:
+                oneOf:
+                  - { type: string, format: uuid }
+                  - { type: string, pattern: "^ARK-" }
+              code: { type: string }
+
     ProblemDetail:
       type: object
       required: [type, title, status]

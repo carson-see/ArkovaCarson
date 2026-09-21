@@ -5,7 +5,7 @@
  * Separate from Dashboard which shows an overview.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -30,6 +30,8 @@ import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useFolders, type Folder } from '@/hooks/useFolders';
+import { useActiveOrg } from '@/hooks/useActiveOrg';
+import { useUserOrgs } from '@/hooks/useUserOrgs';
 import { AppShell } from '@/components/layout';
 import { SecureDocumentDialog } from '@/components/anchor';
 import {
@@ -67,7 +69,21 @@ import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
 /** Local discriminated state for the shared create/rename folder dialog. */
-type FolderDialogState = { mode: 'create'; parentFolderId?: string; ownerScope?: 'USER' | 'ORG' } | { mode: 'rename'; folder: Folder };
+type FolderDialogState = { mode: 'create'; parentFolderId?: string; ownerScope?: 'USER' | 'ORG'; contextOrgId?: string | null } | { mode: 'rename'; folder: Folder };
+
+export function resolveFolderDraft(
+  dialog: Extract<FolderDialogState, { mode: 'create' }>,
+  folders: Folder[],
+) {
+  const parent = dialog.parentFolderId
+    ? folders.find((folder) => folder.id === dialog.parentFolderId)
+    : undefined;
+  return {
+    ownerScope: parent?.ownerScope ?? dialog.ownerScope ?? 'USER' as const,
+    parentFolderId: dialog.parentFolderId ?? null,
+    contextOrgId: parent?.contextOrgId ?? dialog.contextOrgId ?? null,
+  };
+}
 
 const statusConfig = {
   PENDING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
@@ -87,6 +103,9 @@ export function MyRecordsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const { orgId: activeOrgId } = useActiveOrg();
+  const { orgs } = useUserOrgs();
+  const activeMembership = orgs.find((org) => org.orgId === activeOrgId);
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord, assignRecords } = useFolders();
@@ -107,6 +126,21 @@ export function MyRecordsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
   const [moveTargets, setMoveTargets] = useState<Record[]>([]);
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
+  const activeOrgRef = useRef(activeOrgId);
+  const folderDraft = useMemo(() => folderDialog?.mode === 'create'
+    ? resolveFolderDraft(folderDialog, folders)
+    : null, [folderDialog, folders]);
+
+  useEffect(() => {
+    activeOrgRef.current = activeOrgId;
+    // Tenant switches invalidate all local selections/dialog state synchronously.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFolderFilter('ALL');
+    setSelectedRecordIds(new Set());
+    setMoveTargets([]);
+    setFolderDialog(null);
+    setDeleteTarget(null);
+  }, [activeOrgId]);
 
   useEffect(() => {
     if (shouldAutoOpenUpload) {
@@ -141,25 +175,25 @@ export function MyRecordsPage() {
   // error and keep itself open. Only a resolved submit reaches the toast.
   const handleFolderSubmit = useCallback(async (name: string) => {
     if (!folderDialog) return;
+    const requestOrgId = activeOrgId;
     if (folderDialog.mode === 'create') {
-      const parent = folderDialog.parentFolderId
-        ? folders.find((folder) => folder.id === folderDialog.parentFolderId)
-        : undefined;
-      await createFolder(name, {
-        ownerScope: parent?.ownerScope ?? folderDialog.ownerScope ?? 'USER',
-        parentFolderId: folderDialog.parentFolderId ?? null,
-      });
+      if (!folderDraft) return;
+      await createFolder(name, folderDraft);
+      if (activeOrgRef.current !== requestOrgId) throw new Error(FOLDER_LABELS.ERR_CREATE);
       toast.success(FOLDER_LABELS.TOAST_CREATED);
     } else {
       await renameFolder(folderDialog.folder.id, name);
+      if (activeOrgRef.current !== requestOrgId) throw new Error(FOLDER_LABELS.ERR_RENAME);
       toast.success(FOLDER_LABELS.TOAST_RENAMED);
     }
-  }, [folderDialog, folders, createFolder, renameFolder]);
+  }, [activeOrgId, folderDialog, folderDraft, createFolder, renameFolder]);
 
   const handleDeleteFolderConfirm = useCallback(async () => {
     if (!deleteTarget) return;
+    const requestOrgId = activeOrgId;
     try {
       await deleteFolder(deleteTarget.id);
+      if (activeOrgRef.current !== requestOrgId) return;
       toast.success(FOLDER_LABELS.TOAST_DELETED);
       // Records fall back to Unfiled (ON DELETE SET NULL) — if we were
       // viewing the folder being deleted, fall back to All Records so the
@@ -168,19 +202,29 @@ export function MyRecordsPage() {
     } catch {
       toast.error(FOLDER_LABELS.ERR_DELETE);
     }
-  }, [deleteFolder, deleteTarget]);
+  }, [activeOrgId, deleteFolder, deleteTarget]);
 
   const handleMoveSelect = useCallback(async (folderId: string | null) => {
-    if (moveTargets.length === 0) return;
+    if (moveTargets.length === 0) return false;
+    const requestOrgId = activeOrgId;
+    const requestedRecords = moveTargets;
     try {
-      const result = await assignRecords(moveTargets.map((record) => record.id), folderId);
-      setSelectedRecordIds(new Set());
-      toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
-      if (result.failed.length > 0) toast.warning(`${result.failed.length} record(s) could not be moved.`);
+      const result = await assignRecords(requestedRecords.map((record) => record.id), folderId);
+      if (activeOrgRef.current !== requestOrgId) return false;
+      const failedIds = new Set(result.failed.map((failure) => failure.anchor_id));
+      setSelectedRecordIds(failedIds);
+      setMoveTargets(requestedRecords.filter((record) => failedIds.has(record.id)));
+      if (result.moved.length > 0) toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
+      if (result.failed.length > 0) {
+        toast.warning(FOLDER_LABELS.PARTIAL_MOVE.replace('{count}', String(result.failed.length)));
+        return false;
+      }
+      return true;
     } catch {
       toast.error(FOLDER_LABELS.ERR_ASSIGN);
+      return false;
     }
-  }, [assignRecords, moveTargets]);
+  }, [activeOrgId, assignRecords, moveTargets]);
 
   const handleRemoveFromFolder = useCallback(async (record: Record) => {
     try {
@@ -192,16 +236,24 @@ export function MyRecordsPage() {
   }, [assignRecord]);
 
   // Filter records by folder, then search query and status.
+  const selectedFolderIds = useMemo(() => {
+    if (folderFilter === 'ALL' || folderFilter === 'UNFILED') return null;
+    const ids = new Set([folderFilter]);
+    for (let pass = 0; pass < folders.length; pass += 1) {
+      for (const folder of folders) if (folder.parentFolderId && ids.has(folder.parentFolderId)) ids.add(folder.id);
+    }
+    return ids;
+  }, [folderFilter, folders]);
   const filteredRecords = useMemo(() => records.filter((r) => {
     if (folderFilter === 'UNFILED' && r.folderId) return false;
-    if (folderFilter !== 'ALL' && folderFilter !== 'UNFILED' && r.folderId !== folderFilter) return false;
+    if (selectedFolderIds && (!r.folderId || !selectedFolderIds.has(r.folderId))) return false;
     if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       return r.filename.toLowerCase().includes(q) || r.fingerprint.toLowerCase().includes(q);
     }
     return true;
-  }), [records, folderFilter, statusFilter, searchQuery]);
+  }), [records, folderFilter, selectedFolderIds, statusFilter, searchQuery]);
 
   return (
     <AppShell
@@ -242,8 +294,9 @@ export function MyRecordsPage() {
             loading={foldersLoading}
             selected={folderFilter}
             onSelect={setFolderFilter}
-            onNewFolder={(parentFolderId, ownerScope) => setFolderDialog({ mode: 'create', parentFolderId, ownerScope })}
-            canCreateOrg={profile?.role === 'ORG_ADMIN' && !!profile.org_id}
+            onNewFolder={(parentFolderId, ownerScope, contextual) => setFolderDialog({ mode: 'create', parentFolderId, ownerScope, contextOrgId: contextual ? activeOrgId : null })}
+            canCreateOrg={activeMembership?.role === 'owner' || activeMembership?.role === 'admin'}
+            canCreateContextual={Boolean(activeOrgId)}
             onRename={(folder) => setFolderDialog({ mode: 'rename', folder })}
             onDelete={(folder) => setDeleteTarget(folder)}
           />
@@ -473,6 +526,10 @@ export function MyRecordsPage() {
         onOpenChange={(open) => { if (!open) setFolderDialog(null); }}
         mode={folderDialog?.mode ?? 'create'}
         initialName={folderDialog?.mode === 'rename' ? folderDialog.folder.name : undefined}
+        privacyDescription={folderDialog?.mode === 'create'
+          ? folderDraft?.ownerScope === 'ORG' ? FOLDER_LABELS.PRIVACY_ORG
+            : folderDraft?.contextOrgId ? FOLDER_LABELS.PRIVACY_CONTEXT : FOLDER_LABELS.PRIVACY_GLOBAL
+          : undefined}
         onSubmit={handleFolderSubmit}
       />
       <DeleteFolderDialog

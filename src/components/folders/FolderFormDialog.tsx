@@ -40,6 +40,7 @@ interface FolderFormDialogProps {
   mode: 'create' | 'rename';
   initialName?: string;
   onSubmit: (name: string) => Promise<void>;
+  privacyDescription?: string;
 }
 
 export function FolderFormDialog({
@@ -48,6 +49,7 @@ export function FolderFormDialog({
   mode,
   initialName = '',
   onSubmit,
+  privacyDescription,
 }: Readonly<FolderFormDialogProps>) {
   const [name, setName] = useState(initialName);
   const [loading, setLoading] = useState(false);
@@ -125,6 +127,8 @@ export function FolderFormDialog({
               }}
             />
           </div>
+
+          {privacyDescription && <p className="text-sm text-muted-foreground">{privacyDescription}</p>}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>

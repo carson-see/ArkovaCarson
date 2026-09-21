@@ -27,3 +27,4 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 ## 2026-09-14 — SCRUM-5142 folders
 
 `arkova_manage_folders` is one action-discriminated tool over the canonical worker REST routes. It forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model.
+Its tests exercise every CRUD/reparent/connector action and both bulk identifier modes against the same worker paths.

@@ -79,6 +79,64 @@ def test_folder_management_surface(asynchronous: bool) -> None:
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_folder_update_distinguishes_omitted_parent_from_explicit_root(asynchronous: bool) -> None:
+    bodies: list[dict] = []
+    folder = {
+        "id": "folder-id", "public_id": "FLD-0011223344556677", "name": "Legal",
+        "owner_scope": "ORG", "user_id": None, "org_id": "org-id",
+        "context_org_id": None, "parent_folder_id": None, "connector_provider": None,
+        "connector_source_id": None, "connector_connection_id": None,
+        "created_at": "2026-09-14T00:00:00Z", "updated_at": "2026-09-14T00:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return json_response({"folder": folder})
+
+    options = {"api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+               "transport": httpx.MockTransport(handler)}
+
+    async def run_async() -> None:
+        async with AsyncArkova(**options) as client:
+            await client.update_folder("folder-id", name="Renamed")
+            await client.update_folder("folder-id", parent_folder_id=None)
+
+    if asynchronous:
+        asyncio.run(run_async())
+    else:
+        with Arkova(**options) as client:
+            client.update_folder("folder-id", name="Renamed")
+            client.update_folder("folder-id", parent_folder_id=None)
+
+    assert bodies == [{"name": "Renamed"}, {"parent_folder_id": None}]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_folder_writes_never_retry_ambiguous_failures(asynchronous: bool) -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return json_response({"error": "temporarily_unavailable"}, 503)
+
+    options = {"api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+               "transport": httpx.MockTransport(handler), "retries": 3}
+
+    async def run_async() -> None:
+        async with AsyncArkova(**options) as client:
+            await client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
+
+    with pytest.raises(ArkovaError):
+        if asynchronous:
+            asyncio.run(run_async())
+        else:
+            with Arkova(**options) as client:
+                client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
+    assert calls == 1
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("timestamp", ["omitted", None, "2026-09-02T02:58:11Z"])
 @pytest.mark.parametrize(
     ("method", "path", "kind"),

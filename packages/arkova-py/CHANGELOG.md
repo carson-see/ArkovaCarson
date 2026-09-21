@@ -3,6 +3,11 @@
 All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
 anything earlier, see `git log -- packages/arkova-py/`.
 
+## 2.4.1
+
+Folder updates now distinguish an omitted parent from an explicit `None` root,
+and all folder mutations avoid automatic retries after ambiguous HTTP failures.
+
 ## 2.4.0
 
 Adds typed synchronous and asynchronous folder management: nested personal and

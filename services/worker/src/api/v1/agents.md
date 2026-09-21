@@ -1735,6 +1735,7 @@ filters here; if you need OR semantics across columns, run the terms separately 
 ## 2026-09-14 — SCRUM-5142 folder API
 
 `folders.ts` exposes one canonical CRUD/connector/bulk surface to JWT and API-key callers. `folders-deps.ts` sends every operation to service-role-only atomic RPCs; never replace those with read-then-write authorization. Organization keys are an upper bound, personal scope requires a verified user, and org-only keys are supported for exact-org operations with key-id creator attribution. `PUT` is required by the connector binding route and must remain in CORS preflight.
+Both served and checked-in OpenAPI contracts describe the folder surface. Bulk outcomes accept UUIDs for legacy anchor-id input and `ARK-*` identifiers for public-id input; do not falsely constrain both to UUID.
 
 ## 2026-09-14 — SCRUM-5252 platform-admin folder read parity
 

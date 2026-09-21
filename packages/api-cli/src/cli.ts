@@ -38,6 +38,9 @@ const HELP = {
     'arkova anchor <local-file> [--action queue|instant] [--description text] [--tag value] [--org-tag value]',
     'arkova folder list [--scope USER|ORG] [--org-id id] [--owner-user-id id] [--context-org-id id]',
     'arkova folder create --name name --scope USER|ORG [--org-id id] [--context-org-id id] [--parent-folder-id id]',
+    'arkova folder update <folder-id> [--name name] [--parent-folder-id id|--root]',
+    'arkova folder connector <folder-id> (--provider google_drive|docusign --source-id id --connection-id id|--clear)',
+    'arkova folder delete <folder-id>',
     'arkova folder move --record-id id [--record-id id] (--folder-id id|--root)',
   ],
   credentials: 'Set ARKOVA_API_KEY or pass --config - and pipe JSON on stdin.',
@@ -207,6 +210,56 @@ async function runFolder(args: string[], client: CliClient): Promise<{ value: un
     };
     noExtra(args);
     return { value: await client.request('/api/v1/folders', { method: 'POST', body: JSON.stringify(body) }) };
+  }
+  if (action === 'update') {
+    const folderId = required(args.shift(), 'folder-id');
+    const name = takeOption(args, '--name');
+    if (name !== undefined && (name.trim().length === 0 || name.length > 100)) {
+      throw new UsageError('--name must be 1-100 characters');
+    }
+    const parentFolderId = takeOption(args, '--parent-folder-id');
+    const root = takeBoolean(args, '--root');
+    if (parentFolderId && root) throw new UsageError('use only one of --parent-folder-id or --root');
+    if (name === undefined && parentFolderId === undefined && !root) {
+      throw new UsageError('folder update requires --name, --parent-folder-id, or --root');
+    }
+    noExtra(args);
+    const body = {
+      ...(name !== undefined ? { name } : {}),
+      ...(parentFolderId !== undefined || root ? { parent_folder_id: root ? null : parentFolderId } : {}),
+    };
+    return { value: await client.request(`/api/v1/folders/${encodeURIComponent(folderId)}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }) };
+  }
+  if (action === 'connector') {
+    const folderId = required(args.shift(), 'folder-id');
+    const provider = takeOption(args, '--provider');
+    const sourceId = takeOption(args, '--source-id');
+    const connectionId = takeOption(args, '--connection-id');
+    const clear = takeBoolean(args, '--clear');
+    if (clear && (provider || sourceId || connectionId)) {
+      throw new UsageError('--clear cannot be combined with connector values');
+    }
+    if (!clear && (provider !== 'google_drive' && provider !== 'docusign')) {
+      throw new UsageError('--provider must be google_drive or docusign');
+    }
+    if (!clear && (!sourceId || !connectionId)) {
+      throw new UsageError('--source-id and --connection-id are required');
+    }
+    noExtra(args);
+    const body = clear
+      ? { provider: null, source_id: null, connection_id: null }
+      : { provider, source_id: sourceId, connection_id: connectionId };
+    return { value: await client.request(`/api/v1/folders/${encodeURIComponent(folderId)}/connector`, {
+      method: 'PUT', body: JSON.stringify(body),
+    }) };
+  }
+  if (action === 'delete') {
+    const folderId = required(args.shift(), 'folder-id');
+    noExtra(args);
+    await client.request(`/api/v1/folders/${encodeURIComponent(folderId)}`, { method: 'DELETE' });
+    return { value: { deleted: true } };
   }
   if (action === 'move') {
     const recordPublicIds = takeMany(args, '--record-id');
