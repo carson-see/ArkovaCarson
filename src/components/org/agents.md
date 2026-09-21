@@ -102,3 +102,9 @@ see the parent's real name" claim in `docs/uat/suborg-ux/FINDINGS.md` finding 3 
 common case — RLS on `organizations` blocks the read for a child that requested affiliation into an
 existing parent, and the UI falls back to the generic label, same as before this PR. Not a security
 issue; a false "Fixed" claim, corrected in that file with regression tests added here.
+
+## 2026-09-21 — SCRUM-5285: `OrgVerification.tsx` handles 409 `verification_superseded`
+
+The worker compare-and-swaps both domain-verification writes and answers 409 `verification_superseded` when the organization's domain (or its pending code) changed before the write landed. That is permanent, not transient: resubmitting the same code can never succeed. Both `handleStartDomainVerification` and `handleConfirmDomain` therefore branch on it before the generic error path — clearing `verificationCode`, setting `domainVerificationPending` to false, and rendering `ORG_VERIFICATION_LABELS.DOMAIN_START_SUPERSEDED` / `DOMAIN_CONFIRM_SUPERSEDED` from `src/lib/copy.ts`. Resetting to the start step is what makes "start again" actionable; leaving the code box up invites the user to retry a dead code forever.
+
+The branch is narrow on purpose — status 409 AND `code === 'verification_superseded'`. An ordinary 400 keeps the server's own wording, and `OrgVerification.test.tsx` pins that so the branch cannot widen into a catch-all.

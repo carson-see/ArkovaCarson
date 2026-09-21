@@ -1717,6 +1717,24 @@ export const ORG_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// ORGANIZATION VERIFICATION (SCRUM-5285)
+//
+// The worker answers 409 `verification_superseded` when the organization's
+// domain (or its pending code) changed between the request being prepared and
+// the write landing — the compare-and-swap in
+// services/worker/src/api/v1/orgVerification.ts. The user has to be told the
+// proof no longer binds and that the flow restarts; a generic "failed" would
+// invite them to retry the same stale code forever.
+// =============================================================================
+
+export const ORG_VERIFICATION_LABELS = {
+  DOMAIN_START_SUPERSEDED:
+    'Your organization’s domain changed while verification was starting. Start domain verification again.',
+  DOMAIN_CONFIRM_SUPERSEDED:
+    'Your organization’s domain or verification code changed before this confirmation completed, so this code no longer applies. Start domain verification again.',
+} as const;
+
+// =============================================================================
 // PENDING INVITATIONS (org page — visibility for invites that have not
 // resulted in a member yet)
 // =============================================================================
