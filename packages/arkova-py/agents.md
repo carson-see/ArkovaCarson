@@ -36,6 +36,13 @@ mismatch reached PyPI unchallenged. `scripts/ci/ci-workflow-contract.test.ts`
 ("ci.yml Python SDK suite is actually invoked") is the ratchet that keeps the job
 wired; deleting the job fails that suite.
 
+Both PR CI and the PyPI publish workflow install from `uv.lock` with the exact
+uv and Python versions declared in those workflows. Third-party packages are wheel-only (`uv sync --no-build`). The first-party
+project is built once with the locked Hatchling and no isolated resolver; its
+wheel is installed with `--no-deps --no-build`, and all checks use
+`uv run --no-build`. Update the lock with each
+dependency declaration and prove a clean sync before publishing or testing.
+
 ## Licensing
 - **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE` (same copyright line, kept exact). Python convention is a root-level `LICENSE` file, not `files` array entries like the npm packages.
 - `pyproject.toml` uses PEP 639 `license = "MIT"` + `license-files = ["LICENSE"]` (replaces the pre-639 `license = { text = "MIT" }` table form) so hatchling packages the LICENSE file into both the wheel's `dist-info/licenses/` and the sdist automatically. See `scripts/security/package-license-files.test.ts`.

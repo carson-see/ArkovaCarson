@@ -114,6 +114,8 @@ describe('BUG-028 — arkova_anchor_document submission receipt contract', () =>
     supabaseUrl: 'https://example.supabase.co',
     supabaseKey: 'test-key',
     userId: 'test-user',
+    workerBaseUrl: 'https://worker.test',
+    callerApiKey: 'ak_test_secret',
   };
   const FINGERPRINT = 'a'.repeat(64);
   const origFetch = globalThis.fetch;
@@ -128,31 +130,18 @@ describe('BUG-028 — arkova_anchor_document submission receipt contract', () =>
     return JSON.parse(result.content[0].text) as Record<string, unknown>;
   }
 
-  /**
-   * Stands in for Supabase on the real code path: the `mcp_anchor_document`
-   * RPC does not exist in any migration, so PostgREST 404s and the handler
-   * falls through to a direct INSERT on `public_records`. The returned row is
-   * the ACTUAL table shape — note there is no `public_id`, which is the whole
-   * bug.
-   */
-  function supabaseStub(): ReturnType<typeof vi.fn> {
-    return vi.fn(async (url: string) => {
-      if (url.includes('/rpc/mcp_anchor_document')) {
-        return new Response('{"message":"Could not find the function"}', { status: 404 });
-      }
-      if (url.includes('/public_records')) {
-        return new Response(JSON.stringify([{
-          id: '9f1c0b6e-0000-4000-8000-000000000001',
-          source: 'mcp',
-          source_id: FINGERPRINT,
-          record_type: 'document',
-          content_hash: FINGERPRINT,
-          anchor_id: null,
-          metadata: {},
-          created_at: '2026-08-15T00:00:00Z',
-        }]), { status: 201 });
-      }
-      return new Response('{}', { status: 200 });
+  function workerStub(overrides: Record<string, unknown> = {}): ReturnType<typeof vi.fn> {
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('https://worker.test/api/v1/anchor');
+      expect(init?.headers).toMatchObject({ 'X-API-Key': 'ak_test_secret' });
+      return new Response(JSON.stringify({
+        public_id: 'ark_test_receipt',
+        status: 'PENDING',
+        action: 'queue',
+        idempotent: false,
+        fingerprint: FINGERPRINT,
+        ...overrides,
+      }), { status: 200 });
     });
   }
 
@@ -172,39 +161,37 @@ describe('BUG-028 — arkova_anchor_document submission receipt contract', () =>
     expect(createTable![1]).toContain('content_hash');
   });
 
-  it('returns public_id as an explicit null, not a silently dropped key', async () => {
-    globalThis.fetch = supabaseStub() as unknown as typeof fetch;
+  it('returns the canonical worker public_id without a direct-database fallback', async () => {
+    const fetchStub = workerStub();
+    globalThis.fetch = fetchStub as unknown as typeof fetch;
 
     const result = await handleAnchorDocument({ content_hash: FINGERPRINT }, CONFIG);
     const body = payload(result as { content: Array<{ text: string }> });
 
-    // Before the fix this read `record?.public_id` — always undefined, so
-    // JSON.stringify removed the key and an agent could not tell "no id yet"
-    // from "field forgotten".
     expect('public_id' in body).toBe(true);
-    expect(body.public_id).toBeNull();
-    expect(body.status).toBe('submitted');
+    expect(body.public_id).toBe('ark_test_receipt');
+    expect(body.status).toBe('PENDING');
+    expect(fetchStub).toHaveBeenCalledTimes(1);
   });
 
-  it('names the handle the documented follow-up actually accepts', async () => {
-    globalThis.fetch = supabaseStub() as unknown as typeof fetch;
+  it('returns the fingerprint handle accepted by the documented follow-up', async () => {
+    globalThis.fetch = workerStub() as unknown as typeof fetch;
 
     const body = payload(
       await handleAnchorDocument({ content_hash: FINGERPRINT }, CONFIG) as { content: Array<{ text: string }> },
     );
 
-    expect(body.content_hash).toBe(FINGERPRINT);
-    expect(body.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: FINGERPRINT });
-    expect(String(body.message)).toContain('arkova_verify_document');
-    expect(String(body.message)).toContain('content_hash');
+    expect(body.fingerprint).toBe(FINGERPRINT);
+    expect(body).not.toHaveProperty('verify_with');
+    expect(body).not.toHaveProperty('content_hash');
   });
 
   it('the instructed follow-up resolves: arkova_verify_document accepts the receipt handle', async () => {
-    globalThis.fetch = supabaseStub() as unknown as typeof fetch;
+    globalThis.fetch = workerStub() as unknown as typeof fetch;
     const receipt = payload(
       await handleAnchorDocument({ content_hash: FINGERPRINT }, CONFIG) as { content: Array<{ text: string }> },
     );
-    const handle = (receipt.verify_with as { content_hash: string }).content_hash;
+    const handle = receipt.fingerprint as string;
 
     // Not yet anchored → the fingerprint RPC returns "Record not found",
     // which must surface as a decidable UNKNOWN envelope, NOT a tool error.
@@ -221,16 +208,10 @@ describe('BUG-028 — arkova_anchor_document submission receipt contract', () =>
     expect(verified.fingerprint).toBe(FINGERPRINT);
   });
 
-  it('the already_submitted path returns the same shape, not a different one', async () => {
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.includes('/public_records?content_hash=eq.')) {
-        return new Response(JSON.stringify([{
-          id: '9f1c0b6e-0000-4000-8000-000000000001',
-          content_hash: FINGERPRINT,
-          anchor_id: null,
-        }]), { status: 200 });
-      }
-      return new Response('[]', { status: 200 });
+  it('passes through the canonical idempotent receipt without relabeling it', async () => {
+    globalThis.fetch = workerStub({
+      status: 'PENDING',
+      idempotent: true,
     }) as unknown as typeof fetch;
 
     const body = payload(
@@ -240,14 +221,15 @@ describe('BUG-028 — arkova_anchor_document submission receipt contract', () =>
       ) as { content: Array<{ text: string }> },
     );
 
-    expect(body.status).toBe('already_submitted');
+    expect(body.status).toBe('PENDING');
+    expect(body.idempotent).toBe(true);
     expect('public_id' in body).toBe(true);
-    expect(body.public_id).toBeNull();
-    expect(body.verify_with).toEqual({ tool: 'arkova_verify_document', content_hash: FINGERPRINT });
+    expect(body.public_id).toBe('ark_test_receipt');
+    expect(body.fingerprint).toBe(FINGERPRINT);
   });
 
-  it('never leaks the internal public_records UUID as a substitute identifier', async () => {
-    globalThis.fetch = supabaseStub() as unknown as typeof fetch;
+  it('does not synthesize a legacy internal database identifier', async () => {
+    globalThis.fetch = workerStub() as unknown as typeof fetch;
 
     const raw = (await handleAnchorDocument({ content_hash: FINGERPRINT }, CONFIG))
       .content[0].text;

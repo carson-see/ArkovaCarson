@@ -30,6 +30,7 @@ const {
     stripeWebhookSecret: 'whsec_test_mock_secret',
     useMocks: false,
     nodeEnv: 'test',
+    frontendUrl: 'https://app.example.com',
   };
 
   return {
@@ -73,7 +74,12 @@ vi.mock('stripe', async () => {
 
 // ---- System under test ----
 
-import { verifyWebhookSignature, createCheckoutSession, createBillingPortalSession } from './client.js';
+import {
+  verifyWebhookSignature,
+  createCheckoutSession,
+  createAnchorCreditCheckoutSession,
+  createBillingPortalSession,
+} from './client.js';
 
 // ---- Test fixtures ----
 
@@ -196,6 +202,79 @@ describe('verifyWebhookSignature', () => {
         mockConfig.stripeWebhookSecret,
       );
     });
+  });
+});
+
+describe('createAnchorCreditCheckoutSession', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.useMocks = false;
+  });
+
+  it('creates a production one-time checkout with canonical price and target metadata', async () => {
+    mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_credit', url: 'https://pay/credit' });
+
+    const result = await createAnchorCreditCheckoutSession({
+      purchaserUserId: 'purchaser-1',
+      targetUserId: 'recipient-1',
+      targetOrgId: 'org-1',
+      quantity: 3,
+    });
+
+    expect(mockStripeCheckoutCreate).toHaveBeenCalledWith({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      line_items: [{
+        quantity: 3,
+        price_data: {
+          currency: 'usd',
+          unit_amount: 200,
+          product_data: { name: 'Instant secure credit' },
+        },
+      }],
+      success_url: 'https://app.example.com/vault?credit_purchase=success',
+      cancel_url: 'https://app.example.com/vault?credit_purchase=canceled',
+      metadata: {
+        purchase_kind: 'anchor_credits',
+        purchaser_user_id: 'purchaser-1',
+        target_user_id: 'recipient-1',
+        target_org_id: 'org-1',
+        quantity: '3',
+        unit_price_cents: '200',
+      },
+    });
+    expect(result).toEqual({ sessionId: 'cs_credit', url: 'https://pay/credit' });
+  });
+
+  it('uses the mock checkout and canonicalizes absent optional targets to empty metadata', async () => {
+    mockConfig.useMocks = true;
+    mockMockCreateCheckoutSession.mockResolvedValue({ id: 'cs_mock_credit', url: 'https://mock/credit' });
+
+    const result = await createAnchorCreditCheckoutSession({
+      purchaserUserId: 'purchaser-1',
+      targetUserId: null,
+      targetOrgId: null,
+      quantity: 1,
+    });
+
+    expect(mockMockCreateCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'payment',
+      success_url: 'https://app.example.com/vault?credit_purchase=success',
+      cancel_url: 'https://app.example.com/vault?credit_purchase=canceled',
+      metadata: expect.objectContaining({ target_user_id: '', target_org_id: '', quantity: '1' }),
+    }));
+    expect(mockStripeCheckoutCreate).not.toHaveBeenCalled();
+    expect(result).toEqual({ sessionId: 'cs_mock_credit', url: 'https://mock/credit' });
+  });
+
+  it.each([false, true])('rejects a missing checkout URL in %s mock mode', async (useMocks) => {
+    mockConfig.useMocks = useMocks;
+    const create = useMocks ? mockMockCreateCheckoutSession : mockStripeCheckoutCreate;
+    create.mockResolvedValue({ id: 'cs_no_url', url: null });
+
+    await expect(createAnchorCreditCheckoutSession({
+      purchaserUserId: 'purchaser-1', targetUserId: null, targetOrgId: null, quantity: 1,
+    })).rejects.toThrow('Stripe did not return a checkout URL');
   });
 });
 

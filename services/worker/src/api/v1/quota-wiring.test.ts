@@ -13,8 +13,8 @@ describe('per-org quota route wiring', () => {
 
     expect(router).toContain("router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter)");
     expect(submit).toMatch(/export const AnchorSubmitSchema/);
-    expect(submit).toMatch(/async function consumeAnchorCreateQuota\([\s\S]*kind: ['"]anchors_created['"][\s\S]*getOrgId: \(quotaReq\) => quotaReq\.apiKey\?\.orgId \?\? null[\s\S]*getDelta: \(\) => delta/);
-    expect(submit).toMatch(/if \(existing\) \{[\s\S]*return;[\s\S]*await consumeAnchorCreateQuota\(req, res, 1\)/);
+    expect(submit).toContain('ensureAnchorQuotaAvailable(db, orgId, res)');
+    expect(submit).toMatch(/if \(existing\) \{[\s\S]*return;[\s\S]*if \(orgId && !\(await ensureAnchorQuotaAvailable\(db, orgId, res\)\)\)/);
     expect(submit).toMatch(/router\.post\(['"]\/['"], handleAnchorSubmit\)/);
     expect(submit).toMatch(/router\.post\(['"]\/submit['"], handleAnchorSubmit\)/);
   });

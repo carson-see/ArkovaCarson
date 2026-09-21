@@ -4378,6 +4378,7 @@ export type Database = {
         Row: {
           anchor_quota: number | null
           balance: number
+          cap_enforced: boolean
           created_at: string
           cycle_end: string
           cycle_start: string
@@ -4390,6 +4391,7 @@ export type Database = {
         Insert: {
           anchor_quota?: number | null
           balance?: number
+          cap_enforced?: boolean
           created_at?: string
           cycle_end?: string
           cycle_start?: string
@@ -4402,6 +4404,7 @@ export type Database = {
         Update: {
           anchor_quota?: number | null
           balance?: number
+          cap_enforced?: boolean
           created_at?: string
           cycle_end?: string
           cycle_start?: string
@@ -7128,6 +7131,9 @@ export type Database = {
           provider: string
           reason: string
           resolved_at: string | null
+          resolved_by: string | null
+          resolved_note: string | null
+          resolved_request_id: string | null
           webhook_id: string | null
         }
         Insert: {
@@ -7138,6 +7144,9 @@ export type Database = {
           provider: string
           reason: string
           resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_note?: string | null
+          resolved_request_id?: string | null
           webhook_id?: string | null
         }
         Update: {
@@ -7148,6 +7157,9 @@ export type Database = {
           provider?: string
           reason?: string
           resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_note?: string | null
+          resolved_request_id?: string | null
           webhook_id?: string | null
         }
         Relationships: []
@@ -7562,6 +7574,15 @@ export type Database = {
         Args: { p_email: string; p_user_id: string }
         Returns: string
       }
+      add_existing_org_member: {
+        Args: { p_actor_id: string; p_email: string; p_org_id: string; p_role: string }
+        Returns: {
+          email: string
+          full_name: string | null
+          idempotent: boolean
+          user_id: string
+        }[]
+      }
       batch_insert_anchors: { Args: { p_anchors: Json }; Returns: Json }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
       bulk_move_records_to_folder: {
@@ -7752,6 +7773,14 @@ export type Database = {
       }
       deduct_ai_credits: {
         Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
+        Returns: boolean
+      }
+      ensure_ai_credits_period: {
+        Args: {
+          p_monthly_allocation: number
+          p_now?: string
+          p_org_id: string
+        }
         Returns: boolean
       }
       deduct_credit: {

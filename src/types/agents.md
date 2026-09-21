@@ -159,3 +159,6 @@ how the default came to exist. Do not "tidy" the DEFAULT away.
 `offboard_suborg` and `offboard_suborg_as_api_key` mirror the worker copy and
 0460 signatures. They are hand-written pending canonical type generation
 against the qualified migrated database, matching the explicit 0453 caveat.
+# UAT-17
+
+`database.types.ts` mirrors the additive `add_existing_org_member` RPC contract; receipt and existing API types remain unchanged.

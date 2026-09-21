@@ -4,6 +4,7 @@ const ADMIN_ROUTER_PREFIXES = [
   '/compliance-inbox',
   '/connectors',
   '/notifications',
+  '/organization-members',
   '/proof-packet',
   '/queue',
   '/rules',

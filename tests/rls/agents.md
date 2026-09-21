@@ -207,6 +207,9 @@ SCRUM-4887: committed changes to the singleton OAuth confirmation policy use
 timestamp in a separate `finally` path. The lock times out instead of evicting
 an apparently stale owner. Keep file parallelism enabled so unrelated fixture
 collisions remain visible.
+# UAT-17
+
+`email-signup-org-association.test.ts` covers confirmed verified-domain association, unverified/ambiguous-domain denial, atomic exact-email member add, replay idempotency, and cross-org denial on an owned loopback fixture.
 
 ## 2026-09-19 — Referral RPC missing-role claims (migration 0466)
 

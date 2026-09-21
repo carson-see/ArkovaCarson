@@ -1,141 +1,144 @@
-/**
- * AddExistingMemberModal Tests
- *
- * Covers:
- *  - admin path (useAdminEndpoints): search + add route through workerFetch, not Supabase
- *  - standard path: membership guard queries `org_members` (NOT the non-existent
- *    `org_memberships`) and add goes through the add_org_member RPC
- */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-const mockFrom = vi.hoisted(() => vi.fn());
-const mockRpc = vi.hoisted(() => vi.fn());
 const mockWorkerFetch = vi.hoisted(() => vi.fn());
-
-vi.mock('@/lib/supabase', () => ({
-  supabase: { from: mockFrom, rpc: mockRpc },
-}));
-
-vi.mock('@/lib/workerClient', () => ({
-  workerFetch: mockWorkerFetch,
-}));
+vi.mock('@/lib/workerClient', () => ({ workerFetch: mockWorkerFetch }));
 
 import { AddExistingMemberModal } from './AddExistingMemberModal';
 
-// Valid RFC-4122 v4 UUIDs (zod's .uuid() validates version + variant nibbles).
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
-
-function baseProps(overrides: Record<string, unknown> = {}) {
-  return {
-    open: true,
-    onOpenChange: vi.fn(),
-    orgId: ORG_ID,
-    onMemberAdded: vi.fn(),
-    ...overrides,
-  };
+function props(overrides: Record<string, unknown> = {}) {
+  return { open: true, onOpenChange: vi.fn(), orgId: ORG_ID, onMemberAdded: vi.fn(), ...overrides };
 }
 
 describe('AddExistingMemberModal', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([false, true])('uses the atomic exact-email endpoint (platform=%s)', async (useAdminEndpoints) => {
+    mockWorkerFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        member: { id: USER_ID, email: 'found@acme.com', fullName: 'Found User' },
+        idempotent: false,
+      }),
+    });
+    const onMemberAdded = vi.fn();
+    render(<AddExistingMemberModal {...props({ useAdminEndpoints, onMemberAdded })} />);
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), {
+      target: { value: ' Found@Acme.com ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+
+    await waitFor(() => expect(mockWorkerFetch).toHaveBeenCalledWith(
+      `/api/organization-members/${ORG_ID}/existing`,
+      { method: 'POST', body: JSON.stringify({ email: 'Found@Acme.com', role: 'INDIVIDUAL' }) },
+    ));
+    expect(await screen.findByText(/Found User has been added/)).toBeInTheDocument();
+    expect(onMemberAdded).toHaveBeenCalledOnce();
   });
 
-  describe('admin path (useAdminEndpoints)', () => {
-    it('searches via the worker admin endpoint, not Supabase', async () => {
-      mockWorkerFetch.mockResolvedValueOnce({
+  it('shows a bounded missing-account response and permits retry', async () => {
+    mockWorkerFetch
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'No existing account found for that email' }) })
+      .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ user: { id: USER_ID, email: 'found@acme.com', full_name: 'Found User' } }),
+        json: async () => ({ success: true, member: { id: USER_ID, email: 'person@example.com', fullName: null }, idempotent: false }),
       });
-
-      render(<AddExistingMemberModal {...baseProps({ useAdminEndpoints: true })} />);
-
-      fireEvent.change(screen.getByPlaceholderText('user@example.com'), {
-        target: { value: 'found@acme.com' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: /search/i }));
-
-      await waitFor(() => {
-        expect(mockWorkerFetch).toHaveBeenCalledWith(
-          '/api/admin/users/search?email=found%40acme.com',
-          { method: 'GET' },
-        );
-      });
-      // Supabase must NOT be used on the admin search path.
-      expect(mockFrom).not.toHaveBeenCalled();
-      expect(await screen.findByText('Found User')).toBeInTheDocument();
+    render(<AddExistingMemberModal {...props()} />);
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), {
+      target: { value: 'person@example.com' },
     });
-
-    it('adds via POST to the worker admin endpoint', async () => {
-      // First call: search. Second call: add.
-      mockWorkerFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ user: { id: USER_ID, email: 'found@acme.com', full_name: 'Found User' } }),
-        })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true }) });
-
-      render(<AddExistingMemberModal {...baseProps({ useAdminEndpoints: true })} />);
-
-      fireEvent.change(screen.getByPlaceholderText('user@example.com'), {
-        target: { value: 'found@acme.com' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: /search/i }));
-
-      const addBtn = await screen.findByRole('button', { name: /add to organization/i });
-      fireEvent.click(addBtn);
-
-      await waitFor(() => {
-        expect(mockWorkerFetch).toHaveBeenCalledWith(
-          `/api/admin/organizations/${ORG_ID}/members`,
-          expect.objectContaining({ method: 'POST' }),
-        );
-      });
-      // RPC must NOT be used on the admin add path.
-      expect(mockRpc).not.toHaveBeenCalled();
-    });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    expect(await screen.findByText('No existing account found for that email')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    expect(await screen.findByText(/person@example.com has been added/)).toBeInTheDocument();
   });
 
-  describe('standard path (org member)', () => {
-    it('checks membership against org_members (not org_memberships)', async () => {
-      // profiles search → found; org_members guard → not a member
-      const profilesQuery = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue({
-          data: [{ id: USER_ID, email: 'found@acme.com', full_name: 'Found User' }],
-          error: null,
-        }),
-      };
-      const orgMembersQuery = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-      };
-
-      const tablesQueried: string[] = [];
-      mockFrom.mockImplementation((table: string) => {
-        tablesQueried.push(table);
-        if (table === 'profiles') return profilesQuery;
-        if (table === 'org_members') return orgMembersQuery;
-        throw new Error(`unexpected table ${table}`);
-      });
-
-      render(<AddExistingMemberModal {...baseProps()} />);
-
-      fireEvent.change(screen.getByPlaceholderText('user@example.com'), {
-        target: { value: 'found@acme.com' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: /search/i }));
-
-      expect(await screen.findByText('Found User')).toBeInTheDocument();
-      // The membership guard must hit org_members, never org_memberships.
-      expect(tablesQueried).toContain('org_members');
-      expect(tablesQueried).not.toContain('org_memberships');
-      // Standard path does not call the worker admin endpoints.
-      expect(mockWorkerFetch).not.toHaveBeenCalled();
+  it('shows actionable copy for an existing membership with a different role', async () => {
+    const onMemberAdded = vi.fn();
+    mockWorkerFetch.mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: 'membership_role_conflict' }),
     });
+    render(<AddExistingMemberModal {...props({ onMemberAdded })} />);
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), {
+      target: { value: 'person@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+
+    expect(await screen.findByText(/already a member with a different role/i)).toBeInTheDocument();
+    expect(onMemberAdded).not.toHaveBeenCalled();
+  });
+
+  it('submits with Enter and disables duplicate submission while pending', async () => {
+    let resolveRequest!: (value: unknown) => void;
+    mockWorkerFetch.mockReturnValue(new Promise((resolve) => { resolveRequest = resolve; }));
+    render(<AddExistingMemberModal {...props()} />);
+    const email = screen.getByPlaceholderText('user@example.com');
+    fireEvent.change(email, { target: { value: 'person@example.com' } });
+    fireEvent.keyDown(email, { key: 'Enter' });
+
+    await waitFor(() => expect(email).toBeDisabled());
+    fireEvent.keyDown(email, { key: 'Enter' });
+    expect(mockWorkerFetch).toHaveBeenCalledOnce();
+    resolveRequest({ ok: true, json: async () => ({ success: true, member: { id: USER_ID, email: 'person@example.com', fullName: null }, idempotent: false }) });
+  });
+
+  it('fails closed on a malformed success response', async () => {
+    mockWorkerFetch.mockResolvedValue({ ok: true, json: async () => ({ success: true, member: { email: 'person@example.com' } }) });
+    const onMemberAdded = vi.fn();
+    render(<AddExistingMemberModal {...props({ onMemberAdded })} />);
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'person@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    expect(await screen.findByText('Failed to add member. Please try again.')).toBeInTheDocument();
+    expect(onMemberAdded).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale response after controlled close and same-org reopen', async () => {
+    let resolveRequest!: (value: unknown) => void;
+    mockWorkerFetch.mockReturnValue(new Promise((resolve) => { resolveRequest = resolve; }));
+    const onMemberAdded = vi.fn();
+    const view = render(<AddExistingMemberModal {...props({ onMemberAdded })} />);
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'old@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    await waitFor(() => expect(screen.getByPlaceholderText('user@example.com')).toBeDisabled());
+
+    view.rerender(<AddExistingMemberModal {...props({ open: false, onMemberAdded })} />);
+    view.rerender(<AddExistingMemberModal {...props({ open: true, onMemberAdded })} />);
+    expect(screen.getByPlaceholderText('user@example.com')).toHaveValue('');
+
+    resolveRequest({
+      ok: true,
+      json: async () => ({
+        success: true,
+        member: { id: USER_ID, email: 'old@example.com', fullName: 'Old Request' },
+        idempotent: false,
+      }),
+    });
+    await Promise.resolve();
+    expect(onMemberAdded).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Old Request has been added/)).not.toBeInTheDocument();
+  });
+
+  it('resets email, role and success when the controlled organization changes', async () => {
+    mockWorkerFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        member: { id: USER_ID, email: 'member@example.com', fullName: null },
+        idempotent: false,
+      }),
+    });
+    const view = render(<AddExistingMemberModal {...props()} />);
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'member@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+    expect(await screen.findByText(/member@example.com has been added/)).toBeInTheDocument();
+
+    view.rerender(<AddExistingMemberModal {...props({ orgId: '33333333-3333-4333-8333-333333333333' })} />);
+    expect(screen.getByPlaceholderText('user@example.com')).toHaveValue('');
+    expect(screen.queryByText(/has been added/)).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveTextContent('Member');
   });
 });
