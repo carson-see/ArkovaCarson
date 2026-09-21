@@ -14,6 +14,23 @@
 
 ## Now
 
+### 2026-09-21T17:10Z — CTO review session (Claude Fable): queue cleared and recovered, 0482 on prod (SCRUM-5280 database half), four PRs open, NO soak running
+
+**Read this block first.** It supersedes every block below it, including "SCRUM-5280 has no fix yet", "#3019 DO-NOT-SHIP" and "#2968 close as superseded".
+
+- **Prod:** worker `7a98c3d2f`, `/health` 200 healthy (database / anchoring / kms ok) at 2026-09-21T16:58Z. Numeric ledger head is `0482`. Migrations `0470 0471 0473 0474 0475 0476 0477 0481` were applied 2026-09-20T16:10–16:15Z and `0482` 2026-09-21 ~16:57Z, each via Supabase MCP with the numeric reconcile and a readback. `0480` was applied 2026-09-20 (SCRUM-5281; fixed on prod and on main — close the ticket).
+- **0482 was applied ahead of its T3 window, deliberately.** The one-PATCH domain-verification capture was live. It was rehearsed apply → rollback → re-apply on the b4 rig, reviewed independently (GO), and re-verified on prod by a second session. Prod function bodies are md5-identical to the rig. Only file lines 387–712 were sent (the header is comments), so `schema_migrations.statements` will NOT byte-match the file for 0482 — that is not drift. Record: `/Volumes/Extreme/offload/cto-release-2026-09-21/scrum5280-prod-apply/PROD-APPLY-0482.md`. Merging #3036 still needs the 24 h soak.
+- **SCRUM-5280 is NOT closed.** `confirm-domain` / `verify-domain` read the token and write the verification in two requests with no compare-and-swap; reproduced with 0482 applied. SCRUM-5285, worker fix + `orgDomainVerification` machine in progress (branch `fix/scrum-5285-domain-verify-cas`, local only). Prod had 0 pending tokens at 16:56Z.
+- **Open PRs from this lane, all `do-not-merge`, none soaked:** #3033 (UAT-14 recovery, T3), #3034 (UAT-23 recovery, T3, head `827d7b3ac`), #3036 (0482, T3, head FROZEN at `32363aabb` — do not push to it), #3053 (AI-credit refunds, migrations 0483 + 0484, T3, SCRUM-5284 / residual SCRUM-5286). Migration numbers 0482–0484 are taken; next author uses **0485**.
+- **Why two of those are "recoveries":** #3025 (UAT-14) and #3020 (UAT-23) were stacked PRs that merged into their parents *after* the parents had already merged to main, so their code never reached main while their migrations did reach prod. #3033 / #3034 rebuild them onto main. Migrations 0471 / 0476 in #3034 are byte-identical to what prod stored.
+- **Exemptions on main:** `0443 0471 0476 0481 0482`. Remove 0481 with #3033, 0471 / 0476 with #3034, 0482 with #3036. Main also carries `fix(ci): no-credit-limits-beta …` — `P0002` on a not-found error no longer flags; the `post-beta-quota-rollout` label on #3036 was a false-positive unblock and does NOT mean beta is over.
+- **A red worker test blocks every prod deploy.** `docsDenylist.test.ts` was reported to me as "pre-existing failing" and blocked two deploys (`b320bca5b`, `336dda350`) until `7a98c3d2f`. Require full suites from sub-agents; never accept that phrase without proof against `origin/main`.
+- **Every PR gets four independent passes** (code review, debug, TLA precheck, simplify) by an agent that did not write it, recorded in the PR body, before any soak clock starts (Carson, relayed by the coordinator session 2026-09-21). Carson counts the 15-PR ceiling on the TOTAL, bots and merge-queue PRs included.
+- **Automation credential:** `soak-automation@arkova1.iam.gserviceaccount.com`, key at `~/.config/arkova/soak-automation.key.json`, used via `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. This replaces the Owner-level bridge from the block below. Interactive `gcloud` reauth for Carson's own login still needs the Workspace Admin "Google Cloud session control" setting changed.
+- **Before any T3 window (not done):** harness fixes (retry-once behind a `/health` gate in `run_cycle`; no fixture teardown on a non-terminal exit; setsid-detached launch; the SA credential), a fresh preflight on b4, a targeted probe per changed behaviour, and a deploy through `scripts/staging/deploy.sh` so a `staging_deploy_log` row exists — the 09-20 T2 evidence was unusable for the gate because that row was missing.
+- **b4 rig (`dlfcwhljvkomeouykcwk`) state:** preflight `clean_mirror` 8/8 at 2026-09-21T16:23Z, then the 0482 rehearsal added ledger row 0482 (now matching prod) and left undeletable fixtures tagged `rehearsal-0482-20260921t163309z` (4 users, 1 org, 9 audit rows). Re-run the preflight before trusting it; `org_topology` may differ.
+- **Not done, on purpose:** a real settings-form save as an org admin on prod (needs a password typed into a login form). Partners HakiChain and Planbok have not yet been told that domain auto-join now requires a verified domain.
+
 ### 2026-09-20T13:10Z — CTO review session (Claude Fable): c2ce window 2 ENDED at 12:54Z — T1/T2 satisfied, T3 NOT met; b4 rig has no soak running
 
 **Read this block first.** It supersedes the `### Soaks` block and the "window 2 RUNNING" statements below.
@@ -219,7 +236,7 @@
   running per §1.11A (do not tear down). Full trail:
   `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
 
-### Soaks — NONE running on the b4 rig as of 2026-09-20T13:00Z (c2ce window 2 ended 12:54:18Z; the paragraph below is historical)
+### Soaks — NONE running anywhere from this lane as of 2026-09-21T17:10Z (b4 rig idle since 2026-09-20T13:00Z; c2ce window 2 ended 12:54:18Z; the paragraph below is historical)
 
 Rig `arkova-worker-cto-train-b4-0913-staging` / Supabase `dlfcwhljvkomeouykcwk` is IN USE: supervisor pid 85953, floors T1 2026-09-19T23:27:23Z, T2 2026-09-20T01:27:23Z, T3 2026-09-20T21:27:23Z. Details in the 2026-09-19 block above. The Codex controller was additionally preparing rig 1 for #3024/#3025 at 21:14Z — confirm with its evidence dir before touching rig 1.
 
@@ -2976,3 +2993,4 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 
 _Last refreshed: 2026-09-19 by CTO completion session — claims verified against gcloud/MCP/CI output (historical runtime entries retain their own dated evidence; this refresh records local candidate checks and tracking readbacks only, not new runtime state)._
 _Last refreshed: 2026-09-20 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-21 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
