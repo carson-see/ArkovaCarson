@@ -24,6 +24,8 @@ const executionsAggregate = vi.fn();
 const driveRulesList = vi.fn();
 const driveRulesPages = vi.fn();
 const driveFetchJobFailuresList = vi.fn();
+// Round-2 fix (item 2): the gap-visibility read from audit_events.
+const driveGapEventsList = vi.fn();
 
 vi.mock('../config.js', () => ({ config: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -90,6 +92,21 @@ vi.mock('../utils/db.js', () => {
       }),
     }),
   };
+  // Round-2 fix (item 2): audit_events, scoped by org_id + event_type
+  // (both indexed — idx_audit_events_org_id, idx_audit_events_event_type)
+  // and a created_at lookback window.
+  // .select(...).eq('org_id').eq('event_type').gte('created_at').order(...).limit(...)
+  const auditEventsChain = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          gte: () => ({
+            order: () => ({ limit: () => driveGapEventsList() }),
+          }),
+        }),
+      }),
+    }),
+  };
   return {
     db: {
       from: (table: string) => {
@@ -100,6 +117,7 @@ vi.mock('../utils/db.js', () => {
         if (table === 'organization_rule_executions') return executionsChain;
         if (table === 'organization_rules') return rulesChain;
         if (table === 'job_queue') return jobQueueChain;
+        if (table === 'audit_events') return auditEventsChain;
         throw new Error(`unexpected table: ${table}`);
       },
     },
@@ -137,6 +155,7 @@ beforeEach(() => {
   driveRulesPages.mockImplementation((offset: number) => offset === 0
     ? driveRulesList() : Promise.resolve({ data: [], error: null }));
   driveFetchJobFailuresList.mockResolvedValue({ data: [], error: null });
+  driveGapEventsList.mockResolvedValue({ data: [], error: null });
 });
 
 describe('connector-health (SCRUM-1146)', () => {
@@ -915,6 +934,140 @@ describe('connector-health (SCRUM-1146)', () => {
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+    });
+  });
+
+  // Round-2 fix (item 2): the re-bootstrap gap IS durably persisted to
+  // audit_events (fix-round item 2), but until this fix nothing in
+  // connector-health.ts ever read it back — an admin had no product-visible
+  // way to learn a gap occurred. This makes that read real.
+  describe('changes_gap signal (round-2 fix item 2)', () => {
+    function healthyDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'integration-gap-1',
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        scope: null,
+        ...overrides,
+      };
+    }
+
+    function gapRow(overrides: Record<string, unknown> = {}) {
+      return {
+        target_id: 'integration-gap-1',
+        created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h ago
+        details: JSON.stringify({
+          gap_start: '2026-09-20T10:00:00.000Z',
+          gap_end: '2026-09-20T10:05:00.000Z',
+          reason: 'pageTokenInvalid',
+        }),
+        ...overrides,
+      };
+    }
+
+    it('a gap event within the lookback window reads degraded/changes_gap with both bounds in last_error', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('changes_gap');
+      expect(drive?.last_error).toContain('2026-09-20T10:00:00.000Z');
+      expect(drive?.last_error).toContain('2026-09-20T10:05:00.000Z');
+    });
+
+    it('no gap event at all reads connected/none (unaffected by this signal)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('a gap event OUTSIDE the lookback window is not reported', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      // The query itself is window-bounded (a gte('created_at', cutoff)
+      // filter at the DB layer), so an out-of-window row is simply never
+      // returned by the mock — this proves the CALLER treats an empty
+      // result as "no gap," not that a stale row leaks through.
+      driveGapEventsList.mockResolvedValueOnce({ data: [], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('a gap event for a DIFFERENT integration does not leak onto this one', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow({ target_id: 'some-other-integration' })], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('outranks the generic fetch_job_failures reason (data loss outranks a retryable fetch error)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({ data: [{ status: 'dead', last_error: 'some unrelated error' }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('changes_gap');
+    });
+
+    it('is outranked by cursor_stale (an ACTIVELY broken connector right now outranks a past, already-recovered-from gap)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [healthyDriveRow({ last_token_advanced_at: '2020-01-01T00:00:00Z' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('cursor_stale');
+    });
+
+    it('never puts a token or raw JSON blob in last_error — only the two ISO bounds', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({
+        data: [gapRow({ details: JSON.stringify({ gap_start: '2026-09-20T10:00:00.000Z', gap_end: '2026-09-20T10:05:00.000Z', reason: 'pageTokenInvalid', channel_token: 'super-secret-token-should-never-appear' }) })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; last_error: string | null }> };
+      const lastError = body.connectors.find((c) => c.id === 'google_drive')?.last_error ?? '';
+      expect(lastError).not.toContain('super-secret-token-should-never-appear');
+      expect(lastError).not.toContain('channel_token');
+    });
+
+    it('a malformed details payload degrades gracefully (still flags changes_gap, does not throw)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow({ details: 'not valid json{{' })], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('changes_gap');
     });
   });
 });

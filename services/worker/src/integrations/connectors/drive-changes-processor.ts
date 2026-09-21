@@ -168,7 +168,12 @@ export interface DriveProcessorDb {
    * real implementations persist it as an `audit_events` row (no migration:
    * that table already exists and is exactly "append-only record of a
    * notable thing that happened"), which `connector-health.ts` separately
-   * reads to surface `changes_gap`. NEVER throws — a failed write here is
+   * reads to surface `changes_gap` (round-2 fix, SCRUM-2903/3661/5094/2330:
+   * the ORIGINAL fix-round PR body claimed this read existed when it did
+   * not — `connector-health.ts` had no `changes_gap` HealthReason and never
+   * queried `audit_events` at all, so a gap was durably written but had no
+   * product-visible surface; that claim was false until this fix landed).
+   * NEVER throws — a failed write here is
    * logged (adapter-layer concern) but must not itself fail an otherwise-
    * successful recovery; the processor ALSO logs both bounds directly
    * (see `processDriveChanges`), independent of whether this call lands.

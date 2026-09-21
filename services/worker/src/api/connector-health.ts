@@ -74,6 +74,22 @@ export type HealthReason =
   // the ACTUAL cause on the very first customer hitting it, not just "some
   // fetch jobs failed."
   | 'file_access_not_granted'
+  // Round-2 fix (fix-round item 2, corrected): a 410/404-style cursor
+  // re-bootstrap DISCARDED a real change window — `drive-changes-processor.ts`
+  // persists the gap bounds to `audit_events` (`event_type:
+  // 'drive_changes_cursor_gap'`), and THIS is the read that actually surfaces
+  // it here; before this fix the write existed but nothing ever read it back,
+  // so an operator had no product-visible way to learn a gap occurred. Ranked
+  // ABOVE the retryable fetch-failure signals below (data that is already
+  // gone is worse than a fetch that can simply be retried) but BELOW the
+  // signals for a CURRENTLY-broken connector (grant_exceeds_requested,
+  // subscription_expiry, changes_list_never_succeeded, cursor_stale) — a gap
+  // is, by construction, a PAST event the recovery already completed (the
+  // cursor resumed advancing after a fresh token was minted), so an actively
+  // broken connector right now is still the more urgent thing to surface
+  // first. See `DRIVE_CHANGES_GAP_LOOKBACK_MS` for the bounded lookback
+  // window and `DRIVE_HEALTH_PRIORITY` for the exact ranking.
+  | 'changes_gap'
   // P0-2: the `google_drive.file_changed` job_queue drain has failed/dead
   // rows — the document-fetch half of the pipeline that
   // organization_rule_executions cannot see (rule dispatch and document
@@ -420,6 +436,85 @@ function excessScopesOrUndefined(storedScope: string | null): string[] | undefin
   return excess.length > 0 ? excess : undefined;
 }
 
+/**
+ * Round-2 fix (item 2): the exact `event_type` string
+ * `drive-changes-runner.ts`'s `recordCursorGap` writes — must stay in sync
+ * with that literal (no shared constant exists between the two modules
+ * because `connector-health.ts` must not import worker runtime code that
+ * pulls in `db`/`config` init at a different layer; this is a deliberate,
+ * narrow string duplication, guarded by the cross-file test coverage in
+ * both `drive-changes-runner.test.ts` and this file).
+ */
+const DRIVE_CHANGES_GAP_EVENT_TYPE = 'drive_changes_cursor_gap';
+
+/**
+ * Round-2 fix (item 2): how far back to look for a gap event. A gap is a
+ * one-time, already-recovered-from event (the cursor resumed advancing once
+ * the fresh token landed) — unlike `cursor_stale`/`changes_list_never_
+ * succeeded`, which re-evaluate against the CURRENT clock on every request,
+ * a gap that happened 3 weeks ago and was long since superseded by healthy
+ * traffic is stale information, not an active finding. 7 days balances
+ * "long enough that an admin checking in weekly still sees it" against "an
+ * old, cold incident doesn't sit in the dashboard forever."
+ */
+export const DRIVE_CHANGES_GAP_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface DriveGapAuditRow {
+  target_id: string | null;
+  created_at: string;
+  details: string | null;
+}
+
+/** Round-2 fix (item 2): the two bounds a `changes_gap` signal carries. */
+interface DriveGapSignal {
+  gapStart: string | null;
+  gapEnd: string | null;
+}
+
+/**
+ * Round-2 fix (item 2): parses the bounded, PII-free `details` JSON
+ * `recordCursorGap` writes (`{gap_start, gap_end, reason}` — see
+ * `drive-changes-runner.ts`). Deliberately extracts ONLY `gap_start`/
+ * `gap_end` as strings — never spreads or forwards the parsed object, so an
+ * unexpected extra key in a row (this table is append-only; a future
+ * writer could add one) can never reach `lastError` unnoticed. Never
+ * throws: a malformed/foreign-shaped `details` value degrades to "a gap
+ * happened, bounds unknown" rather than losing the signal entirely or
+ * crashing the health endpoint.
+ */
+function parseDriveGapDetails(details: string | null): DriveGapSignal {
+  if (!details) return { gapStart: null, gapEnd: null };
+  try {
+    const parsed: unknown = JSON.parse(details);
+    if (!parsed || typeof parsed !== 'object') return { gapStart: null, gapEnd: null };
+    const record = parsed as Record<string, unknown>;
+    return {
+      gapStart: typeof record.gap_start === 'string' ? record.gap_start : null,
+      gapEnd: typeof record.gap_end === 'string' ? record.gap_end : null,
+    };
+  } catch {
+    return { gapStart: null, gapEnd: null };
+  }
+}
+
+/**
+ * Round-2 fix (item 2): reduces the (already org_id + event_type + window
+ * scoped) audit_events rows to the MOST RECENT gap per integration —
+ * `target_id` is `org_integrations.id`. Rows are expected pre-sorted
+ * `created_at DESC` by the caller's query (matches `lastEventByVendor`'s
+ * existing "first occurrence wins" pattern in this same file), so this is a
+ * single pass, not a sort.
+ */
+function latestDriveGapByIntegrationId(rows: DriveGapAuditRow[]): Map<string, DriveGapSignal> {
+  const out = new Map<string, DriveGapSignal>();
+  for (const row of rows) {
+    if (!row.target_id) continue;
+    if (out.has(row.target_id)) continue;
+    out.set(row.target_id, parseDriveGapDetails(row.details));
+  }
+  return out;
+}
+
 interface DriveHealthSignals {
   /**
    * True only when: the cursor has not advanced past the threshold, AND the
@@ -454,6 +549,13 @@ interface DriveHealthSignals {
    * whether any rule is enabled.
    */
   grantExceedsRequested?: string[];
+  /**
+   * Round-2 fix (item 2): set when a `drive_changes_cursor_gap` audit_events
+   * row exists for this integration within `DRIVE_CHANGES_GAP_LOOKBACK_MS`.
+   * No enabled-rule guard (unlike cursorStale/neverSucceeded) — a gap
+   * already happened regardless of whether a rule is enabled right now.
+   */
+  gap?: DriveGapSignal;
 }
 
 function classify(
@@ -521,6 +623,22 @@ function classify(
       lastError: `Drive changes cursor has not advanced in over ${hours}h despite an enabled rule and a healthy channel`,
     };
   }
+  // Round-2 fix (item 2): checked AFTER every CURRENTLY-broken-connector
+  // signal above (a gap is a past, already-recovered-from event — see the
+  // `changes_gap` HealthReason doc comment) but BEFORE the retryable
+  // fetch-failure signals below (data that is already gone outranks a fetch
+  // that can simply be retried).
+  if (driveSignals?.gap) {
+    const { gapStart, gapEnd } = driveSignals.gap;
+    const bounds = gapStart
+      ? `between ${gapStart} and ${gapEnd ?? 'the recovery'}`
+      : 'in a window whose exact bounds were not recorded';
+    return {
+      state: 'degraded',
+      reason: 'changes_gap',
+      lastError: `Drive changes were missed ${bounds} — a cursor re-bootstrap could not recover them (Drive does not allow enumerating a window after the token expires)`,
+    };
+  }
   // Fix-round item 6: checked BEFORE the generic fetch_job_failures below —
   // a specific, actionable cause outranks "some fetch jobs failed" once we
   // actually know why.
@@ -552,7 +670,12 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  grant_exceeds_requested: 7, subscription_expiry: 6, changes_list_never_succeeded: 5, cursor_stale: 4,
+  grant_exceeds_requested: 8, subscription_expiry: 7, changes_list_never_succeeded: 6, cursor_stale: 5,
+  // Round-2 fix (item 2): changes_gap sits BELOW every currently-broken-
+  // connector signal above (a gap is a past, already-recovered-from event)
+  // but ABOVE the retryable fetch-failure signals below (lost data outranks
+  // a fetch that can simply be retried) — see the HealthReason doc comment.
+  changes_gap: 4,
   file_access_not_granted: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
@@ -616,7 +739,7 @@ export async function handleConnectorHealth(
     return;
   }
 
-  const [subscriptions, recentEvents, recentExecutions, driveFetchFailureRows] = await Promise.all([
+  const [subscriptions, recentEvents, recentExecutions, driveFetchFailureRows, driveGapRows] = await Promise.all([
     safeFetch<SubscriptionRow[]>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any)
@@ -665,6 +788,32 @@ export async function handleConnectorHealth(
         .limit(50),
       [],
     ),
+    // Round-2 fix (item 2): gap-visibility read. `.eq('org_id', orgId)`
+    // uses `idx_audit_events_org_id` (btree, WHERE org_id IS NOT NULL) —
+    // this is a small, per-org-selective index scan, not a seq scan on the
+    // full audit_events table; `.eq('event_type', ...)` further narrows
+    // within that org-scoped set (also independently indexed via
+    // `idx_audit_events_event_type`). `target_id` is filtered in JS
+    // (`latestDriveGapByIntegrationId`) rather than a DB-side `.in()`,
+    // matching this file's existing `loadFailuresByVendor` pattern of
+    // "fetch a small, already-bounded rowset, correlate in JS" — the org
+    // scoping alone already bounds this to a handful of rows for any real
+    // org, so a second filter dimension buys nothing worth the extra query
+    // complexity. Ordered newest-first + limited so a runaway sequence of
+    // gaps on one integration cannot starve visibility into a DIFFERENT
+    // integration's gap.
+    safeFetch<DriveGapAuditRow[]>(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db as any)
+        .from('audit_events')
+        .select('target_id, created_at, details')
+        .eq('org_id', orgId)
+        .eq('event_type', DRIVE_CHANGES_GAP_EVENT_TYPE)
+        .gte('created_at', new Date(Date.now() - DRIVE_CHANGES_GAP_LOOKBACK_MS).toISOString())
+        .order('created_at', { ascending: false })
+        .limit(50),
+      [],
+    ),
   ]);
 
   const hasEnabledDriveRules = driveRuleRows.some((row) => driveFolderIds(row.trigger_config).length > 0);
@@ -680,6 +829,10 @@ export async function handleConnectorHealth(
   const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
     (row) => typeof row.last_error === 'string' && DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN.test(row.last_error),
   ).length;
+  // Round-2 fix (item 2): keyed by org_integrations.id — the SAME id every
+  // driveSignals construction below already keys off of (integration.id /
+  // row.id), so this is a plain map lookup per connection, no re-query.
+  const driveGapByIntegrationId = latestDriveGapByIntegrationId(driveGapRows);
 
   const integrationByProvider = new Map<string, IntegrationRow>();
   for (const row of integrations) integrationByProvider.set(row.provider, row);
@@ -727,6 +880,7 @@ export async function handleConnectorHealth(
         fetchJobFailureCount: driveFetchJobFailureCount,
         fileAccessDeniedCount: driveFileAccessDeniedCount,
         grantExceedsRequested: excessScopesOrUndefined(integration.scope),
+        gap: driveGapByIntegrationId.get(integration.id),
       }
       : undefined;
     let classification = classify(entry, integration, subscription, lastFailed, driveSignals);
@@ -743,6 +897,7 @@ export async function handleConnectorHealth(
             fetchJobFailureCount: driveFetchJobFailureCount,
             fileAccessDeniedCount: driveFileAccessDeniedCount,
             grantExceedsRequested: excessScopesOrUndefined(row.scope),
+            gap: driveGapByIntegrationId.get(row.id),
           }),
         };
       }).sort(compareDriveHealth);
