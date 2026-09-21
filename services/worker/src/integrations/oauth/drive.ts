@@ -428,9 +428,13 @@ export async function getStartPageToken(args: {
   deps?: DriveClientDeps;
 }): Promise<string> {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const startTokenQuery = args.driveId
-    ? `?driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true`
-    : '';
+  // Fix-round item D (simplify): built with URLSearchParams, matching every
+  // other query-string builder in this file — no hand-assembled `?a=b&c=d`
+  // template literal to keep separately correct.
+  const startTokenParams = args.driveId
+    ? new URLSearchParams({ driveId: args.driveId, supportsAllDrives: 'true' })
+    : undefined;
+  const startTokenQuery = startTokenParams ? `?${startTokenParams.toString()}` : '';
   const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });

@@ -63,6 +63,7 @@ import {
   createProcessorDbAdapter,
   createFolderPathCache,
   runDriveChanges,
+  runDriveReconciliationSweep,
   driveChangesRunLeaseSpec,
   type DriveIntegrationRow,
 } from './drive-changes-runner.js';
@@ -1150,6 +1151,252 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
       // The lease must not be left stuck 'processing' — the TTL is a
       // backstop, not the primary release path.
       expect(leaseStore.current()?.status).toBe('completed');
+    });
+  });
+
+  describe('dirty/rerun-requested marker (fix-round item 3)', () => {
+    it('a locked skip marks the lease dirty (attempts=1) rather than dropping the push silently', async () => {
+      const kms = fakeKms();
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), {
+        held: { holder: 'some-other-instance:123:nonce', expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() },
+      });
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          return {
+            select: (_c: string) => ({
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      const integration: DriveIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+      };
+      expect(leaseStore.current()?.attempts).toBe(0);
+      const result = await runDriveChanges(integration, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      expect(result).toEqual({ skipped: 'locked' });
+      expect(leaseStore.current()?.attempts).toBe(1);
+    });
+
+    it('a push that arrives mid-run (marking the held lease dirty) triggers exactly ONE extra processDriveChanges pass before release, then clears the flag', async () => {
+      const kms = fakeKms();
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          return {
+            select: (_c: string) => ({
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      const integration: DriveIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+      };
+      // First pass's own processDriveChanges call simulates a CONCURRENT
+      // push landing while this run is still in flight — it marks the SAME
+      // lease row dirty, exactly like markLeaseDirty would from another
+      // request that found the lease held.
+      processDriveChangesMock.mockImplementationOnce(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (leaseStore.from('job_queue') as any).update({ attempts: 1 }).eq('id', INT);
+        return { pagesProcessed: 1, queued: 1, parentMismatch: 0, duplicates: 0, changesProcessed: 1, newPageToken: 'pt-2' };
+      });
+      processDriveChangesMock.mockResolvedValueOnce({
+        pagesProcessed: 1, queued: 0, parentMismatch: 0, duplicates: 0, changesProcessed: 0, newPageToken: 'pt-3',
+      });
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const result = await runDriveChanges(integration, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        logger: log,
+      });
+      // Exactly TWO processDriveChanges calls: the original pass + ONE
+      // bounded extra pass — never a loop.
+      expect(processDriveChangesMock).toHaveBeenCalledTimes(2);
+      // The second pass resumed from the FIRST pass's own newPageToken.
+      expect(processDriveChangesMock.mock.calls[1][0].integration.last_page_token).toBe('pt-2');
+      // The runner returns the SECOND pass's result — it is the freshest.
+      expect(result).toMatchObject({ newPageToken: 'pt-3' });
+      // The dirty flag was cleared, not left set for the NEXT run to
+      // re-trigger a pass for work that has already been handled.
+      expect(leaseStore.current()?.attempts).toBe(0);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ integrationId: INT }),
+        expect.stringContaining('one more bounded pass'),
+      );
+    });
+
+    it('when NOT dirty, runs exactly once — no extra pass, no wasted work', async () => {
+      const kms = fakeKms();
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          return {
+            select: (_c: string) => ({
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      const integration: DriveIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+      };
+      processDriveChangesMock.mockResolvedValueOnce({
+        pagesProcessed: 1, queued: 0, parentMismatch: 0, duplicates: 0, changesProcessed: 0, newPageToken: 'pt-2',
+      });
+      await runDriveChanges(integration, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      expect(processDriveChangesMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('runDriveReconciliationSweep (fix-round item 3, second half)', () => {
+    it('scans stale google_drive integrations and invokes runDriveChanges for each, respecting the single-flight lease', async () => {
+      const kms = fakeKms();
+      const staleIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+        last_token_advanced_at: '2020-01-01T00:00:00Z',
+      };
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');
+      let scanCall = 0;
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          if (t === 'org_integrations') {
+            scanCall += 1;
+            return {
+              select: () => ({
+                eq: () => ({
+                  is: () => ({
+                    not: () => ({
+                      or: () => ({
+                        limit: () => Promise.resolve({ data: [staleIntegrationRow], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: (_c: string) => ({
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      processDriveChangesMock.mockResolvedValueOnce({
+        pagesProcessed: 1, queued: 0, parentMismatch: 0, duplicates: 0, changesProcessed: 0, newPageToken: 'pt-2',
+      });
+      const result = await runDriveReconciliationSweep({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      expect(scanCall).toBe(1);
+      expect(result.scanned).toBe(1);
+      expect(result.ran).toBe(1);
+      expect(processDriveChangesMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('one integration erroring does not stop the sweep from continuing — errored is counted, not thrown', async () => {
+      const kms = fakeKms();
+      const rowA = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+        last_token_advanced_at: '2020-01-01T00:00:00Z',
+      };
+      const rowB = { ...rowA, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' };
+      const leaseStoreA = createRunLeaseStore(driveChangesRunLeaseSpec(rowA.id), 'free');
+      const leaseStoreB = createRunLeaseStore(driveChangesRunLeaseSpec(rowB.id), 'free');
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') {
+            // Route by whichever lease id the caller filters on — both
+            // stores share the same `.from()` entry point shape.
+            return {
+              update: (patch: Record<string, unknown>) => ({
+                eq: (_c: string, id: string) => {
+                  const store = id === rowA.id ? leaseStoreA : leaseStoreB;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  return (store.from('job_queue') as any).update(patch).eq('id', id);
+                },
+              }),
+              upsert: (values: { id: string }) => {
+                const store = values.id === rowA.id ? leaseStoreA : leaseStoreB;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                return (store.from('job_queue') as any).upsert(values);
+              },
+              select: (cols?: string) => ({
+                eq: (_c: string, id: string) => {
+                  const store = id === rowA.id ? leaseStoreA : leaseStoreB;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  return (store.from('job_queue') as any).select(cols).eq('id', id);
+                },
+              }),
+            };
+          }
+          if (t === 'org_integrations') {
+            return { select: () => ({ eq: () => ({ is: () => ({ not: () => ({ or: () => ({ limit: () => Promise.resolve({ data: [rowA, rowB], error: null }) }) }) }) }) }) };
+          }
+          return {
+            select: (_c: string) => ({
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      processDriveChangesMock
+        .mockRejectedValueOnce(new Error('boom for row A'))
+        .mockResolvedValueOnce({ pagesProcessed: 1, queued: 0, parentMismatch: 0, duplicates: 0, changesProcessed: 0, newPageToken: 'pt-2' });
+      const result = await runDriveReconciliationSweep({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      expect(result.scanned).toBe(2);
+      expect(result.errored).toBe(1);
+      expect(result.ran).toBe(1);
     });
   });
 });
