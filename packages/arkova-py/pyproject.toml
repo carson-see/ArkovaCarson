@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arkova"
-# 2.3.0 — MINOR, not PATCH. The 2.2.1 corrective release fixed the one
+# 2.4.0 adds canonical folder-management models and sync/async methods. The
+# prior 2.3.0 release was MINOR, not PATCH: the 2.2.1 corrective release fixed the one
 # crash-class drift; this one clears the rest of the same audit, and seven
 # declared fields that no endpoint emits are REMOVED. Nothing can lose data
 # (they read `None` on every response ever returned), but `.chain_tx_id` on a
 # receipt now raises AttributeError instead of answering `None`, and that is a
 # source-visible break. See CHANGELOG.md.
-version = "2.4.0"
+version = "2.5.0"
 description = "Typed Python SDK for the Arkova Verification APIs"
 readme = "README.md"
 requires-python = ">=3.10"

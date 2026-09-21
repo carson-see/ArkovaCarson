@@ -25,7 +25,7 @@
   ],
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
-      "toolCount": 18,
+      "toolCount": 19,
       "toolListDoc": "https://arkova.ai/.well-known/mcp/server-card.json"
     }
   }

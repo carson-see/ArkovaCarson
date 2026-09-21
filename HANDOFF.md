@@ -46,6 +46,106 @@
   - **SCRUM-5281 (High)** — prod carries 0462 without 0480, so `folders_select_user` lets platform admins SELECT every user's globally-personal folders. Fix = 0480 (#3022; sha256 `67e3df8c99069e23ab3155226c0673bdd42dc9761905d17b984c8e754adb1e73`, byte-identical in the composite). **SUPERSEDED 2026-09-20T02:52Z — 0480 is applied on prod; see the 2026-09-20 block above.**
 - **Correction for other sessions:** the Atlassian connector IS usable (claude.ai connector, user carson) — the "unauthenticated" entry in the plugin list is a different, unused server.
 
+### UAT-19 completion preparation — exact-org review follow-up
+
+- Canonical tracking: [SCRUM-5268](https://arkova.atlassian.net/browse/SCRUM-5268)
+  and [Confluence153256009](https://arkova.atlassian.net/wiki/spaces/A/pages/153256009).
+  This candidate remains draft preparation, not staging/release completion.
+- Exact-org folders, registry/export and queue operations now preserve secondary
+  membership authority without stale primary-profile escalation. Review fixes
+  cover partial moves, stale reads/mutations, notification failure after a durable
+  response, queue polling versus mutation completion and no-primary-org access.
+- Additive0477 serializes logical collision sets, rechecks authority after waits,
+  supports same-selection replay and rejects competing terminal selections.
+  Local native checks include unrelated-set progress while another set is locked.
+- [Proposed T3 plan](docs/staging/uat19-completion-20260919/PLAN.md) is independently
+  premortemed; browser fixtures mock authentication/network and Secure dialog
+  internals. No hosted configuration, deployment, payment, email or soak occurred.
+- Founder cap is30 open PRs including drafts and parallel Sol implementation is
+  authorized. Root owns integration, independent verification and held-Draft
+  publication; historical parent evidence does not qualify this new runtime.
+
+### UAT-24 completion follow-up — active preparation
+
+- Founder continuation covers UAT-24, UAT-19, UAT-16, UAT-14 and UAT-15; the
+  latest direction authorizes multiple tickets in parallel with isolated Sol
+  agent lanes and independent CTO verification. Integrations stay serialized.
+  The latest
+  cap is **30 total open PRs including drafts**, superseding older limits below.
+- Isolated branch `cto/uat24-completion-20260919` starts from release-owned
+  PR2968 at `ec108c4220787876494c61a9b04c3cc25212de4b`; preserve that branch and
+  its hold. Preparation requires a reviewed/debugged held Draft, proportional
+  tests, a premortemed soak plan and verified external tracking updates.
+- Direct authenticated folder RLS exposed globally personal folders to platform
+  administrators even though the service RPC denied that path. Additive 0480
+  narrows only the personal SELECT policy. Native role-based allow/deny and
+  cycle tests pass locally; no hosted application or production claim.
+- Publication inventory found release-owned parent2968 advanced to
+  `5a9c3b392a53ccb405de7d8f2db65c88a7acfef3`, including contractual-cap0475.
+  Our unpublished privacy migration was renumbered0480; parent0475 is untouched.
+  Integration and repeated combined verification are required before publication.
+- Selected-organization UI, partial-move recovery, Python omitted/null patch
+  behavior, mutation retries and API/CLI contract parity are being corrected.
+  Full UAT acceptance and independent final review remain pending.
+- [Proposed T3 plan](docs/staging/uat24-completion-20260919/PLAN.md) is not a soak
+  receipt. No shared rig, production database, provider account, release queue
+  or running observer is modified. Historical parent-head exceptions do not
+  qualify these new corrections.
+- Canonical status: [SCRUM-5142](https://arkova.atlassian.net/browse/SCRUM-5142),
+  [story documentation](https://arkova.atlassian.net/wiki/spaces/A/pages/148307969),
+  and [master bugs](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
+  The story remains In Progress; release completion is not claimed.
+
+### 2026-09-19 — UAT-12 completion follow-up preparation
+
+- **Publication authority:** Carson explicitly authorized reuse of existing
+  PR2966 only, including returning it to Draft after ownership/queue checks.
+  The zero-new-PR cap remains; no other PR reuse, merge or deployment is
+  authorized. Preserve `do-not-merge` and the prior release history. Publication
+  readback belongs on the canonical story page; the old no-resoak decision for
+  head `2cc5c46` does not qualify these new corrections.
+- Founder-directed session order is UAT-12, then UAT-23, then UAT-17, one issue at
+  a time with Sol subagents and independent CTO review. The session gate is a
+  reviewed/debugged Draft PR, proportionate verification, a premortemed soak
+  plan, and Jira/Confluence/source-document updates—not production release.
+- Follow-up branch `cto/uat12-completion-20260919` starts from PR2966 head
+  `2cc5c46ba47b71e288924e6733366d778525a3bc`; publication targets only the existing
+  PR2966 branch `cto/uat12-submit-20260914` by fast-forward. Its pre-publication
+  audit found it held/dequeued, not queued.
+  Corrections cover canonical single-document submission, scoped
+  private-tag suggestions, honest status/recovery and public-description copy,
+  API/SDK/CLI/MCP parity, purchase conservation (0473), and atomic daily creation
+  quota (0474). Both new migrations remain unapplied candidate changes.
+- Real local PostgreSQL checks reproduced and corrected the purchase-principal
+  divergence and proved quota boundary/duplicate contention; frontend browser
+  checks use a standalone mocked-boundary fixture, not a hosted full-stack soak.
+  Final review corrected false instant-completion promises during HELD, failed,
+  missing and first-read/error states; the captured submit action survives status
+  outages and retry renders once. Final focused frontend checks passed 53/53;
+  the standalone desktop/mobile/keyboard browser selection passed 10/10.
+  Python async status and MCP bounded-error coverage were added; OpenAPI and
+  SDK/MCP usage docs now describe the status path and backward-compatible
+  receipt optionality. The interrupted broad suite remains inconclusive.
+  Final exact-head evidence belongs in the reused Draft PR2966 and the
+  [canonical UAT-12 page](https://arkova.atlassian.net/wiki/spaces/A/pages/148275201).
+- [Proposed T3 plan](docs/staging/uat12-completion-20260919/PLAN.md) requires an
+  exclusively assigned clean rig, pinned identity, a full observation window,
+  targeted quota/credit/privacy/recovery probes and coordinated rollback.
+  No rig, production database, release queue or existing soak is changed here.
+- The founder's proposed personal-three / organization-twenty-five zero-before-
+  refill purchase rule remains a policy decision pending exact scope and
+  pending-payment/refundable-attempt semantics. No cap, expiry, price or queue
+  schedule is silently changed. Existing three-hour age-trigger behavior differs
+  from the newly described daily-or-10,000 policy and needs explicit disposition.
+- Tracking: [SCRUM-5139](https://arkova.atlassian.net/browse/SCRUM-5139) remains
+  In Progress; source/local findings are recorded in the
+  [master bug log](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
+  Build/review subtasks SCRUM-5140 and SCRUM-5141 are verified In Progress;
+  candidate-only Data Model, Payments and Webhooks topic updates were read back.
+  Identity & Access and the final-review bug-log supplement were also read back;
+  the Uyiosa Google Doc now records the zero-new-PR freeze in its UAT-12 row.
+  UAT-23 and UAT-17 remain queued behind this preparation gate.
+
 ### 2026-09-19 — UAT-23 completion preparation
 
 - Current founder authority permits exactly the two new in-scope UAT-23/UAT-17 draft PRs while total open PRs, including drafts, remains at or below 25. UAT-12 continues in existing PR2966. This supersedes the older zero-new-PR and sequential-session text below for this session only; it authorizes no merge, deployment, production mutation, or soak side effect.
@@ -139,60 +239,6 @@ B5a's candidate — no tagged revision on this rig carries default traffic). Tra
 candidate is `-00026-teq` tagged `train-8`. Recheck tag->revision mapping before reusing any
 tag name for a new train — this rig has accumulated one tag per train and they are not
 reclaimed automatically.
-
-
-
-### 2026-09-19 — UAT-12 completion follow-up preparation
-
-- **Publication authority:** Carson explicitly authorized reuse of existing
-  PR2966 only, including returning it to Draft after ownership/queue checks.
-  The zero-new-PR cap remains; no other PR reuse, merge or deployment is
-  authorized. Preserve `do-not-merge` and the prior release history. Publication
-  readback belongs on the canonical story page; the old no-resoak decision for
-  head `2cc5c46` does not qualify these new corrections.
-- Founder-directed session order is UAT-12, then UAT-23, then UAT-17, one issue at
-  a time with Sol subagents and independent CTO review. The session gate is a
-  reviewed/debugged Draft PR, proportionate verification, a premortemed soak
-  plan, and Jira/Confluence/source-document updates—not production release.
-- Follow-up branch `cto/uat12-completion-20260919` starts from PR2966 head
-  `2cc5c46ba47b71e288924e6733366d778525a3bc`; publication targets only the existing
-  PR2966 branch `cto/uat12-submit-20260914` by fast-forward. Its pre-publication
-  audit found it held/dequeued, not queued.
-  Corrections cover canonical single-document submission, scoped
-  private-tag suggestions, honest status/recovery and public-description copy,
-  API/SDK/CLI/MCP parity, purchase conservation (0473), and atomic daily creation
-  quota (0474). Both new migrations remain unapplied candidate changes.
-- Real local PostgreSQL checks reproduced and corrected the purchase-principal
-  divergence and proved quota boundary/duplicate contention; frontend browser
-  checks use a standalone mocked-boundary fixture, not a hosted full-stack soak.
-  Final review corrected false instant-completion promises during HELD, failed,
-  missing and first-read/error states; the captured submit action survives status
-  outages and retry renders once. Final focused frontend checks passed 53/53;
-  the standalone desktop/mobile/keyboard browser selection passed 10/10.
-  Python async status and MCP bounded-error coverage were added; OpenAPI and
-  SDK/MCP usage docs now describe the status path and backward-compatible
-  receipt optionality. The interrupted broad suite remains inconclusive.
-  Final exact-head evidence belongs in the reused Draft PR2966 and the
-  [canonical UAT-12 page](https://arkova.atlassian.net/wiki/spaces/A/pages/148275201).
-- [Proposed T3 plan](docs/staging/uat12-completion-20260919/PLAN.md) requires an
-  exclusively assigned clean rig, pinned identity, a full observation window,
-  targeted quota/credit/privacy/recovery probes and coordinated rollback.
-  No rig, production database, release queue or existing soak is changed here.
-- The founder's proposed personal-three / organization-twenty-five zero-before-
-  refill purchase rule remains a policy decision pending exact scope and
-  pending-payment/refundable-attempt semantics. No cap, expiry, price or queue
-  schedule is silently changed. Existing three-hour age-trigger behavior differs
-  from the newly described daily-or-10,000 policy and needs explicit disposition.
-- Tracking: [SCRUM-5139](https://arkova.atlassian.net/browse/SCRUM-5139) remains
-  In Progress; source/local findings are recorded in the
-  [master bug log](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
-  Build/review subtasks SCRUM-5140 and SCRUM-5141 are verified In Progress;
-  candidate-only Data Model, Payments and Webhooks topic updates were read back.
-  Identity & Access and the final-review bug-log supplement were also read back;
-  the Uyiosa Google Doc now records the zero-new-PR freeze in its UAT-12 row.
-  UAT-23 and UAT-17 remain queued behind this preparation gate.
-
-_Last refreshed: 2026-09-19 by CTO completion session — claims verified against gcloud/MCP/CI output (historical runtime entries retain their own dated evidence; this refresh records local candidate checks and tracking readbacks only, not new runtime state)._
 
 ### 2026-09-13T15:10Z → 15:45Z — CTO release session (Claude Fable): B3b live on prod, standing-rig pair unblocked, GitHub cleaned, PRs 4–6 of 8 opened
 
@@ -2928,4 +2974,5 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 
 
 
+_Last refreshed: 2026-09-19 by CTO completion session — claims verified against gcloud/MCP/CI output (historical runtime entries retain their own dated evidence; this refresh records local candidate checks and tracking readbacks only, not new runtime state)._
 _Last refreshed: 2026-09-20 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._

@@ -54,6 +54,7 @@ interface MembersTableProps {
   members: Member[];
   loading?: boolean;
   currentUserId?: string;
+  orgId?: string;
   onRemoveMember?: (member: Member) => Promise<void>;
   onChangeRole?: (member: Member, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => Promise<void>;
 }
@@ -62,6 +63,7 @@ export function MembersTable({
   members,
   loading,
   currentUserId,
+  orgId,
   onRemoveMember,
   onChangeRole,
 }: Readonly<MembersTableProps>) {
@@ -116,7 +118,7 @@ export function MembersTable({
             <TableRow key={member.id}>
               <TableCell>
                 <Link
-                  to={memberDetailPath(member.id)}
+                  to={memberDetailPath(member.id, orgId)}
                   className="flex items-center gap-3 text-left rounded-md -m-1 p-1 hover:bg-muted/50 transition-colors cursor-pointer w-full"
                 >
                   <Avatar className="h-8 w-8">

@@ -107,6 +107,7 @@ describe('bin invocation via a real npm-style symlink', () => {
       'arkova_create_attestation',
       'arkova_get_submission_status',
       'arkova_import_rows',
+      'arkova_manage_folders',
       'arkova_search_anchors',
       'arkova_submit_anchor',
       'arkova_verify_anchor',

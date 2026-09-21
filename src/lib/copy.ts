@@ -716,6 +716,10 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   // attestation was created" until batch-create emits.
   'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
+  'folder.created': 'A record folder was created.',
+  'folder.updated': 'A record folder name, parent, or connector destination changed.',
+  'folder.deleted': 'A record folder was deleted and its records became unfiled.',
+  'record.folder_changed': 'One or more records moved to a folder or became unfiled.',
   'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
   'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
   'suborg.created': 'A parent organization created an affiliated organization.',
@@ -4783,6 +4787,10 @@ export const OPS_SLO_LABELS = {
  * never banned crypto terms.
  */
 export const FOLDER_LABELS = {
+  CONTEXT_PRIVATE: 'My org-context folder',
+  PRIVACY_GLOBAL: 'Only you can access this global personal folder.',
+  PRIVACY_CONTEXT: 'You and authorized organization or platform administrators can access this folder.',
+  PRIVACY_ORG: 'Organization members can access this organization folder according to their role.',
   NAV_TITLE: 'Folders',
   ALL_RECORDS: 'All Records',
   UNFILED: 'Unfiled',
@@ -4808,11 +4816,17 @@ export const FOLDER_LABELS = {
   ERR_RENAME: 'Could not rename the folder. Please try again.',
   ERR_DELETE: 'Could not delete the folder. Please try again.',
   ERR_ASSIGN: 'Could not move the record. Please try again.',
+  PARTIAL_MOVE: '{count} record(s) could not be moved. They remain selected so you can try again.',
   TOAST_CREATED: 'Folder created',
   TOAST_RENAMED: 'Folder renamed',
   TOAST_DELETED: 'Folder deleted',
   TOAST_ASSIGNED: 'Record moved',
   TOAST_UNFILED: 'Record removed from folder',
+} as const;
+
+export const RULE_FOLDER_LABELS = {
+  AUTO: 'Use connector destination when available',
+  AUTO_HELP: 'Trusted records fetched from a linked connector are sorted to its destination. Other records remain Unfiled unless you choose a folder.',
 } as const;
 
 /**

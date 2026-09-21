@@ -1,11 +1,22 @@
 # Changelog
 
-## 2.4.0
+All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
+anything earlier, see `git log -- packages/arkova-py/`.
+
+## 2.5.0
 
 - Add synchronous and asynchronous `anchor_import()` for canonical 1–100 row spreadsheet imports. Inputs contain fingerprints and metadata only; write requests are never automatically retried.
 
-All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
-anything earlier, see `git log -- packages/arkova-py/`.
+## 2.4.1
+
+Folder updates now distinguish an omitted parent from an explicit `None` root,
+and all folder mutations avoid automatic retries after ambiguous HTTP failures.
+
+## 2.4.0
+
+Adds typed synchronous and asynchronous folder management: nested personal and
+organization folders, connector destination binding, deletion, and bounded
+partial-result bulk moves through the canonical `/api/v1/folders` routes.
 
 ## 2.3.0
 

@@ -99,6 +99,105 @@ def test_anchor_import_never_retries_a_write_error() -> None:
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_folder_management_surface(asynchronous: bool) -> None:
+    folder = {
+        "id": "folder-id", "public_id": "FLD-0011223344556677", "name": "Legal",
+        "owner_scope": "ORG", "user_id": None, "org_id": "org-id",
+        "context_org_id": None, "parent_folder_id": None, "connector_provider": None,
+        "connector_source_id": None, "connector_connection_id": None,
+        "created_at": "2026-09-14T00:00:00Z", "updated_at": "2026-09-14T00:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/folders/bulk-move":
+            assert json.loads(request.content)["record_public_ids"] == ["ARK-2026-ABC12345"]
+            return json_response({"moved": ["ARK-2026-ABC12345"], "failed": []})
+        assert request.url.path == "/api/v1/folders"
+        if request.method == "GET":
+            return json_response({"folders": [folder]})
+        assert json.loads(request.content)["owner_scope"] == "ORG"
+        return json_response({"folder": folder}, 201)
+
+    options = {"api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+               "transport": httpx.MockTransport(handler)}
+
+    async def run_async() -> tuple[str, str, list[str]]:
+        async with AsyncArkova(**options) as client:
+            listed = await client.list_folders(org_id="org-id")
+            created = await client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
+            moved = await client.move_records_by_public_id(["ARK-2026-ABC12345"], None)
+            return listed.folders[0].public_id, created.public_id, moved.moved
+
+    if asynchronous:
+        result = asyncio.run(run_async())
+    else:
+        with Arkova(**options) as client:
+            listed = client.list_folders(org_id="org-id")
+            created = client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
+            moved = client.move_records_by_public_id(["ARK-2026-ABC12345"], None)
+            result = (listed.folders[0].public_id, created.public_id, moved.moved)
+    assert result == ("FLD-0011223344556677", "FLD-0011223344556677", ["ARK-2026-ABC12345"])
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_folder_update_distinguishes_omitted_parent_from_explicit_root(asynchronous: bool) -> None:
+    bodies: list[dict] = []
+    folder = {
+        "id": "folder-id", "public_id": "FLD-0011223344556677", "name": "Legal",
+        "owner_scope": "ORG", "user_id": None, "org_id": "org-id",
+        "context_org_id": None, "parent_folder_id": None, "connector_provider": None,
+        "connector_source_id": None, "connector_connection_id": None,
+        "created_at": "2026-09-14T00:00:00Z", "updated_at": "2026-09-14T00:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return json_response({"folder": folder})
+
+    options = {"api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+               "transport": httpx.MockTransport(handler)}
+
+    async def run_async() -> None:
+        async with AsyncArkova(**options) as client:
+            await client.update_folder("folder-id", name="Renamed")
+            await client.update_folder("folder-id", parent_folder_id=None)
+
+    if asynchronous:
+        asyncio.run(run_async())
+    else:
+        with Arkova(**options) as client:
+            client.update_folder("folder-id", name="Renamed")
+            client.update_folder("folder-id", parent_folder_id=None)
+
+    assert bodies == [{"name": "Renamed"}, {"parent_folder_id": None}]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_folder_writes_never_retry_ambiguous_failures(asynchronous: bool) -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return json_response({"error": "temporarily_unavailable"}, 503)
+
+    options = {"api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
+               "transport": httpx.MockTransport(handler), "retries": 3}
+
+    async def run_async() -> None:
+        async with AsyncArkova(**options) as client:
+            await client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
+
+    with pytest.raises(ArkovaError):
+        if asynchronous:
+            asyncio.run(run_async())
+        else:
+            with Arkova(**options) as client:
+                client.create_folder(name="Legal", owner_scope="ORG", org_id="org-id")
+    assert calls == 1
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("timestamp", ["omitted", None, "2026-09-02T02:58:11Z"])
 @pytest.mark.parametrize(
     ("method", "path", "kind"),
@@ -112,19 +211,12 @@ def test_anchor_import_never_retries_a_write_error() -> None:
     ],
 )
 def test_all_readers_preserve_nullable_observed_timestamp(
-    asynchronous: bool,
-    timestamp: str | None,
-    method: str,
-    path: str,
-    kind: str,
+    asynchronous: bool, timestamp: str | None, method: str, path: str, kind: str,
 ) -> None:
     """Both clients keep missing/null observations as None across all timestamp models."""
     payload = {
-        "verified": True,
-        "status": "ACTIVE",
-        "type": kind,
-        "public_id": "ARK-TIMESTAMP",
-        "fingerprint": "a" * 64,
+        "verified": True, "status": "ACTIVE", "type": kind,
+        "public_id": "ARK-TIMESTAMP", "fingerprint": "a" * 64,
         "record_uri": "https://app.arkova.ai/verify/ARK-TIMESTAMP",
     }
     if timestamp != "omitted":
@@ -136,8 +228,7 @@ def test_all_readers_preserve_nullable_observed_timestamp(
         return json_response(payload)
 
     options = {
-        "api_key": "ak_test",
-        "base_url": "https://api.arkova.ai/api/v2",
+        "api_key": "ak_test", "base_url": "https://api.arkova.ai/api/v2",
         "transport": httpx.MockTransport(handler),
     }
 
@@ -703,9 +794,7 @@ def test_user_agent_matches_installed_package_version() -> None:
 
 
 def test_fingerprint_matches_known_sha256() -> None:
-    with Arkova(
-        api_key="ak_test", transport=httpx.MockTransport(lambda r: json_response({}))
-    ) as client:
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(lambda r: json_response({}))) as client:
         fp = client.fingerprint("hello world")
     assert fp == "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
@@ -771,27 +860,16 @@ def test_anchor_sends_description_tags_and_instant_action() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
-        return json_response(
-            {
-                "public_id": "ARK-INSTANT",
-                "fingerprint": "a" * 64,
-                "status": "PENDING",
-                "created_at": "2026-01-01T00:00:00Z",
-                "record_uri": "https://app.arkova.ai/verify/ARK-INSTANT",
-                "action": "instant",
-                "credit_state": "pending",
-                "instant_status": "QUEUED",
-            },
-            status_code=201,
-        )
+        return json_response({
+            "public_id": "ARK-INSTANT", "fingerprint": "a" * 64, "status": "PENDING",
+            "created_at": "2026-01-01T00:00:00Z", "record_uri": "https://app.arkova.ai/verify/ARK-INSTANT",
+            "action": "instant", "credit_state": "pending", "instant_status": "QUEUED",
+        }, status_code=201)
 
     with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
         receipt = client.anchor(
-            fingerprint="a" * 64,
-            description="Quarterly agreement",
-            action="instant",
-            user_tags=["legal"],
-            organization_tags=["q3"],
+            fingerprint="a" * 64, description="Quarterly agreement", action="instant",
+            user_tags=["legal"], organization_tags=["q3"],
         )
     assert seen[0]["action"] == "instant"
     assert seen[0]["private_tags"] == {"user": ["legal"], "organization": ["q3"]}
@@ -1117,13 +1195,7 @@ def test_anchor_bulk_surfaces_per_row_errors_on_partial_success() -> None:
                 "validated": 2,
                 "queued": 1,
                 "duplicates": [],
-                "errors": [
-                    {
-                        "row": 1,
-                        "code": "insert_failed",
-                        "message": "Failed to create anchor record.",
-                    }
-                ],
+                "errors": [{"row": 1, "code": "insert_failed", "message": "Failed to create anchor record."}],
                 "dry_run": False,
                 "anchors": [
                     {
@@ -1159,12 +1231,10 @@ def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
             {
                 "error": "duplicate_fingerprints",
                 "message": (
-                    "Batch contains 1 duplicate fingerprint(s); pick a duplicate_strategy "
+                    'Batch contains 1 duplicate fingerprint(s); pick a duplicate_strategy '
                     'other than "fail" to proceed.'
                 ),
-                "duplicates": [
-                    {"row": 1, "fingerprint": "a" * 64, "scope": "in_db", "decision": "fail"}
-                ],
+                "duplicates": [{"row": 1, "fingerprint": "a" * 64, "scope": "in_db", "decision": "fail"}],
             },
             status_code=409,
         )
@@ -1173,9 +1243,7 @@ def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
         Arkova(api_key="ak_test", retries=0, transport=httpx.MockTransport(handler)) as client,
         pytest.raises(ArkovaError) as exc_info,
     ):
-        client.anchor_bulk(
-            [BulkAnchorInput(fingerprint="a" * 64), BulkAnchorInput(fingerprint="a" * 64)]
-        )
+        client.anchor_bulk([BulkAnchorInput(fingerprint="a" * 64), BulkAnchorInput(fingerprint="a" * 64)])
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "duplicate_fingerprints"
@@ -1184,12 +1252,7 @@ def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
 def test_anchor_bulk_402_insufficient_credits_preserves_code_and_status() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return json_response(
-            {
-                "error": "insufficient_credits",
-                "balance": 0,
-                "required": 5,
-                "message": "Not enough credits.",
-            },
+            {"error": "insufficient_credits", "balance": 0, "required": 5, "message": "Not enough credits."},
             status_code=402,
         )
 
@@ -1366,7 +1429,9 @@ def prod_shaped_legal_verification() -> dict:
         "expiry_date": None,
         "anchor_timestamp": "2026-03-11T18:22:41.000Z",
         "bitcoin_block": 901_447,
-        "network_receipt_id": ("3c1f9a7e2b6d48f0a5c3e9b17d24f8a0c6e5b3d1f9a72e4c8b06d5a1f3e7c9b24"),
+        "network_receipt_id": (
+            "3c1f9a7e2b6d48f0a5c3e9b17d24f8a0c6e5b3d1f9a72e4c8b06d5a1f3e7c9b24"
+        ),
         "merkle_proof_hash": None,
         "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
         "jurisdiction": "KE",
@@ -1534,17 +1599,7 @@ def test_verify_types_the_proof_and_fingerprint_evidence_fields() -> None:
 # BOTH emit sites (the idempotent duplicate hit at 200 and the fresh insert at
 # 201) build this same object literal with no conditional key.
 ANCHOR_RECEIPT_EMITTED_KEYS = frozenset(
-    {
-        "public_id",
-        "fingerprint",
-        "status",
-        "created_at",
-        "record_uri",
-        "action",
-        "credit_state",
-        "instant_status",
-        "idempotent",
-    }
+    {"public_id", "fingerprint", "status", "created_at", "record_uri", "action", "credit_state", "instant_status", "idempotent"}
 )
 
 # services/worker/src/api/v2/resourceDetails.ts — `mapAnchorDetail()`. One

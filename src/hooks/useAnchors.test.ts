@@ -203,3 +203,19 @@ describe('useAnchors', () => {
     expect(result.current.records[0].folderId).toBeNull();
   });
 });
+
+describe('useAnchors selected-scope realtime guards', () => {
+  it('never admits another org and limits ordinary members to their own rows', async () => {
+    const { anchorBelongsToScope } = await import('./useAnchors');
+    expect(anchorBelongsToScope({ org_id: 'org-2', user_id: 'other' } as never, 'user-1', 'org-1', 'ORG_ADMIN')).toBe(false);
+    expect(anchorBelongsToScope({ org_id: 'org-1', user_id: 'other' } as never, 'user-1', 'org-1', 'INDIVIDUAL')).toBe(false);
+    expect(anchorBelongsToScope({ org_id: 'org-1', user_id: 'user-1' } as never, 'user-1', 'org-1', 'INDIVIDUAL')).toBe(true);
+  });
+
+  it('removes soft-deleted and connector-pipeline rows from realtime views', async () => {
+    const { anchorIsVisibleRealtime } = await import('./useAnchors');
+    expect(anchorIsVisibleRealtime({ deleted_at: '2026-01-01', metadata: null } as never)).toBe(false);
+    expect(anchorIsVisibleRealtime({ deleted_at: null, metadata: { pipeline_source: 'connector' } } as never)).toBe(false);
+    expect(anchorIsVisibleRealtime({ deleted_at: null, metadata: {} } as never)).toBe(true);
+  });
+});

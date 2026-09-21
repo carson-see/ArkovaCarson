@@ -79,6 +79,8 @@ import { credentialsCtdlImportRouter } from './credentials-ctdl-import.js';
 import { credentialsCtdlRegistryAnchorRouter } from './credentials-ctdl-registry-anchor.js';
 import { webhooksRouter } from './webhooks.js';
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
+import { foldersRouter } from './folders-deps.js';
+import { requireFolderAuth } from './folder-auth.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
 import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
@@ -171,11 +173,11 @@ const API_EXPOSED_HEADERS = [
   'Retry-After',
 ].join(', ');
 
-router.use((req: Request, res: Response, next: NextFunction) => {
+export function apiV1CorsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers.origin;
   if (API_CORS_ORIGINS.includes('*') || (origin && API_CORS_ORIGINS.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-Id, Idempotency-Key');
     res.setHeader('Access-Control-Expose-Headers', API_EXPOSED_HEADERS);
     res.setHeader('Access-Control-Max-Age', '86400');
@@ -185,7 +187,11 @@ router.use((req: Request, res: Response, next: NextFunction) => {
     return;
   }
   next();
-});
+}
+
+// Preserve the router as a self-contained export for tests and consumers that
+// mount apiV1Router directly instead of using the production index.ts stack.
+router.use(apiV1CorsMiddleware);
 
 // ─── API spec discoverability (Link header per RFC 8631) ───
 router.use((_req: Request, res: Response, next: NextFunction) => {
@@ -529,6 +535,10 @@ router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webho
 // would 401 an API-key caller before this route is ever reached.
 router.use('/agents/computeid', computeidGate, batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
 router.use('/agents', requireAuth, agentsRouter);
+
+// SCRUM-5142: folder management is available to AAL2 browser sessions and
+// scoped SDK/API keys. When both credentials are presented, both are checked.
+router.use('/folders', requireFolderAuth, foldersRouter);
 
 // ─── Sub-organization management over an API key (SCRUM-3971) ───
 // MOUNTED HERE, NOT AT `/org/sub-orgs`. `index.ts:532` mounts the same feature

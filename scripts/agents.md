@@ -124,3 +124,6 @@ The exact documented revoke/re-enable containment SQL is rehearsed locally.
 RPC return values across both concurrent serialization orders, an idempotent
 retry and an initial zero-credit offboard. This regression failed on the prior
 0460 result shape before the SQL correction. No remote database is used.
+## UAT-19 native queue authorization proof
+
+`uat19/native-pg-queue-resolution.sh` owns a loopback-only throwaway PostgreSQL database. It exercises migration 0477 with service-role ACL, exact secondary/no-primary membership, approved direct parent, stale/null authorization denial with zero mutations, server-bound collision keys, and a different-winner concurrent race that must produce one winner without deadlock.

@@ -239,6 +239,8 @@ export interface SupabaseConfig {
    * — NOT a shared service-account key. NEVER logged.
    */
   callerApiKey?: string;
+  /** Verified inbound Bearer value for worker-route parity. Never logged. */
+  callerAuthorization?: string;
   /**
    * BUG-008/027 (CTO ruling R-1 STRENGTHENED): is the Nessie query capability
    * served at all? Sourced from the `ENABLE_NESSIE_QUERY` edge var.
@@ -304,6 +306,83 @@ function errorResult(message: string): ToolResult {
 
 function textResult(data: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+}
+
+export interface ManageFoldersInput {
+  action: 'list' | 'create' | 'update' | 'bind_connector' | 'delete' | 'bulk_move';
+  folder_id?: string;
+  owner_scope?: 'USER' | 'ORG';
+  owner_user_id?: string;
+  org_id?: string;
+  context_org_id?: string;
+  name?: string;
+  parent_folder_id?: string | null;
+  provider?: 'google_drive' | 'docusign' | null;
+  source_id?: string | null;
+  connection_id?: string | null;
+  anchor_ids?: string[];
+  record_public_ids?: string[];
+}
+
+export async function handleManageFolders(input: ManageFoldersInput, config: SupabaseConfig): Promise<ToolResult> {
+  if (!config.workerBaseUrl || (!config.callerApiKey && !config.callerAuthorization)) {
+    return errorResult('Folder management requires a configured worker route and authenticated caller forwarding.');
+  }
+  let path = '/api/v1/folders';
+  let method = 'GET';
+  let body: Record<string, unknown> | undefined;
+  if (input.action === 'bulk_move' && Number(!!input.anchor_ids) + Number(!!input.record_public_ids) !== 1) {
+    return errorResult('Provide exactly one record id list for bulk_move.');
+  }
+  if (input.action === 'list') {
+    const query = new URLSearchParams();
+    if (input.owner_scope) query.set('owner_scope', input.owner_scope);
+    if (input.owner_user_id) query.set('owner_user_id', input.owner_user_id);
+    if (input.org_id) query.set('org_id', input.org_id);
+    if (input.context_org_id) query.set('context_org_id', input.context_org_id);
+    if (query.size) path += `?${query.toString()}`;
+  } else if (input.action === 'create') {
+    method = 'POST';
+    body = { name: input.name, owner_scope: input.owner_scope,
+      ...(input.org_id ? { org_id: input.org_id } : {}),
+      ...(input.context_org_id ? { context_org_id: input.context_org_id } : {}),
+      ...(input.parent_folder_id ? { parent_folder_id: input.parent_folder_id } : {}) };
+  } else if (input.action === 'update') {
+    method = 'PATCH'; path += `/${encodeURIComponent(input.folder_id ?? '')}`;
+    body = { ...(input.name ? { name: input.name } : {}),
+      ...(input.parent_folder_id !== undefined ? { parent_folder_id: input.parent_folder_id } : {}) };
+  } else if (input.action === 'bind_connector') {
+    method = 'PUT'; path += `/${encodeURIComponent(input.folder_id ?? '')}/connector`;
+    body = input.provider ? { provider: input.provider, source_id: input.source_id, connection_id: input.connection_id }
+      : { provider: null, source_id: null, connection_id: null };
+  } else if (input.action === 'delete') {
+    method = 'DELETE'; path += `/${encodeURIComponent(input.folder_id ?? '')}`;
+  } else {
+    method = 'POST'; path += '/bulk-move';
+    body = input.record_public_ids
+      ? { record_public_ids: input.record_public_ids, folder_id: input.folder_id ?? null }
+      : { anchor_ids: input.anchor_ids, folder_id: input.folder_id ?? null };
+  }
+  try {
+    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.callerApiKey ? { 'X-API-Key': config.callerApiKey } : {}),
+        ...(config.callerAuthorization ? { Authorization: config.callerAuthorization } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok && response.status !== 207) {
+      return errorResult(JSON.stringify({ error: 'folder_management_failed', status: response.status }));
+    }
+    if (response.status === 204) return textResult({ deleted: true });
+    return textResult(await response.json());
+  } catch (error) {
+    return errorResult(safeErrorText(error, 'arkova_manage_folders'));
+  }
 }
 
 /** Stable machine code for a disabled Nessie, shared with the worker envelope. */
@@ -730,6 +809,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       type: 'object',
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: 'arkova_manage_folders',
+    description:
+      'List, create, rename, nest, delete, bind connector destinations, or bulk-move records in canonical Arkova folders. Organization API keys remain bounded to their organization.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'Folder operation: list, create, update, bind_connector, delete, or bulk_move.' },
+        folder_id: { type: 'string', format: 'uuid', description: 'Folder UUID for a mutation. Omit during bulk_move to move records to Unfiled.' },
+        owner_scope: { type: 'string', description: 'Folder owner scope: USER or ORG.' },
+        owner_user_id: { type: 'string', format: 'uuid', description: 'Personal folder owner UUID for an authorized contextual admin lookup.' },
+        org_id: { type: 'string', format: 'uuid', description: 'Organization UUID for organization folders.' },
+        context_org_id: { type: 'string', format: 'uuid', description: 'Explicit organization context for a personal folder.' },
+        name: { type: 'string', description: 'Folder name.' },
+        parent_folder_id: { type: 'string', format: 'uuid', description: 'Same-owner parent folder UUID.' },
+        provider: { type: 'string', description: 'Connector provider: google_drive or docusign.' },
+        source_id: { type: 'string', description: 'Opaque connector source destination identifier.' },
+        connection_id: { type: 'string', format: 'uuid', description: 'Active connector connection UUID.' },
+        anchor_ids: { type: 'array', items: { type: 'string', format: 'uuid', description: 'Record UUID.' }, minItems: 1, maxItems: 100, description: 'One to 100 record UUIDs for bulk_move.' },
+        record_public_ids: { type: 'array', items: { type: 'string', pattern: '^ARK-', description: 'API-visible record public id.' }, minItems: 1, maxItems: 100, description: 'One to 100 public record ids for bulk_move; outcomes preserve these ids.' },
+      },
+      required: ['action'],
     },
   },
 ];
@@ -1739,10 +1842,16 @@ async function authenticatedWorkerJson(
   try {
     const response = await fetch(`${base}${path}`, {
       ...init,
-      redirect: 'error',
+      redirect: 'manual',
       headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },
       signal: controller.signal,
     });
+    // Cloudflare Workers supports `manual`, not Node's `error`, for redirect
+    // handling. Return the original 3xx untouched so callers fail closed and
+    // the verified credential is never replayed to Location.
+    if (response.status >= 300 && response.status < 400) {
+      return { response, body: null };
+    }
     let body: Record<string, unknown> | null = null;
     try {
       body = await response.json() as Record<string, unknown>;

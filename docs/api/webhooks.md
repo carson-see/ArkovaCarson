@@ -119,6 +119,20 @@ Certificate and job references are deterministic, domain-separated opaque values
 
 `attestation.revoked` payload `data`: `public_id`, `status` (always `REVOKED`), `revocation_reason`, `revoked_at`, plus optional `attestation_type` and `org_public_id`.
 
+### Folder Lifecycle (SCRUM-5142)
+
+| Event | Fired When | Status |
+|---|---|---|
+| `folder.created` | An authorized caller creates a personal or organization folder. | Stable |
+| `folder.updated` | An authorized caller renames, reparents, or changes the connector destination for a folder. | Stable |
+| `folder.deleted` | An authorized caller deletes a folder; its records become unfiled. | Stable |
+| `record.folder_changed` | One or more records move to a folder or become unfiled. Mixed-organization batches do not emit one misleading tenant aggregate. | Stable |
+
+Folder lifecycle payload `data`: `folder_public_id`, `owner_scope`, plus optional
+`connector_provider`. Record move payload `data`: nullable `folder_public_id`,
+`moved_count`, and `failed_count`. These events expose no internal folder,
+record, user, or organization UUIDs.
+
 Subscribe to `attestation.active` for the attestation anchoring signal. Its
 payload contains the attestation public id, type, `ACTIVE` status, transaction
 id, and network-observed chain timestamp. It carries no fingerprint or internal

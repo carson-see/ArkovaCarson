@@ -16,7 +16,9 @@
 import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { getCallerOrgIdResult, isCallerOrgAdminResult } from './_org-auth.js';
+import { getCallerProfileResult } from './_org-auth.js';
+import { authorizeManualRun } from './queue-resolution.js';
+import { z } from 'zod';
 
 const MAX_CANDIDATES = 25;
 const MAX_EXTERNAL_FILE_ID_LENGTH = 255;
@@ -88,32 +90,6 @@ export async function handleCollisionContext(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const identity = await getCallerOrgIdResult(userId);
-  if (identity.error) {
-    res.status(500).json({
-      error: { code: 'lookup_failed', message: 'Unable to verify caller organization' },
-    });
-    return;
-  }
-  const orgId = identity.value;
-  if (!orgId) {
-    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
-    return;
-  }
-
-  const authority = await isCallerOrgAdminResult(userId, orgId);
-  if (authority.error) {
-    res.status(500).json({
-      error: { code: 'lookup_failed', message: 'Unable to verify caller authority' },
-    });
-    return;
-  }
-  if (!authority.value) {
-    res.status(403).json({
-      error: { code: 'forbidden', message: 'Organization administrator access required' },
-    });
-    return;
-  }
   const externalFileId = String(req.params.externalFileId ?? '').trim();
   if (!externalFileId || externalFileId.length > MAX_EXTERNAL_FILE_ID_LENGTH) {
     res.status(400).json({
@@ -124,13 +100,42 @@ export async function handleCollisionContext(
     });
     return;
   }
-
+  // `*Result` (not the fail-closed `getCallerProfile`) so an operational
+  // profiles failure surfaces as 500 instead of masquerading as "no org" 403
+  // (SCRUM-3569 / #2998 contract, preserved across the UAT-19 exact-org work).
+  const { value: profile, error: profileError } = await getCallerProfileResult(userId);
+  if (profileError) {
+    res.status(500).json({
+      error: { code: 'lookup_failed', message: 'Unable to verify caller organization' },
+    });
+    return;
+  }
+  const requestedOrg = req.query.org_id === undefined
+    ? { success: true as const, data: undefined }
+    : z.string().uuid().safeParse(req.query.org_id);
+  if (!requestedOrg.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'org_id must be a valid UUID' } });
+    return;
+  }
+  const orgId = requestedOrg.data ?? profile?.org_id;
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+  const authorization = await authorizeManualRun(userId, orgId, profile);
+  if (!authorization.ok) {
+    res.status(authorization.status).json({
+      error: { code: authorization.code, message: authorization.message },
+    });
+    return;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
     .from('anchors')
     .select('public_id, fingerprint, filename, created_at, metadata')
     .eq('org_id', orgId)
     .eq('status', 'PENDING_RESOLUTION')
+    .is('deleted_at', null)
     .eq('metadata->>external_file_id', externalFileId)
     .order('created_at', { ascending: false })
     .limit(MAX_CANDIDATES);

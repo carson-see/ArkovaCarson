@@ -26,7 +26,7 @@ interface MoveToFolderDialogProps {
   onOpenChange: (open: boolean) => void;
   folders: Folder[];
   currentFolderId: string | null;
-  onSelect: (folderId: string | null) => Promise<void>;
+  onSelect: (folderId: string | null) => Promise<boolean | void>;
 }
 
 export function MoveToFolderDialog({
@@ -37,18 +37,26 @@ export function MoveToFolderDialog({
   onSelect,
 }: Readonly<MoveToFolderDialogProps>) {
   const [pendingId, setPendingId] = useState<string | null | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
 
   const handleOpenChange = (next: boolean) => {
     if (pendingId !== undefined) return;
+    setFailed(false);
     onOpenChange(next);
   };
 
   const handleSelect = async (folderId: string | null) => {
     if (pendingId !== undefined) return;
+    setFailed(false);
     setPendingId(folderId);
     try {
-      await onSelect(folderId);
-      onOpenChange(false);
+      if (await onSelect(folderId) !== false) {
+        onOpenChange(false);
+      } else {
+        setFailed(true);
+      }
+    } catch {
+      setFailed(true);
     } finally {
       setPendingId(undefined);
     }
@@ -56,12 +64,13 @@ export function MoveToFolderDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{FOLDER_LABELS.ASSIGN_TITLE}</DialogTitle>
           <DialogDescription className="sr-only">{FOLDER_LABELS.ASSIGN_TITLE}</DialogDescription>
         </DialogHeader>
 
+        {failed && <p role="alert" className="text-sm text-destructive">{FOLDER_LABELS.ERR_ASSIGN}</p>}
         <div className="space-y-1 py-2 max-h-80 overflow-y-auto">
           <FolderRow
             label={FOLDER_LABELS.UNFILED}
@@ -116,7 +125,7 @@ function FolderRow({ label, selected, loading, disabled, onClick }: Readonly<Fol
       )}
     >
       <FolderClosed className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
       {loading ? (
         <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
       ) : (

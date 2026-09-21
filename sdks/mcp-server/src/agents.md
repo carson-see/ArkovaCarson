@@ -25,3 +25,8 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 - Tool names/descriptions/input-property descriptions are CLAUDE.md §1.3 terminology surface (see `index.test.ts`'s standing guard above) — treat them like UI copy, not internal code, when adding or editing a tool.
 - UAT-23 `arkova_import_rows` accepts 1–100 strict fingerprint rows through the canonical API-key import endpoint; raw file fields and tenant overrides are rejected before fetch, with no automatic write retry.
 - The built stdio server currently lists 9 tools; `cli.bin.test.ts` pins that count through a real symlinked process after UAT-12 status and UAT-23 import were added.
+
+## 2026-09-14 — SCRUM-5142 folders
+
+`arkova_manage_folders` is one action-discriminated tool over the canonical worker REST routes. It forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model.
+Its tests exercise every CRUD/reparent/connector action and both bulk identifier modes against the same worker paths.

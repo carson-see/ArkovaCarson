@@ -25,7 +25,7 @@ describe('API/MCP public docs denylist', () => {
   });
 
   it('documents MCP as read-only by default and does not publish anchor_document in the launch manifest', () => {
-    expect(mcpTools).toContain('fifteen default launch tools plus three conditionally registered submission-lifecycle tools');
+    expect(mcpTools).toContain('sixteen default launch tools plus three conditionally registered submission-lifecycle tools');
     expect(mcpTools).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
     expect(apiReadme).toContain('MCP launch is read-only by default');
     expect(edgeManifest).not.toContain('"anchor_document"');

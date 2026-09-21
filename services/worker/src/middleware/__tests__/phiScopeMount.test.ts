@@ -82,10 +82,14 @@ describe('PHI / student-PII mounts carry a scope guard that cannot no-op', () =>
     // (almost) the whole file — which DOES contain `req.apiKey` and
     // `X-API-Key`, so the negative assertions below would fail claiming
     // requireAuth accepts API keys when requireAuth never changed.
-    const end = routerSource.indexOf('// ─── Batch rate limiter', start);
-    expect(end, 'the banner that delimits requireAuth moved — re-anchor this slice').toBeGreaterThan(
-      start,
-    );
+    const banner = routerSource.indexOf('// ─── Batch rate limiter', start);
+    expect(banner, 'the banner after requireAuth moved — re-anchor this slice').toBeGreaterThan(start);
+    const nextTopLevelOffset = routerSource.slice(start + 1).search(/\n(?:async )?function [A-Za-z0-9_]+\(/);
+    const nextTopLevelFunction = nextTopLevelOffset >= 0 ? start + 1 + nextTopLevelOffset : -1;
+    const end = nextTopLevelFunction > start && nextTopLevelFunction < banner
+      ? nextTopLevelFunction
+      : banner;
+    expect(end, 'could not delimit the requireAuth function').toBeGreaterThan(start);
     const body = routerSource.slice(start, end);
 
     // No Authorization header, or one carrying an API key, is a 401.

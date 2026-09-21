@@ -60,6 +60,8 @@ function setQueryRejection(reason: unknown) {
 // SCRUM-3010: record every `.eq(column, value)` the component issues so tests
 // can assert the row-scoping applied for admins vs non-admin members.
 const eqCalls: Array<[string, unknown]> = [];
+const isCalls: Array<[string, unknown]> = [];
+const inCalls: Array<[string, unknown]> = [];
 function resetEqCalls() {
   eqCalls.length = 0;
 }
@@ -67,7 +69,7 @@ function resetEqCalls() {
 vi.mock('@/lib/supabase', () => {
   const builder: Record<string, unknown> = {};
   const passthrough = () => builder;
-  for (const method of ['select', 'is', 'filter', 'order', 'range', 'or', 'gte', 'lte']) {
+  for (const method of ['select', 'filter', 'order', 'range', 'or', 'gte', 'lte']) {
     builder[method] = passthrough;
   }
   // `eq` records its arguments, then behaves like every other passthrough.
@@ -75,6 +77,8 @@ vi.mock('@/lib/supabase', () => {
     eqCalls.push([column, value]);
     return builder;
   };
+  builder.is = (column: string, value: unknown) => { isCalls.push([column, value]); return builder; };
+  builder.in = (column: string, value: unknown) => { inCalls.push([column, value]); return builder; };
   // Make the builder awaitable — `await query` resolves to the current result,
   // or rejects when `queryRejection` is set.
   builder.then = (
@@ -140,6 +144,8 @@ describe('OrgRegistryTable', () => {
     setQueryResult({ data: [], count: 0, error: null });
     setQueryRejection(null);
     resetEqCalls();
+    isCalls.length = 0;
+    inCalls.length = 0;
   });
 
   // SCRUM-3010 STEP 1 (frontend gate): the org-wide registry is the cross-member
@@ -154,14 +160,13 @@ describe('OrgRegistryTable', () => {
     expect(eqCalls).not.toContainEqual(['user_id', 'user-1']);
   });
 
-  it('scopes the query to user_id (never org_id) for a non-admin member', async () => {
+  it('scopes a non-admin query to the exact org and user', async () => {
     setQueryResult({ data: [], count: 0, error: null });
     renderTable({ isAdmin: false, currentUserId: 'user-1' });
     await waitFor(() => {
       expect(eqCalls).toContainEqual(['user_id', 'user-1']);
     });
-    // The whole-org query must never be issued for a non-admin.
-    expect(eqCalls).not.toContainEqual(['org_id', 'org-1']);
+    expect(eqCalls).toContainEqual(['org_id', 'org-1']);
   });
 
   it('issues no org-wide query for a non-admin with no user id (fail closed)', async () => {
@@ -172,6 +177,19 @@ describe('OrgRegistryTable', () => {
       expect(screen.getAllByText(/no records found/i).length).toBeGreaterThan(0);
     });
     expect(eqCalls).not.toContainEqual(['org_id', 'org-1']);
+  });
+
+  it('applies an unfiled filter without weakening member ownership scope', async () => {
+    renderTable({ isAdmin: false, currentUserId: 'user-1', folderFilter: null });
+    await waitFor(() => expect(isCalls).toContainEqual(['folder_id', null]));
+    expect(eqCalls).toContainEqual(['user_id', 'user-1']);
+    expect(eqCalls).toContainEqual(['org_id', 'org-1']);
+  });
+
+  it('filters by the selected folder and descendants for exact-org admins', async () => {
+    renderTable({ isAdmin: true, folderFilter: ['folder-root', 'folder-child'] });
+    await waitFor(() => expect(inCalls).toContainEqual(['folder_id', ['folder-root', 'folder-child']]));
+    expect(eqCalls).toContainEqual(['org_id', 'org-1']);
   });
 
   // The Export CSV path must be gated the same way as the table: a non-admin's

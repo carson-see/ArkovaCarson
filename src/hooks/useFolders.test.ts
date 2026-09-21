@@ -1,61 +1,24 @@
-/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
-/**
- * useFolders Hook Tests
- *
- * @see SCRUM-2940 (folders data layer) + founder-priority bug fix (migration
- * 0393): an ORG_ADMIN's "Move to folder" on a record they can SEE but did not
- * personally create (useAnchors gives ORG_ADMIN the whole org's list) used to
- * silently no-op — anchors_update_own's RLS `USING` clause matched zero rows,
- * PostgREST returned `{ error: null }` for the zero-row UPDATE, and
- * `assignRecord` only checked `error`, never a row count. The caller (
- * MyRecordsPage.handleMoveSelect) then showed a false "Record moved" toast.
- * `assignRecord` now mirrors `useSecureQueue.removeItem`'s established
- * pattern: `.select('id')` after the update, throw if zero rows came back.
- */
+/** SCRUM-5142 worker-backed canonical folder hook tests. */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const mockFrom = vi.hoisted(() => vi.fn());
+const workerFetch = vi.hoisted(() => vi.fn());
 const mockProfile = vi.hoisted(() => ({ current: { role: 'INDIVIDUAL', org_id: null as string | null } }));
 
-vi.mock('@/lib/supabase', () => ({
-  supabase: { from: mockFrom },
-}));
+vi.mock('@/lib/workerClient', () => ({ workerFetch }));
+vi.mock('./useAuth', () => ({ useAuth: () => ({ user: { id: 'user-1' }, loading: false }) }));
+vi.mock('./useProfile', () => ({ useProfile: () => ({ profile: mockProfile.current, loading: false }) }));
+vi.mock('./useActiveOrg', () => ({ useActiveOrg: () => ({ orgId: mockProfile.current.org_id, loading: false }) }));
 
-vi.mock('./useAuth', () => ({
-  useAuth: () => ({ user: { id: 'user-1' }, loading: false }),
-}));
-
-vi.mock('./useProfile', () => ({
-  useProfile: () => ({ profile: mockProfile.current, loading: false }),
-}));
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createSelectChain(result: { data: any[] | null; error: unknown }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const chain: any = {
-    select: vi.fn(() => chain),
-    order: vi.fn(() => Promise.resolve(result)),
-  };
-  return chain;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createUpdateChain(result: { data: any[] | null; error: unknown }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const chain: any = {
-    eq: vi.fn(() => chain),
-    select: vi.fn(() => Promise.resolve(result)),
-  };
-  return chain;
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 function createWrapper() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: qc }, children);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
+  return ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);
 }
 
 import { useFolders } from './useFolders';
@@ -64,57 +27,72 @@ describe('useFolders', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProfile.current = { role: 'INDIVIDUAL', org_id: null };
+    workerFetch.mockResolvedValue(response({ folders: [] }));
   });
 
-  it('assignRecord succeeds when the update actually affects a row', async () => {
-    const listChain = createSelectChain({ data: [], error: null });
-    const updateChain = createUpdateChain({ data: [{ id: 'anchor-1' }], error: null });
-    mockFrom.mockReturnValue({ select: () => listChain, update: vi.fn(() => updateChain) });
-
+  it('loads the caller global personal folders through the authenticated worker API', async () => {
+    workerFetch.mockResolvedValueOnce(response({ folders: [{
+      id: 'folder-1', public_id: 'FLD-1', name: 'Legal', owner_scope: 'USER',
+      context_org_id: null, parent_folder_id: null, connector_provider: null,
+      created_at: '2026-09-14T00:00:00Z',
+    }] }));
     const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
-
-    await expect(result.current.assignRecord('anchor-1', 'folder-1')).resolves.toBeUndefined();
-    expect(updateChain.eq).toHaveBeenCalledWith('id', 'anchor-1');
+    expect(workerFetch).toHaveBeenCalledWith('/api/v1/folders?owner_scope=USER');
+    expect(result.current.folders[0]).toMatchObject({ id: 'folder-1', name: 'Legal' });
   });
 
-  it('assignRecord throws when RLS silently blocks the update (zero rows returned) instead of pretending it worked', async () => {
-    // This is the founder-priority bug: an ORG_ADMIN moving a teammate-owned
-    // record that anchors_update_own's RLS USING clause does not match.
-    // PostgREST returns { error: null, data: [] } for the zero-row UPDATE --
-    // the pre-fix hook resolved successfully here and the caller toasted a
-    // false "Record moved".
-    const listChain = createSelectChain({ data: [], error: null });
-    const updateChain = createUpdateChain({ data: [], error: null });
-    mockFrom.mockReturnValue({ select: () => listChain, update: vi.fn(() => updateChain) });
-
+  it('loads personal global, personal context, and organization folders for an org member', async () => {
     mockProfile.current = { role: 'ORG_ADMIN', org_id: 'org-1' };
     const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
-
-    await expect(result.current.assignRecord('someone-elses-anchor', 'folder-1')).rejects.toThrow();
+    expect(workerFetch.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([
+      '/api/v1/folders?owner_scope=USER',
+      '/api/v1/folders?owner_scope=USER&context_org_id=org-1',
+      '/api/v1/folders?owner_scope=ORG&org_id=org-1',
+    ]));
   });
 
-  it('assignRecord(id, null) un-files a record and still checks for zero rows', async () => {
-    const listChain = createSelectChain({ data: [], error: null });
-    const updateChain = createUpdateChain({ data: [], error: null });
-    mockFrom.mockReturnValue({ select: () => listChain, update: vi.fn(() => updateChain) });
-
+  it('assignRecord sends the canonical one-item bulk move', async () => {
+    workerFetch.mockImplementation(async (path: string) => path.endsWith('/bulk-move')
+      ? response({ moved: ['anchor-1'], failed: [] }) : response({ folders: [] }));
     const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.assignRecord('anchor-1', 'folder-1')).resolves.toBeUndefined();
+    const [, init] = workerFetch.mock.calls.find(([path]) => path.endsWith('/bulk-move'))!;
+    expect(JSON.parse(init.body)).toEqual({ anchor_ids: ['anchor-1'], folder_id: 'folder-1' });
+  });
 
+  it('returns every denied item so a bulk caller can keep it selected', async () => {
+    workerFetch.mockImplementation(async (path: string) => path.endsWith('/bulk-move')
+      ? response({ moved: [], failed: [{ anchor_id: 'anchor-1', code: 'not_authorized_or_not_found' }] }, 207)
+      : response({ folders: [] }));
+    const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.assignRecords(['anchor-1'], null)).resolves.toEqual({
+      moved: [], failed: [{ anchor_id: 'anchor-1', code: 'not_authorized_or_not_found' }],
+    });
     await expect(result.current.assignRecord('anchor-1', null)).rejects.toThrow();
-    expect(updateChain.eq).toHaveBeenCalledWith('id', 'anchor-1');
   });
 
-  it('assignRecord surfaces a real Postgres error unchanged', async () => {
-    const listChain = createSelectChain({ data: [], error: null });
-    const updateChain = createUpdateChain({ data: null, error: { message: 'constraint violation' } });
-    mockFrom.mockReturnValue({ select: () => listChain, update: vi.fn(() => updateChain) });
-
+  it('keeps top-level personal folders global and inherits an explicit parent context', async () => {
+    mockProfile.current = { role: 'ORG_ADMIN', org_id: 'org-1' };
     const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
+    await result.current.createFolder('Global');
+    await result.current.createFolder('Child', { ownerScope: 'USER', parentFolderId: 'parent', contextOrgId: 'org-1' });
+    const bodies = workerFetch.mock.calls.filter(([, init]) => init?.method === 'POST').map(([, init]) => JSON.parse(init.body));
+    expect(bodies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Global', context_org_id: null }),
+      expect.objectContaining({ name: 'Child', context_org_id: 'org-1', parent_folder_id: 'parent' }),
+    ]));
+  });
 
-    await expect(result.current.assignRecord('anchor-1', 'folder-1')).rejects.toThrow('constraint violation');
+  it('surfaces a stable API error', async () => {
+    workerFetch.mockImplementation(async (path: string) => path.endsWith('/bulk-move')
+      ? response({ error: 'folder_forbidden' }, 403) : response({ folders: [] }));
+    const { result } = renderHook(() => useFolders(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.assignRecord('anchor-1', 'folder-1')).rejects.toThrow('folder_forbidden');
   });
 });

@@ -6,7 +6,7 @@
  * date range filter, bulk selection, CSV export.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   FileText,
   CheckCircle,
@@ -83,6 +83,8 @@ interface OrgRegistryTableProps {
   onViewAnchor?: (anchor: Anchor) => void;
   onRevokeAnchor?: (anchor: Anchor) => void;
   onDownloadProof?: (anchor: Anchor) => void;
+  folderFilter?: string[] | null;
+  onMoveRecords?: (anchorIds: string[]) => void;
 }
 
 const statusConfig = {
@@ -229,6 +231,8 @@ export function OrgRegistryTable({
   onViewAnchor,
   onRevokeAnchor,
   onDownloadProof,
+  folderFilter,
+  onMoveRecords,
 }: Readonly<OrgRegistryTableProps>) {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -240,6 +244,7 @@ export function OrgRegistryTable({
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const requestIdRef = useRef(0);
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
   const { exportAnchors, loading: exporting } = useExportAnchors();
@@ -251,6 +256,7 @@ export function OrgRegistryTable({
   }, [exportAnchors, orgId, isAdmin, currentUserId]);
 
   const fetchAnchors = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
 
     // SCRUM-3010 STEP 1 (frontend gate): a non-admin member must never see the
@@ -269,11 +275,12 @@ export function OrgRegistryTable({
     // SCRUM-3010: admin → org-wide (`org_id`); non-admin member → own rows only (`user_id`).
     const base = supabase
       .from('anchors')
-      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata', { count: 'exact' });
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata, folder_id', { count: 'exact' });
 
+    const orgScoped = base.eq('org_id', orgId);
     const scoped = isAdmin
-      ? base.eq('org_id', orgId)
-      : base.eq('user_id', currentUserId as string);
+      ? orgScoped
+      : orgScoped.eq('user_id', currentUserId as string);
 
     let query = scoped
       .is('deleted_at', null)
@@ -285,6 +292,8 @@ export function OrgRegistryTable({
     if (statusFilter !== 'ALL') {
       query = query.eq('status', statusFilter);
     }
+    if (folderFilter === null) query = query.is('folder_id', null);
+    else if (folderFilter && folderFilter.length > 0) query = query.in('folder_id', folderFilter);
 
     // Apply search filter (filename OR fingerprint)
     // SEC-NEW-08: Sanitize input to prevent PostgREST filter injection
@@ -307,6 +316,7 @@ export function OrgRegistryTable({
     try {
       const { data, error, count } = await query;
 
+      if (requestId !== requestIdRef.current) return;
       if (error) {
         console.error('Error fetching anchors:', error);
         // SCRUM-1999: surface the failure explicitly instead of silently falling
@@ -322,6 +332,7 @@ export function OrgRegistryTable({
         setTotalCount(count || 0);
       }
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       // SCRUM-1999 (CodeRabbit Critical / Carson P1): a THROWN/REJECTED query
       // (network failure, abort, client throw) never reaches the resolved
       // `{ error }` branch above. Without this catch the function exited before
@@ -333,9 +344,9 @@ export function OrgRegistryTable({
       setAnchors([]);
       setTotalCount(0);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [orgId, isAdmin, currentUserId, currentPage, statusFilter, searchQuery, dateFrom, dateTo]);
+  }, [orgId, isAdmin, currentUserId, currentPage, statusFilter, searchQuery, dateFrom, dateTo, folderFilter]);
 
   useEffect(() => {
     async function run() { await fetchAnchors(); }
@@ -349,7 +360,7 @@ export function OrgRegistryTable({
       setSelectedIds(new Set());
     }
     void reset();
-  }, [statusFilter, searchQuery, dateFrom, dateTo]);
+  }, [orgId, statusFilter, searchQuery, dateFrom, dateTo, folderFilter]);
 
   // Bulk selection handlers
   const allOnPageSelected = anchors.length > 0 && anchors.every((a) => selectedIds.has(a.id));
@@ -500,6 +511,11 @@ export function OrgRegistryTable({
             >
               <XCircle className="mr-2 h-4 w-4" />
               Revoke ({revocableSelected})
+            </Button>
+          )}
+          {onMoveRecords && (
+            <Button variant="outline" size="sm" onClick={() => onMoveRecords([...selectedIds])}>
+              Move to folder
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={clearSelection}>

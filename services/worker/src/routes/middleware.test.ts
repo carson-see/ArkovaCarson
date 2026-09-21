@@ -16,9 +16,9 @@ vi.mock('../utils/logger.js', () => ({
 
 const { setCorsHeaders } = await import('./middleware.js');
 
-function makeReqRes(method: string, origin?: string) {
+function makeReqRes(method: string, origin?: string, path = '/') {
   const headers: Record<string, string> = {};
-  const req = { method, headers: { origin } } as unknown as Request;
+  const req = { method, path, headers: { origin } } as unknown as Request;
   const res = {
     setHeader: (k: string, v: string) => {
       headers[k] = v;

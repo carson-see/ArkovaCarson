@@ -114,6 +114,11 @@ into the TS SDK (`packages/sdk`), but nothing called them from Python.
   write path`): cap boundary, mixed fingerprint+data rows, dry-run, per-row
   errors on a partial success, 409 duplicate-fail, 402 insufficient-credits,
   plus sync + async wiring.
+
+## 2026-09-14 — SCRUM-5142 folders
+
+Sync and async clients expose folder list/create/update/bind/delete/bulk move against `/api/v1/folders`. Models preserve nested parent, owner context, connector metadata, and partial move failures.
+Folder updates use an internal omission sentinel so rename-only requests retain their parent while explicit `parent_folder_id=None` moves to root. No folder mutation automatically retries an ambiguous response.
 ## 2026-09-19 — UAT-12 durable status
 
 Sync and async clients expose `get_anchor_submission_status(public_id)` returning `AnchorSubmissionStatus`. This is caller-scoped API state, not public verification, and includes no private tags or internal ids.

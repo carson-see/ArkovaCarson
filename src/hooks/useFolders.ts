@@ -1,167 +1,131 @@
-/**
- * useFolders Hook (SCRUM-2940)
- *
- * Fetches and mutates the caller's folders from Supabase. RLS (migration 0365)
- * scopes reads/writes:
- *   - INDIVIDUAL users see/own their USER-scoped folders (user_id = auth.uid())
- *   - ORG members see their org's ORG-scoped folders (org_id = get_user_org_id())
- *
- * React Query for cache + optimistic invalidation — NEVER useState arrays for
- * table data (CLAUDE.md §6). The owner scope is derived from the profile:
- * ORG_ADMIN callers create ORG folders; everyone else creates USER folders.
- * This mirrors the ownership split the anchors list already uses.
- */
-
+/** Canonical nested-folder client for SCRUM-5142. */
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryClient';
 import { FOLDER_LABELS } from '@/lib/copy';
-import type { Database } from '@/types/database.types';
+import { workerFetch } from '@/lib/workerClient';
 import { useAuth } from './useAuth';
-import { useProfile } from './useProfile';
+import { useActiveOrg } from './useActiveOrg';
 
-type FolderRow = Database['public']['Tables']['folders']['Row'];
-type FolderInsert = Database['public']['Tables']['folders']['Insert'];
-
-/** UI-facing folder shape (camelCase, only what the browse UI needs). */
 export interface Folder {
   id: string;
+  publicId?: string;
   name: string;
   ownerScope: 'USER' | 'ORG';
+  contextOrgId?: string | null;
+  parentFolderId?: string | null;
+  connectorProvider?: 'google_drive' | 'docusign' | null;
   createdAt: string;
 }
 
-function mapFolder(row: Pick<FolderRow, 'id' | 'name' | 'owner_scope' | 'created_at'>): Folder {
+interface ApiFolder {
+  id: string; public_id: string; name: string; owner_scope: 'USER' | 'ORG';
+  context_org_id: string | null; parent_folder_id: string | null;
+  connector_provider: 'google_drive' | 'docusign' | null; created_at: string;
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error((body as { error?: string }).error ?? `Folder request failed (${response.status})`);
+  return body as T;
+}
+
+function mapFolder(row: ApiFolder): Folder {
   return {
-    id: row.id,
-    name: row.name,
-    ownerScope: row.owner_scope as 'USER' | 'ORG',
-    createdAt: row.created_at,
+    id: row.id, publicId: row.public_id, name: row.name, ownerScope: row.owner_scope,
+    contextOrgId: row.context_org_id, parentFolderId: row.parent_folder_id,
+    connectorProvider: row.connector_provider, createdAt: row.created_at,
   };
 }
 
-/** Whether the caller's folders are org-scoped (ORG_ADMIN with an org). */
-function resolveOrgScope(role?: string | null, orgId?: string | null): boolean {
-  return role === 'ORG_ADMIN' && !!orgId;
+async function fetchFolders(orgId: string | null): Promise<Folder[]> {
+  const paths = ['/api/v1/folders?owner_scope=USER'];
+  if (orgId) {
+    paths.push(`/api/v1/folders?owner_scope=USER&context_org_id=${encodeURIComponent(orgId)}`);
+    paths.push(`/api/v1/folders?owner_scope=ORG&org_id=${encodeURIComponent(orgId)}`);
+  }
+  const bodies = await Promise.all(paths.map(async (path) =>
+    readJson<{ folders: ApiFolder[] }>(await workerFetch(path))));
+  return bodies.flatMap((body) => body.folders.map(mapFolder));
 }
 
-async function fetchFolders(): Promise<Folder[]> {
-  // RLS returns only folders the caller owns/belongs to — no explicit filter
-  // needed, but we order by name for a stable sidebar.
-  const { data, error } = await supabase
-    .from('folders')
-    .select('id, name, owner_scope, created_at')
-    .order('name', { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map(mapFolder);
-}
+interface CreateFolderOptions { ownerScope?: 'USER' | 'ORG'; parentFolderId?: string | null; contextOrgId?: string | null }
 
 interface UseFoldersReturn {
   folders: Folder[];
   loading: boolean;
   error: string | null;
-  createFolder: (name: string) => Promise<void>;
+  createFolder: (name: string, options?: CreateFolderOptions) => Promise<void>;
   renameFolder: (id: string, name: string) => Promise<void>;
   deleteFolder: (id: string) => Promise<void>;
-  /** Assign a record to a folder, or pass null to move it back to Unfiled. */
   assignRecord: (anchorId: string, folderId: string | null) => Promise<void>;
+  assignRecords: (anchorIds: string[], folderId: string | null) => Promise<{ moved: string[]; failed: Array<{ anchor_id: string; code: string }> }>;
 }
 
 export function useFolders(): UseFoldersReturn {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { orgId, loading: orgLoading } = useActiveOrg();
   const qc = useQueryClient();
-
-  const orgScoped = resolveOrgScope(profile?.role, profile?.org_id);
-
-  const key = queryKeys.folders(user?.id ?? '', orgScoped ? profile?.org_id : null);
-
-  const {
-    data: folders = [],
-    isLoading,
-    error: queryError,
-  } = useQuery({
-    queryKey: key,
-    queryFn: fetchFolders,
-    enabled: !!user,
+  const key = queryKeys.folders(user?.id ?? '', orgId);
+  const { data: folders = [], isLoading, error: queryError } = useQuery({
+    queryKey: key, queryFn: () => fetchFolders(orgId), enabled: !!user && !orgLoading,
   });
-
-  const invalidate = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: key });
-  }, [qc, key]);
+  const invalidate = useCallback(() => { void qc.invalidateQueries({ queryKey: key }); }, [qc, key]);
 
   const createMutation = useMutation({
-    mutationFn: async (name: string) => {
-      if (!user) throw new Error('not authenticated');
-      const trimmed = name.trim();
-      // Annotated as the generated Insert type: without it TS widens the
-      // ternary to a union of two object literals and PostgREST's
-      // RejectExcessProperties<> narrows against only the first arm.
-      const row: FolderInsert = orgScoped
-        ? { owner_scope: 'ORG', org_id: profile!.org_id, user_id: null, name: trimmed, created_by: user.id }
-        : { owner_scope: 'USER', user_id: user.id, org_id: null, name: trimmed, created_by: user.id };
-      const { error } = await supabase.from('folders').insert(row);
-      if (error) throw error;
-    },
-    onSuccess: invalidate,
+    mutationFn: async ({ name, options }: { name: string; options?: CreateFolderOptions }) => {
+      if (orgLoading) throw new Error(FOLDER_LABELS.ERR_CREATE);
+      const requestOrgId = orgId;
+      const ownerScope = options?.ownerScope ?? 'USER';
+      if (ownerScope === 'ORG' && !requestOrgId) throw new Error(FOLDER_LABELS.ERR_CREATE);
+      const response = await workerFetch('/api/v1/folders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(), owner_scope: ownerScope,
+          ...(ownerScope === 'ORG' ? { org_id: requestOrgId } : { context_org_id: options?.contextOrgId ?? null }),
+          parent_folder_id: options?.parentFolderId ?? null,
+        }),
+      });
+      await readJson(response);
+    }, onSuccess: invalidate,
   });
-
   const renameMutation = useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string }) => {
-      const { error } = await supabase.from('folders').update({ name: name.trim() }).eq('id', id);
-      if (error) throw error;
-    },
-    onSuccess: invalidate,
+      await readJson(await workerFetch(`/api/v1/folders/${encodeURIComponent(id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }),
+      }));
+    }, onSuccess: invalidate,
   });
-
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      // ON DELETE SET NULL un-files the folder's records (migration 0365).
-      const { error } = await supabase.from('folders').delete().eq('id', id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      invalidate();
-      // Records' folder_id changed → refresh the records list too.
-      void qc.invalidateQueries({ queryKey: ['anchors'] });
-    },
+      const response = await workerFetch(`/api/v1/folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!response.ok) await readJson(response);
+    }, onSuccess: () => { invalidate(); void qc.invalidateQueries({ queryKey: ['anchors'] }); },
   });
-
   const assignMutation = useMutation({
-    mutationFn: async ({ anchorId, folderId }: { anchorId: string; folderId: string | null }) => {
-      // .select('id') + row-count check (mirrors useSecureQueue.removeItem):
-      // anchors_update_own's RLS USING clause matches ZERO rows — not an
-      // error — when the caller doesn't own the anchor. PostgREST returns
-      // `{ error: null }` for that zero-row UPDATE, so checking `error`
-      // alone lets the caller believe the move succeeded when nothing
-      // changed (founder-priority bug: an ORG_ADMIN's org-wide "My Records"
-      // view, useAnchors.ts, includes records they didn't personally
-      // create; migration 0393 widens the org-admin case, but this check
-      // stays as the honest-failure backstop for any row RLS still denies,
-      // e.g. a plain org member moving a teammate's record).
-      const { data, error } = await supabase
-        .from('anchors')
-        .update({ folder_id: folderId })
-        .eq('id', anchorId)
-        .select('id');
-      if (error) throw error;
-      if (!data || data.length === 0) {
-        throw new Error(FOLDER_LABELS.ERR_ASSIGN);
-      }
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['anchors'] });
-    },
+    mutationFn: async ({ anchorIds, folderId }: { anchorIds: string[]; folderId: string | null }) =>
+      readJson<{ moved: string[]; failed: Array<{ anchor_id: string; code: string }> }>(
+        await workerFetch('/api/v1/folders/bulk-move', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ anchor_ids: anchorIds, folder_id: folderId }),
+        }),
+      ),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['anchors'] }); },
   });
 
+  async function assignRecords(anchorIds: string[], folderId: string | null) {
+    return assignMutation.mutateAsync({ anchorIds, folderId });
+  }
   return {
-    folders,
-    loading: isLoading,
+    folders, loading: orgLoading || isLoading,
     error: queryError ? (queryError as Error).message || FOLDER_LABELS.ERR_CREATE : null,
-    createFolder: (name) => createMutation.mutateAsync(name),
+    createFolder: (name, options) => createMutation.mutateAsync({ name, options }),
     renameFolder: (id, name) => renameMutation.mutateAsync({ id, name }),
     deleteFolder: (id) => deleteMutation.mutateAsync(id),
-    assignRecord: (anchorId, folderId) => assignMutation.mutateAsync({ anchorId, folderId }),
+    assignRecord: async (anchorId, folderId) => {
+      const result = await assignRecords([anchorId], folderId);
+      if (result.failed.length > 0) throw new Error(FOLDER_LABELS.ERR_ASSIGN);
+    },
+    assignRecords,
   };
 }

@@ -90,9 +90,10 @@ export function useExportAnchors(): UseExportAnchorsReturn {
       .from('anchors')
       .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, file_mime, created_at, updated_at, chain_timestamp, revoked_at, revocation_reason, expires_at, legal_hold');
 
+    const orgScoped = scoped.eq('org_id', orgId);
     const filtered = scope.isAdmin
-      ? scoped.eq('org_id', orgId)
-      : scoped.eq('user_id', scope.userId as string);
+      ? orgScoped
+      : orgScoped.eq('user_id', scope.userId as string);
 
     const { data, error: fetchError } = await filtered
       .is('deleted_at', null)

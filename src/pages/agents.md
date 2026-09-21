@@ -879,6 +879,10 @@ only fails when a user clicks.
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
 
+## 2026-09-14 — SCRUM-5142 folder UI
+
+`MyRecordsPage` supports nested personal/org folders and bounded multi-record moves. `MemberDetailPage` loads only the selected member's explicit org-context folders through the worker API and filters the member's records by the selected subtree; global personal folders are never requested. `RuleBuilderPage` configures the same destination ids for connector actions.
+
 ## 2026-09-14 — SCRUM-5145 consumed confirmation links
 
 `AuthCallbackPage` reconciles only `otp_expired` with authoritative `auth.getUser()`. It auto-routes only when that user is confirmed and matches the signup email remembered in session storage. A confirmed account that cannot be correlated gets an honest signed-in choice; generic errors, unrelated accounts, unconfirmed users, lookup failures, and the three-second lookup timeout remain errors.
@@ -907,3 +911,7 @@ organization", which would flash at a user who has one.
 `DevelopersPage.tsx` must distinguish REST authentication (`Authorization: Bearer`) from hosted MCP authentication (`X-API-Key`). Keep install commands version-neutral and link to package registries for live release status so coordinated publications do not immediately stale the page. Never describe a release candidate as published. The primary REST example uses the mounted `GET /api/v1/verify/:publicId` route.
 
 The public gateway serves the machine-readable reference at `/api/docs/spec.json`; `/api/docs` returns 404 and must not be used for documentation buttons. Sandbox verification search uses `GET /api/v1/verify/search` and must describe the returned `search_mode` (`semantic_vector` or `lexical_substring`) rather than promise semantic execution.
+## 2026-09-19 — UAT-19 exact-org dashboard and queue
+
+`OrgProfilePage` is the route-org shell: it passes the route org to Secure Document, registry, queue, and the additive `useOrgProfileFolders` wrapper. It renders safe HTTPS-only organization social links and composes folder filtering/management into Home. `AnchorQueuePage` carries `org_id` through list/run/resolve, queries the exact membership role, clears tenant-bound state on route changes, and ignores stale responses. Never fall back from a route org to the profile/active org.
+The queue scope key includes authenticated user and effective organization, so primary-organization changes also invalidate list requests and clear rows. An explicit empty or malformed `org_id` is visibly denied rather than falling back.

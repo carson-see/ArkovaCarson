@@ -3303,41 +3303,86 @@ export type Database = {
       }
       folders: {
         Row: {
+          connector_connection_id: string | null
+          connector_provider: string | null
+          connector_source_id: string | null
+          context_org_id: string | null
           created_at: string
-          created_by: string
+          created_by: string | null
+          created_by_api_key_id: string | null
           id: string
           name: string
           org_id: string | null
           owner_scope: string
+          parent_folder_id: string | null
+          public_id: string
+          is_system_managed: boolean
           updated_at: string
           user_id: string | null
         }
         Insert: {
+          connector_connection_id?: string | null
+          connector_provider?: string | null
+          connector_source_id?: string | null
+          context_org_id?: string | null
           created_at?: string
-          created_by: string
+          created_by?: string | null
+          created_by_api_key_id?: string | null
           id?: string
           name: string
           org_id?: string | null
           owner_scope: string
+          parent_folder_id?: string | null
+          public_id?: string
+          is_system_managed?: boolean
           updated_at?: string
           user_id?: string | null
         }
         Update: {
+          connector_connection_id?: string | null
+          connector_provider?: string | null
+          connector_source_id?: string | null
+          context_org_id?: string | null
           created_at?: string
-          created_by?: string
+          created_by?: string | null
+          created_by_api_key_id?: string | null
           id?: string
           name?: string
           org_id?: string | null
           owner_scope?: string
+          parent_folder_id?: string | null
+          public_id?: string
+          is_system_managed?: boolean
           updated_at?: string
           user_id?: string | null
         }
         Relationships: [
           {
+            foreignKeyName: "folders_context_org_id_fkey"
+            columns: ["context_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_parent_folder_id_fkey"
+            columns: ["parent_folder_id"]
+            isOneToOne: false
+            referencedRelation: "folders"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "folders_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_created_by_api_key_id_fkey"
+            columns: ["created_by_api_key_id"]
+            isOneToOne: false
+            referencedRelation: "api_keys"
             referencedColumns: ["id"]
           },
           {
@@ -7585,6 +7630,10 @@ export type Database = {
       }
       batch_insert_anchors: { Args: { p_anchors: Json }; Returns: Json }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
+      bulk_move_records_to_folder: {
+        Args: { p_anchor_ids: string[]; p_folder_id: string }
+        Returns: Json
+      }
       bulk_promote_confirmed: { Args: { p_tx_ids: string[] }; Returns: number }
       bump_cloud_logging_retry_counts: {
         Args: { p_audit_ids: string[]; p_error_msg?: string }
@@ -7892,6 +7941,174 @@ export type Database = {
           p_tx_id: string
         }
         Returns: Json
+      }
+      folder_administers_org: { Args: { p_org_id: string }; Returns: boolean }
+      folder_administers_org_exact: {
+        Args: { p_org_id: string }
+        Returns: boolean
+      }
+      folder_api_administers_org: {
+        Args: {
+          p_actor_user_id: string
+          p_api_org_id: string
+          p_exact?: boolean
+          p_org_id: string
+        }
+        Returns: boolean
+      }
+      folder_api_bulk_move: {
+        Args: {
+          p_actor_user_id: string
+          p_anchor_ids: string[]
+          p_api_org_id: string
+          p_folder_id: string
+        }
+        Returns: Json
+      }
+      folder_api_create: {
+        Args: {
+          p_actor_user_id: string
+          p_api_key_id: string
+          p_api_org_id: string
+          p_context_org_id: string
+          p_name: string
+          p_org_id: string
+          p_owner_scope: string
+          p_owner_user_id: string
+          p_parent_folder_id?: string
+        }
+        Returns: {
+          connector_connection_id: string | null
+          connector_provider: string | null
+          connector_source_id: string | null
+          context_org_id: string | null
+          created_at: string
+          created_by: string | null
+          created_by_api_key_id: string | null
+          id: string
+          is_system_managed: boolean
+          name: string
+          org_id: string | null
+          owner_scope: string
+          parent_folder_id: string | null
+          public_id: string
+          updated_at: string
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "folders"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      folder_api_delete: {
+        Args: {
+          p_actor_user_id: string
+          p_api_org_id: string
+          p_folder_id: string
+        }
+        Returns: {
+          connector_connection_id: string | null
+          connector_provider: string | null
+          connector_source_id: string | null
+          context_org_id: string | null
+          created_at: string
+          created_by: string | null
+          created_by_api_key_id: string | null
+          id: string
+          is_system_managed: boolean
+          name: string
+          org_id: string | null
+          owner_scope: string
+          parent_folder_id: string | null
+          public_id: string
+          updated_at: string
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "folders"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      folder_api_is_member: {
+        Args: { p_org_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      folder_api_list: {
+        Args: {
+          p_actor_user_id: string
+          p_api_org_id: string
+          p_context_org_id?: string
+          p_org_id?: string
+          p_owner_scope: string
+          p_owner_user_id?: string
+        }
+        Returns: {
+          connector_connection_id: string | null
+          connector_provider: string | null
+          connector_source_id: string | null
+          context_org_id: string | null
+          created_at: string
+          created_by: string | null
+          created_by_api_key_id: string | null
+          id: string
+          is_system_managed: boolean
+          name: string
+          org_id: string | null
+          owner_scope: string
+          parent_folder_id: string | null
+          public_id: string
+          updated_at: string
+          user_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "folders"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      folder_api_update: {
+        Args: {
+          p_actor_user_id: string
+          p_api_org_id: string
+          p_connector_connection_id: string
+          p_connector_present: boolean
+          p_connector_provider: string
+          p_connector_source_id: string
+          p_folder_id: string
+          p_name: string
+          p_name_present: boolean
+          p_parent_folder_id: string
+          p_parent_present: boolean
+        }
+        Returns: {
+          connector_connection_id: string | null
+          connector_provider: string | null
+          connector_source_id: string | null
+          context_org_id: string | null
+          created_at: string
+          created_by: string | null
+          created_by_api_key_id: string | null
+          id: string
+          is_system_managed: boolean
+          name: string
+          org_id: string | null
+          owner_scope: string
+          parent_folder_id: string | null
+          public_id: string
+          updated_at: string
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "folders"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       generate_anchor_public_id: {
         Args: { category?: string }
@@ -8419,6 +8636,14 @@ export type Database = {
           p_reason?: string
         }
         Returns: number
+      }
+      resolve_connector_destination_folder: {
+        Args: {
+          p_anchor_org_id: string
+          p_anchor_user_id: string
+          p_artifact_id: string
+        }
+        Returns: string
       }
       resolve_supplementary_journal: {
         Args: { p_action: string; p_journal_id: string; p_reason?: string }

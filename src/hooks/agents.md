@@ -246,6 +246,9 @@ an `else if` so the fallback cannot attribute the same organization twice.
 a same-user `authenticated`/AAL2 token are present. An assurance upgrade resumes
 the query; account switches and AAL downgrades mask cached data immediately.
 
+## 2026-09-14 — SCRUM-5142 folder client
+
+`useFolders` uses the worker folder API for global personal, org-context personal, and org folders. Moves always use the bounded bulk endpoint, including one-record moves, so partial failures and service-role authorization have one contract.
 ## 2026-09-19 — UAT-12 submission authority
 
 `useSecuringCapability` and `useAnchorSubmissionStatus` parse worker payloads
@@ -256,6 +259,10 @@ its query key includes both user and selected organization to prevent stale scop
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
 
 UAT-23 bulk imports use only the JWT canonical HTTP bridge; preserve prior-chunk receipts, never auto-retry an ambiguous write, and keep the invocation's original organization scope.
+## 2026-09-19 — `useOrgProfileFolders`
+
+This additive wrapper is deliberately route-org scoped and never consults profile/active-org state. Its query key includes caller, explicit org, resolved authorization, and manager authority; reads stay disabled and cached rows stay hidden until route authorization resolves. Mutations require the caller-visible manager gate and capture the explicit org. Worker authorization remains authoritative. `descendantFolderIds` is cycle-safe.
+
 ## 2026-09-14 — SCRUM-5145 signup resend API
 
 Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.

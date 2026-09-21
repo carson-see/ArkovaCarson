@@ -210,17 +210,21 @@ describe('canonical agent workflow documentation', () => {
     ).map((match) => match[1]);
     // `arkova_anchor_document` is registered at runtime only when
     // `MCP_ENABLE_ANCHOR_DOCUMENT=true` (see mcp-server.ts) — it is not
-    // part of the default read-only launch surface. `arkova_import_rows`
-    // (UAT-23) is registered inside that same `telemetry.anchorDocumentEnabled`
-    // block, so it is conditional for the same reason and is excluded here
-    // too — the default launch surface stays at fifteen read-only tools.
+    // part of the default read-only launch surface. The same is true of
+    // `arkova_get_submission_status`, which shares that flag + write-scope
+    // gate, and of `arkova_import_rows` (UAT-23), which is registered inside
+    // that same `telemetry.anchorDocumentEnabled` block — three conditional
+    // tools in total. `arkova_manage_folders` IS a default launch tool
+    // (SCRUM-5142), so the launch surface is 16: fifteen read-oriented tools
+    // plus the scoped folder-management tool.
     const launchToolNames = definedToolNames.filter((name) =>
       name !== 'arkova_anchor_document'
       && name !== 'arkova_get_submission_status'
       && name !== 'arkova_import_rows');
 
-    expect(launchToolNames).toHaveLength(15);
-    expect(mcpToolsDoc).toContain('exposes fifteen default launch tools plus three conditionally registered submission-lifecycle tools');
+    expect(launchToolNames).toHaveLength(16);
+    expect(launchToolNames).toContain('arkova_manage_folders');
+    expect(mcpToolsDoc).toContain('exposes sixteen default launch tools plus three conditionally registered submission-lifecycle tools');
     expect(launchToolNames).not.toContain('arkova_anchor_document');
     expect(mcpToolsDoc).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
 
@@ -271,6 +275,8 @@ describe('canonical agent workflow documentation', () => {
     // so the reference now says "All three" rather than "Both" — the claim the
     // assertion guards (conditional registration on the flag) is unchanged.
     expect(mcpToolsDoc).toContain('All three are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true`');
+    expect(mcpToolsDoc).toContain('Folder mutations remain separately available through `arkova_manage_folders`');
+    expect(mcpToolsDoc).toContain('only to callers with `anchor:write`');
     expect(mcpToolsDoc).toContain('gated write tool');
   });
 });

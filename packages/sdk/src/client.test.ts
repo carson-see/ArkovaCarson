@@ -1474,6 +1474,10 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'attestation.created': true,
   'attestation.revoked': true,
   'attestation.active': true,
+  'folder.created': true,
+  'folder.updated': true,
+  'folder.deleted': true,
+  'record.folder_changed': true,
   // SCRUM-3972 — affiliated-organization lifecycle. See docs/api/webhooks.md
   // and services/worker/src/webhooks/payload-schemas.ts.
   'suborg.created': true,
@@ -1508,6 +1512,10 @@ describe('WebhookEventType', () => {
         'attestation.created',
         'attestation.revoked',
         'attestation.active',
+        'folder.created',
+        'folder.updated',
+        'folder.deleted',
+        'record.folder_changed',
         'suborg.approved',
         'suborg.created',
         'suborg.credits_allocated',
@@ -1517,6 +1525,74 @@ describe('WebhookEventType', () => {
         'suborg.suspended',
       ].sort(),
     );
+  });
+});
+
+describe('folders namespace', () => {
+  it('covers list, rename, reparent, connector binding/clear, and delete contracts', async () => {
+    const folder = {
+      id: 'folder-id', public_id: 'FLD-0011223344556677', name: 'Child', owner_scope: 'ORG',
+      user_id: null, org_id: 'org-id', context_org_id: null, parent_folder_id: null,
+      connector_provider: null, connector_source_id: null, connector_connection_id: null,
+      created_at: '2026-09-14T00:00:00Z', updated_at: '2026-09-14T00:00:00Z',
+    };
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folders: [folder] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ folder }) })
+      .mockResolvedValueOnce({ ok: true, status: 204 });
+    const client = new Arkova({ apiKey: 'ak_test' });
+
+    await client.folders.list({ ownerScope: 'ORG', orgId: 'org-id' });
+    await client.folders.update('folder-id', { name: 'Renamed' });
+    await client.folders.update('folder-id', { parentFolderId: null });
+    await client.folders.bindConnector('folder-id', {
+      provider: 'google_drive', sourceId: 'drive-folder', connectionId: 'connection-id',
+    });
+    await client.folders.bindConnector('folder-id', { provider: null, sourceId: null, connectionId: null });
+    await client.folders.delete('folder-id');
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/folders/folder-id'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: 'Renamed' }) }));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/folders/folder-id'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ parent_folder_id: null }) }));
+    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/folders/folder-id/connector'),
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({
+        provider: 'google_drive', source_id: 'drive-folder', connection_id: 'connection-id',
+      }) }));
+    expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/folders/folder-id'),
+      expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it('creates nested folders and maps the public-safe response', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ folder: {
+      id: 'folder-id', public_id: 'FLD-0011223344556677', name: 'Child', owner_scope: 'ORG',
+      user_id: null, org_id: 'org-id', context_org_id: null, parent_folder_id: 'parent-id',
+      connector_provider: null, connector_source_id: null, connector_connection_id: null,
+      created_at: '2026-09-14T00:00:00Z', updated_at: '2026-09-14T00:00:00Z',
+    } }) });
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const folder = await client.folders.create({ name: 'Child', ownerScope: 'ORG', orgId: 'org-id', parentFolderId: 'parent-id' });
+    expect(folder).toMatchObject({ publicId: 'FLD-0011223344556677', parentFolderId: 'parent-id' });
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/folders'), expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('returns per-record partial failures for bulk moves', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({
+      moved: ['anchor-a'], failed: [{ anchor_id: 'anchor-b', code: 'not_authorized_or_not_found' }],
+    }) });
+    const result = await new Arkova({ apiKey: 'ak_test' }).folders.moveRecords(['anchor-a', 'anchor-b'], null);
+    expect(result).toEqual({ moved: ['anchor-a'], failed: [{ anchorId: 'anchor-b', code: 'not_authorized_or_not_found' }] });
+  });
+
+  it('bulk moves records by their API-visible public ids', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ moved: ['ARK-2026-ABC12345'], failed: [] }) });
+    await new Arkova({ apiKey: 'ak_test' }).folders.moveRecordsByPublicId(['ARK-2026-ABC12345'], null);
+    expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/v1/folders/bulk-move'), expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
+    }));
   });
 });
 

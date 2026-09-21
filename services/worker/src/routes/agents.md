@@ -14,6 +14,16 @@ after an avoidable retry is the wrong order of defences.
 
 # services/worker/src/routes/agents.md
 
+## 2026-09-19 — global CORS must preserve the v1 header contract
+
+`index.ts` mounts `corsMiddleware` before `/api/v1`, so the global middleware must defer the exact
+`/api/v1` boundary and legacy `/v1` alias to the v1 router's shared CORS owner. That owner carries
+API-key/idempotency headers, PUT, and its own production origin policy; duplicating any subset
+globally makes the contracts drift. Non-v1 browser routes keep their narrower historical header
+list, and `/api/v10` or `/v10` are not treated as v1.
+The integration regression belongs in `index.test.ts` so a unit test of the v1 router alone cannot
+miss mount-order preemption.
+
 ## UAT-22 invitation GET route (2026-09-14)
 
 `GET /api/admin/organizations/:id/invitations` sits behind the structural `/admin` gate and forwards the authenticated actor to the independently authorized list handler. Route regressions cover missing auth, non-admin denial and selected-org dispatch.
@@ -354,3 +364,4 @@ a quick per-instance signal, not a durable audit trail — the `origin_guard_wou
 ## 2026-09-19 — UAT-23 JWT bulk import bridge
 
 `POST /api/v1/anchor-self-service/bulk` accepts at most 100 strict rows and delegates each to the canonical single-submit handler without loopback HTTP. Recipient-bearing imports are authorized for the exact selected organization before any row runs: owner/admin or platform admin only; personal recipient provisioning fails closed. Non-recipient personal imports remain valid. Safe metadata survives; private/reserved/underscore keys remain filtered by the canonical handler. Results are 200 or 207 with bounded per-row codes and no internal IDs.
+- **2026-09-19 (UAT-19):** `queue-resolution-mounted.test.ts` exercises the real queue handlers through Express JSON/query parsing and the real `extractAuthUserId`/`verifyAuthToken` path using locally signed JOSE tokens. It pins missing/AAL1/expired/malformed 401 with no DB, malformed selected-org 400/no DB, exact secondary owner with no primary org, stale primary-role denial, and selected-anchor/org conflict before the resolution RPC.

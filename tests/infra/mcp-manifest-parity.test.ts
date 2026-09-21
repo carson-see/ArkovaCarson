@@ -5,7 +5,7 @@
  * is what MCP clients — and human operators deciding whether to install
  * the connector — read BEFORE ever calling `tools/list` against the live
  * server. It drifted badly: the live server (services/edge/src/mcp-tools.ts,
- * wired into services/edge/src/mcp-server.ts) registers 17 tools, but the
+ * wired into services/edge/src/mcp-server.ts) registers 18 tools, but the
  * manifest advertised only 2 (`arkova_search`, `arkova_get_anchor`). An agent or founder
  * reading the manifest had no way to discover arkova_verify_batch, nessie_query,
  * arkova_anchor_document, or any of the other 12 real tools.
@@ -61,11 +61,11 @@ const SERVER_TOOL_NAMES = TOOL_DEFINITIONS.map((t) => t.name);
 describe('MCP discovery manifest parity (L2-A6)', () => {
   const manifest = loadManifest();
 
-  it('server declares 15 default plus 3 conditional tools', () => {
+  it('server declares 16 default plus 3 conditional tools', () => {
     // Not a manifest assertion — a tripwire so this test file itself gets
     // revisited if TOOL_DEFINITIONS grows/shrinks materially, since the
-    // PR body and description text below reference "17" explicitly.
-    expect(SERVER_TOOL_NAMES.length).toBe(18);
+    // PR body and description text below reference "19" explicitly.
+    expect(SERVER_TOOL_NAMES.length).toBe(19);
   });
 
   it('has a non-empty tools array', () => {
@@ -85,7 +85,7 @@ describe('MCP discovery manifest parity (L2-A6)', () => {
     expect(extra).toEqual([]);
   });
 
-  it('advertises the exact real tool count — regression tripwire', () => {
+  it('advertises the exact real tool count — exact registry tripwire', () => {
     expect(manifest.tools.length).toBe(SERVER_TOOL_NAMES.length);
   });
 
@@ -105,9 +105,8 @@ describe('MCP discovery manifest parity (L2-A6)', () => {
       expect(manifest.tools.some((t) => t.name === tool.name)).toBe(true);
     });
 
-    it('has a non-empty description', () => {
-      expect(typeof manifestTool().description).toBe('string');
-      expect(manifestTool().description.length).toBeGreaterThan(0);
+    it('matches the server tool description exactly', () => {
+      expect(manifestTool().description).toBe(tool.description);
     });
 
     it('declares an object input schema', () => {
@@ -124,6 +123,14 @@ describe('MCP discovery manifest parity (L2-A6)', () => {
       const serverProps = Object.keys(tool.inputSchema.properties).sort();
       const manifestProps = Object.keys(manifestTool().inputSchema.properties ?? {}).sort();
       expect(manifestProps).toEqual(serverProps);
+    });
+
+    it('matches every server property description exactly', () => {
+      const manifestProperties = manifestTool().inputSchema.properties ?? {};
+      for (const [name, serverProperty] of Object.entries(tool.inputSchema.properties)) {
+        const manifestProperty = manifestProperties[name] as { description?: unknown } | undefined;
+        expect(manifestProperty?.description).toBe(serverProperty.description);
+      }
     });
   });
 

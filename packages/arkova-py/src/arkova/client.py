@@ -26,6 +26,10 @@ from .models import (
     DocumentDetail,
     FingerprintDetail,
     FingerprintVerification,
+    Folder,
+    FolderEnvelope,
+    FolderList,
+    FolderMoveResult,
     MerkleProofResponse,
     OrganizationDetail,
     OrgList,
@@ -58,6 +62,13 @@ try:
 except PackageNotFoundError:  # running from a source tree without an install
     _VERSION = "unknown"
 T = TypeVar("T")
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 
 def _headers(api_key: str) -> dict[str, str]:
@@ -520,6 +531,62 @@ class Arkova:
     def get_document(self, public_id: str) -> DocumentDetail:
         return _parse_json(self._request("GET", f"/documents/{public_id}"), DocumentDetail)
 
+    def list_folders(
+        self, *, owner_scope: Literal["USER", "ORG"] = "ORG", owner_user_id: str | None = None,
+        org_id: str | None = None, context_org_id: str | None = None,
+    ) -> FolderList:
+        params = {"owner_scope": owner_scope}
+        if owner_user_id is not None: params["owner_user_id"] = owner_user_id
+        if org_id is not None: params["org_id"] = org_id
+        if context_org_id is not None: params["context_org_id"] = context_org_id
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        return _parse_json(self._request("GET", path, params=params), FolderList)
+
+    def create_folder(
+        self, *, name: str, owner_scope: Literal["USER", "ORG"], org_id: str | None = None,
+        context_org_id: str | None = None, parent_folder_id: str | None = None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        response = self._request("POST", path, json={"name": name, "owner_scope": owner_scope,
+            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id},
+            retryable=False)
+        return _parse_json(response, FolderEnvelope).folder
+
+    def update_folder(
+        self, folder_id: str, *, name: str | None = None,
+        parent_folder_id: str | None | _Unset = _UNSET,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        body: dict[str, Any] = {}
+        if name is not None: body["name"] = name
+        if not isinstance(parent_folder_id, _Unset): body["parent_folder_id"] = parent_folder_id
+        if not body: raise ArkovaError("Folder update requires name or parent_folder_id", code="invalid_request")
+        response = self._request("PATCH", path, json=body, retryable=False)
+        return _parse_json(response, FolderEnvelope).folder
+
+    def bind_folder_connector(
+        self, folder_id: str, *, provider: Literal["google_drive", "docusign"] | None,
+        source_id: str | None, connection_id: str | None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}/connector")
+        response = self._request("PUT", path, json={"provider": provider, "source_id": source_id,
+            "connection_id": connection_id}, retryable=False)
+        return _parse_json(response, FolderEnvelope).folder
+
+    def delete_folder(self, folder_id: str) -> None:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        self._request("DELETE", path, retryable=False)
+
+    def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(self._request("POST", path, json={"anchor_ids": list(anchor_ids),
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
+    def move_records_by_public_id(self, record_public_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(self._request("POST", path, json={"record_public_ids": list(record_public_ids),
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
     def _request(
         self,
         method: str,
@@ -527,10 +594,11 @@ class Arkova:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any | None = None,
+        retryable: bool = True,
     ) -> httpx.Response:
         for attempt in range(self._retries + 1):
             response = self._client.request(method, path, params=params, json=json)
-            if response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
+            if not retryable or response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
                 _raise_for_error(response)
                 return response
 
@@ -728,6 +796,62 @@ class AsyncArkova:
             DocumentDetail,
         )
 
+    async def list_folders(
+        self, *, owner_scope: Literal["USER", "ORG"] = "ORG", owner_user_id: str | None = None,
+        org_id: str | None = None, context_org_id: str | None = None,
+    ) -> FolderList:
+        params = {"owner_scope": owner_scope}
+        if owner_user_id is not None: params["owner_user_id"] = owner_user_id
+        if org_id is not None: params["org_id"] = org_id
+        if context_org_id is not None: params["context_org_id"] = context_org_id
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        return _parse_json(await self._request("GET", path, params=params), FolderList)
+
+    async def create_folder(
+        self, *, name: str, owner_scope: Literal["USER", "ORG"], org_id: str | None = None,
+        context_org_id: str | None = None, parent_folder_id: str | None = None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders")
+        response = await self._request("POST", path, json={"name": name, "owner_scope": owner_scope,
+            "org_id": org_id, "context_org_id": context_org_id, "parent_folder_id": parent_folder_id},
+            retryable=False)
+        return _parse_json(response, FolderEnvelope).folder
+
+    async def update_folder(
+        self, folder_id: str, *, name: str | None = None,
+        parent_folder_id: str | None | _Unset = _UNSET,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        body: dict[str, Any] = {}
+        if name is not None: body["name"] = name
+        if not isinstance(parent_folder_id, _Unset): body["parent_folder_id"] = parent_folder_id
+        if not body: raise ArkovaError("Folder update requires name or parent_folder_id", code="invalid_request")
+        response = await self._request("PATCH", path, json=body, retryable=False)
+        return _parse_json(response, FolderEnvelope).folder
+
+    async def bind_folder_connector(
+        self, folder_id: str, *, provider: Literal["google_drive", "docusign"] | None,
+        source_id: str | None, connection_id: str | None,
+    ) -> Folder:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}/connector")
+        response = await self._request("PUT", path, json={"provider": provider, "source_id": source_id,
+            "connection_id": connection_id}, retryable=False)
+        return _parse_json(response, FolderEnvelope).folder
+
+    async def delete_folder(self, folder_id: str) -> None:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/folders/{quote(folder_id, safe='')}")
+        await self._request("DELETE", path, retryable=False)
+
+    async def move_records(self, anchor_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(await self._request("POST", path, json={"anchor_ids": list(anchor_ids),
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
+    async def move_records_by_public_id(self, record_public_ids: Sequence[str], folder_id: str | None) -> FolderMoveResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
+        return _parse_json(await self._request("POST", path, json={"record_public_ids": list(record_public_ids),
+            "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
     async def _request(
         self,
         method: str,
@@ -735,10 +859,11 @@ class AsyncArkova:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any | None = None,
+        retryable: bool = True,
     ) -> httpx.Response:
         for attempt in range(self._retries + 1):
             response = await self._client.request(method, path, params=params, json=json)
-            if response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
+            if not retryable or response.status_code not in RETRYABLE_STATUSES or attempt >= self._retries:
                 _raise_for_error(response)
                 return response
 

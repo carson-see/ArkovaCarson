@@ -47,6 +47,7 @@ import {
   handleAgentListOrgs,
   handleAgentGetAnchor,
   handleAgentGetOrganization,
+  handleManageFolders,
   type SupabaseConfig,
   type ToolResult,
   type ImportRowsInput,
@@ -677,6 +678,31 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     ),
   );
 
+  tool(
+    'arkova_manage_folders',
+    TOOL_DESC['arkova_manage_folders'],
+    {
+      action: z.enum(['list', 'create', 'update', 'bind_connector', 'delete', 'bulk_move']),
+      folder_id: z.string().uuid().optional(),
+      owner_scope: z.enum(['USER', 'ORG']).optional(),
+      owner_user_id: z.string().uuid().optional(),
+      org_id: z.string().uuid().optional(),
+      context_org_id: z.string().uuid().optional(),
+      name: z.string().trim().min(1).max(100).optional(),
+      parent_folder_id: z.string().uuid().nullable().optional(),
+      provider: z.enum(['google_drive', 'docusign']).nullable().optional(),
+      source_id: z.string().trim().min(1).max(500).nullable().optional(),
+      connection_id: z.string().uuid().nullable().optional(),
+      anchor_ids: z.array(z.string().uuid()).min(1).max(100).optional(),
+      record_public_ids: z.array(z.string().regex(/^ARK-[A-Za-z0-9][A-Za-z0-9_-]{0,123}$/)).min(1).max(100).optional(),
+    },
+    withTelemetry(
+      'arkova_manage_folders',
+      async (input) => handleManageFolders(input as Parameters<typeof handleManageFolders>[0], config),
+      telemetry,
+    ),
+  );
+
   // ── Resources ─────────────────────────────────────────────────────────
 
   server.resource(
@@ -843,6 +869,8 @@ interface AuthResult {
    * identity namespace; the raw value grants no edge-local permission.
    */
   callerApiKey: string | null;
+  /** Verified inbound Bearer header for worker route reuse. Never logged. */
+  callerAuthorization: string | null;
 }
 
 const MCP_ANCHOR_WRITE_SCOPES = new Set(['write:anchors', 'anchor:write']);
@@ -904,6 +932,7 @@ async function validateApiKey(
           // BUG-3a: retain the validated raw key so the nessie_query proxy
           // can forward it edge→worker. Never logged.
           callerApiKey: apiKey,
+          callerAuthorization: null,
         };
       }
     }
@@ -959,7 +988,7 @@ export async function validateBearer(
       if (user.id !== local.userId) return null;
       // Bearer callers have no raw API key to forward — the worker nessie
       // proxy requires X-API-Key, so these callers degrade to text fallback.
-      return { userId: user.id, tier: local.tier, apiKeyId: null, scopes: local.scopes, callerApiKey: null };
+      return { userId: user.id, tier: local.tier, apiKeyId: null, scopes: local.scopes, callerApiKey: null, callerAuthorization: `Bearer ${token}` };
     }
   } catch {
     // Fall through
@@ -1117,6 +1146,7 @@ export async function handleMcpRequest(
     // + per-caller rate limits). Otherwise it degrades to the text fallback.
     workerBaseUrl: env.WORKER_BASE_URL,
     callerApiKey: auth.callerApiKey ?? undefined,
+    callerAuthorization: auth.callerAuthorization ?? undefined,
     // BUG-008/027: fail closed — only the exact string "true" enables Nessie.
     nessieEnabled: env.ENABLE_NESSIE_QUERY === 'true',
   };

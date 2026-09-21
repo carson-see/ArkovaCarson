@@ -136,6 +136,7 @@ const AnchorInsertSchema = z.object({
   ),
   credential_type: z.literal('CONTRACT_POSTSIGNING'),
   metadata: z.record(z.string(), z.unknown()),
+  folder_id: dbUuid('folder_id').nullable(),
   // R19 evidence-class column (migration 0376). On THIS path it is deliberately
   // and permanently NULL — a required `z.null()`, not `.optional()` — so the
   // honest classification is enforced at the write path, not left to omission.
@@ -523,6 +524,7 @@ async function buildAnchorInsertPayload(args: {
     filename: source.filename,
     credential_type: 'CONTRACT_POSTSIGNING' as const,
     metadata,
+    folder_id: readString(args.rule.action_config?.destination_folder_id),
     // R19 evidence class — explicitly NULL. Rationale lives once, on
     // AnchorInsertSchema above; do not restate it here.
     //

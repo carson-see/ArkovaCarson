@@ -16,7 +16,7 @@
  * @see BETA-01 — Mempool Live Transaction Tracking (realtime)
  */
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
@@ -26,11 +26,29 @@ import { queryKeys } from '@/lib/queryClient';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { useAuth } from './useAuth';
 import { useProfile } from './useProfile';
+import { useActiveOrg } from './useActiveOrg';
+import { useUserOrgs } from './useUserOrgs';
 import type { Database } from '@/types/database.types';
 import type { Record } from '@/components/records';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type AnchorRow = Database['public']['Tables']['anchors']['Row'];
+
+export function anchorBelongsToScope(
+  row: Pick<AnchorRow, 'org_id' | 'user_id'>,
+  userId: string | undefined,
+  orgId: string | null,
+  role: string | null | undefined,
+): boolean {
+  return orgId
+    ? row.org_id === orgId && (role === 'ORG_ADMIN' || row.user_id === userId)
+    : row.org_id == null && row.user_id === userId;
+}
+
+export function anchorIsVisibleRealtime(row: Pick<AnchorRow, 'deleted_at' | 'metadata'>): boolean {
+  const metadata = row.metadata as { [key: string]: unknown } | null;
+  return !row.deleted_at && !metadata?.pipeline_source;
+}
 
 /** Subset of AnchorRow columns selected for performance (not select *). */
 type AnchorPartial = Pick<AnchorRow,
@@ -76,10 +94,11 @@ async function fetchAnchorsData(
     .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata, folder_id');
 
   // ORG_ADMIN: show all org records; INDIVIDUAL/platform admin: show own records
-  if (role === 'ORG_ADMIN' && orgId) {
+  if (orgId) {
     query = query.eq('org_id', orgId);
+    if (role !== 'ORG_ADMIN') query = query.eq('user_id', userId);
   } else {
-    query = query.eq('user_id', userId);
+    query = query.eq('user_id', userId).is('org_id', null);
   }
 
   const { data, error } = await query
@@ -103,17 +122,30 @@ interface UseAnchorsReturn {
 export function useAnchors(): UseAnchorsReturn {
   const { user, loading: authLoading } = useAuth();
   const { profile } = useProfile();
+  const { orgId: activeOrgId, loading: activeOrgLoading } = useActiveOrg();
+  const { orgs } = useUserOrgs();
+  const membership = orgs.find((org) => org.orgId === activeOrgId);
+  const activeRole = activeOrgId
+    ? (membership?.role === 'owner' || membership?.role === 'admin' ? 'ORG_ADMIN' : 'INDIVIDUAL')
+    : profile?.role;
   const qc = useQueryClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const scopeIdentity = `${user?.id ?? ''}:${activeOrgId ?? 'personal'}:${activeRole ?? 'unknown'}`;
+  const scopeIdentityRef = useRef(scopeIdentity);
+  useLayoutEffect(() => { scopeIdentityRef.current = scopeIdentity; }, [scopeIdentity]);
+  const anchorsKey = useMemo(
+    () => [...queryKeys.anchors(user?.id ?? '', activeOrgId), activeRole ?? 'UNKNOWN'] as const,
+    [user?.id, activeOrgId, activeRole],
+  );
 
   const {
     data: records = [],
     isLoading: queryLoading,
     error: queryError,
   } = useQuery({
-    queryKey: queryKeys.anchors(user?.id ?? '', profile?.org_id),
-    queryFn: () => fetchAnchorsData(user!.id, profile?.org_id, profile?.role),
-    enabled: !!user,
+    queryKey: anchorsKey,
+    queryFn: () => fetchAnchorsData(user!.id, activeOrgId, activeRole),
+    enabled: !!user && !activeOrgLoading,
   });
 
   // Fire status-transition toast with optional mempool link
@@ -157,18 +189,23 @@ export function useAnchors(): UseAnchorsReturn {
   const handleRealtimePayload = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (payload: { eventType: string; new: any; old: any }) => {
-      const key = queryKeys.anchors(user?.id ?? '', profile?.org_id);
+      if (scopeIdentityRef.current !== scopeIdentity) return;
+      const key = anchorsKey;
+      const belongsToScope = (row: Partial<AnchorRow>) => anchorBelongsToScope(
+        row as Pick<AnchorRow, 'org_id' | 'user_id'>, user?.id, activeOrgId, activeRole,
+      );
 
       if (payload.eventType === 'UPDATE') {
         const updated = payload.new as AnchorRow;
         const old = payload.old as Partial<AnchorRow> | null;
-        fireStatusToast(old, updated);
-        qc.setQueryData<Record[]>(key, (prev) =>
-          (prev ?? []).map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
-        );
+        const eligible = belongsToScope(updated) && anchorIsVisibleRealtime(updated);
+        if (eligible) fireStatusToast(old, updated);
+        qc.setQueryData<Record[]>(key, (prev) => eligible
+          ? (prev ?? []).map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r))
+          : (prev ?? []).filter((r) => r.id !== updated.id));
       } else if (payload.eventType === 'INSERT') {
         const inserted = payload.new as AnchorRow;
-        if (!inserted.deleted_at) {
+        if (anchorIsVisibleRealtime(inserted) && belongsToScope(inserted)) {
           qc.setQueryData<Record[]>(key, (prev) =>
             [mapAnchorToRecord(inserted), ...(prev ?? [])],
           );
@@ -182,56 +219,64 @@ export function useAnchors(): UseAnchorsReturn {
         }
       }
     },
-    [user?.id, profile?.org_id, fireStatusToast, qc],
+    [user?.id, activeOrgId, activeRole, anchorsKey, fireStatusToast, qc, scopeIdentity],
   );
 
   // Realtime subscription for anchor changes (BETA-01)
   // Filtered by user_id to reduce traffic (H3) + reconnect handler (C4)
   useEffect(() => {
     if (!user) return;
+    let active = true;
+
+    const guardedPayload = (payload: Parameters<typeof handleRealtimePayload>[0]) => {
+      if (active) handleRealtimePayload(payload);
+    };
 
     const channel = supabase
-      .channel(`anchors-${user.id}`)
+      .channel(`anchors-${user.id}-${activeOrgId ?? 'personal'}-${activeRole ?? 'unknown'}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'anchors',
-          filter: `user_id=eq.${user.id}`,
+          filter: activeRole === 'ORG_ADMIN' && activeOrgId
+            ? `org_id=eq.${activeOrgId}`
+            : `user_id=eq.${user.id}`,
         },
-        handleRealtimePayload,
+        guardedPayload,
       )
       .subscribe((status) => {
         // Refetch on reconnect to catch any missed updates (C4)
         if (status === 'SUBSCRIBED' && channelRef.current) {
-          qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id, profile?.org_id) });
+          qc.invalidateQueries({ queryKey: anchorsKey });
         }
       });
 
     channelRef.current = channel;
 
     return () => {
+      active = false;
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
     };
-  }, [user, handleRealtimePayload, qc, profile?.org_id]);
+  }, [user, handleRealtimePayload, qc, activeOrgId, activeRole, anchorsKey]);
 
   const refreshAnchors = useCallback(async () => {
     if (user) {
-      await qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id, profile?.org_id) });
+      await qc.invalidateQueries({ queryKey: anchorsKey });
     }
-  }, [user, profile?.org_id, qc]);
+  }, [user, anchorsKey, qc]);
 
   if (queryError) {
     toast.error(TOAST.RECORDS_FETCH_FAILED);
   }
 
   return {
-    records,
-    loading: authLoading || (!!user && queryLoading),
+    records: activeOrgLoading ? [] : records,
+    loading: authLoading || activeOrgLoading || (!!user && queryLoading),
     error: queryError ? (queryError as Error).message : null,
     refreshAnchors,
   };

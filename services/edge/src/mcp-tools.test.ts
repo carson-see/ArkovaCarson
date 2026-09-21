@@ -19,6 +19,7 @@ import {
   handleAgentVerify,
   handleNessieQuery,
   handleSearchCredentials,
+  handleManageFolders,
   handleAnchorDocument,
   handleGetSubmissionStatus,
   handleImportRows,
@@ -69,7 +70,7 @@ describe('handleImportRows', () => {
     expect(result.isError).not.toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith('https://worker.example/api/v1/anchor/import', expect.objectContaining({
-      method: 'POST', redirect: 'error', headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
+      method: 'POST', redirect: 'manual', headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
       signal: expect.any(AbortSignal),
     }));
   });
@@ -120,7 +121,7 @@ describe('handleAnchorDocument submission action parity', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://worker.test/api/v1/anchor');
-    expect(init.redirect).toBe('error');
+    expect(init.redirect).toBe('manual');
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
       fingerprint: 'c'.repeat(64),
@@ -128,6 +129,27 @@ describe('handleAnchorDocument submission action parity', () => {
       credential_type: 'OTHER',
       metadata: { credential_type: 'OTHER' },
     }));
+  });
+
+  it('rejects a worker redirect without forwarding the credential to its target', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: 'https://attacker.example/steal' } }));
+
+    const result = await handleAnchorDocument({
+      content_hash: 'd'.repeat(64),
+      record_type: 'document',
+    }, {
+      ...CONFIG,
+      workerBaseUrl: 'https://worker.test',
+      callerApiKey: 'ak_test_secret',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('HTTP 302');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/anchor',
+      expect.objectContaining({ redirect: 'manual', headers: expect.objectContaining({ 'X-API-Key': 'ak_test_secret' }) }),
+    );
   });
 
   it('preserves a canonical worker credential type', async () => {
@@ -290,7 +312,7 @@ describe('handleGetSubmissionStatus caller-scoped proxy', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'https://worker.test/api/v1/anchor/ark_test/submission-status',
       expect.objectContaining({
-        redirect: 'error',
+        redirect: 'manual',
         signal: expect.any(AbortSignal),
         headers: { Accept: 'application/json', 'X-API-Key': 'ak_test_secret' },
       }),
@@ -1575,5 +1597,120 @@ describe('upstream error bodies are scrubbed before reaching the caller', () => 
     expect(text).not.toContain('secret_col');
     expect(JSON.parse(text)).toMatchObject({ code: 'TOOL_ERROR' });
     err.mockRestore();
+  });
+});
+
+describe('arkova_manage_folders', () => {
+  it('forwards only the authenticated caller key to the canonical worker route', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ folders: [] }), { status: 200 }));
+    const result = await handleManageFolders(
+      { action: 'list', owner_scope: 'ORG', org_id: 'aaaaaaaa-0000-4000-8000-000000000001' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders?owner_scope=ORG&org_id=aaaaaaaa-0000-4000-8000-000000000001',
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-API-Key': 'ak_test_caller' }) }),
+    );
+  });
+
+  it('rejects redirects without replaying caller credentials to another location', async () => {
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed: redirect mode is set to error'));
+
+    const result = await handleManageFolders(
+      { action: 'list', owner_scope: 'ORG' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders?owner_scope=ORG',
+      expect.objectContaining({
+        redirect: 'manual',
+        headers: expect.objectContaining({ 'X-API-Key': 'ak_test_caller' }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('forwards API-visible public ids for a composable bulk move', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ moved: ['ARK-2026-ABC12345'], failed: [] }), { status: 200 }));
+    await handleManageFolders(
+      { action: 'bulk_move', record_public_ids: ['ARK-2026-ABC12345'] },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+    expect(mockFetch).toHaveBeenCalledWith('https://worker.test/api/v1/folders/bulk-move', expect.objectContaining({
+      body: JSON.stringify({ record_public_ids: ['ARK-2026-ABC12345'], folder_id: null }),
+    }));
+  });
+
+  it('forwards create, reparent, connector binding/clear, and delete without changing outputs', async () => {
+    const config = { ...CONFIG, workerBaseUrl: 'https://worker.test', callerApiKey: 'ak_test_caller' };
+    const folderId = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const connectionId = 'aaaaaaaa-0000-4000-8000-000000000002';
+    const cases = [
+      [{ action: 'create', name: 'Cases', owner_scope: 'ORG' }, 'POST', '/api/v1/folders',
+        { name: 'Cases', owner_scope: 'ORG' }],
+      [{ action: 'update', folder_id: folderId, parent_folder_id: null }, 'PATCH', `/api/v1/folders/${folderId}`,
+        { parent_folder_id: null }],
+      [{ action: 'bind_connector', folder_id: folderId, provider: 'google_drive', source_id: 'drive-folder', connection_id: connectionId },
+        'PUT', `/api/v1/folders/${folderId}/connector`,
+        { provider: 'google_drive', source_id: 'drive-folder', connection_id: connectionId }],
+      [{ action: 'bind_connector', folder_id: folderId, provider: null, source_id: null, connection_id: null },
+        'PUT', `/api/v1/folders/${folderId}/connector`, { provider: null, source_id: null, connection_id: null }],
+      [{ action: 'delete', folder_id: folderId }, 'DELETE', `/api/v1/folders/${folderId}`, undefined],
+    ] as const;
+    for (const [input, method, path, body] of cases) {
+      mockFetch.mockResolvedValueOnce(new Response(method === 'DELETE' ? null : JSON.stringify({ folder: { public_id: 'FLD-1' } }),
+        { status: method === 'DELETE' ? 204 : 200 }));
+      const result = await handleManageFolders(input, config);
+      expect(result.isError).toBeFalsy();
+      expect(mockFetch).toHaveBeenLastCalledWith(`https://worker.test${path}`, expect.objectContaining({
+        method, ...(body ? { body: JSON.stringify(body) } : {}),
+      }));
+    }
+  });
+
+  it.each([
+    ['API key', { callerApiKey: 'ak_test_caller' }, { 'X-API-Key': 'ak_test_caller' }],
+    ['Bearer', { callerAuthorization: 'Bearer verified-token' }, { Authorization: 'Bearer verified-token' }],
+  ])('rejects a folder redirect without forwarding the verified %s credential', async (_kind, credential, expectedHeader) => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://attacker.example/steal' } }));
+    const result = await handleManageFolders(
+      { action: 'list' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', ...credential },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('307');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders',
+      expect.objectContaining({ redirect: 'manual', headers: expect.objectContaining(expectedHeader) }),
+    );
+  });
+
+  it('rejects ambiguous bulk id lists before a worker call', async () => {
+    const result = await handleManageFolders(
+      { action: 'bulk_move', anchor_ids: ['aaaaaaaa-0000-4000-8000-000000000001'],
+        record_public_ids: ['ARK-2026-ABC12345'] },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test/', callerApiKey: 'ak_test_caller' },
+    );
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('forwards a verified Bearer and scrubs worker error bodies', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ message: 'internal.host secret row' }), { status: 403 }));
+    const result = await handleManageFolders(
+      { action: 'delete', folder_id: 'aaaaaaaa-0000-4000-8000-000000000001' },
+      { ...CONFIG, workerBaseUrl: 'https://worker.test', callerAuthorization: 'Bearer verified-token' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('internal.host');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://worker.test/api/v1/folders/aaaaaaaa-0000-4000-8000-000000000001',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer verified-token' }) }),
+    );
   });
 });

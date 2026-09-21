@@ -102,6 +102,7 @@ Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-R
 
 - `arkova_verify_anchor` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
 - `arkova_search_anchors` — Keyword search over credentials. Lexical substring match on title/description, not meaning-based; paraphrases will not match. Every result carries a `search_mode` field — read it before presenting results as ranked. Input: `{ "query": "string", "max_results": number }`
+- `arkova_manage_folders` — List and manage nested personal or organization record folders, partial-result bulk moves, and connector destinations. Organization API keys remain bounded to their organization.
 - `verify_fingerprint` — Check if a SHA-256 fingerprint matches an anchored record. Input: `{ "fingerprint": "string" }`
 
 ## Use Cases

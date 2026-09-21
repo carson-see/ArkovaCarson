@@ -2,9 +2,9 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes fifteen default launch tools plus three conditionally registered submission-lifecycle tools. They let AI agents (Claude, LangChain, AutoGen, custom agents) submit client-computed fingerprints, import bounded spreadsheet rows, inspect caller-scoped submission state, verify credentials, and query verified public records without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen default launch tools plus three conditionally registered submission-lifecycle tools. They let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, query verified public records, organize records, submit client-computed fingerprints, import bounded spreadsheet rows, and inspect caller-scoped submission state through the same authorization checks as the REST API. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
-`arkova_anchor_document`, `arkova_get_submission_status` and `arkova_import_rows` are intentionally outside the default MCP launch surface. All three are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. When the hosted feature flag is off, callers that still hold `anchor:write` or its `write:anchors` alias can read historical submission status through the authenticated REST API, TypeScript/Python SDK status method, or API CLI; read-only callers cannot use another transport to bypass that authorization requirement.
+`arkova_anchor_document`, `arkova_get_submission_status` and `arkova_import_rows` are intentionally outside the default MCP launch surface. All three are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Folder mutations remain separately available through `arkova_manage_folders` only to callers with `anchor:write` and the exact folder/record authority checked by the REST API. When the hosted feature flag is off, callers that still hold `anchor:write` or its `write:anchors` alias can read historical submission status through the authenticated REST API, TypeScript/Python SDK status method, or API CLI; read-only callers cannot use another transport to bypass that authorization requirement.
 
 The hosted tool name is `arkova_anchor_document`; the separately maintained npm stdio server exposes the equivalent submission operation as `arkova_submit_anchor`. Registration documents capability, not production enablement: both hosted submission tools remain absent from default discovery unless the flag and scope checks pass. The npm stdio server registers its submit and status tools independently of the hosted edge gate.
 
@@ -57,11 +57,30 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 13 | **`arkova_verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
 | 14 | `arkova_oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
 | 15 | `arkova_list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
-| 16 | **`arkova_get_submission_status`** | **Read caller-scoped durable queue/instant state; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-12** |
-| 17 | `arkova_anchor_document` | Submit a client-computed fingerprint; hosted edge registration is conditional on `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus `write:anchors` or `anchor:write` | UAT-12 |
-| 18 | **`arkova_import_rows`** | **Import up to 100 client-computed spreadsheet rows in one call (`queue` or `instant`); hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-23 / SCRUM-5265** |
+| 16 | **`arkova_manage_folders`** | **List and manage nested personal or organization record folders** | **SCRUM-5142** |
+| 17 | **`arkova_get_submission_status`** | **Read caller-scoped durable queue/instant state; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-12** |
+| 18 | `arkova_anchor_document` | Submit a client-computed fingerprint; hosted edge registration is conditional on `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus `write:anchors` or `anchor:write` | UAT-12 |
+| 19 | **`arkova_import_rows`** | **Import up to 100 client-computed spreadsheet rows in one call (`queue` or `instant`); hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-23 / SCRUM-5265** |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `arkova`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
+
+### `arkova_manage_folders`
+
+Uses the same authenticated `/api/v1/folders` routes as the app and SDKs. The
+`action` is `list`, `create`, `update`, `bind_connector`, `delete`, or
+`bulk_move`. Folder mutations require `anchor:write`; listing requires
+`anchor:read`. An organization API key stays bounded to its key organization,
+including when its issuer owns unrelated personal or other-organization rows.
+Globally personal folders have no `context_org_id` and remain owner-private;
+authorized administrators can view personal folders only when the folder has an
+explicit approved organization context.
+
+Bulk moves accept one to 100 internal `anchor_ids` or API-visible
+`record_public_ids`, preserve the caller's identifier in each outcome, and keep successful rows when other
+rows fail, and return partial results inside the MCP tool response. Omit
+`folder_id` to move records to Unfiled. Connector bindings require `provider`,
+`source_id`, and an active same-scope `connection_id`; omit the three values to
+clear a binding.
 
 All tool responses follow the MCP convention:
 

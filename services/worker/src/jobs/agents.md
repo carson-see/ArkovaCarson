@@ -2000,6 +2000,10 @@ Read before changing it:
 - **`COMPUTEID_RECHECK_CRON`** is the single source for the schedule: the `withCronMonitoring` slug's declared crontab and the schedule quoted in `cloud-scheduler.sh`'s `NOT_SCHEDULED` reason, bound together by a test. Nothing bound the literal before, so Sentry's monitor could have drifted from the gcloud binding silently.
 - **Correction to the rationale, not the schedule.** `17 * * * *` stays, but the reason given for it was false: SCRUM-4475 replaced the global bucket, so the `:00` pile-up is **not** currently costing other jobs 429s. Spreading off `:00` is prevention, not a fix for a live incident. Corrected in all four places that repeated the claim.
 
+## 2026-09-14 — connector folder routing
+
+`defaultMaterializeAnchor` selects DS-04 member `owner_user_id` for member-scoped artifacts. Migration 0462 revalidates the locked artifact against the active member connection and exact membership before publication; org-scoped artifacts retain owner/admin actor resolution. Do not split 0445's locked anchor publication and artifact link.
+
 ## 2026-09-13 — SCRUM-5120: `batch_insert_anchors` was dropping `description`
 
 `publicRecordAnchor.ts`'s `buildPipelineAnchorInsert` has always built its RPC element with `...(description ? { description } : {})` — this file's JS side never dropped the field. The bug was entirely in `public.batch_insert_anchors` (migration `0370`/SCRUM-3031's redefinition never read `elem->>'description'`), fixed by migration `0458` (threads it through the input CTE and the INSERT column list/matching SELECT only — every other line of 0370's dedup-lookup fix is unchanged). 40,059 openalex/federal_register anchors created since 2026-08-17 landed with `description IS NULL` as a result; the text is still recoverable from the linked `public_records.metadata` row and is backfilled out-of-band by `scripts/ops/repair-pipeline-anchor-descriptions.ts` (not run against any remote database by this change — dry-run only, local stack unavailable in this worktree).

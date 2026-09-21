@@ -5,7 +5,7 @@
  * Separate from Dashboard which shows an overview.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -30,6 +30,8 @@ import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useFolders, type Folder } from '@/hooks/useFolders';
+import { useActiveOrg } from '@/hooks/useActiveOrg';
+import { useUserOrgs } from '@/hooks/useUserOrgs';
 import { AppShell } from '@/components/layout';
 import { SecureDocumentDialog } from '@/components/anchor';
 import {
@@ -43,6 +45,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -66,7 +69,21 @@ import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
 /** Local discriminated state for the shared create/rename folder dialog. */
-type FolderDialogState = { mode: 'create' } | { mode: 'rename'; folder: Folder };
+type FolderDialogState = { mode: 'create'; parentFolderId?: string; ownerScope?: 'USER' | 'ORG'; contextOrgId?: string | null } | { mode: 'rename'; folder: Folder };
+
+export function resolveFolderDraft(
+  dialog: Extract<FolderDialogState, { mode: 'create' }>,
+  folders: Folder[],
+) {
+  const parent = dialog.parentFolderId
+    ? folders.find((folder) => folder.id === dialog.parentFolderId)
+    : undefined;
+  return {
+    ownerScope: parent?.ownerScope ?? dialog.ownerScope ?? 'USER' as const,
+    parentFolderId: dialog.parentFolderId ?? null,
+    contextOrgId: parent?.contextOrgId ?? dialog.contextOrgId ?? null,
+  };
+}
 
 const statusConfig = {
   PENDING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
@@ -86,9 +103,12 @@ export function MyRecordsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const { orgId: activeOrgId } = useActiveOrg();
+  const { orgs } = useUserOrgs();
+  const activeMembership = orgs.find((org) => org.orgId === activeOrgId);
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
-  const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord } = useFolders();
+  const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord, assignRecords } = useFolders();
 
   // NCA-FU2 (SCRUM-906) — deep-linked from the compliance scorecard with
   // `?action=upload&credential_type=...`. URL params are scrubbed post-mount
@@ -104,7 +124,23 @@ export function MyRecordsPage() {
   const [folderFilter, setFolderFilter] = useState<FolderSelection>('ALL');
   const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
-  const [moveTarget, setMoveTarget] = useState<Record | null>(null);
+  const [moveTargets, setMoveTargets] = useState<Record[]>([]);
+  const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
+  const activeOrgRef = useRef(activeOrgId);
+  const folderDraft = useMemo(() => folderDialog?.mode === 'create'
+    ? resolveFolderDraft(folderDialog, folders)
+    : null, [folderDialog, folders]);
+
+  useEffect(() => {
+    activeOrgRef.current = activeOrgId;
+    // Tenant switches invalidate all local selections/dialog state synchronously.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFolderFilter('ALL');
+    setSelectedRecordIds(new Set());
+    setMoveTargets([]);
+    setFolderDialog(null);
+    setDeleteTarget(null);
+  }, [activeOrgId]);
 
   useEffect(() => {
     if (shouldAutoOpenUpload) {
@@ -139,19 +175,25 @@ export function MyRecordsPage() {
   // error and keep itself open. Only a resolved submit reaches the toast.
   const handleFolderSubmit = useCallback(async (name: string) => {
     if (!folderDialog) return;
+    const requestOrgId = activeOrgId;
     if (folderDialog.mode === 'create') {
-      await createFolder(name);
+      if (!folderDraft) return;
+      await createFolder(name, folderDraft);
+      if (activeOrgRef.current !== requestOrgId) throw new Error(FOLDER_LABELS.ERR_CREATE);
       toast.success(FOLDER_LABELS.TOAST_CREATED);
     } else {
       await renameFolder(folderDialog.folder.id, name);
+      if (activeOrgRef.current !== requestOrgId) throw new Error(FOLDER_LABELS.ERR_RENAME);
       toast.success(FOLDER_LABELS.TOAST_RENAMED);
     }
-  }, [folderDialog, createFolder, renameFolder]);
+  }, [activeOrgId, folderDialog, folderDraft, createFolder, renameFolder]);
 
   const handleDeleteFolderConfirm = useCallback(async () => {
     if (!deleteTarget) return;
+    const requestOrgId = activeOrgId;
     try {
       await deleteFolder(deleteTarget.id);
+      if (activeOrgRef.current !== requestOrgId) return;
       toast.success(FOLDER_LABELS.TOAST_DELETED);
       // Records fall back to Unfiled (ON DELETE SET NULL) — if we were
       // viewing the folder being deleted, fall back to All Records so the
@@ -160,17 +202,29 @@ export function MyRecordsPage() {
     } catch {
       toast.error(FOLDER_LABELS.ERR_DELETE);
     }
-  }, [deleteFolder, deleteTarget]);
+  }, [activeOrgId, deleteFolder, deleteTarget]);
 
   const handleMoveSelect = useCallback(async (folderId: string | null) => {
-    if (!moveTarget) return;
+    if (moveTargets.length === 0) return false;
+    const requestOrgId = activeOrgId;
+    const requestedRecords = moveTargets;
     try {
-      await assignRecord(moveTarget.id, folderId);
-      toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
+      const result = await assignRecords(requestedRecords.map((record) => record.id), folderId);
+      if (activeOrgRef.current !== requestOrgId) return false;
+      const failedIds = new Set(result.failed.map((failure) => failure.anchor_id));
+      setSelectedRecordIds(failedIds);
+      setMoveTargets(requestedRecords.filter((record) => failedIds.has(record.id)));
+      if (result.moved.length > 0) toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
+      if (result.failed.length > 0) {
+        toast.warning(FOLDER_LABELS.PARTIAL_MOVE.replace('{count}', String(result.failed.length)));
+        return false;
+      }
+      return true;
     } catch {
       toast.error(FOLDER_LABELS.ERR_ASSIGN);
+      return false;
     }
-  }, [assignRecord, moveTarget]);
+  }, [activeOrgId, assignRecords, moveTargets]);
 
   const handleRemoveFromFolder = useCallback(async (record: Record) => {
     try {
@@ -182,16 +236,24 @@ export function MyRecordsPage() {
   }, [assignRecord]);
 
   // Filter records by folder, then search query and status.
+  const selectedFolderIds = useMemo(() => {
+    if (folderFilter === 'ALL' || folderFilter === 'UNFILED') return null;
+    const ids = new Set([folderFilter]);
+    for (let pass = 0; pass < folders.length; pass += 1) {
+      for (const folder of folders) if (folder.parentFolderId && ids.has(folder.parentFolderId)) ids.add(folder.id);
+    }
+    return ids;
+  }, [folderFilter, folders]);
   const filteredRecords = useMemo(() => records.filter((r) => {
     if (folderFilter === 'UNFILED' && r.folderId) return false;
-    if (folderFilter !== 'ALL' && folderFilter !== 'UNFILED' && r.folderId !== folderFilter) return false;
+    if (selectedFolderIds && (!r.folderId || !selectedFolderIds.has(r.folderId))) return false;
     if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       return r.filename.toLowerCase().includes(q) || r.fingerprint.toLowerCase().includes(q);
     }
     return true;
-  }), [records, folderFilter, statusFilter, searchQuery]);
+  }), [records, folderFilter, selectedFolderIds, statusFilter, searchQuery]);
 
   return (
     <AppShell
@@ -232,7 +294,9 @@ export function MyRecordsPage() {
             loading={foldersLoading}
             selected={folderFilter}
             onSelect={setFolderFilter}
-            onNewFolder={() => setFolderDialog({ mode: 'create' })}
+            onNewFolder={(parentFolderId, ownerScope, contextual) => setFolderDialog({ mode: 'create', parentFolderId, ownerScope, contextOrgId: contextual ? activeOrgId : null })}
+            canCreateOrg={activeMembership?.role === 'owner' || activeMembership?.role === 'admin'}
+            canCreateContextual={Boolean(activeOrgId)}
             onRename={(folder) => setFolderDialog({ mode: 'rename', folder })}
             onDelete={(folder) => setDeleteTarget(folder)}
           />
@@ -273,6 +337,13 @@ export function MyRecordsPage() {
             <p className="text-sm text-muted-foreground">
               {filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''}
             </p>
+            {selectedRecordIds.size > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setMoveTargets(
+                records.filter((record) => selectedRecordIds.has(record.id)),
+              )}>
+                <FolderInput className="mr-2 h-4 w-4" /> Move {selectedRecordIds.size}
+              </Button>
+            )}
           </div>
         </CardHeader>
         <Separator />
@@ -325,6 +396,16 @@ export function MyRecordsPage() {
                     onClick={() => navigate(recordDetailPath(record.id))}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(recordDetailPath(record.id)); } }}
                   >
+                    <Checkbox
+                      checked={selectedRecordIds.has(record.id)}
+                      aria-label={`Select ${record.filename}`}
+                      onClick={(event) => event.stopPropagation()}
+                      onCheckedChange={(checked) => setSelectedRecordIds((current) => {
+                        const next = new Set(current);
+                        if (checked) next.add(record.id); else next.delete(record.id);
+                        return next;
+                      })}
+                    />
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
                       <FileText className="h-5 w-5 text-muted-foreground" />
                     </div>
@@ -386,7 +467,7 @@ export function MyRecordsPage() {
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
-                            setMoveTarget(record);
+                            setMoveTargets([record]);
                           }}
                         >
                           <FolderInput className="mr-2 h-4 w-4" />
@@ -445,6 +526,10 @@ export function MyRecordsPage() {
         onOpenChange={(open) => { if (!open) setFolderDialog(null); }}
         mode={folderDialog?.mode ?? 'create'}
         initialName={folderDialog?.mode === 'rename' ? folderDialog.folder.name : undefined}
+        privacyDescription={folderDialog?.mode === 'create'
+          ? folderDraft?.ownerScope === 'ORG' ? FOLDER_LABELS.PRIVACY_ORG
+            : folderDraft?.contextOrgId ? FOLDER_LABELS.PRIVACY_CONTEXT : FOLDER_LABELS.PRIVACY_GLOBAL
+          : undefined}
         onSubmit={handleFolderSubmit}
       />
       <DeleteFolderDialog
@@ -454,10 +539,10 @@ export function MyRecordsPage() {
         onConfirm={handleDeleteFolderConfirm}
       />
       <MoveToFolderDialog
-        open={moveTarget !== null}
-        onOpenChange={(open) => { if (!open) setMoveTarget(null); }}
+        open={moveTargets.length > 0}
+        onOpenChange={(open) => { if (!open) setMoveTargets([]); }}
         folders={folders}
-        currentFolderId={moveTarget?.folderId ?? null}
+        currentFolderId={moveTargets.length === 1 ? moveTargets[0]?.folderId ?? null : null}
         onSelect={handleMoveSelect}
       />
     </AppShell>

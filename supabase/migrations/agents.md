@@ -1574,6 +1574,23 @@ remains held until its own production and CI requirements are satisfied.
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
 
+## 2026-09-14 — SCRUM-5142 nested folders
+
+Migration 0462 extends the canonical 0365 `folders` table. Global USER folders remain private; explicit org-context USER folders are visible to exact/approved-ancestor admins, while mutations remain owner/exact-admin scoped. Hierarchy changes serialize per owner to reject concurrent cycles. Connector routing stays inside the 0445 atomic materialization transaction, preserves an existing folder, and validates active exact-scope connections. The native rollback/reapply, adverse RLS/API-key, 0445 reuse, reconnect, and two-session cycle fixture is under `docs/staging/uat24-2026-09-14/`.
+
+## 2026-09-14 — SCRUM-5252 platform-admin folder read parity
+
+Migration 0464 replaces only `folder_api_list` and retains its exact signature
+and service-role-only grants. It verifies `profiles.is_platform_admin` only
+when `p_api_org_id` is NULL, so API-key organization scope remains an upper
+bound. Do not add platform administrators to `folder_api_administers_org`:
+that helper protects write RPCs. Missing service-role claims must fail closed
+with `auth.role() IS DISTINCT FROM 'service_role'`. The unchanged signature
+has no generated database-type delta.
+## Recent migrations (PR #2966)
+
+0461 is immutable; it was applied only to the owned UAT-17 staging candidate in this session. Additive 0463 (SCRUM-5212) provides explicit funded, never-debited NEEDS_CREDIT recovery, exact owner/org checks, intent→anchor→credit lock order and one durable generation job. Additive 0465 reconciles 0451's canonical restrictive MFA policy onto all three RLS tables introduced by 0461 without rewriting staged history. Apply 0463 and 0465 before the corrected worker; roll back the worker before removing its RPC/column. Native tests load the exact 0341 debit helper and 0461/0463 RPCs, but use a reduced surrounding schema. Full canonical-schema replay, type generation and fresh corrected-head qualification remain separate gates. No production application is asserted here.
+
 ## 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
 
 Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.
@@ -1642,11 +1659,18 @@ referral SECURITY DEFINER RPCs. `get_caller_role()` may return NULL when request
 claims are absent; every service-role comparison must coalesce that result to
 `false` so PL/pgSQL authority guards fail closed. Normal authenticated and
 service-role paths remain unchanged.
+| `0477` | `0477_uat19_queue_resolve_authorization.sql` | SCRUM-5268 / UAT-19 | PRE-PUBLICATION | Replaces only the service-role four-argument `resolve_anchor_queue_by_public_id` body. Tenant and collision scope come from the selected public anchor; authorization is exact `org_members` owner/admin, platform admin, or exact owner/admin of one APPROVED direct parent (no profile-role fallback or recursive ancestry). A tenant+collision advisory transaction lock precedes deterministic row locks, so different-winner races cannot deadlock; the durable receipt is rechecked under lock. ACL/signature stay service-role-only/unchanged. Native proof: `scripts/uat19/native-pg-queue-resolution.sh`. |
 
-## Recent migrations (PR #2966)
+## 2026-09-19 — UAT-24 global-personal folder privacy (0480)
 
-0461 is immutable; it was applied only to the owned UAT-17 staging candidate in this session. Additive 0463 (SCRUM-5212) provides explicit funded, never-debited NEEDS_CREDIT recovery, exact owner/org checks, intent→anchor→credit lock order and one durable generation job. Additive 0465 reconciles 0451's canonical restrictive MFA policy onto all three RLS tables introduced by 0461 without rewriting staged history. Apply 0463 and 0465 before the corrected worker; roll back the worker before removing its RPC/column. Native tests load the exact 0341 debit helper and 0461/0463 RPCs, but use a reduced surrounding schema. Full canonical-schema replay, type generation and fresh corrected-head qualification remain separate gates. No production application is asserted here.
-
+`0480_uat24_global_personal_folder_privacy.sql` is an additive correction to
+0462/0464. It narrows only `folders_select_user`: platform administrators and
+approved ancestor administrators can read another user's personal folder only
+when `context_org_id IS NOT NULL`; a globally personal row remains visible only
+to its owner. No insert/update/delete policy or worker RPC changes. The native
+UAT-24 harness executes the effective 0462 + 0464 + 0480 stack under forced RLS
+and proves owner, platform-context, ancestor-context, peer-denial, global
+privacy, and NULL-identity behavior. File-only, not applied to any hosted DB.
 ## 2026-09-19 — 0475 atomic contractual anchor-cap conservation
 
 `0475_atomic_contractual_anchor_cap.sql` compensates for the final-slot race
@@ -1660,6 +1684,7 @@ The initial review incorrectly equated matching old production/B4 RPC hashes
 with canonical 0474. Both were still on the older 0461-era body. Migration 0475
 is based on immutable 0474 file SHA256 `00a15bd4...e6e64bb`; B4 first received
 0474 during qualification, and production application remained pending.
+
 ## Recent migrations (PR #2964) — 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
 
 Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.
