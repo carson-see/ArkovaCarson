@@ -313,6 +313,38 @@ export async function refreshAccessToken(args: {
 }
 
 /**
+ * Fetch a fresh `changes.getStartPageToken` — the cursor to begin (or
+ * RESTART) walking the changes feed from "now" forward. Extracted from
+ * `createChangesWatch` (which calls this as its first step) so the SAME
+ * logic is reusable by the 410/404 "pageToken invalid/expired" recovery path
+ * in `drive-changes-processor.ts` — Google's documented recovery for an
+ * expired page token is exactly this call, never a retry of `changes.list`
+ * with the same stale token.
+ */
+export async function getStartPageToken(args: {
+  accessToken: string;
+  // DRIVE-02 (SCRUM-2367): scope to a shared-drive corpus when watching one.
+  driveId?: string;
+  deps?: DriveClientDeps;
+}): Promise<string> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const startTokenQuery = args.driveId
+    ? `?driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true`
+    : '';
+  const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  const startJson = (await readDriveJson(startRes, 'Drive changes.startPageToken')) as {
+    startPageToken?: string;
+  } | null;
+  if (!startRes.ok || !startJson?.startPageToken) {
+    // Non-document path: changes/startPageToken returns small API JSON.
+    throw new DriveApiError('Drive startPageToken failed', startRes.status, boundedErrorDetail(startJson));
+  }
+  return startJson.startPageToken;
+}
+
+/**
  * Register a Drive push-notification channel. Drive will POST file-change
  * events to `address`. Channels expire after 7 days; renew before then via
  * the integration-subscription-renewal cron.
@@ -331,19 +363,11 @@ export async function createChangesWatch(args: {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
   // Drive requires a startPageToken to watch changes. For a shared-drive corpus
   // the token must be scoped to that drive.
-  const startTokenQuery = args.driveId
-    ? `?driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true`
-    : '';
-  const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
-    headers: { Authorization: `Bearer ${args.accessToken}` },
+  const startPageToken = await getStartPageToken({
+    accessToken: args.accessToken,
+    driveId: args.driveId,
+    deps: args.deps,
   });
-  const startJson = (await readDriveJson(startRes, 'Drive changes.startPageToken')) as {
-    startPageToken?: string;
-  } | null;
-  if (!startRes.ok || !startJson?.startPageToken) {
-    // Non-document path: changes/startPageToken returns small API JSON.
-    throw new DriveApiError('Drive startPageToken failed', startRes.status, boundedErrorDetail(startJson));
-  }
 
   const watchBody = {
     id: args.channelId,
@@ -356,7 +380,7 @@ export async function createChangesWatch(args: {
     ? `&driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true&includeItemsFromAllDrives=true`
     : '';
   const res = await fetchImpl(
-    `${DRIVE_API_BASE}/changes/watch?pageToken=${encodeURIComponent(startJson.startPageToken)}${watchQuery}`,
+    `${DRIVE_API_BASE}/changes/watch?pageToken=${encodeURIComponent(startPageToken)}${watchQuery}`,
     {
       method: 'POST',
       headers: {
@@ -380,7 +404,7 @@ export async function createChangesWatch(args: {
     : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   // DRIVE-02: expose the startPageToken so the bootstrap can persist it as the
   // watch's initial_page_token (the durable resume anchor).
-  return { resourceId: json.resourceId, expiration: expirationIso, startPageToken: startJson.startPageToken };
+  return { resourceId: json.resourceId, expiration: expirationIso, startPageToken };
 }
 
 /** Stop an active Drive push-notification channel during renewal/disconnect. */
@@ -593,6 +617,28 @@ export type DriveChangesListResponseT = z.infer<typeof ChangesListResponse>;
  * needs (file id/parents/revision/actor); body bytes never traverse this
  * path per CLAUDE.md §1.6.
  */
+/**
+ * SCRUM-2903 / SCRUM-3661 / SCRUM-5094 / SCRUM-2330 incident fix: this used
+ * to be built as `[ 'newStartPageToken', 'nextPageToken', 'changes(...',
+ * 'file(...', 'lastModifyingUser(...)))' ].join('')` — an EMPTY-STRING join,
+ * so the first two top-level entries and the start of `changes(...)` fused
+ * together with no separating commas
+ * (`newStartPageTokennextPageTokenchanges(...`). Google rejected every call
+ * with HTTP 400 `Invalid field selection newStartPageTokennextP...` — every
+ * Drive change notification failed, silently (200-acked so Drive would not
+ * retry-storm), since the 2026-05-04 commit that introduced it.
+ *
+ * Built as ONE template literal — unambiguous, and its top-level entries are
+ * explicitly comma-separated so there is no join-separator to get wrong a
+ * second time. Structure mirrors `getFileMetadata`'s and `listChildFolders`'
+ * flat `fields` masks: this one is just nested, per
+ * https://developers.google.com/drive/api/guides/fields-parameter.
+ */
+const CHANGES_LIST_FIELDS =
+  'newStartPageToken,nextPageToken,changes(fileId,removed,changeType,time,' +
+  'file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,' +
+  'lastModifyingUser(emailAddress,displayName)))';
+
 export async function listChanges(args: {
   accessToken: string;
   pageToken: string;
@@ -604,13 +650,7 @@ export async function listChanges(args: {
     includeRemoved: 'true',
     supportsAllDrives: 'true',
     includeItemsFromAllDrives: 'true',
-    fields: [
-      'newStartPageToken',
-      'nextPageToken',
-      'changes(fileId,removed,changeType,time,',
-      'file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,',
-      'lastModifyingUser(emailAddress,displayName)))',
-    ].join(''),
+    fields: CHANGES_LIST_FIELDS,
   });
   const url = `${DRIVE_API_BASE}/changes?${params.toString()}`;
   const res = await fetchImpl(url, {

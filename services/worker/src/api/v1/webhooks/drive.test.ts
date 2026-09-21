@@ -1,7 +1,7 @@
 /**
  * Drive push-notification webhook handler tests (SCRUM-1099, SCRUM-1211).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -30,8 +30,23 @@ const { mockConfig } = vi.hoisted(() => ({
 }));
 vi.mock('../../../config.js', () => ({ config: mockConfig }));
 
+// Task 4 (orchestrator review): the ENABLE_DRIVE_CHANGES_RUNNER=true path —
+// where runDriveChanges is actually called — had ZERO test coverage in this
+// file before this change; every existing test below exercises only the
+// default-disabled 200-ack stub. Mock the runner + KMS client boundary so
+// the new tests can drive both the success and failure legs without a real
+// Drive credential or Postgres.
+const runDriveChangesMock = vi.fn();
+vi.mock('../../../integrations/connectors/drive-changes-runner.js', () => ({
+  runDriveChanges: (...args: unknown[]) => runDriveChangesMock(...args),
+}));
+vi.mock('../../../integrations/oauth/crypto.js', () => ({
+  createDefaultKmsClient: vi.fn(async () => ({ encrypt: vi.fn(), decrypt: vi.fn() })),
+}));
+
 import { logger } from '../../../utils/logger.js';
 import { driveWebhookRouter } from './drive.js';
+import { DriveApiError } from '../../../integrations/oauth/drive.js';
 
 function createApp() {
   const app = express();
@@ -341,5 +356,102 @@ describe('POST /webhooks/drive (SCRUM-1211 fail-closed channel-token)', () => {
         message_number: 7,
       }),
     );
+  });
+
+  // Task 4 (orchestrator review): make a repeated changes.list failure LOUD.
+  // ENABLE_DRIVE_CHANGES_RUNNER is read directly off process.env (not the
+  // mocked `config`), so these tests flip it per-test and restore it after.
+  describe('ENABLE_DRIVE_CHANGES_RUNNER=true (runner enabled)', () => {
+    let prevFlag: string | undefined;
+
+    beforeEach(() => {
+      prevFlag = process.env.ENABLE_DRIVE_CHANGES_RUNNER;
+      process.env.ENABLE_DRIVE_CHANGES_RUNNER = 'true';
+    });
+
+    afterEach(() => {
+      if (prevFlag === undefined) delete process.env.ENABLE_DRIVE_CHANGES_RUNNER;
+      else process.env.ENABLE_DRIVE_CHANGES_RUNNER = prevFlag;
+    });
+
+    it('200s and logs an info line with the result on success', async () => {
+      dbFromMock.mockReturnValueOnce(lookupChain({
+        org_id: 'org-1',
+        integration_id: 'int-1',
+        channel_token: 'expected-token',
+      }));
+      dbFromMock.mockReturnValueOnce(nonceInsert(null));
+      runDriveChangesMock.mockResolvedValueOnce({ queued: 1, pagesProcessed: 1, newPageToken: 'tok-2' });
+
+      const res = await request(createApp())
+        .post('/webhooks/drive')
+        .set('X-Goog-Channel-ID', 'chan-1')
+        .set('X-Goog-Resource-State', 'change')
+        .set('X-Goog-Channel-Token', 'expected-token')
+        .set('X-Goog-Message-Number', '10');
+
+      expect(res.status).toBe(200);
+      expect(runDriveChangesMock).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: 'org-1', integrationId: 'int-1' }),
+        'drive webhook: changes processed',
+      );
+    });
+
+    it('200s (ack, no retry-storm) but logs httpStatus + bounded errorDetail as STRUCTURED fields on a DriveApiError (e.g. this incident\'s own HTTP 400)', async () => {
+      dbFromMock.mockReturnValueOnce(lookupChain({
+        org_id: 'org-1',
+        integration_id: 'int-1',
+        channel_token: 'expected-token',
+      }));
+      dbFromMock.mockReturnValueOnce(nonceInsert(null));
+      const err = new DriveApiError(
+        'Drive changes.list failed',
+        400,
+        'Invalid field selection newStartPageTokennextP...',
+      );
+      runDriveChangesMock.mockRejectedValueOnce(err);
+
+      const res = await request(createApp())
+        .post('/webhooks/drive')
+        .set('X-Goog-Channel-ID', 'chan-1')
+        .set('X-Goog-Resource-State', 'change')
+        .set('X-Goog-Channel-Token', 'expected-token')
+        .set('X-Goog-Message-Number', '11');
+
+      expect(res.status).toBe(200);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          httpStatus: 400,
+          errorDetail: 'Invalid field selection newStartPageTokennextP...',
+          orgId: 'org-1',
+          integrationId: 'int-1',
+        }),
+        'drive webhook: runDriveChanges failed — 200 ack so Drive does not retry-storm',
+      );
+    });
+
+    it('httpStatus/errorDetail are null (not crashing, not fabricated) for a non-DriveApiError failure', async () => {
+      dbFromMock.mockReturnValueOnce(lookupChain({
+        org_id: 'org-1',
+        integration_id: 'int-1',
+        channel_token: 'expected-token',
+      }));
+      dbFromMock.mockReturnValueOnce(nonceInsert(null));
+      runDriveChangesMock.mockRejectedValueOnce(new Error('KMS decrypt failed'));
+
+      const res = await request(createApp())
+        .post('/webhooks/drive')
+        .set('X-Goog-Channel-ID', 'chan-1')
+        .set('X-Goog-Resource-State', 'change')
+        .set('X-Goog-Channel-Token', 'expected-token')
+        .set('X-Goog-Message-Number', '12');
+
+      expect(res.status).toBe(200);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ httpStatus: null, errorDetail: null }),
+        'drive webhook: runDriveChanges failed — 200 ack so Drive does not retry-storm',
+      );
+    });
   });
 });

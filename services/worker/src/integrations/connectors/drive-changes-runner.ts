@@ -29,6 +29,7 @@
  * stub Drive HTTP, KMS, and the DB without touching production.
  */
 import { z } from 'zod';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { dbUuid } from '../../utils/db-row-validation.js';
 import {
   refreshAccessToken,
@@ -57,6 +58,12 @@ import {
 } from './drive-folder-resolver.js';
 import { reportDriveProcessingFailure } from './drive-connect-health.js';
 import { driveFolderIds } from './drive-folder-bindings.js';
+import {
+  acquireRunLease,
+  releaseRunLease,
+  runLeaseHolder,
+  type RunLeaseSpec,
+} from '../../jobs/run-lease.js';
 
 // Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
 // CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
@@ -107,6 +114,62 @@ const EnqueueRuleEventPayloadSchema = z.object({
 });
 
 const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Per-integration single-flight guard (orchestrator first-run-flood review,
+ * SCRUM-2903/3661 follow-up).
+ *
+ * Without this, a burst of Drive push notifications for the SAME
+ * integration (Drive can and does deliver bursts — the flagged prod org
+ * receives ~115 pushes/day) can land on multiple Cloud Run instances
+ * concurrently, each independently decrypting/refreshing the OAuth token and
+ * walking the SAME changes.list backlog. The revision ledger's
+ * UNIQUE(integration, file, revision) constraint already stops that from
+ * double-enqueueing a rule event or a file-changed job (a losing writer's
+ * insert 23505s and is counted as a duplicate) — so a race here was never a
+ * correctness bug — but it wastes Drive API quota and token-refresh calls
+ * proportional to the concurrency, and `advancePageToken`'s UPDATE is a
+ * last-writer-wins overwrite (no CAS), so a straggler run can rewrite the
+ * cursor backwards after a faster run already advanced it past that point.
+ *
+ * Reuses the SAME cross-instance TTL-lease primitive `jobs/run-lease.ts`
+ * already uses for the singleton anchor-pipeline crons (SCRUM-3031) — a
+ * `job_queue` row claimed via compare-and-set, deliberately NOT a Postgres
+ * advisory lock (see that module's doc comment: this webhook path also goes
+ * through PostgREST's pooled backends, where an advisory lock's release can
+ * land on a different backend than its acquire and silently no-op). The
+ * difference from every OTHER registered lease is that this one is
+ * DYNAMICALLY keyed per integration (`leaseId = integration.id`, already a
+ * `job_queue`-compatible UUID) rather than a fixed module-level constant —
+ * `job_queue` has no uniqueness constraint tying `leaseId` to a single
+ * logical lease, so a distinct row per integration is exactly as safe as the
+ * fixed-id case the other specs use.
+ *
+ * Short TTL/no heartbeat, deliberately: `withRunLease`'s heartbeat+deadline
+ * machinery exists for crons that can legitimately run up to an hour; a
+ * webhook-triggered pass is bounded by `SAFE_PAGE_LIMIT` and expected to
+ * finish in seconds to low minutes. A plain acquire/release (this module) is
+ * simpler and correct for that shape — a crashed holder self-heals via TTL
+ * expiry, same as every other lease here.
+ */
+const DRIVE_CHANGES_RUN_LEASE_TTL_MS = 10 * 60_000;
+
+export function driveChangesRunLeaseSpec(integrationId: string): RunLeaseSpec {
+  return {
+    leaseId: integrationId,
+    leaseType: 'drive-changes:lease',
+    ttlMs: DRIVE_CHANGES_RUN_LEASE_TTL_MS,
+    label: `Drive changes (integration ${integrationId})`,
+    // Not cron-scheduled — there is no fixed cadence to floor against, and
+    // this spec is never registered in `RUN_LEASE_SPECS` (whose shared test
+    // asserts `ttlMs > slowestRecordedCadenceMs` for every entry there).
+    // Unused by the plain acquire/release path below; set equal to ttlMs so
+    // the field is never silently wrong if a future refactor DOES route this
+    // spec through `withRunLease`.
+    slowestRecordedCadenceMs: 0,
+    maxRunMs: DRIVE_CHANGES_RUN_LEASE_TTL_MS,
+  };
+}
 
 export interface DriveChangesRunnerDeps {
   db: {
@@ -569,7 +632,7 @@ export function createFolderPathCache(
 export async function runDriveChanges(
   integration: DriveIntegrationRow,
   deps: DriveChangesRunnerDeps,
-): Promise<ProcessChangesResult | { skipped: 'no_page_token' | 'no_watched_folders' }> {
+): Promise<ProcessChangesResult | { skipped: 'no_page_token' | 'no_watched_folders' | 'locked' }> {
   // Bootstrap guard — Drive integrations created BEFORE migration 0288 may
   // have last_page_token=null. Without it the processor can't even call
   // changes.list. Fail soft (skip + log).
@@ -604,34 +667,56 @@ export async function runDriveChanges(
     return { skipped: 'no_watched_folders' };
   }
 
-  const { accessToken } = await loadDriveAccessToken(integration, deps);
-  const procIntegration: DriveProcessorIntegration = {
-    id: integration.id,
-    org_id: integration.org_id,
-    last_page_token: integration.last_page_token,
-    watched_folder_ids: watched,
-  };
-  const db = createProcessorDbAdapter(deps);
-  // SCRUM-1837 (GH #1837): wire the folder-path resolver so
-  // folder_path_starts_with rules can finally match. Bound once per run
-  // (not per change) over the real drive_folder_path_cache-backed store.
-  const folderPathCache = createFolderPathCache(deps);
-  const resolveFolderPath = (args: { orgId: string; fileId: string; accessToken: string }) =>
-    resolveDriveFolderPath({
-      orgId: args.orgId,
-      fileId: args.fileId,
-      accessToken: args.accessToken,
-      cache: folderPathCache,
-      // PR #1944 review follow-up: without a logger, every resolution
-      // failure was a completely silent swallow-to-null — pass one through
-      // so a real failure (permission loss, an unexpected bug) actually
-      // produces a log line instead of just quietly degrading rule matching.
-      deps: { fetchImpl: deps.drive?.fetchImpl, logger: deps.logger },
+  // Single-flight guard — see the doc comment on driveChangesRunLeaseSpec.
+  // Acquired AFTER the cheap skip checks above (no point burning a lease
+  // round-trip on a pass that would immediately no-op) and BEFORE the token
+  // refresh + changes.list work this guards.
+  const leaseClient = deps.db as unknown as SupabaseClient;
+  const leaseSpec = driveChangesRunLeaseSpec(integration.id);
+  const leaseHolder = runLeaseHolder();
+  const acquired = await acquireRunLease(leaseClient, leaseSpec, leaseHolder);
+  if (!acquired) {
+    deps.logger?.info?.(
+      { integrationId: integration.id, orgId: integration.org_id },
+      'drive runner: another run already holds the per-integration lease — skipping (single-flight)',
+    );
+    return { skipped: 'locked' };
+  }
+
+  try {
+    const { accessToken } = await loadDriveAccessToken(integration, deps);
+    const procIntegration: DriveProcessorIntegration = {
+      id: integration.id,
+      org_id: integration.org_id,
+      last_page_token: integration.last_page_token,
+      watched_folder_ids: watched,
+    };
+    const db = createProcessorDbAdapter(deps);
+    // SCRUM-1837 (GH #1837): wire the folder-path resolver so
+    // folder_path_starts_with rules can finally match. Bound once per run
+    // (not per change) over the real drive_folder_path_cache-backed store.
+    const folderPathCache = createFolderPathCache(deps);
+    const resolveFolderPath = (args: { orgId: string; fileId: string; accessToken: string }) =>
+      resolveDriveFolderPath({
+        orgId: args.orgId,
+        fileId: args.fileId,
+        accessToken: args.accessToken,
+        cache: folderPathCache,
+        // PR #1944 review follow-up: without a logger, every resolution
+        // failure was a completely silent swallow-to-null — pass one through
+        // so a real failure (permission loss, an unexpected bug) actually
+        // produces a log line instead of just quietly degrading rule matching.
+        deps: { fetchImpl: deps.drive?.fetchImpl, logger: deps.logger },
+      });
+    return await processDriveChanges({
+      integration: procIntegration,
+      accessToken,
+      db,
+      deps: { logger: deps.logger, resolveFolderPath },
     });
-  return processDriveChanges({
-    integration: procIntegration,
-    accessToken,
-    db,
-    deps: { logger: deps.logger, resolveFolderPath },
-  });
+  } finally {
+    // Best-effort: a failed release is not itself a failure of this run —
+    // the TTL is the backstop (see run-lease.ts's own release doc comment).
+    await releaseRunLease(leaseClient, leaseSpec, leaseHolder);
+  }
 }

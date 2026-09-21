@@ -40,6 +40,7 @@ import {
   type DriveIntegrationRow,
 } from '../../../integrations/connectors/drive-changes-runner.js';
 import { createDefaultKmsClient } from '../../../integrations/oauth/crypto.js';
+import { DriveApiError } from '../../../integrations/oauth/drive.js';
 import { parseDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
 import { reportDriveProcessingFailure } from '../../../integrations/connectors/drive-connect-health.js';
 
@@ -267,8 +268,25 @@ router.post('/', async (req: Request, res: Response) => {
       'drive webhook: changes processed',
     );
   } catch (err) {
+    // P0-2 follow-up (task 4, orchestrator review): `error: err` alone relies
+    // on pino's default Error serializer, which is NOT guaranteed to surface
+    // custom properties like `DriveApiError.status`/`.detail` — the exact
+    // fields an operator needs to tell "Drive is rejecting our requests"
+    // (4xx) apart from a network/5xx blip at a glance in Cloud Run logs,
+    // without opening the error object. `detail` is already bounded (~500
+    // chars) + PII-scrubbed BY CONSTRUCTION (see DriveApiError's doc comment
+    // in oauth/drive.ts) — never a raw or unbounded Google response body.
+    const httpStatus = err instanceof DriveApiError ? err.status : null;
+    const errorDetail = err instanceof DriveApiError ? (err.detail ?? null) : null;
     logger.error(
-      { error: err, channelId, orgId: lookup.org_id, integrationId: lookup.integration_id },
+      {
+        error: err,
+        httpStatus,
+        errorDetail,
+        channelId,
+        orgId: lookup.org_id,
+        integrationId: lookup.integration_id,
+      },
       'drive webhook: runDriveChanges failed — 200 ack so Drive does not retry-storm',
     );
     // 200 ack anyway — Drive's retry would just repeat the same failure.

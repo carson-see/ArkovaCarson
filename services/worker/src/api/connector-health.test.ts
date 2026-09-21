@@ -587,7 +587,7 @@ describe('connector-health (SCRUM-1146)', () => {
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
     });
 
-    it('does NOT flag cursor_stale for a never-bootstrapped cursor (last_token_advanced_at null — that is P0-1 territory, out of scope here)', async () => {
+    it('does NOT flag cursor_stale (specifically) for a never-bootstrapped cursor — see changes_list_never_succeeded below for what IS now flagged', async () => {
       integrationsList.mockResolvedValueOnce({
         data: [driveIntegrationRow({ last_token_advanced_at: null })],
         error: null,
@@ -598,6 +598,112 @@ describe('connector-health (SCRUM-1146)', () => {
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('cursor_stale');
     });
+  });
+
+  // Task 4 (orchestrator "make this failure loud" review, SCRUM-2903/3661
+  // fields-mask incident follow-up): the P0-2 cursor_stale signal above was
+  // BLIND to a cursor that has never once advanced — which is exactly the
+  // shape of a connection whose every changes.list call has failed since it
+  // connected (this incident: HTTP 400 fields-mask bug, 150 failures/day,
+  // zero successes, ever). Before this fix the dashboard showed
+  // 'connected'/'none' for that entire window with no signal at all — the
+  // previous test block's `driveIntegrationRow()` default `connected_at`
+  // ('2026-04-20') is already old enough to demonstrate this: it was
+  // ASSERTED as "out of scope" there and is now covered here.
+  describe('Drive changes_list_never_succeeded signal (Task 4 gap fix)', () => {
+    const FAR_PAST_CONNECT = '2020-01-01T00:00:00Z';
+    const RECENT_CONNECT = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+    function neverAdvancedDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: FAR_PAST_CONNECT,
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: null,
+        last_renewal_error: null,
+        last_token_advanced_at: null,
+        ...overrides,
+      };
+    }
+
+    it('flags changes_list_never_succeeded when the cursor has NEVER advanced, connected_at is old, AND the org has an enabled Drive rule', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [neverAdvancedDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('changes_list_never_succeeded');
+      expect(drive?.last_error).toContain('never succeeded');
+    });
+
+    it('does NOT flag a freshly-connected integration (connected_at recent, cursor never advanced yet — expected, not a finding)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [neverAdvancedDriveRow({ connected_at: RECENT_CONNECT })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('does NOT flag an org with zero enabled Drive rules (same false-positive guard as cursor_stale)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [neverAdvancedDriveRow()], error: null });
+      // driveRulesList stays at the default empty-array mock (beforeEach).
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('changes_list_never_succeeded');
+    });
+
+    it('is mutually exclusive with cursor_stale — a cursor that HAS advanced at least once never reads changes_list_never_succeeded', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [neverAdvancedDriveRow({ last_token_advanced_at: '2020-06-01T00:00:00Z' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('cursor_stale');
+    });
+
+    it('subscription_expiry still outranks changes_list_never_succeeded (broken channel already explains it)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [neverAdvancedDriveRow({ last_renewal_error: 'invalid_grant' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('subscription_expiry');
+    });
+  });
+
+  describe('Drive cursor-staleness + fetch-job-failure signals (P0-2), continued', () => {
+    const FAR_PAST = '2020-01-01T00:00:00Z';
+
+    function driveIntegrationRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        ...overrides,
+      };
+    }
 
     it('subscription_expiry still outranks cursor_stale (channel itself is broken — a stale cursor is the expected side effect, not new information)', async () => {
       integrationsList.mockResolvedValueOnce({

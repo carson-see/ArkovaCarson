@@ -15,6 +15,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// SCRUM-2903/3661 follow-up (single-flight lease): runDriveChanges now
+// imports `jobs/run-lease.ts`, which reads the Zod-validated `config` export
+// at MODULE LOAD time — this suite never sets the Supabase/Stripe env vars
+// that full validation requires. Mirrors the same mock
+// `drive-subscription-renewal-deps.test.ts` already uses for the identical
+// reason; only `kRevision` (read by `runLeaseHolder()`) matters here.
+vi.mock('../../config.js', () => ({ config: { kRevision: 'test-revision' } }));
+vi.mock('../../utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 // Mock processDriveChanges so the happy-path runDriveChanges test can
 // assert the handoff arguments without exercising the real Drive
 // changes.list HTTP fetch or revision-ledger writes. The other suites
@@ -43,8 +54,10 @@ import {
   createProcessorDbAdapter,
   createFolderPathCache,
   runDriveChanges,
+  driveChangesRunLeaseSpec,
   type DriveIntegrationRow,
 } from './drive-changes-runner.js';
+import { createRunLeaseStore } from '../../jobs/__tests__/__testHelpers.js';
 
 const ORG = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const INT = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -930,21 +943,24 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
     const fakeFetch = vi.fn();
     // Org has one rule with a folder binding so loadWatchedFolderIds resolves
     // a non-empty set.
+    const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');
     const db = {
-      from: (_t: string) => ({
-        select: (_c: string) => ({
-          eq: (_c1: string, _v1: unknown) => ({
-            eq: (_c2: string, _v2: unknown) => ({
-              eq: (_c3: string, _v3: unknown) =>
-                Promise.resolve({
-                  data: [{ trigger_config: { folder_id: 'folder-Z' } }],
-                  error: null,
-                }),
+      from: (t: string) => {
+        if (t === 'job_queue') return leaseStore.from(t);
+        return {
+          select: (_c: string) => ({
+            eq: (_c1: string, _v1: unknown) => ({
+              eq: (_c2: string, _v2: unknown) => ({
+                eq: (_c3: string, _v3: unknown) =>
+                  Promise.resolve({
+                    data: [{ trigger_config: { folder_id: 'folder-Z' } }],
+                    error: null,
+                  }),
+              }),
             }),
           }),
-        }),
-      }),
-
+        };
+      },
       rpc: vi.fn(),
     };
     const integration: DriveIntegrationRow = {
@@ -991,5 +1007,100 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
     expect(callArg.accessToken).toBe('access-fresh');
     expect(callArg.db).toBeDefined(); // adapter was passed
     expect(callArg.deps).toBeDefined();
+    // Single-flight lease: acquired for the run and released afterward — a
+    // later concurrent push for the SAME integration must be able to
+    // acquire it again immediately, not find it stuck 'processing'.
+    expect(leaseStore.current()?.status).toBe('completed');
+    expect(leaseStore.current()?.scheduled_for).toBeNull();
+  });
+
+  describe('single-flight lease (orchestrator first-run-flood review)', () => {
+    it('returns { skipped: "locked" } and never touches Drive/the processor when another run already holds the lease', async () => {
+      const kms = fakeKms();
+      const fakeFetch = vi.fn();
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), {
+        held: { holder: 'some-other-instance:123:nonce', expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() },
+      });
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          return {
+            select: (_c: string) => ({
+              eq: (_c1: string, _v1: unknown) => ({
+                eq: (_c2: string, _v2: unknown) => ({
+                  eq: (_c3: string, _v3: unknown) =>
+                    Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }),
+                }),
+              }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      const integration: DriveIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+      };
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const result = await runDriveChanges(integration, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+        logger: log,
+      });
+      expect(result).toEqual({ skipped: 'locked' });
+      // No token refresh, no Drive call, no processor call — the whole
+      // point of acquiring the lease BEFORE any of that work starts.
+      expect(fakeFetch).not.toHaveBeenCalled();
+      expect(kms.decrypt).not.toHaveBeenCalled();
+      expect(processDriveChangesMock).not.toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalled();
+    });
+
+    it('releases the lease even when processDriveChanges throws', async () => {
+      const kms = fakeKms();
+      const fakeFetch = vi.fn();
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          return {
+            select: (_c: string) => ({
+              eq: (_c1: string, _v1: unknown) => ({
+                eq: (_c2: string, _v2: unknown) => ({
+                  eq: (_c3: string, _v3: unknown) =>
+                    Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }),
+                }),
+              }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      const integration: DriveIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+      };
+      processDriveChangesMock.mockRejectedValueOnce(new Error('changes.list exploded'));
+      await expect(
+        runDriveChanges(integration, {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          db: db as any,
+          kms,
+          drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        }),
+      ).rejects.toThrow('changes.list exploded');
+      // The lease must not be left stuck 'processing' — the TTL is a
+      // backstop, not the primary release path.
+      expect(leaseStore.current()?.status).toBe('completed');
+    });
   });
 });

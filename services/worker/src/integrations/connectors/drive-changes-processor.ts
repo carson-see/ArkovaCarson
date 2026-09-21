@@ -21,6 +21,8 @@
  */
 import {
   listChanges,
+  getStartPageToken,
+  DriveApiError,
   type DriveChangesListEntry,
   type DriveChangesListResponseT,
 } from '../oauth/drive.js';
@@ -120,6 +122,13 @@ export interface DriveProcessorDeps {
   /** Network boundary: `listChanges` from oauth/drive.ts by default. Swapped
    *  in tests for a mocked async function returning fixture pages. */
   listChanges?: typeof listChanges;
+  /**
+   * Network boundary: `getStartPageToken` from oauth/drive.ts by default.
+   * Used ONLY for 410/404 "pageToken invalid/expired" recovery — see the
+   * doc comment above the catch block in `processDriveChanges`. Swapped in
+   * tests so the recovery path never needs a real Drive credential.
+   */
+  getStartPageToken?: typeof getStartPageToken;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
   /**
    * SCRUM-1837: resolve a Drive file's human-readable folder path so
@@ -146,7 +155,29 @@ export interface ProcessChangesResult {
   duplicates: number;
   pagesProcessed: number;
   newPageToken: string | null;
+  /**
+   * True when this pass recovered from a 410/404 "pageToken invalid/expired"
+   * `changes.list` error by re-bootstrapping the cursor via
+   * `changes.getStartPageToken` rather than failing the pass outright. Any
+   * changes that occurred in the gap between the expired token and the fresh
+   * one are NOT recovered (Google does not offer a way to — the expired
+   * token is why) — this only stops the integration from failing FOREVER on
+   * every subsequent webhook. Absent/false on every other path.
+   */
+  cursorReset?: true;
 }
+
+/** Google's documented statuses for "this pageToken is no longer valid" —
+ * https://developers.google.com/drive/api/guides/manage-changes: 410 Gone is
+ * the primary documented case; 404 is included defensively (observed from
+ * other Google list APIs for the same underlying condition — an
+ * unrecognized/expired opaque token). Any OTHER status (400, 401, 403, 429,
+ * 5xx) is a different failure class and must keep failing loud — recovering
+ * from those by discarding the cursor would silently skip real changes for
+ * reasons that have nothing to do with token validity (e.g. this incident's
+ * own 400 fields-mask bug, which must fail loud, not "recover" by fast-
+ * forwarding past every unprocessed change). */
+const PAGE_TOKEN_EXPIRED_STATUSES = new Set([410, 404]);
 
 const SAFE_PAGE_LIMIT = 25;
 
@@ -374,7 +405,72 @@ export async function processDriveChanges(args: {
     try {
       response = await list({ accessToken: args.accessToken, pageToken });
     } catch (err) {
-      // Bubble up; webhook handler decides whether to 200-ack or retry.
+      // 410/404 "pageToken invalid/expired" recovery. Google's documented
+      // response to an expired changes.list page token is to call
+      // changes.getStartPageToken and resume from "now" — retrying
+      // changes.list with the SAME stale token just 410s again forever,
+      // which before this fix meant a page-token could fail an integration
+      // PERMANENTLY with no operator-visible recovery path (every future
+      // webhook would hit this same throw). Any changes made in the gap
+      // between the expired token and the fresh one are unrecoverable by
+      // definition — Drive does not offer a way to enumerate them once the
+      // token backing them has expired — so this trades silent permanent
+      // failure for a bounded, LOUD gap and a working cursor going forward.
+      // Deliberately narrow: only 410/404 recover this way. Every other
+      // status (400 — this incident's own bug shape, 401/403, 429, 5xx)
+      // keeps failing loud below; "recovering" from those by discarding the
+      // cursor would silently fast-forward past real, still-retrievable
+      // changes for reasons that have nothing to do with token validity.
+      if (err instanceof DriveApiError && PAGE_TOKEN_EXPIRED_STATUSES.has(err.status)) {
+        const getToken = args.deps?.getStartPageToken ?? getStartPageToken;
+        log?.warn?.(
+          { err, integrationId: args.integration.id, pageToken, status: err.status },
+          'drive changes.list: pageToken invalid/expired — re-bootstrapping cursor via changes.getStartPageToken',
+        );
+        let freshToken: string;
+        try {
+          freshToken = await getToken({ accessToken: args.accessToken });
+        } catch (bootstrapErr) {
+          // Recovery itself failed — this IS a genuine, non-recoverable
+          // failure now. Bubble up exactly like any other changes.list error
+          // (webhook handler decides whether to 200-ack or retry; the OLD
+          // cursor is left untouched, so a later successful attempt is not
+          // blocked by anything this catch did).
+          log?.error?.(
+            { err: bootstrapErr, integrationId: args.integration.id },
+            'drive changes.getStartPageToken (410/404 recovery) failed',
+          );
+          reportDriveProcessingFailure(bootstrapErr, {
+            stage: 'changes_list',
+            orgId: args.integration.org_id,
+            integrationId: args.integration.id,
+          });
+          throw bootstrapErr;
+        }
+        await args.db.advancePageToken({
+          integration_id: args.integration.id,
+          new_page_token: freshToken,
+        });
+        // Still reported — an expired token is a real operational event an
+        // operator should see, even though the pipeline recovered from it.
+        reportDriveProcessingFailure(err, {
+          stage: 'changes_list',
+          orgId: args.integration.org_id,
+          integrationId: args.integration.id,
+        });
+        result.newPageToken = freshToken;
+        result.cursorReset = true;
+        return result;
+      }
+
+      // Bubble up; webhook handler decides whether to 200-ack or retry. The
+      // page token is NOT advanced — the next attempt retries from the SAME
+      // `pageToken` this call read from `args.integration.last_page_token`
+      // (or the prior page's `nextPageToken`, held only in the LOCAL
+      // `pageToken` variable, never persisted mid-walk), so a transient
+      // failure costs redundant re-processing of already-seen pages, never a
+      // skipped change — the ledger's UNIQUE(integration, file, revision)
+      // constraint makes that redundant re-processing idempotent.
       log?.error?.({ err, integrationId: args.integration.id, pageToken }, 'drive changes.list failed');
       // P0-2: this is exactly the class of failure (a stuck/410/429/5xx
       // changes.list call) the hardening audit found invisible — reported

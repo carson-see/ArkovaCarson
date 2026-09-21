@@ -12,7 +12,7 @@ import {
   type DriveProcessorDb,
   type DriveProcessorIntegration,
 } from './drive-changes-processor.js';
-import type { DriveChangesListResponseT } from '../oauth/drive.js';
+import { DriveApiError, type DriveChangesListResponseT } from '../oauth/drive.js';
 import { DRIVE_REVISION_KINDS } from './drive-artifact-producer.js';
 
 const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -653,6 +653,134 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       }),
     ).rejects.toThrow(/no last_page_token/);
     expect(listMock).not.toHaveBeenCalled();
+  });
+
+  describe('changes.list failure handling (orchestrator first-run-flood review)', () => {
+    it('a mid-walk (page 2) changes.list failure does NOT advance the persisted cursor', async () => {
+      const db = makeFakeDb();
+      let call = 0;
+      const listMock = vi.fn().mockImplementation(async (_args: { pageToken: string }) => {
+        call += 1;
+        if (call === 1) {
+          // Page 1 succeeds and points to a second page — but is NOT the
+          // final page, so advancePageToken must not be called for it either.
+          return pageOf(
+            [{ file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } }],
+            { nextPageToken: 'token-2' },
+          );
+        }
+        // Page 2 fails — a generic 5xx, not a 410/404.
+        const err = new DriveApiError('Drive changes.list failed', 503);
+        throw err;
+      });
+      await expect(
+        processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'token-1' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock },
+        }),
+      ).rejects.toThrow(DriveApiError);
+      // Page 1's file DID get processed (queued) before the page-2 failure —
+      // that work is not lost or duplicated on retry (ledger dedupe), but the
+      // cursor must NOT have moved: a retry from the ORIGINAL last_page_token
+      // is exactly what must happen next, not a retry from some
+      // partially-advanced position.
+      expect(db.enqueueCalls).toHaveLength(1);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('a first-page changes.list failure does NOT advance the persisted cursor', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 500));
+      await expect(
+        processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'token-1' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock },
+        }),
+      ).rejects.toThrow(DriveApiError);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('a 400 (this incident\'s own status code) does NOT trigger 410/404 cursor-reset recovery', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 400));
+      const getStartPageTokenMock = vi.fn();
+      await expect(
+        processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'token-1' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+        }),
+      ).rejects.toThrow(DriveApiError);
+      expect(getStartPageTokenMock).not.toHaveBeenCalled();
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it.each([410, 404])(
+      'a %d "pageToken invalid/expired" response re-bootstraps the cursor via changes.getStartPageToken and returns cleanly (no throw)',
+      async (status) => {
+        const db = makeFakeDb();
+        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', status));
+        const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token');
+        const result = await processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'stale-token' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+        });
+        expect(getStartPageTokenMock).toHaveBeenCalledWith({ accessToken: 'tok' });
+        expect(db.advancedPageTokens).toEqual(['fresh-start-token']);
+        expect(result.cursorReset).toBe(true);
+        expect(result.newPageToken).toBe('fresh-start-token');
+        // No changes could have been processed — Drive told us the token was
+        // invalid before returning any page.
+        expect(result.queued).toBe(0);
+      },
+    );
+
+    it('a 410 whose recovery (changes.getStartPageToken) ALSO fails bubbles up and does not touch the cursor', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410));
+      const getStartPageTokenMock = vi.fn().mockRejectedValue(new DriveApiError('Drive startPageToken failed', 500));
+      await expect(
+        processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'stale-token' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+        }),
+      ).rejects.toThrow(DriveApiError);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('a 410 mid-walk (page 2) still recovers — page 1 work is preserved, cursor jumps to the fresh token', async () => {
+      const db = makeFakeDb();
+      let call = 0;
+      const listMock = vi.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return pageOf(
+            [{ file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } }],
+            { nextPageToken: 'token-2' },
+          );
+        }
+        throw new DriveApiError('Drive changes.list failed', 410);
+      });
+      const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-2');
+      const result = await processDriveChanges({
+        integration: makeIntegration({ last_page_token: 'token-1' }),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+      });
+      expect(db.enqueueCalls).toHaveLength(1);
+      expect(result.cursorReset).toBe(true);
+      expect(db.advancedPageTokens).toEqual(['fresh-start-token-2']);
+    });
   });
 
   // SCRUM-1837 (GH #1837): folder_path was hardcoded null, so

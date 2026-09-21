@@ -15,14 +15,66 @@ import {
   revokeOAuthToken,
   getFileMetadata,
   getSharedDriveName,
+  getStartPageToken,
+  listChanges,
   listChildFolders,
   DriveConfigError,
   DriveApiError,
   DRIVE_FOLDER_LISTING_SCOPES,
 } from './drive.js';
+import { assertValidFieldsMask } from './__test-helpers__/fields-mask.js';
 
 beforeEach(() => {
   // Intentionally blank — each test sets its own env.
+});
+
+describe('assertValidFieldsMask (shared test helper)', () => {
+  it('accepts a well-formed nested mask', () => {
+    expect(() =>
+      assertValidFieldsMask(
+        'newStartPageToken,nextPageToken,changes(fileId,removed,changeType,time,file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,lastModifyingUser(emailAddress,displayName)))',
+      ),
+    ).not.toThrow();
+  });
+
+  it('accepts a simple flat mask', () => {
+    expect(() => assertValidFieldsMask('id,name,parents,driveId')).not.toThrow();
+  });
+
+  it('rejects an empty mask', () => {
+    expect(() => assertValidFieldsMask('')).toThrow(/empty/);
+  });
+
+  it('rejects a whitespace-joined mask (e.g. an accidental `.join(\' \')`)', () => {
+    expect(() => assertValidFieldsMask('newStartPageToken nextPageToken')).toThrow(/whitespace/);
+  });
+
+  it('rejects unbalanced (unclosed) parentheses', () => {
+    expect(() => assertValidFieldsMask('changes(fileId,file(id,name)')).toThrow(/unmatched|unclosed/);
+  });
+
+  it('rejects unbalanced (stray close) parentheses', () => {
+    expect(() => assertValidFieldsMask('changes(fileId))')).toThrow(/unmatched/);
+  });
+
+  it('rejects a trailing comma', () => {
+    expect(() => assertValidFieldsMask('id,name,')).toThrow(/trailing comma/);
+  });
+
+  it('rejects a stray/empty comma', () => {
+    expect(() => assertValidFieldsMask('id,,name')).toThrow(/stray comma/);
+  });
+
+  it('rejects an unrecognized character', () => {
+    expect(() => assertValidFieldsMask('id;name')).toThrow(/unrecognized character/);
+  });
+
+  it('does NOT alone catch a no-separator join fusion (documented limitation — exact-string assertions cover this)', () => {
+    // 'newStartPageToken' + 'nextPageToken' joined with '' (no separator at
+    // all) fuses into a single identifier-looking token — structurally
+    // indistinguishable from one long legitimate field name.
+    expect(() => assertValidFieldsMask('newStartPageTokennextPageToken,changes(fileId)')).not.toThrow();
+  });
 });
 
 describe('buildAuthorizationUrl', () => {
@@ -432,5 +484,293 @@ describe('listChildFolders', () => {
       'https://www.googleapis.com/auth/drive.metadata.readonly',
     ]);
     expect(DRIVE_FOLDER_LISTING_SCOPES).not.toContain('https://www.googleapis.com/auth/drive.file');
+  });
+
+  it('getFileMetadata: fields mask is exactly id,name,parents,driveId (exact-string, in addition to structural)', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ id: 'f', name: 'n', parents: [] }), { status: 200 });
+    };
+    await getFileMetadata({
+      fileId: 'f',
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const fields = new URL(capturedUrl).searchParams.get('fields')!;
+    expect(fields).toBe('id,name,parents,driveId');
+    expect(() => assertValidFieldsMask(fields)).not.toThrow();
+  });
+
+  it('getSharedDriveName: fields mask is exactly name (exact-string, in addition to structural)', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ name: 'Legal Team Drive' }), { status: 200 });
+    };
+    await getSharedDriveName({
+      driveId: 'd',
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const fields = new URL(capturedUrl).searchParams.get('fields')!;
+    expect(fields).toBe('name');
+    expect(() => assertValidFieldsMask(fields)).not.toThrow();
+  });
+
+  it('listChildFolders: fields mask passes the structural validator (regression guard for the same defect class)', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+    };
+    await listChildFolders({
+      accessToken: 'at',
+      parent: 'root',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const fields = new URL(capturedUrl).searchParams.get('fields')!;
+    expect(fields).toBe('nextPageToken,files(id,name,driveId)');
+    expect(() => assertValidFieldsMask(fields)).not.toThrow();
+  });
+});
+
+// SCRUM-2903 / SCRUM-3661 / SCRUM-5094 / SCRUM-2330: `listChanges` built its
+// `fields` mask via an EMPTY-STRING array `.join('')`, fusing
+// `newStartPageToken` + `nextPageToken` + the start of `changes(...)` into
+// one invalid run with no separating commas. Google answered every call
+// with HTTP 400 `Invalid field selection newStartPageTokennextP...` —
+// confirmed in prod logs, 150x/day since the 2026-05-04 commit that
+// introduced it. No prior test ever asserted the URL/fields shape here.
+describe('listChanges (SCRUM-2903 fields-mask regression)', () => {
+  async function captureListChangesUrl(): Promise<string> {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({ changes: [], newStartPageToken: '99' }),
+        { status: 200 },
+      );
+    };
+    await listChanges({
+      accessToken: 'access-tok',
+      pageToken: 'token-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    return capturedUrl;
+  }
+
+  it('sends a `fields` mask that is a single well-formed, comma-separated mask (structural)', async () => {
+    const url = await captureListChangesUrl();
+    const fields = new URL(url).searchParams.get('fields');
+    expect(fields).not.toBeNull();
+    // This is the assertion that actually catches the incident: the old
+    // code produced 'newStartPageTokennextPageTokenchanges(...)' — no
+    // comma between the first two top-level entries, and no comma between
+    // 'nextPageToken' and 'changes('. Both fuse into ONE identifier-looking
+    // run that a pure structural tokenizer cannot distinguish from a single
+    // (very long) legitimate field name — see the doc comment on
+    // assertValidFieldsMask for why the exact-string assertion below is the
+    // real regression guard and this call is defense-in-depth only.
+    expect(() => assertValidFieldsMask(fields!)).not.toThrow();
+  });
+
+  it('sends the EXACT expected `fields` mask string (the real regression guard)', async () => {
+    const url = await captureListChangesUrl();
+    const fields = new URL(url).searchParams.get('fields');
+    expect(fields).toBe(
+      'newStartPageToken,nextPageToken,changes(fileId,removed,changeType,time,file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,lastModifyingUser(emailAddress,displayName)))',
+    );
+  });
+
+  it('sends the correct top-level query params (pageToken, includeRemoved, supportsAllDrives, includeItemsFromAllDrives)', async () => {
+    const url = await captureListChangesUrl();
+    const params = new URL(url).searchParams;
+    expect(new URL(url).pathname).toBe('/drive/v3/changes');
+    expect(params.get('pageToken')).toBe('token-1');
+    expect(params.get('includeRemoved')).toBe('true');
+    expect(params.get('supportsAllDrives')).toBe('true');
+    expect(params.get('includeItemsFromAllDrives')).toBe('true');
+  });
+
+  it('sends the caller access token as a Bearer header', async () => {
+    let capturedAuth: string | null = null;
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      capturedAuth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return new Response(JSON.stringify({ changes: [] }), { status: 200 });
+    };
+    await listChanges({
+      accessToken: 'access-tok-2',
+      pageToken: 'tok',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(capturedAuth).toBe('Bearer access-tok-2');
+  });
+
+  it('parses a real (documented-shape) changes.list response, including a change missing `parents` (shared-drive item)', async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          changes: [
+            {
+              fileId: 'file-1',
+              removed: false,
+              changeType: 'file',
+              time: '2026-09-20T12:00:00.000Z',
+              file: {
+                id: 'file-1',
+                name: 'Shared item.pdf',
+                // No `parents` — this happens on some shared-drive items per
+                // Google's documented response shape.
+                driveId: 'shared-drive-1',
+                modifiedTime: '2026-09-20T12:00:00.000Z',
+                headRevisionId: 'rev-1',
+                trashed: false,
+                mimeType: 'application/pdf',
+              },
+            },
+          ],
+          nextPageToken: 'page-2',
+        }),
+        { status: 200 },
+      );
+    const res = await listChanges({
+      accessToken: 'at',
+      pageToken: 'tok',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(res.changes).toHaveLength(1);
+    expect(res.changes[0].file?.parents).toBeUndefined();
+    expect(res.nextPageToken).toBe('page-2');
+  });
+
+  it('throws a bounded DriveApiError on a non-ok response (e.g. the real HTTP 400 this fields mask caused)', async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({ error: { message: "Invalid field selection newStartPageTokennextP..." } }),
+        { status: 400 },
+      );
+    const err = await listChanges({
+      accessToken: 'at',
+      pageToken: 'tok',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(400);
+    expect((err as DriveApiError).detail).toContain('Invalid field selection');
+  });
+});
+
+describe('createChangesWatch (exact URL/param assertions)', () => {
+  it('calls changes/startPageToken then changes/watch with the exact expected query params (My Drive, no driveId)', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (calls.length === 1) {
+        return new Response(JSON.stringify({ startPageToken: 'start-1' }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ resourceId: 'res-1', expiration: String(Date.now() + 1000) }),
+        { status: 200 },
+      );
+    };
+    await createChangesWatch({
+      accessToken: 'at',
+      channelId: 'chan-1',
+      address: 'https://arkova.ai/webhooks/drive',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    const startUrl = new URL(calls[0].url);
+    expect(startUrl.pathname).toBe('/drive/v3/changes/startPageToken');
+    expect(startUrl.search).toBe('');
+
+    const watchUrl = new URL(calls[1].url);
+    expect(watchUrl.pathname).toBe('/drive/v3/changes/watch');
+    expect(watchUrl.searchParams.get('pageToken')).toBe('start-1');
+    expect(watchUrl.searchParams.has('driveId')).toBe(false);
+    expect(watchUrl.searchParams.has('supportsAllDrives')).toBe(false);
+    expect(calls[1].init?.method).toBe('POST');
+    expect(JSON.parse(calls[1].init?.body as string)).toEqual({
+      id: 'chan-1',
+      type: 'web_hook',
+      address: 'https://arkova.ai/webhooks/drive',
+      token: undefined,
+    });
+  });
+
+  it('scopes both calls to a shared drive when driveId is provided', async () => {
+    const calls: Array<{ url: string }> = [];
+    const fetchImpl = async (url: string) => {
+      calls.push({ url });
+      if (calls.length === 1) {
+        return new Response(JSON.stringify({ startPageToken: 'start-2' }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ resourceId: 'res-2', expiration: String(Date.now() + 1000) }),
+        { status: 200 },
+      );
+    };
+    await createChangesWatch({
+      accessToken: 'at',
+      channelId: 'chan-2',
+      address: 'https://arkova.ai/webhooks/drive',
+      driveId: 'shared-drive-9',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const startUrl = new URL(calls[0].url);
+    expect(startUrl.searchParams.get('driveId')).toBe('shared-drive-9');
+    expect(startUrl.searchParams.get('supportsAllDrives')).toBe('true');
+    const watchUrl = new URL(calls[1].url);
+    expect(watchUrl.searchParams.get('driveId')).toBe('shared-drive-9');
+    expect(watchUrl.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(watchUrl.searchParams.get('includeItemsFromAllDrives')).toBe('true');
+  });
+});
+
+describe('getStartPageToken (extracted for 410/404 cursor recovery reuse)', () => {
+  it('GETs changes/startPageToken and returns the token (My Drive, no driveId)', async () => {
+    let capturedUrl = '';
+    let capturedAuth: string | null = null;
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedAuth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return new Response(JSON.stringify({ startPageToken: 'fresh-token' }), { status: 200 });
+    };
+    const token = await getStartPageToken({
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(token).toBe('fresh-token');
+    expect(capturedAuth).toBe('Bearer at');
+    const url = new URL(capturedUrl);
+    expect(url.pathname).toBe('/drive/v3/changes/startPageToken');
+    expect(url.search).toBe('');
+  });
+
+  it('scopes to a shared drive when driveId is provided', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ startPageToken: 'fresh-token-2' }), { status: 200 });
+    };
+    await getStartPageToken({
+      accessToken: 'at',
+      driveId: 'shared-drive-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const url = new URL(capturedUrl);
+    expect(url.searchParams.get('driveId')).toBe('shared-drive-1');
+    expect(url.searchParams.get('supportsAllDrives')).toBe('true');
+  });
+
+  it('throws a bounded DriveApiError on failure', async () => {
+    const fetchImpl = async () => new Response('{}', { status: 500 });
+    const err = await getStartPageToken({
+      accessToken: 'at',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(500);
   });
 });

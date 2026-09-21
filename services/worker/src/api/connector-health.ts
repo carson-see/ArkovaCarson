@@ -33,6 +33,25 @@ export type HealthReason =
   // this fires even when NO rule execution ever ran — the pipeline stalled
   // upstream of that layer entirely.
   | 'cursor_stale'
+  // Task 4 (orchestrator "make this failure loud" review, SCRUM-2903/3661
+  // fields-mask incident follow-up): `cursor_stale` above is BLIND to a
+  // cursor that has NEVER advanced (`last_token_advanced_at` null) — that
+  // null is deliberately non-stale for an integration connected moments ago
+  // (see `isDriveCursorStale`'s doc comment), but it is ALSO the exact,
+  // indistinguishable state of an integration whose EVERY changes.list call
+  // has failed since the day it connected — this incident's own prod shape:
+  // 150 failures/day, zero successes, ever, for months, with the dashboard
+  // reading 'connected'/'none' the entire time. There is no dedicated
+  // "last changes.list error" column to persist a more specific signal
+  // without a migration (verified: `org_integrations` has no such column —
+  // grepped every migration touching that table; `last_renewal_error` is
+  // semantically CHANNEL-RENEWAL-only, already drives `subscription_expiry`,
+  // and is cleared on renewal success even while changes.list keeps
+  // failing — reusing it would silently HIDE this exact failure the moment
+  // a renewal sweep happens to succeed). This reuses the one anchor already
+  // read without a migration — `connected_at` — as the staleness clock when
+  // the cursor has never moved at all.
+  | 'changes_list_never_succeeded'
   // P0-2: the `google_drive.file_changed` job_queue drain has failed/dead
   // rows — the document-fetch half of the pipeline that
   // organization_rule_executions cannot see (rule dispatch and document
@@ -337,6 +356,28 @@ export function isDriveCursorStale(
   return now.getTime() - advancedAtMs > thresholdMs;
 }
 
+/**
+ * Task 4 gap fix — see the `changes_list_never_succeeded` doc comment on
+ * `HealthReason`. `isDriveCursorStale` is deliberately blind to a NEVER-
+ * advanced cursor; this covers exactly that case using `connected_at` (a
+ * field already selected by the health query, so no migration is needed) as
+ * the staleness clock instead. Returns false whenever the cursor HAS
+ * advanced at least once — that is `isDriveCursorStale`'s case, not this
+ * one; the two are mutually exclusive by construction.
+ */
+export function hasDriveChangesNeverSucceeded(
+  lastTokenAdvancedAt: string | null,
+  connectedAt: string | null,
+  now: Date = new Date(),
+  thresholdMs: number = DRIVE_CURSOR_STALE_THRESHOLD_MS,
+): boolean {
+  if (lastTokenAdvancedAt) return false;
+  if (!connectedAt) return false;
+  const connectedAtMs = Date.parse(connectedAt);
+  if (!Number.isFinite(connectedAtMs)) return false;
+  return now.getTime() - connectedAtMs > thresholdMs;
+}
+
 interface DriveHealthSignals {
   /**
    * True only when: the cursor has not advanced past the threshold, AND the
@@ -346,6 +387,14 @@ interface DriveHealthSignals {
    * would be a false positive, not a finding).
    */
   cursorStale: boolean;
+  /**
+   * True only when: the cursor has NEVER advanced (null) past the threshold
+   * since connection, AND the org has at least one enabled Drive rule. Same
+   * false-positive guard as `cursorStale`, for the never-bootstrapped case
+   * `cursorStale` cannot see — see the `changes_list_never_succeeded`
+   * `HealthReason` doc comment.
+   */
+  neverSucceeded: boolean;
   /** Count of failed/dead google_drive.file_changed job_queue rows for this org. */
   fetchJobFailureCount: number;
 }
@@ -379,11 +428,23 @@ function classify(
       lastError: subscription.last_renewal_error ?? null,
     };
   }
-  // P0-2: checked AFTER vendor_auth_revoked / subscription_expiry (a broken
-  // channel already explains a stalled/never-advancing cursor — that is not
-  // new information) but BEFORE the rule-execution-derived
-  // 'processing_failure' below, since both new signals catch failures a rule
-  // execution never even got dispatched for.
+  // P0-2 / Task 4: checked AFTER vendor_auth_revoked / subscription_expiry
+  // (a broken channel already explains a stalled/never-advancing cursor —
+  // that is not new information) but BEFORE the rule-execution-derived
+  // 'processing_failure' below, since all three new signals catch failures
+  // a rule execution never even got dispatched for. `neverSucceeded` is
+  // checked first: it is the stronger claim ("this has NEVER once worked
+  // since connecting", vs. cursorStale's "this worked before and stopped")
+  // and the two are mutually exclusive by construction (see
+  // hasDriveChangesNeverSucceeded's doc comment).
+  if (driveSignals?.neverSucceeded) {
+    const hours = Math.round(DRIVE_CURSOR_STALE_THRESHOLD_MS / (60 * 60 * 1000));
+    return {
+      state: 'degraded',
+      reason: 'changes_list_never_succeeded',
+      lastError: `Drive changes.list has never succeeded on this connection in over ${hours}h despite an enabled rule — Drive may be rejecting our requests`,
+    };
+  }
   if (driveSignals?.cursorStale) {
     const hours = Math.round(DRIVE_CURSOR_STALE_THRESHOLD_MS / (60 * 60 * 1000));
     return {
@@ -413,7 +474,7 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  subscription_expiry: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
+  subscription_expiry: 5, changes_list_never_succeeded: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
 
@@ -567,6 +628,8 @@ export async function handleConnectorHealth(
     const driveSignals: DriveHealthSignals | undefined = entry.id === 'google_drive' && integration
       ? {
         cursorStale: hasEnabledDriveRules && isDriveCursorStale(integration.last_token_advanced_at),
+        neverSucceeded: hasEnabledDriveRules
+          && hasDriveChangesNeverSucceeded(integration.last_token_advanced_at, integration.connected_at),
         fetchJobFailureCount: driveFetchJobFailureCount,
       }
       : undefined;
@@ -579,6 +642,8 @@ export async function handleConnectorHealth(
           integration: row, subscription: watch,
           ...classify(entry, row, watch, vendorFailure, {
             cursorStale: hasEnabledDriveRules && isDriveCursorStale(row.last_token_advanced_at, now),
+            neverSucceeded: hasEnabledDriveRules
+              && hasDriveChangesNeverSucceeded(row.last_token_advanced_at, row.connected_at, now),
             fetchJobFailureCount: driveFetchJobFailureCount,
           }),
         };

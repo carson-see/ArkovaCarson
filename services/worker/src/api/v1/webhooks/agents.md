@@ -1,6 +1,26 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
+_Last updated: 2026-09-21 (`drive.ts` catch block now logs `httpStatus`/`errorDetail` as structured fields — SCRUM-2903/3661/5094/2330)_
 _Last updated: 2026-09-13 (SCRUM-4514: CTO decision — no raw-body retention, no server-side replay)_
+
+## 2026-09-21 — `drive.ts`: structured `httpStatus`/`errorDetail` on the `runDriveChanges` failure log (fields-mask incident follow-up)
+
+The `catch` around `runDriveChanges` already logged `error: err` and reported
+to Sentry, but relied on pino's default Error serializer to surface
+`DriveApiError`'s custom `status`/`detail` properties — not guaranteed, and
+not what an operator scanning Cloud Run logs for "is Drive rejecting our
+requests" (4xx) vs. a network/5xx blip can grep on at a glance. Now extracts
+`httpStatus`/`errorDetail` explicitly when the caught error is a
+`DriveApiError`; both `null` otherwise (never fabricated). `errorDetail` is
+already bounded (~500 chars) + PII-scrubbed BY CONSTRUCTION (see
+`DriveApiError`'s doc comment in `oauth/drive.ts`) — this never introduces a
+new place a raw Google response body could leak. This webhook's
+`ENABLE_DRIVE_CHANGES_RUNNER=true` path had ZERO test coverage before this
+change (every existing test exercised only the default-disabled 200-ack
+stub) — `drive.test.ts` now mocks `runDriveChanges` + `createDefaultKmsClient`
+and covers success, a `DriveApiError` failure (asserting the structured
+fields), and a non-`DriveApiError` failure (asserting `null`/`null`, not a
+crash).
 
 ## 2026-09-13 (later) — SCRUM-4514 CTO decision: no raw-body retention, so no `/replay` endpoint
 
