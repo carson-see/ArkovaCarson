@@ -44,7 +44,7 @@
     "bitcoinjs-lib": "7.0.2",
     "cheerio": "1.2.0",
     "compression": "1.8.2",
-    "dotenv": "17.4.2",
+    "dotenv": "18.0.0",
     "ecpair": "3.0.2",
     "express": "5.2.1",
     "jose": "6.2.12",
