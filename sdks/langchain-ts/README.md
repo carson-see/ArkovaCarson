@@ -11,15 +11,19 @@ installed LangChain version before passing them to an agent executor.
 **ESM only.** This package ships as `"type": "module"` with an `exports` map
 declaring only `import`/`types` conditions — there is no CJS build and no
 `require` entry point. `import { getArkovaTools } from '@arkova/langchain'`
-works everywhere Node `>=18` runs it. A plain `require('@arkova/langchain')`
-in a CommonJS file will fail with `ERR_REQUIRE_ESM` on Node before 22.12
-(the version that added native `require(esm)` interop for pure-ESM packages);
-on Node `>=22.12` a bare `require()` may transparently succeed via that
-interop, but that is Node doing extra work on your behalf, not a contract
-this package publishes or tests. If your project is CommonJS and you cannot
-move to `import`/dynamic `import()`, use `sdks/mcp-server` instead (published
-as `arkova-mcp-server`) or wait for a dual-build release — see `agents.md`
-for why this package did not add one in this pass.
+(or dynamic `await import('@arkova/langchain')` from CommonJS) works
+everywhere Node `>=18` runs it. **A plain `require('@arkova/langchain')`
+does not work, on any Node version** — it throws
+`ERR_PACKAGE_PATH_NOT_EXPORTED` (verified against the real published
+tarball on Node 25.6.1, and true by the exports-conditions algorithm on
+every Node version: an `exports` map with no `require` condition refuses
+a `require()` caller before Node's separate `require(esm)` interop is ever
+considered — that interop only applies to a bare ESM file with no
+restricting `exports` map, which is not this package's shape). If your
+project is CommonJS and you cannot move to `import`/dynamic `import()`,
+use `sdks/mcp-server` instead (published as `arkova-mcp-server`) or wait
+for a dual-build release — see `agents.md` for why this package did not
+add one in this pass.
 
 ## Installation
 

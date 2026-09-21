@@ -67,18 +67,6 @@ describe('packed tarball, real node process (not vitest)', () => {
   });
 
   it('the packed exports map exposes only ESM conditions — no `require` entry point was ever built or tested as CJS', () => {
-    // A LIVE `require()` call is deliberately NOT used to assert this: Node
-    // >=22.12 added native `require(esm)` interop, so `require()` of a pure-ESM
-    // package can SUCCEED on the current runtime (verified: it does, on the
-    // Node ${process.version} this suite runs under) even though this package
-    // ships no CJS build and its `exports` map declares no `require` condition.
-    // That native interop is a Node-version-dependent runtime behavior, not a
-    // contract this package publishes — asserting on it here would make the
-    // test's meaning silently flip depending on which Node happens to run CI.
-    // The actual, version-independent contract is the `exports` map itself:
-    // it must expose only `types`/`import`, so a consumer resolving against
-    // the manifest (a bundler, a strict resolver, or Node <22.12 either way)
-    // sees an ESM-only package, never an implicit CJS entry point nobody built.
     const packedManifestPath = join(installDir, 'node_modules', '@arkova', 'langchain', 'package.json');
     const packedManifest = JSON.parse(readFileSync(packedManifestPath, 'utf8')) as {
       exports?: Record<string, unknown>;
@@ -89,5 +77,36 @@ describe('packed tarball, real node process (not vitest)', () => {
     const rootExport = packedManifest.exports!['.'] as Record<string, string>;
     expect(Object.keys(rootExport).sort()).toEqual(['import', 'types']);
     expect(rootExport.require).toBeUndefined();
+  });
+
+  // 2026-09-21 independent-review correction: an earlier version of this file
+  // asserted nothing about a LIVE `require()` call, reasoning that Node
+  // >=22.12's native `require(esm)` interop might make `require()` of this
+  // pure-ESM package transparently succeed — a claim the README also made
+  // ("may transparently succeed"). Empirically wrong on Node 25.6.1 (and by
+  // the exports-conditions algorithm, on every Node version): with an
+  // `exports` map present that declares no `require` condition, Node's
+  // exports-conditions resolver refuses the "." subpath for a `require()`
+  // caller BEFORE the require(esm) interop is ever considered — interop only
+  // engages for a bare ESM file with NO exports map restricting it, which is
+  // not this package's shape. So `require()` does not "maybe" succeed here;
+  // it reliably throws. This test asserts that reality directly, from the
+  // real published tarball, so the README's prose and this package's actual
+  // behavior cannot drift apart again the way they did this pass.
+  it('a bare `require()` of the ESM-only package reliably throws — not "may transparently succeed"', () => {
+    const script = [
+      "try {",
+      "  require('@arkova/langchain');",
+      "  console.log('REQUIRE_UNEXPECTEDLY_SUCCEEDED');",
+      "} catch (err) {",
+      "  console.log('REQUIRE_FAILED code=' + err.code);",
+      "}",
+    ].join('\n');
+    const scriptPath = join(installDir, 'require-check.cjs');
+    writeFileSync(scriptPath, script);
+
+    const output = execFileSync('node', [scriptPath], { cwd: installDir, encoding: 'utf8' });
+    expect(output).not.toContain('REQUIRE_UNEXPECTEDLY_SUCCEEDED');
+    expect(output).toContain('REQUIRE_FAILED code=ERR_PACKAGE_PATH_NOT_EXPORTED');
   });
 });

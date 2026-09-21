@@ -112,11 +112,19 @@ What changed instead:
   (since Node 17.3), both present at the Node 18 floor. Being ESM-only is an orthogonal constraint
   on TOP of that floor, not a reason to raise it — Node 18 runs this package fine via `import`, it
   just cannot `require()` it.
-- README states the ESM-only contract prominently, including the Node 22.12 `require(esm)` native
-  interop nuance (see `src/packed-import.test.ts`'s comment for why that interop is NOT asserted on
-  in a test — it is Node-version-dependent runtime behavior, not something this package publishes).
+- README states the ESM-only contract prominently. **Corrected 2026-09-21 (independent review):**
+  an earlier version of this README hedged that `require()` "may transparently succeed" on Node
+  `>=22.12` via native `require(esm)` interop. Empirically false, verified against the real
+  published tarball on Node 25.6.1 and true by the exports-conditions algorithm on every Node
+  version: `require(esm)` interop only applies to a bare ESM file with no restricting `exports`
+  map — this package's `exports` map (present, `types`+`import` only, no `require` condition)
+  makes Node's exports-conditions resolver refuse a `require()` caller BEFORE that interop is ever
+  considered. `require('@arkova/langchain')` reliably throws `ERR_PACKAGE_PATH_NOT_EXPORTED`, full
+  stop — README now states this plainly instead of hedging with "may".
 - `src/packed-import.test.ts` (new): builds fresh, `npm pack`s the real tarball, installs it into an
   empty temp project (no monorepo hoisting), and runs a real `node` process that `import`s it —
   proving the published `exports` map actually resolves for a real consumer, which importing the
   source under vitest cannot prove. Also asserts the packed `package.json`'s `exports.["."]` has
-  exactly `{types, import}` keys, no `require`.
+  exactly `{types, import}` keys, no `require`, AND (added 2026-09-21) that a live `require()` call
+  against the real installed tarball throws `ERR_PACKAGE_PATH_NOT_EXPORTED` — so the README's claim
+  and this package's actual behavior cannot drift apart again undetected.
