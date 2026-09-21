@@ -48,6 +48,7 @@ MCP server for AI agent access:
 - **Transport:** Streamable HTTP
 - `arkova_verify_anchor` — Verify by public_id
 - `arkova_search_anchors` — Keyword search by query with max_results. Lexical substring match, not meaning-based; check the `search_mode` field on every result
+- `arkova_manage_folders` — List and manage nested record folders with tenant-scoped bulk moves and connector destinations
 - `verify_fingerprint` — Check SHA-256 fingerprint match
 
 ## Traction

@@ -1,4 +1,8 @@
 # services/worker/src/
+The global CORS middleware runs before all route mounts but defers the exact `/api/v1` boundary to
+the v1 router's distinct CORS policy. Non-v1 routes retain the narrower browser header contract.
+Keep the mount-order regression in `index.test.ts` when changing either layer.
+
 PR #2904 review: `memory-leaks.test.ts` explicitly supplies the disabled fanout config while importing actual delivery/lifecycle cleanup. The suite remains independent of configured-worker credentials.
 
 _Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_
@@ -296,6 +300,12 @@ Two new typed config entries, both read through `config` and never `process.env`
 
 **Validate-if-present for `COMPUTEID_CA_CERT_PEM` (W11b).** The refine block validated the pin only inside `if (cfg.enableComputeidIntegration)`. Since the pin is now in `deploy-worker.yml --set-secrets` while the flag is still false, a malformed or rotated PEM sits in prod entirely unexercised and is first parsed by the *activation* deploy — the one moment nobody wants a surprise. It is now parsed whenever it is present, and a failure while the flag is OFF is a `console.warn`, never an `addIssue`: a dark integration must not be able to stop the worker booting. Flag ON keeps the hard failure, including the production "must be an X.509 certificate, not a bare SPKI pin" rule.
 
+## 2026-09-14 — SCRUM-5142 MCP registry assertion
+
+`mcp-tools.test.ts` includes `arkova_manage_folders` in the exact ordered runtime
+registry. Adding an MCP tool must update this list and the canonical
+`docs/api/mcp-tools.md` inventory together; keep the gated
+`arkova_anchor_document` exclusion distinct from the default catalog count.
 
 ## 2026-09-14 — SCRUM-3972 review correction
 

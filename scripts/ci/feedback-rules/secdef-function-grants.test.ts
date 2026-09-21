@@ -364,6 +364,8 @@ GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
     expect([...DELIBERATELY_AUTHENTICATED].sort()).toEqual([
       'public.create_webhook_endpoint',
       'public.ensure_org_referral_code',
+      'public.folder_administers_org',
+      'public.folder_administers_org_exact',
       'public.get_org_referrals',
       'public.get_pipeline_stats',
       'public.get_user_monthly_anchor_count',
@@ -390,6 +392,36 @@ GRANT EXECUTE ON FUNCTION public.create_webhook_endpoint(uuid) TO authenticated;
       .toHaveLength(1);
     expect(check(sql + '\nGRANT EXECUTE ON FUNCTION public.create_webhook_endpoint(text, text[], text) TO anon;'))
       .toHaveLength(1);
+  });
+
+  it('accepts only the immutable 0462 RLS helpers with their intentional authenticated grant', () => {
+    const file = '0462_scrum5142_folder_hierarchy_authority.sql';
+    const sql = readFileSync(resolve(import.meta.dirname, '../../../supabase/migrations', file), 'utf8');
+    const check = (value: string) => findViolations([{ file, sql: value }], {
+      deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
+    });
+    expect(check(sql)).toEqual([]);
+    expect(check(sql.replace(
+      'SELECT public.is_org_admin_of(p_org_id);',
+      'SELECT true;',
+    )).map((violation) => violation.name).sort()).toEqual([
+      'folder_administers_org',
+      'folder_administers_org_exact',
+    ]);
+    expect(check(sql + `
+CREATE FUNCTION public.folder_administers_org(p_org_id uuid, p_actor_id uuid)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER AS $$ SELECT true $$;
+REVOKE ALL ON FUNCTION public.folder_administers_org(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.folder_administers_org(uuid, uuid) TO authenticated;
+`).map((violation) => violation.name).sort()).toEqual([
+      'folder_administers_org',
+      'folder_administers_org_exact',
+    ]);
+    expect(check(sql + '\nGRANT EXECUTE ON FUNCTION public.folder_administers_org(uuid) TO anon;')
+      .map((violation) => violation.name).sort()).toEqual([
+      'folder_administers_org',
+      'folder_administers_org_exact',
+    ]);
   });
 
   it('same-file: an anon-only revoke satisfies an auth-exempt function', () => {

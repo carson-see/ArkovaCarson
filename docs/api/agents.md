@@ -246,6 +246,12 @@ handler's dispatch is guarded on an org id its ownership query never selects.
 The contract is published so subscriptions can be registered ahead of the fix,
 the same shape as `credential.verified`.
 
+## 2026-09-14 — SCRUM-5142 MCP folder parity
+
+`mcp-tools.md` documents `arkova_manage_folders` with the same action set as hosted MCP, npm MCP, REST, and both SDKs. Tool and server-card registries must remain exact mirrors.
+The intro now describes the resulting default catalog precisely: sixteen tools,
+with fifteen read-oriented tools and one separately scoped folder-management
+tool. Do not call the whole catalog read-only while folder mutations are live.
 
 ## CTO #2844 atomic offboarding correction — 2026-09-14
 

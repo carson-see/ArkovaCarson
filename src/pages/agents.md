@@ -879,6 +879,10 @@ only fails when a user clicks.
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
 
+## 2026-09-14 — SCRUM-5142 folder UI
+
+`MyRecordsPage` supports nested personal/org folders and bounded multi-record moves. `MemberDetailPage` loads only the selected member's explicit org-context folders through the worker API and filters the member's records by the selected subtree; global personal folders are never requested. `RuleBuilderPage` configures the same destination ids for connector actions.
+
 ## 2026-09-14 — SCRUM-5145 consumed confirmation links
 
 `AuthCallbackPage` reconciles only `otp_expired` with authoritative `auth.getUser()`. It auto-routes only when that user is confirmed and matches the signup email remembered in session storage. A confirmed account that cannot be correlated gets an honest signed-in choice; generic errors, unrelated accounts, unconfirmed users, lookup failures, and the three-second lookup timeout remain errors.

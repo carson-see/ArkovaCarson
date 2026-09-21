@@ -7,14 +7,15 @@
  * Route: /organization/member/:memberId
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Mail, Calendar, User, FileText, Loader2 } from 'lucide-react';
+import { ArrowLeft, Mail, Calendar, User, FileText, Folder as FolderIcon, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrganization } from '@/hooks/useOrganization';
 import { supabase } from '@/lib/supabase';
+import { workerFetch } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -49,6 +50,13 @@ interface MemberProfile {
   org_id: string | null;
 }
 
+interface MemberFolder {
+  id: string;
+  name: string;
+  parent_folder_id: string | null;
+  connector_provider: 'google_drive' | 'docusign' | null;
+}
+
 function getInitials(name: string): string {
   const parts = name.split(/[\s@]+/);
   if (parts.length >= 2) {
@@ -81,6 +89,9 @@ export function MemberDetailPage() {
 
   const [member, setMember] = useState<MemberProfile | null>(null);
   const [anchors, setAnchors] = useState<AnchorRow[]>([]);
+  const [folders, setFolders] = useState<MemberFolder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,20 +99,19 @@ export function MemberDetailPage() {
     if (!memberId || !profile?.org_id) return;
 
     const currentMemberId = memberId;
-    const orgId = profile.org_id;
-
     let cancelled = false;
 
     async function fetchMemberData() {
       setLoading(true);
       setError(null);
+      setFolderError(null);
+      setSelectedFolderId(null);
 
-      // Fetch member profile — must be in same org
+      // Profile RLS establishes exact-org or approved parent-admin visibility.
       const { data: memberData, error: memberError } = await supabase
         .from('profiles')
         .select('id, email, full_name, avatar_url, role, created_at, org_id')
         .eq('id', currentMemberId)
-        .eq('org_id', orgId)
         .single();
 
       if (cancelled) return;
@@ -112,21 +122,37 @@ export function MemberDetailPage() {
         return;
       }
 
-      setMember(memberData as MemberProfile);
+      const visibleMember = memberData as MemberProfile;
+      if (!visibleMember.org_id) {
+        setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
+        setLoading(false);
+        return;
+      }
+      setMember(visibleMember);
 
-      // Fetch anchors created by this member within the org
-      const { data: anchorData } = await supabase
+      // The folder endpoint applies the same exact context and approved
+      // ancestor-admin policy atomically in the database.
+      const [anchorResult, folderResponse] = await Promise.all([
+        supabase
         .from('anchors')
-        .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height')
+        .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, folder_id, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height')
         .eq('user_id', currentMemberId)
-        .eq('org_id', orgId)
+        .eq('org_id', visibleMember.org_id)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(200),
+        workerFetch(`/api/v1/folders?owner_scope=USER&owner_user_id=${encodeURIComponent(currentMemberId)}&context_org_id=${encodeURIComponent(visibleMember.org_id)}`),
+      ]);
 
       if (cancelled) return;
 
-      setAnchors((anchorData ?? []) as typeof anchors);
+      setAnchors((anchorResult.data ?? []) as AnchorRow[]);
+      if (folderResponse.ok) {
+        const body = await folderResponse.json() as { folders?: MemberFolder[] };
+        if (!cancelled) setFolders(body.folders ?? []);
+      } else {
+        setFolderError('Folders could not be loaded for this member.');
+      }
       setLoading(false);
     }
 
@@ -139,6 +165,42 @@ export function MemberDetailPage() {
     await signOut();
     navigate(ROUTES.LOGIN);
   };
+
+  const selectedFolderIds = new Set<string>();
+  if (selectedFolderId) {
+    selectedFolderIds.add(selectedFolderId);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const folder of folders) {
+        if (folder.parent_folder_id && selectedFolderIds.has(folder.parent_folder_id) && !selectedFolderIds.has(folder.id)) {
+          selectedFolderIds.add(folder.id);
+          changed = true;
+        }
+      }
+    }
+  }
+  const visibleAnchors = selectedFolderId
+    ? anchors.filter((anchor) => !!anchor.folder_id && selectedFolderIds.has(anchor.folder_id))
+    : anchors;
+
+  const renderFolders = (parentId: string | null, depth = 0): ReactNode => folders
+    .filter((folder) => folder.parent_folder_id === parentId)
+    .map((folder) => (
+      <div key={folder.id}>
+        <button
+          type="button"
+          onClick={() => setSelectedFolderId(folder.id)}
+          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted ${selectedFolderId === folder.id ? 'bg-muted font-medium' : ''}`}
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        >
+          <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">{folder.name}</span>
+          {folder.connector_provider && <Badge variant="outline" className="ml-auto text-[10px]">Connector</Badge>}
+        </button>
+        {renderFolders(folder.id, depth + 1)}
+      </div>
+    ));
 
   return (
     <AppShell
@@ -242,20 +304,46 @@ export function MemberDetailPage() {
             </CardContent>
           </Card>
 
+          <Card className="shadow-card-rest">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FolderIcon className="h-5 w-5" />
+                Folders
+                {folders.length > 0 && <Badge variant="secondary">{folders.length}</Badge>}
+              </CardTitle>
+            </CardHeader>
+            <Separator />
+            <CardContent className="pt-4">
+              <button
+                type="button"
+                onClick={() => setSelectedFolderId(null)}
+                className={`mb-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted ${selectedFolderId === null ? 'bg-muted font-medium' : ''}`}
+              >
+                <span>All records</span>
+                <Badge variant="secondary">{anchors.length}</Badge>
+              </button>
+              {folderError ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">{folderError}</p>
+              ) : folders.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">No org-context folders.</p>
+              ) : renderFolders(null)}
+            </CardContent>
+          </Card>
+
           {/* Member's records */}
           <Card className="shadow-card-rest">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <FileText className="h-5 w-5" />
                 {MEMBER_DETAIL_LABELS.RECORDS_SECTION}
-                {anchors.length > 0 && (
-                  <Badge variant="secondary">{anchors.length}</Badge>
+                {visibleAnchors.length > 0 && (
+                  <Badge variant="secondary">{visibleAnchors.length}</Badge>
                 )}
               </CardTitle>
             </CardHeader>
             <Separator />
             <CardContent className="pt-4">
-              {anchors.length === 0 ? (
+              {visibleAnchors.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <FileText className="h-10 w-10 mx-auto mb-3 opacity-50" />
                   <p className="text-sm">{MEMBER_DETAIL_LABELS.RECORDS_EMPTY}</p>
@@ -271,7 +359,7 @@ export function MemberDetailPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {anchors.map((anchor) => (
+                    {visibleAnchors.map((anchor) => (
                       <TableRow key={anchor.id}>
                         <TableCell>
                           <Link

@@ -636,6 +636,7 @@ instant/queue keyboard actionability, purchase/admin guidance, and durable
 NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
 only account and network boundaries; submissions are captured at the worker HTTP
 boundary and rearm must reuse the original fingerprint.
+
 ## 2026-09-14 — SCRUM-5145 email confirmation browser regressions
 
 `uat17-email-confirmation.spec.ts` drives the actual SignUpForm, useAuth, EmailConfirmation and AuthCallbackPage through the development-only fixture at1280/375. Auth signup/resend HTTP responses are simulated; the tests assert one signup, dedicated password-free resend, truthful outcomes, idle-time cooldown reset, long-address containment and actionable expired links. They use empty storageState and do not need seeded sessions. Run locally with `npx playwright test --config=e2e/uat17-email-confirmation.config.ts`; the dedicated config owns port5197 and uses placeholder local Auth configuration. The spec also runs in the ordinary CI Chromium project. Screenshots are Playwright attachments. This proves browser behavior, not real SMTP, server expiry, organization association or MFA; the isolated hosted driver and actual browser UAT cover those release gates.

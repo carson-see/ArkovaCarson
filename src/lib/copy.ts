@@ -716,6 +716,10 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   // attestation was created" until batch-create emits.
   'attestation.created': 'A single attestation was created and is awaiting securing. Bulk creation does not send this notification.',
   'attestation.revoked': 'An attestation was withdrawn by the party that made it.',
+  'folder.created': 'A record folder was created.',
+  'folder.updated': 'A record folder name, parent, or connector destination changed.',
+  'folder.deleted': 'A record folder was deleted and its records became unfiled.',
+  'record.folder_changed': 'One or more records moved to a folder or became unfiled.',
   'anchor.revocation_anchored': 'An anchor revocation was confirmed on the configured network.',
   'attestation.active': 'An attestation became active after its Network Receipt was submitted.',
   'suborg.created': 'A parent organization created an affiliated organization.',

@@ -72,6 +72,12 @@ worth noticing before "harmonising" them.
 The `?? created_at` shape is the one to reject in review: it reads as correct and misreports only on
 the subset of rows where `chain_timestamp` is NULL, so a spot check will not catch it.
 
+## 2026-09-14 — SCRUM-5142 MCP workflow documentation count
+
+The canonical runtime has sixteen default tools after `arkova_manage_folders`:
+fifteen read-oriented tools plus the separately scoped folder-management tool.
+`agentWorkflows.test.ts` pins both the count and that distinction against
+`docs/api/mcp-tools.md` so a writable action cannot be mislabeled read-only.
 ## 2026-09-12 — `/orgs` gained hierarchy, public-id only (SCRUM-3971)
 
 `list_orgs` returned exactly the key's own organization with no way to tell a

@@ -44,6 +44,9 @@ import type {
   MerkleProofEntry,
   ProofBundle,
   ProofBundleSignature,
+  Folder,
+  CreateFolderInput,
+  BulkFolderMoveResult,
 } from './types';
 
 const ANCHOR_LIFECYCLE_STATUSES = new Set<AnchorLifecycleStatus>([
@@ -569,6 +572,66 @@ export class Arkova {
     const data = await jsonOrThrow<Record<string, unknown>>(response, 'Document lookup failed');
     return mapDocumentDetails(data);
   }
+
+  /** Nested personal and organization folder management (SCRUM-5142). */
+  readonly folders = {
+    list: async (options: {
+      ownerScope?: 'USER' | 'ORG'; ownerUserId?: string; orgId?: string; contextOrgId?: string;
+    } = {}): Promise<Folder[]> => {
+      const params = new URLSearchParams({ owner_scope: options.ownerScope ?? 'ORG' });
+      if (options.ownerUserId) params.set('owner_user_id', options.ownerUserId);
+      if (options.orgId) params.set('org_id', options.orgId);
+      if (options.contextOrgId) params.set('context_org_id', options.contextOrgId);
+      const response = await this.fetch(`/api/v1/folders?${params}`);
+      const body = await jsonOrThrow<{ folders: Array<Record<string, unknown>> }>(response, 'Folder list failed');
+      return body.folders.map(mapFolder);
+    },
+    create: async (input: CreateFolderInput): Promise<Folder> => {
+      const response = await this.fetch('/api/v1/folders', { method: 'POST', body: JSON.stringify({
+        name: input.name, owner_scope: input.ownerScope, org_id: input.orgId,
+        context_org_id: input.contextOrgId, parent_folder_id: input.parentFolderId,
+      }) });
+      const body = await jsonOrThrow<{ folder: Record<string, unknown> }>(response, 'Folder creation failed');
+      return mapFolder(body.folder);
+    },
+    update: async (id: string, patch: { name?: string; parentFolderId?: string | null }): Promise<Folder> => {
+      const response = await this.fetch(`/api/v1/folders/${encodeURIComponent(id)}`, {
+        method: 'PATCH', body: JSON.stringify({ name: patch.name, parent_folder_id: patch.parentFolderId }),
+      });
+      const body = await jsonOrThrow<{ folder: Record<string, unknown> }>(response, 'Folder update failed');
+      return mapFolder(body.folder);
+    },
+    bindConnector: async (id: string, binding: {
+      provider: 'google_drive' | 'docusign' | null; sourceId: string | null; connectionId: string | null;
+    }): Promise<Folder> => {
+      const response = await this.fetch(`/api/v1/folders/${encodeURIComponent(id)}/connector`, {
+        method: 'PUT', body: JSON.stringify({ provider: binding.provider, source_id: binding.sourceId,
+          connection_id: binding.connectionId }),
+      });
+      const body = await jsonOrThrow<{ folder: Record<string, unknown> }>(response, 'Connector binding failed');
+      return mapFolder(body.folder);
+    },
+    delete: async (id: string): Promise<void> => {
+      const response = await this.fetch(`/api/v1/folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!response.ok) await jsonOrThrow(response, 'Folder delete failed');
+    },
+    moveRecords: async (anchorIds: string[], folderId: string | null): Promise<BulkFolderMoveResult> => {
+      const response = await this.fetch('/api/v1/folders/bulk-move', {
+        method: 'POST', body: JSON.stringify({ anchor_ids: anchorIds, folder_id: folderId }),
+      });
+      const body = await jsonOrThrow<{ moved: string[]; failed: Array<{ anchor_id: string; code: string }> }>(
+        response, 'Folder bulk move failed');
+      return { moved: body.moved, failed: body.failed.map((row) => ({ anchorId: row.anchor_id, code: row.code })) };
+    },
+    moveRecordsByPublicId: async (recordPublicIds: string[], folderId: string | null): Promise<BulkFolderMoveResult> => {
+      const response = await this.fetch('/api/v1/folders/bulk-move', {
+        method: 'POST', body: JSON.stringify({ record_public_ids: recordPublicIds, folder_id: folderId }),
+      });
+      const body = await jsonOrThrow<{ moved: string[]; failed: Array<{ anchor_id: string; code: string }> }>(
+        response, 'Folder bulk move failed');
+      return { moved: body.moved, failed: body.failed.map((row) => ({ anchorId: row.anchor_id, code: row.code })) };
+    },
+  };
 
   /**
    * Webhook management namespace (INT-09).
@@ -1431,6 +1494,19 @@ export class ArkovaError extends Error {
 }
 
 // ─── Internal mappers (snake_case → camelCase) ──────────────────────────
+
+function mapFolder(row: Record<string, unknown>): Folder {
+  return {
+    id: row.id as string, publicId: row.public_id as string, name: row.name as string,
+    ownerScope: row.owner_scope as Folder['ownerScope'], userId: (row.user_id as string | null) ?? null,
+    orgId: (row.org_id as string | null) ?? null, contextOrgId: (row.context_org_id as string | null) ?? null,
+    parentFolderId: (row.parent_folder_id as string | null) ?? null,
+    connectorProvider: (row.connector_provider as Folder['connectorProvider']) ?? null,
+    connectorSourceId: (row.connector_source_id as string | null) ?? null,
+    connectorConnectionId: (row.connector_connection_id as string | null) ?? null,
+    createdAt: row.created_at as string, updatedAt: row.updated_at as string,
+  };
+}
 
 function mapWebhook(row: Record<string, unknown>): WebhookEndpoint {
   return {

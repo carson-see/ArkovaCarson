@@ -82,11 +82,11 @@ The server speaks JSON-RPC over stdio. A handshake plus a `tools/list` confirms 
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | npx -y arkova-mcp-server
 ```
 
-A healthy server replies with its `serverInfo` and all 8 tool definitions. The `ARKOVA_API_KEY is not set` line on stderr is expected here and is not a failure.
+A healthy server replies with its `serverInfo` and all 9 tool definitions. The `ARKOVA_API_KEY is not set` line on stderr is expected here and is not a failure.
 
 ## Tools
 
-8 tools total, all reading the same `ARKOVA_API_KEY`. **Every tool is a remote HTTPS call to the Arkova API.** None of them read local files, environment variables, or stored secrets.
+9 tools total, all reading the same `ARKOVA_API_KEY`. **Every tool is a remote HTTPS call to the Arkova API.** None of them read local files, environment variables, or stored secrets.
 
 | Tool | Description |
 |------|-------------|
@@ -98,6 +98,7 @@ A healthy server replies with its `serverInfo` and all 8 tool definitions. The `
 | `arkova_create_attestation` | Create a third-party attestation (requires `attester_name` and a non-empty `claims` array; any authenticated API key, not just org admins) |
 | `arkova_batch_verify` | Verify up to 20 public IDs at once; results returned inline |
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |
+| `arkova_manage_folders` | List and manage nested folders, connector destinations, and bulk record moves |
 
 ### Renamed / removed in this version (v3.0.0, breaking)
 

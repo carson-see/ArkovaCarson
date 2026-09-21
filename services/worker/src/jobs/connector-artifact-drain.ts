@@ -414,7 +414,13 @@ export async function defaultMaterializeAnchor(
   row: ConnectorArtifactRow,
   deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
 ): Promise<MaterializationOutcome> {
-  const userId = await resolveOrgActorUserId(deps, row.org_id);
+  const memberOwnerId = metadataString(row.metadata, 'queue_scope') === 'member'
+    ? metadataString(row.metadata, 'owner_user_id')
+    : null;
+  // DS-04 member artifacts are owned by the verified member connection owner.
+  // Migration 0462 rechecks that ownership against the locked artifact, active
+  // member_integrations row, and exact org membership before publication.
+  const userId = memberOwnerId ?? await resolveOrgActorUserId(deps, row.org_id);
 
   // SCRUM-2904 envelope-level guard: if the declared-hash rules path already
   // created a live anchor for this same envelope (flag-flip-mid-flight race:

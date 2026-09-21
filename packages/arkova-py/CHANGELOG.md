@@ -3,6 +3,12 @@
 All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
 anything earlier, see `git log -- packages/arkova-py/`.
 
+## 2.4.0
+
+Adds typed synchronous and asynchronous folder management: nested personal and
+organization folders, connector destination binding, deletion, and bounded
+partial-result bulk moves through the canonical `/api/v1/folders` routes.
+
 ## 2.3.0
 
 Clears the rest of the model-drift audit opened by **BUG-2026-08-12-007**. That

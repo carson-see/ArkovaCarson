@@ -45,6 +45,10 @@ export const VALID_EVENTS = [
   // delivery has happened.
   'attestation.created',
   'attestation.revoked',
+  'folder.created',
+  'folder.updated',
+  'folder.deleted',
+  'record.folder_changed',
   'anchor.revocation_anchored',
   'attestation.active',
   // SCRUM-3972 — affiliated-organization lifecycle. Same caveat as

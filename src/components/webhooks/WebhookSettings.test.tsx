@@ -626,6 +626,11 @@ describe('WebhookSettings', () => {
         // (attestation.created was shipping the document fingerprint, §1.6).
         'attestation.created',
         'attestation.revoked',
+        // SCRUM-5142: emitted by the authenticated folder management routes.
+        'folder.created',
+        'folder.updated',
+        'folder.deleted',
+        'record.folder_changed',
         'anchor.revocation_anchored',
         'attestation.active',
         // SCRUM-3972: affiliated-organization lifecycle. Appended after

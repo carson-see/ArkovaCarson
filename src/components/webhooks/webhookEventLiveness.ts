@@ -137,6 +137,22 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: false,
     fields: ['public_id', 'status', 'revocation_reason', 'revoked_at', 'attestation_type?', 'org_public_id?'],
   },
+  'folder.created': {
+    live: true,
+    fields: ['folder_public_id', 'owner_scope', 'connector_provider?'],
+  },
+  'folder.updated': {
+    live: true,
+    fields: ['folder_public_id', 'owner_scope', 'connector_provider?'],
+  },
+  'folder.deleted': {
+    live: true,
+    fields: ['folder_public_id', 'owner_scope', 'connector_provider?'],
+  },
+  'record.folder_changed': {
+    live: true,
+    fields: ['folder_public_id', 'moved_count', 'failed_count'],
+  },
   'anchor.revocation_anchored': {
     live: true,
     fields: ['public_id', 'status', 'revocation_tx_id', 'revocation_block_height', 'original_chain_tx_id', 'org_public_id?'],

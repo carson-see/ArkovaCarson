@@ -69,3 +69,5 @@ only the hook's own file. This folder is the missing consumer, wired into
   `useAnchors` (`src/hooks/useAnchors.ts`) to select+map `folder_id` →
   `Record.folderId` (additive, did not restructure the hook). See
   `src/pages/agents.md` and `src/hooks/agents.md` for the consumer-side notes.
+
+- 2026-09-14 SCRUM-5142: `FolderSidebar` renders same-owner nested trees and connector-managed destinations. Parent selection is passed to the canonical create API; database cycle/owner guards remain authoritative.

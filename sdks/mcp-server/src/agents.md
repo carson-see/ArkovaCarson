@@ -23,3 +23,7 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 - Compatible with Claude, OpenAI, Cursor, and any MCP client.
 - Compatible with Claude, OpenAI, Cursor, and any MCP client (stdio transport only — see `cli.ts`).
 - Tool names/descriptions/input-property descriptions are CLAUDE.md §1.3 terminology surface (see `index.test.ts`'s standing guard above) — treat them like UI copy, not internal code, when adding or editing a tool.
+
+## 2026-09-14 — SCRUM-5142 folders
+
+`arkova_manage_folders` is one action-discriminated tool over the canonical worker REST routes. It forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model.

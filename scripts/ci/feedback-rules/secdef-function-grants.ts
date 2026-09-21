@@ -116,6 +116,13 @@ export const DELIBERATELY_AUTHENTICATED = new Set([
   // verified 2026-09-14). The exact immutable definition is pinned below so
   // this exception cannot authorize a changed body or another overload.
   'public.create_webhook_endpoint',
+  // 0462: these are RLS-policy helpers. Every named caller is an
+  // authenticated folders/profiles/anchors policy, and each body derives the
+  // caller through is_org_admin_of(auth.uid()) rather than trusting an input
+  // identity. Prod deliberately grants authenticated and denies anon. The
+  // exact reviewed migration bytes are pinned below.
+  'public.folder_administers_org',
+  'public.folder_administers_org_exact',
   // src/hooks/useEntitlements.ts — usage widget calls this as the signed-in
   // user; the hook falls back to 0 on error, so revoking fails SILENTLY.
   // 0392 added the NULL-identity self-only guard that makes the grant safe.
@@ -137,10 +144,20 @@ export const DELIBERATELY_AUTHENTICATED = new Set([
 
 // 0454 is already applied on staging and must remain byte-identical. A future
 // definition requires its own security review; a same-name grant is insufficient.
-const WEBHOOK_CREATION_AUTH_PIN = {
-  file: '0454_scrum3972_webhook_endpoint_scope.sql',
-  sha256: '965be3884f775ef4875daf27d20e04d8886a0a2833223bcccacc571d069fd2a8',
-};
+const AUTHENTICATED_DEFINITION_PINS = new Map([
+  ['public.create_webhook_endpoint', {
+    file: '0454_scrum3972_webhook_endpoint_scope.sql',
+    sha256: '965be3884f775ef4875daf27d20e04d8886a0a2833223bcccacc571d069fd2a8',
+  }],
+  ['public.folder_administers_org', {
+    file: '0462_scrum5142_folder_hierarchy_authority.sql',
+    sha256: '406cdab5b03e3f6f7be2356091f252e4cc51bda9017a662efa2c55ee33b30f78',
+  }],
+  ['public.folder_administers_org_exact', {
+    file: '0462_scrum5142_folder_hierarchy_authority.sql',
+    sha256: '406cdab5b03e3f6f7be2356091f252e4cc51bda9017a662efa2c55ee33b30f78',
+  }],
+]);
 
 export interface SecdefFunction {
   file: string;
@@ -569,9 +586,9 @@ export function findViolations(
       if (allowed.has(`${fn.schema}.${fn.name}`)) continue;
       // Authenticated-axis exemption only — the anon axis stays mandatory.
       const qualifiedName = `${fn.schema}.${fn.name}`;
-      const reviewedDefinition = qualifiedName !== 'public.create_webhook_endpoint' || (
-        file === WEBHOOK_CREATION_AUTH_PIN.file &&
-        createHash('sha256').update(sql).digest('hex') === WEBHOOK_CREATION_AUTH_PIN.sha256
+      const pin = AUTHENTICATED_DEFINITION_PINS.get(qualifiedName);
+      const reviewedDefinition = !pin || (
+        file === pin.file && createHash('sha256').update(sql).digest('hex') === pin.sha256
       );
       const authExempt = authExemptSet.has(qualifiedName) && reviewedDefinition;
       if (hasExplicitRevoke(sql, fn.schema, fn.name, authExempt)) continue;

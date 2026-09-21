@@ -27,6 +27,13 @@ const CORS_ALLOWED_ORIGINS: string[] = (() => {
   return [...origins];
 })();
 
+function isV1ApiPath(req: Request): boolean {
+  return req.path === '/api/v1'
+    || req.path.startsWith('/api/v1/')
+    || req.path === '/v1'
+    || req.path.startsWith('/v1/');
+}
+
 /**
  * Sets CORS headers for browser-facing routes.
  * Returns true if the request was a preflight (OPTIONS) that was already handled.
@@ -60,6 +67,14 @@ export function setCorsHeaders(req: Request, res: Response): boolean {
  * Use on routers instead of manual setCorsHeaders() calls in each handler.
  */
 export function corsMiddleware(req: Request, res: Response, next: NextFunction): void {
+  // The v1 router owns a distinct CORS contract: API-key/idempotency headers,
+  // PUT, and its own production origin policy. It is mounted after this global
+  // middleware, so defer its canonical and legacy exact boundaries instead of
+  // preempting OPTIONS with the narrower browser-route contract.
+  if (isV1ApiPath(req)) {
+    next();
+    return;
+  }
   if (setCorsHeaders(req, res)) return;
   next();
 }
