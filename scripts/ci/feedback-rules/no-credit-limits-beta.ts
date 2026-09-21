@@ -17,11 +17,19 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPO, hasLabel, changedFiles, LABELS } from '../lib/ciContext.js';
 
-const VIOLATION_RES = [
-  /RAISE\s+EXCEPTION[^;]*Quota\s+exceeded/i,
+const QUOTA_MESSAGE_RE = /RAISE\s+EXCEPTION[^;]*Quota\s+exceeded/i;
+
+const P0002_RES = [
   /ERRCODE\s*=?\s*['"]?P0002['"]?/i,
   /raise\s+exception\s+using\s+errcode\s*=\s*['"]P0002['"]/i,
 ];
+
+// P0002 is Postgres `no_data_found`. 0093 abused it for a quota refusal, which
+// is why it is matched at all; a RAISE whose message literal is a not-found
+// error is the code's ordinary meaning, not quota enforcement (0470/0482
+// `'user_not_found'`, flagged on PR #3019 and #3036). Deliberately narrow: only
+// the message literal is consulted, and a quota-worded line never reaches here.
+const NOT_FOUND_MESSAGE_RE = /RAISE\s+EXCEPTION\s+'[^']*not[_ ]found[^']*'/i;
 
 const BASELINE_MIGRATION = 'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql';
 
@@ -31,21 +39,27 @@ interface Violation {
   text: string;
 }
 
-function checkFile(file: string): Violation[] {
-  let content: string;
-  try {
-    content = readFileSync(resolve(REPO, file), 'utf8');
-  } catch {
-    return [];
-  }
+function isViolation(line: string): boolean {
+  if (QUOTA_MESSAGE_RE.test(line)) return true;
+  if (!P0002_RES.some((re) => re.test(line))) return false;
+  return !NOT_FOUND_MESSAGE_RE.test(line);
+}
+
+export function findViolationsInSql(content: string, file: string): Violation[] {
   const violations: Violation[] = [];
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    if (VIOLATION_RES.some((re) => re.test(lines[i]))) {
-      violations.push({ file, line: i + 1, text: lines[i].trim() });
-    }
+    if (isViolation(lines[i])) violations.push({ file, line: i + 1, text: lines[i].trim() });
   }
   return violations;
+}
+
+function checkFile(file: string): Violation[] {
+  try {
+    return findViolationsInSql(readFileSync(resolve(REPO, file), 'utf8'), file);
+  } catch {
+    return [];
+  }
 }
 
 export function run(): { ok: boolean; message: string } {
