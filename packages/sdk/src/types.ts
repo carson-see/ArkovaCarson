@@ -710,7 +710,13 @@ export interface AnchorImportOptions {
 
 export interface AnchorImportResultRow {
   fingerprint: string;
-  status: 'created' | 'skipped' | 'failed';
+  /**
+   * `created_recipient_failed` / `skipped_recipient_failed` mean the anchor
+   * committed and only the recipient link failed. The record exists — do not
+   * re-submit the row; re-submitting dedupes but wastes a call, and for a
+   * capped org an instant re-submission can consume credit.
+   */
+  status: 'created' | 'skipped' | 'failed' | 'created_recipient_failed' | 'skipped_recipient_failed';
   publicId?: string;
   instantStatus?: AnchorInstantStatus | null;
   reason?: string;
@@ -721,6 +727,12 @@ export interface AnchorImportResponse {
   created: number;
   skipped: number;
   failed: number;
+  /**
+   * Rows whose anchor committed but whose recipient link failed. Additive:
+   * these are already counted in `created`/`skipped` and never in `failed`,
+   * so `created + skipped + failed` still equals `total`.
+   */
+  recipientLinkFailed: number;
   results: AnchorImportResultRow[];
 }
 

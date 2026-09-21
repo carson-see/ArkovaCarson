@@ -67,6 +67,8 @@ interface ProcessingResult {
   instantFailed: number;
   instantPending: number;
   instantUnknown: number;
+  /** Secured rows whose recipient link failed; never counted as failed. */
+  recipientLinkFailed: number;
   partial: boolean;
   action: SecuringPath;
 }
@@ -81,6 +83,8 @@ function toProcessingResult(bulkResult: Awaited<ReturnType<ReturnType<typeof use
     instantFailed: statuses.filter((row) => row.instant_status === 'FAILED').length,
     instantPending: statuses.filter((row) => ['QUEUED', 'PROCESSING', 'RETRYABLE'].includes(row.instant_status ?? '')).length,
     instantUnknown: action === 'instant' ? statuses.filter((row) => row.status !== 'failed' && !row.instant_status).length : 0,
+    recipientLinkFailed: bulkResult.recipient_link_failed
+      ?? statuses.filter((row) => row.status === 'created_recipient_failed' || row.status === 'skipped_recipient_failed').length,
     partial: bulkResult.partial === true,
     action,
   };
@@ -762,7 +766,18 @@ function CompleteStep({
         {result.instantFailed > 0 && <Badge variant="destructive" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_FAILED(result.instantFailed)}</Badge>}
         {result.instantPending > 0 && <Badge variant="secondary" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_PENDING(result.instantPending)}</Badge>}
         {result.instantUnknown > 0 && <Badge variant="outline" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_UNKNOWN(result.instantUnknown)}</Badge>}
+        {result.recipientLinkFailed > 0 && (
+          <Badge variant="outline" className="text-base px-4 py-1">
+            {BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED(result.recipientLinkFailed)}
+          </Badge>
+        )}
       </div>
+
+      {result.recipientLinkFailed > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED_BODY}
+        </p>
+      )}
 
       {result.skipped > 0 && (
         <p className="text-xs text-muted-foreground">

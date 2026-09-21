@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from arkova import (
     BULK_ANCHOR_MAX_ROWS,
     Anchor,
+    AnchorImportResponse,
     AnchorImportRow,
     AnchorReceipt,
     Arkova,
@@ -77,6 +78,42 @@ def test_anchor_import_uses_canonical_path_and_parses_207(asynchronous: bool) ->
     assert result.failed == 1
     assert seen[0].url.path == "/v1/anchor/import"
     assert "org_id" not in json.loads(seen[0].content)
+
+
+# SHOULD-FIX from the #3020 review: an anchor that exists is never reported as
+# a failed row, so the typed model must accept the two recipient-link statuses
+# and the additive counter without dropping to a generic string.
+def test_anchor_import_models_accept_recipient_link_statuses() -> None:
+    parsed = AnchorImportResponse.model_validate(
+        {
+            "total": 2,
+            "created": 1,
+            "skipped": 1,
+            "failed": 0,
+            "recipient_link_failed": 2,
+            "results": [
+                {
+                    "fingerprint": "a" * 64,
+                    "status": "created_recipient_failed",
+                    "public_id": "ARK-1",
+                    "reason": "recipient_activation_email_failed",
+                },
+                {
+                    "fingerprint": "b" * 64,
+                    "status": "skipped_recipient_failed",
+                    "public_id": "ARK-2",
+                    "reason": "recipient_link_failed",
+                },
+            ],
+        }
+    )
+    assert parsed.recipient_link_failed == 2
+    assert parsed.failed == 0
+    assert [row.status for row in parsed.results] == [
+        "created_recipient_failed",
+        "skipped_recipient_failed",
+    ]
+    assert parsed.created + parsed.skipped + parsed.failed == parsed.total
 
 
 def test_anchor_import_never_retries_a_write_error() -> None:

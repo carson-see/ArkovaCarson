@@ -82,3 +82,9 @@ commit as the final word on the string's exact form, only on removing the
 non-existent placeholder entity.
 
 UAT-23 adds `arkova_import_rows` to the documented conditional write surface; keep the server card exactly aligned with `TOOL_DEFINITIONS` and the 15+3 count.
+
+## 2026-09-21 — server-card description synced for arkova_import_rows (PR #3034)
+
+`mcp-manifest-parity` asserts each manifest description equals its
+`TOOL_DEFINITIONS` description exactly, so this file and
+`services/edge/src/mcp-tools.ts` change together or CI goes red.

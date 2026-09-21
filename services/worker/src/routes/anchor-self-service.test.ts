@@ -119,7 +119,7 @@ describe('anchor self-service context bridge', () => {
     });
     expect(response.status).toBe(207);
     expect(response.body).toEqual({
-      total: 3, created: 1, skipped: 1, failed: 1,
+      total: 3, created: 1, skipped: 1, failed: 1, recipient_link_failed: 0,
       results: [
         { fingerprint: 'a'.repeat(64), status: 'created', public_id: 'ARK-aaaa', instant_status: 'QUEUED' },
         { fingerprint: 'b'.repeat(64), status: 'skipped', public_id: 'ARK-bbbb', instant_status: 'QUEUED' },
@@ -133,6 +133,118 @@ describe('anchor self-service context bridge', () => {
     });
     expect(state.bulkBodies[0]).not.toHaveProperty('recipient_email');
     expect(state.bulkBodies[0]).not.toHaveProperty('fingerprint_provided');
+  });
+
+  // SHOULD-FIX from the #3020 review: a row whose anchor was created but whose
+  // recipient link then threw was reported `status: 'failed'` and left out of
+  // `created`. A caller reading that re-submits a row whose PERMANENT anchor
+  // already exists — a duplicate submission attempt and, for a capped or
+  // billable org, a double charge. The anchor is the durable fact, so it is
+  // always counted; the link failure gets its own truthful status.
+  it('counts a created anchor whose recipient link fails as created, not failed', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'owner';
+    state.linkRecipient.mockRejectedValueOnce(new Error('recipient_activation_email_failed'));
+
+    const response = await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'a'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test',
+      }],
+    });
+
+    expect(response.status).toBe(207);
+    expect(response.body.results[0]).toEqual({
+      fingerprint: 'a'.repeat(64),
+      status: 'created_recipient_failed',
+      public_id: 'ARK-aaaa',
+      reason: 'recipient_activation_email_failed',
+    });
+    // The anchor exists, so it is counted in `created` and NOT in `failed`.
+    expect(response.body.created).toBe(1);
+    expect(response.body.failed).toBe(0);
+    expect(response.body.recipient_link_failed).toBe(1);
+    // Summary stays arithmetically honest.
+    expect(response.body.created + response.body.skipped + response.body.failed).toBe(response.body.total);
+  });
+
+  // The replay half of the same defect: re-submitting the row above dedupes to
+  // the existing anchor (canonical submit answers `idempotent: true`, so no new
+  // anchor and no new charge) and re-attempts ONLY the recipient link. If that
+  // link fails again the row is still not `failed` — the anchor is there.
+  it('replays a recipient-failed row without creating or charging again', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'owner';
+    state.linkRecipient.mockRejectedValueOnce(new Error('recipient_activation_email_failed'));
+
+    const response = await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      // `b`-prefixed fingerprints resolve to the idempotent receipt in the
+      // canonical-submit mock, i.e. the anchor already exists.
+      rows: [{
+        fingerprint: 'b'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test',
+      }],
+    });
+
+    expect(response.status).toBe(207);
+    expect(response.body.results[0]).toEqual({
+      fingerprint: 'b'.repeat(64),
+      status: 'skipped_recipient_failed',
+      public_id: 'ARK-bbbb',
+      reason: 'recipient_activation_email_failed',
+    });
+    expect(response.body.created).toBe(0);
+    expect(response.body.skipped).toBe(1);
+    expect(response.body.failed).toBe(0);
+    expect(response.body.recipient_link_failed).toBe(1);
+    expect(response.body.created + response.body.skipped + response.body.failed).toBe(response.body.total);
+    // Only the link was re-attempted; the submit deduped rather than creating.
+    expect(state.linkRecipient).toHaveBeenCalledTimes(1);
+    expect(state.bulkBodies).toHaveLength(1);
+  });
+
+  it('keeps a successful recipient link on the plain created status', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'owner';
+    state.linkRecipient.mockResolvedValueOnce(undefined);
+
+    const response = await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'a'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test',
+      }],
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.results[0].status).toBe('created');
+    expect(response.body.created).toBe(1);
+    expect(response.body.recipient_link_failed).toBe(0);
+  });
+
+  it('bounds an unsafe recipient-link error into a stable reason code', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'owner';
+    state.linkRecipient.mockRejectedValueOnce(new Error('recipient bob@example.test could not be linked'));
+
+    const response = await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'a'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test',
+      }],
+    });
+
+    expect(response.body.results[0].status).toBe('created_recipient_failed');
+    expect(response.body.results[0].reason).toBe('recipient_link_failed');
+    // No PII from the thrown message reaches the response.
+    expect(JSON.stringify(response.body)).not.toContain('bob@example.test');
   });
 
   it('rejects more than 100 rows before submitting any row', async () => {

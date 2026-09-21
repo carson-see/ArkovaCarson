@@ -266,3 +266,11 @@ This additive wrapper is deliberately route-org scoped and never consults profil
 ## 2026-09-14 — SCRUM-5145 signup resend API
 
 Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.
+
+## 2026-09-21 — useBulkAnchors carries recipient-link outcomes (PR #3034)
+
+`BulkAnchorResult.status` gained `created_recipient_failed` /
+`skipped_recipient_failed`, and `BulkCreateResult` gained the optional
+`recipient_link_failed` counter, summed across chunks like the other counters.
+Optional because an older worker omits it; absent reads as zero. These rows are
+NOT failures — do not fold them into `failed` in any consumer.

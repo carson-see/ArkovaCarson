@@ -50,3 +50,10 @@ Bulk upload and AI extraction components for CSV/Excel document anchoring workfl
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 BulkUploadWizard mapping label "Document Type". CSV column-name documentation strings (`credential_type`) untouched — they name the real columns. Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-09-21 — Wizard reports secured-but-unlinked rows (PR #3034)
+
+`ProcessingResult.recipientLinkFailed` comes from the response counter, falling
+back to counting `*_recipient_failed` rows when an older worker omits it. It
+renders its own badge plus the "do not upload again" body. It is deliberately
+separate from `failed`: the records exist.

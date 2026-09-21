@@ -139,3 +139,11 @@ the typed result; unknown persisted values fail closed as `ArkovaError(502, inva
 than being asserted into the public union or rendered as a known state.
 
 UAT-23 `anchorImport()` is additive and distinct from legacy `anchorBulk()`: 1–100 already-fingerprinted rows, canonical `/api/v1/anchor/import`, tenant derived from the API key, no document bytes, and no automatic write retry.
+
+## 2026-09-21 — anchorImport recipient-link surface (PR #3034)
+
+`AnchorImportResultRow.status` gained `created_recipient_failed` /
+`skipped_recipient_failed`; `AnchorImportResponse` gained `recipientLinkFailed`.
+`anchorImport()` now maps the response field-by-field instead of spreading, so
+the wire's `recipient_link_failed` never leaks onto the typed surface next to its
+camelCase twin; a missing field reads as 0.

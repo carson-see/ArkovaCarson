@@ -611,7 +611,16 @@ class AnchorImportRow:
 
 class AnchorImportResultRow(ArkovaModel):
     fingerprint: str
-    status: Literal["created", "skipped", "failed"]
+    #: ``created_recipient_failed`` / ``skipped_recipient_failed`` mean the
+    #: anchor committed and only the recipient link failed. The record exists
+    #: -- do not re-submit the row.
+    status: Literal[
+        "created",
+        "skipped",
+        "failed",
+        "created_recipient_failed",
+        "skipped_recipient_failed",
+    ]
     public_id: str | None = None
     instant_status: str | None = None
     reason: str | None = None
@@ -622,4 +631,9 @@ class AnchorImportResponse(ArkovaModel):
     created: int
     skipped: int
     failed: int
+    #: Rows whose anchor committed but whose recipient link failed. Additive:
+    #: already counted in ``created``/``skipped`` and never in ``failed``, so
+    #: ``created + skipped + failed`` still equals ``total``. Older workers omit
+    #: it, which reads as zero.
+    recipient_link_failed: int = 0
     results: list[AnchorImportResultRow]

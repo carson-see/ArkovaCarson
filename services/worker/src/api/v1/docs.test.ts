@@ -277,6 +277,22 @@ describe('OpenAPI spec', () => {
       .toEqual(expect.arrayContaining(['org_id', 'action', 'rows']));
   });
 
+  // SHOULD-FIX from the #3020 review. The per-row status is a published
+  // contract: a created anchor whose recipient link failed must be reportable
+  // without calling the row `failed`, and §1.8 allows only ADDITIVE changes,
+  // so `created`/`skipped`/`failed` stay exactly where they are.
+  it('publishes the recipient-link statuses additively and keeps the original three', () => {
+    const response = openApiSpec.paths['/anchor/import'].post
+      .responses['207'].content['application/json'].schema;
+    const rowStatus = response.properties.results.items.properties.status;
+    expect(rowStatus.enum).toEqual([
+      'created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed',
+    ]);
+    // Additive counter; the four original counters remain required.
+    expect(response.properties.recipient_link_failed).toMatchObject({ type: 'integer', minimum: 0 });
+    expect(response.required).toEqual(['total', 'created', 'skipped', 'failed', 'results']);
+  });
+
   it('has all four tags', () => {
     const tagNames = openApiSpec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('Verification');

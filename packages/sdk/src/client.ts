@@ -47,6 +47,7 @@ import type {
   AnchorImportRow,
   AnchorImportOptions,
   AnchorImportResponse,
+  AnchorImportResultRow,
   Folder,
   CreateFolderInput,
   BulkFolderMoveResult,
@@ -370,12 +371,23 @@ export class Arkova {
     });
     const result = await jsonOrThrow<{
       total: number; created: number; skipped: number; failed: number;
-      results: Array<{ fingerprint: string; status: 'created' | 'skipped' | 'failed'; public_id?: string; instant_status?: AnchorInstantStatus | null; reason?: string }>;
+      recipient_link_failed?: number;
+      results: Array<{ fingerprint: string; status: AnchorImportResultRow['status']; public_id?: string; instant_status?: AnchorInstantStatus | null; reason?: string }>;
     }>(response, 'Anchor import failed');
-    return { ...result, results: result.results.map((row) => ({
-      fingerprint: row.fingerprint, status: row.status, publicId: row.public_id,
-      instantStatus: row.instant_status, reason: row.reason,
-    })) };
+    // Mapped explicitly rather than spread so the snake_case counter never
+    // leaks onto the typed surface alongside its camelCase twin. Older workers
+    // omit it; absent means no row hit a recipient-link failure.
+    return {
+      total: result.total,
+      created: result.created,
+      skipped: result.skipped,
+      failed: result.failed,
+      recipientLinkFailed: result.recipient_link_failed ?? 0,
+      results: result.results.map((row) => ({
+        fingerprint: row.fingerprint, status: row.status, publicId: row.public_id,
+        instantStatus: row.instant_status, reason: row.reason,
+      })),
+    };
   }
 
   /** Shape one `anchorBulk()` input into the wire (snake_case) row shape, fingerprinting `data` rows client-side. */

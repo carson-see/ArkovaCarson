@@ -5197,6 +5197,14 @@ export const BULK_IMPORT_LABELS = {
   INSTANT_PENDING: (count: number) => `${count} Instant pending`,
   INSTANT_UNKNOWN: (count: number) => `${count} Status unavailable`,
   PARTIAL_TRANSPORT: 'The import stopped after a partial response. Confirmed row receipts were preserved.',
+  // SCRUM-5265 (SHOULD-FIX from the #3020 review). These rows ARE secured —
+  // only the recipient invitation failed. The copy has to say both halves,
+  // because the reader's obvious next move (re-upload the row) would create a
+  // duplicate submission for a record that already exists. §1.5: states what
+  // is measured (record secured; recipient not linked) and what is not
+  // asserted (nothing about the recipient having been notified).
+  RECIPIENT_LINK_FAILED: (count: number) => `${count} Secured, recipient not linked`,
+  RECIPIENT_LINK_FAILED_BODY: 'These records are secured and permanent. The recipient could not be linked, so no invitation was sent. Do not upload these rows again — invite the recipient from the record instead.',
 } as const;
 
 export const ORG_MEMBER_ADD_LABELS = {

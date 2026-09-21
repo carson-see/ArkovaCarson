@@ -350,3 +350,13 @@ Status-handler tests retain safe string error codes but collapse structured upst
 HTTP status; internal provider messages must never reach MCP output.
 
 UAT-23 `arkova_import_rows` is registered only inside the same flag-and-write-scope branch as `arkova_anchor_document`; its strict schema rejects unknown/raw fields and forwards 1–100 rows only to `/api/v1/anchor/import` with the validated caller API key.
+
+## 2026-09-21 — arkova_import_rows describes the recipient-link statuses (PR #3034)
+
+The tool description now tells an agent that a `created_recipient_failed` /
+`skipped_recipient_failed` row is already anchored and must not be re-imported —
+an agent is the caller most likely to retry a row it reads as failed. The
+description is byte-identical in `public/.well-known/mcp/server-card.json`
+(manifest parity asserts exact equality). The response is passed through
+untouched, and the malformed-response guard still checks only the four original
+counters, so the additive counter needs no change there.

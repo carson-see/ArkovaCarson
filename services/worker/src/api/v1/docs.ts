@@ -226,9 +226,19 @@ const ANCHOR_IMPORT_RESPONSE = {
     created: { type: 'integer', minimum: 0 },
     skipped: { type: 'integer', minimum: 0 },
     failed: { type: 'integer', minimum: 0 },
+    // Additive (§1.8): rows counted here are ALSO counted in `created` or
+    // `skipped`, so `created + skipped + failed` still equals `total`.
+    recipient_link_failed: {
+      type: 'integer', minimum: 0,
+      description: 'Rows whose anchor committed but whose recipient link failed. Already included in created/skipped; never in failed.',
+    },
     results: { type: 'array', maxItems: 100, items: { type: 'object', required: ['fingerprint', 'status'], properties: {
       fingerprint: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-      status: { type: 'string', enum: ['created', 'skipped', 'failed'] },
+      status: {
+        type: 'string',
+        enum: ['created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed'],
+        description: 'The *_recipient_failed values mean the anchor exists and must not be re-submitted; only the recipient link failed.',
+      },
       public_id: { type: 'string' },
       reason: { type: 'string', description: 'Bounded machine-readable failure code' },
       instant_status: { type: 'string', enum: ['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED'] },

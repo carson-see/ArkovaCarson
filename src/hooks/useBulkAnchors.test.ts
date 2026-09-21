@@ -114,6 +114,34 @@ describe('useBulkAnchors', () => {
     expect(outcome!.failed).toBe(0);
   });
 
+  // SHOULD-FIX from the #3020 review: a created anchor whose recipient link
+  // failed must reach the UI as a secured-but-unlinked row, never as `failed`.
+  // Reporting it as failed is what makes a caller re-upload an existing anchor.
+  it('surfaces a created-but-unlinked row without counting it as failed', async () => {
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 1,
+      results: [{
+        fingerprint: 'a'.repeat(64), status: 'created_recipient_failed',
+        public_id: 'ARK-1', reason: 'recipient_activation_email_failed',
+      }],
+    }), { status: 207 }));
+    const { result } = renderHook(() => useBulkAnchors());
+    let outcome: {
+      results: Array<{ status: string; reason?: string }>;
+      failed: number; created: number; recipient_link_failed?: number;
+    } | null = null;
+    await act(async () => {
+      outcome = await result.current.createBulkAnchors([mockRecords[0]], { action: 'queue' });
+    });
+    expect(outcome).not.toBeNull();
+    expect(outcome!.results[0]).toMatchObject({
+      status: 'created_recipient_failed', reason: 'recipient_activation_email_failed',
+    });
+    expect(outcome!.created).toBe(1);
+    expect(outcome!.failed).toBe(0);
+    expect(outcome!.recipient_link_failed).toBe(1);
+  });
+
   it('does not automatically retry an ambiguous failed chunk', async () => {
     const eleven = Array.from({ length: 11 }, (_, index) => ({
       fingerprint: index.toString(16).padStart(64, '0'), filename: `row-${index}.pdf`,

@@ -1831,3 +1831,12 @@ skips that org-only quota, and HTTP must not pre-increment or compensate usage a
 ## PR #2904 integration with #2844 atomic offboarding
 
 Approve/revoke, credit transfer and offboard events emit once inside the shared successful cores, covering session and API-key callers. Approve/revoke requires its audit write before emission. Offboard waits for0460's single transaction and uses its returned locked balances; it never re-reads or reclaims credits in HTTP. Idempotent retries emit offboard completion without repeating a reclaim or suspension. Public response shapes are unchanged.
+
+## 2026-09-21 — Import response: additive recipient-link statuses (PR #3034)
+
+`ANCHOR_IMPORT_RESPONSE` publishes two new per-row `status` values
+(`created_recipient_failed`, `skipped_recipient_failed`) and an additive
+`recipient_link_failed` counter. §1.8: purely additive — `created`, `skipped`,
+`failed` keep their meaning and the `required` list is unchanged, so existing
+clients keep parsing. The new values mean the anchor exists and the row must not
+be re-submitted.

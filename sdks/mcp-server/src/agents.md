@@ -30,3 +30,10 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 
 `arkova_manage_folders` is one action-discriminated tool over the canonical worker REST routes. It forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model.
 Its tests exercise every CRUD/reparent/connector action and both bulk identifier modes against the same worker paths.
+
+## 2026-09-21 — stdio arkova_import_rows description parity (PR #3034)
+
+Same recipient-link sentence as the hosted edge tool. The tool NAME is
+`arkova_import_rows` on both servers — do not let this one drift the way
+`arkova_batch_verify`/`arkova_verify_batch` and
+`arkova_submit_anchor`/`arkova_anchor_document` already have.

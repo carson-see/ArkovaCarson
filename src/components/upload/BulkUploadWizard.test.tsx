@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BulkUploadWizard, mergeExtractionResults } from './BulkUploadWizard';
+import { BULK_IMPORT_LABELS } from '@/lib/copy';
 
 // Hoist mock function
 const mockRpc = vi.hoisted(() => vi.fn());
@@ -317,9 +318,52 @@ ${fp2},file2.pdf`;
       instantFailed: 0,
       instantPending: 0,
       instantUnknown: 0,
+      recipientLinkFailed: 0,
       partial: false,
       action: 'queue',
     });
+  });
+
+  // SHOULD-FIX from the #3020 review: the row is secured, so the summary must
+  // say so and must NOT invite a re-upload of an anchor that already exists.
+  it('reports a secured row whose recipient could not be linked', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        total: 1,
+        created: 1,
+        skipped: 0,
+        failed: 0,
+        recipient_link_failed: 1,
+        results: [{
+          fingerprint: 'a'.repeat(64), status: 'created_recipient_failed',
+          public_id: 'ARK-1', reason: 'recipient_activation_email_failed',
+        }],
+      },
+      error: null,
+    });
+
+    render(<BulkUploadWizard onComplete={mockOnComplete} />);
+
+    const csvContent = `fingerprint,filename\n${'a'.repeat(64)},file1.pdf`;
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => { expect(screen.getByText('Process 1 Records')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Process 1 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
+
+    await waitFor(() => {
+      expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED(1))).toBeInTheDocument();
+    });
+    expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED_BODY)).toBeInTheDocument();
+    // The anchor exists: it is counted as created and never as failed.
+    expect(screen.getByText('1 Created')).toBeInTheDocument();
+    expect(screen.queryByText('1 Failed')).not.toBeInTheDocument();
+    expect(mockOnComplete).toHaveBeenCalledWith(expect.objectContaining({
+      created: 1, failed: 0, recipientLinkFailed: 1,
+    }));
   });
 
   it('should handle mixed success and failure results', async () => {

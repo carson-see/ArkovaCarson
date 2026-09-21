@@ -907,3 +907,10 @@ UAT-17 add-existing-member labels live in `copy.ts`; the dialog describes the ex
 `WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and
 attestation-active events; the registration-drift gate binds this map to the
 worker registry.
+
+## 2026-09-21 — BULK_IMPORT_LABELS recipient-link copy (PR #3034)
+
+`RECIPIENT_LINK_FAILED` / `RECIPIENT_LINK_FAILED_BODY` describe a row that IS
+secured but whose recipient could not be linked. The body text must keep saying
+"Do not upload these rows again" — the whole point of the status is to stop a
+re-upload of an anchor that already exists. No §1.3 banned terms.

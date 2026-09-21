@@ -115,6 +115,7 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
   let created = 0;
   let skipped = 0;
   let failed = 0;
+  let recipientLinkFailed = 0;
 
   for (const row of body.rows) {
     try {
@@ -131,6 +132,17 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
       const publicId = typeof outcome.body.public_id === 'string' ? outcome.body.public_id : undefined;
       if (outcome.status >= 200 && outcome.status < 300) {
         const isSkipped = outcome.body.idempotent === true;
+        // The anchor is the durable fact. Once the canonical submit answers
+        // 2xx the record exists permanently, so a later recipient-link failure
+        // must NOT be reported as a failed row: a caller reading `failed` here
+        // re-submits a row whose anchor already exists, which is a duplicate
+        // submission attempt and, for a capped or billable org, a double
+        // charge. The link failure gets its own status instead (SCRUM-5265,
+        // SHOULD-FIX from the #3020 review). Replay is safe and cheap: the
+        // canonical submit dedupes on fingerprint and answers
+        // `idempotent: true` without creating or charging again, and the block
+        // below re-attempts ONLY the link.
+        let recipientFailure: string | null = null;
         if (row.recipient_email && publicId) {
           try {
             await linkBulkRecipient({
@@ -142,19 +154,22 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
               deliverActivationEmail: true,
             });
           } catch (error) {
-            failed += 1;
-            const reason = error instanceof Error && /^[a-zA-Z0-9_.-]{1,80}$/.test(error.message)
+            // Bounded, non-PII: a thrown message is only echoed when it is
+            // already a machine-readable code.
+            recipientFailure = error instanceof Error && /^[a-zA-Z0-9_.-]{1,80}$/.test(error.message)
               ? error.message
               : 'recipient_link_failed';
-            results.push({ fingerprint: row.fingerprint.toLowerCase(), status: 'failed', ...(publicId ? { public_id: publicId } : {}), reason });
-            continue;
           }
         }
         if (isSkipped) skipped += 1; else created += 1;
+        if (recipientFailure) recipientLinkFailed += 1;
         results.push({
           fingerprint: row.fingerprint.toLowerCase(),
-          status: isSkipped ? 'skipped' : 'created',
+          status: recipientFailure
+            ? (isSkipped ? 'skipped_recipient_failed' : 'created_recipient_failed')
+            : (isSkipped ? 'skipped' : 'created'),
           ...(publicId ? { public_id: publicId } : {}),
+          ...(recipientFailure ? { reason: recipientFailure } : {}),
           ...(typeof outcome.body.instant_status === 'string' ? { instant_status: outcome.body.instant_status } : {}),
         });
       } else {
@@ -167,11 +182,16 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
     }
   }
 
-  res.status(failed > 0 ? 207 : 200).json({
+  // A recipient-link failure is a partial outcome even though every anchor
+  // committed, so it reports 207 alongside a genuinely failed row.
+  res.status(failed > 0 || recipientLinkFailed > 0 ? 207 : 200).json({
     total: body.rows.length,
     created,
     skipped,
     failed,
+    // Additive counter (§1.8). Rows counted here are ALSO counted in `created`
+    // or `skipped`, so `created + skipped + failed` still equals `total`.
+    recipient_link_failed: recipientLinkFailed,
     results,
   });
 }

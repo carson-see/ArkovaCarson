@@ -25,7 +25,9 @@ export interface CreateBulkAnchorsOptions {
 
 interface BulkAnchorResult {
   fingerprint: string;
-  status: 'created' | 'skipped' | 'failed';
+  // `*_recipient_failed` means the anchor committed and only the recipient
+  // link failed — the row must never be re-submitted (SCRUM-5265).
+  status: 'created' | 'skipped' | 'failed' | 'created_recipient_failed' | 'skipped_recipient_failed';
   id?: string;
   reason?: string;
   existingId?: string;
@@ -37,6 +39,8 @@ interface BulkCreateResult {
   created: number;
   skipped: number;
   failed: number;
+  /** Additive: also counted in `created`/`skipped`, never in `failed`. */
+  recipient_link_failed?: number;
   results: BulkAnchorResult[];
   partial?: boolean;
 }
@@ -119,6 +123,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
         let totalCreated = 0;
         let totalSkipped = 0;
         let totalFailed = 0;
+        let totalRecipientLinkFailed = 0;
 
         // Process in batches for progress tracking
         for (let i = 0; i < records.length; i += BATCH_SIZE) {
@@ -160,6 +165,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             totalCreated += data.created || 0;
             totalSkipped += data.skipped || 0;
             totalFailed += data.failed || 0;
+            totalRecipientLinkFailed += data.recipient_link_failed || 0;
 
             if (data.results) {
               allResults.push(...data.results);
@@ -172,6 +178,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
               created: totalCreated,
               skipped: totalSkipped,
               failed: totalFailed,
+              recipient_link_failed: totalRecipientLinkFailed,
               results: allResults,
               partial: true,
             };
@@ -190,7 +197,8 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
           console.info(
             `[BulkUpload] Batch ${batchNumber}/${totalBatches} complete — ` +
             `records ${i + 1}–${processed} of ${records.length} | ` +
-            `created: ${data?.created ?? 0}, skipped: ${data?.skipped ?? 0}, failed: ${data?.failed ?? 0}`
+            `created: ${data?.created ?? 0}, skipped: ${data?.skipped ?? 0}, failed: ${data?.failed ?? 0}, ` +
+            `recipient link failed: ${data?.recipient_link_failed ?? 0}`
           );
         }
 
@@ -199,6 +207,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
           created: totalCreated,
           skipped: totalSkipped,
           failed: totalFailed,
+          recipient_link_failed: totalRecipientLinkFailed,
           results: allResults,
         };
 

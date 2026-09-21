@@ -136,6 +136,30 @@ describe('anchorImport', () => {
     expect(body).toMatchObject({ action: 'instant', rows: [{ fingerprint: 'a'.repeat(64), fingerprint_provided: true }] });
   });
 
+  // SHOULD-FIX from the #3020 review: the anchor exists, so the SDK must carry
+  // the recipient-link statuses through typed rather than call the row failed.
+  it('carries the recipient-link statuses and the additive counter through typed', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      total: 2, created: 1, skipped: 1, failed: 0, recipient_link_failed: 2,
+      results: [
+        { fingerprint: 'a'.repeat(64), status: 'created_recipient_failed', public_id: 'ARK-1', reason: 'recipient_activation_email_failed' },
+        { fingerprint: 'b'.repeat(64), status: 'skipped_recipient_failed', public_id: 'ARK-2', reason: 'recipient_link_failed' },
+      ],
+    }), { status: 207, headers: { 'content-type': 'application/json' } }));
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const result = await client.anchorImport(
+      [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true }],
+      { action: 'queue' },
+    );
+    expect(result.failed).toBe(0);
+    expect(result.recipientLinkFailed).toBe(2);
+    expect(result.results.map((row) => row.status)).toEqual([
+      'created_recipient_failed', 'skipped_recipient_failed',
+    ]);
+    expect(result.results[0]).toMatchObject({ publicId: 'ARK-1', reason: 'recipient_activation_email_failed' });
+    expect(result.created + result.skipped + result.failed).toBe(result.total);
+  });
+
   it('fails closed above 100 rows and never retries a write response', async () => {
     const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 3, sleep: vi.fn() } });
     const row = { fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true };
