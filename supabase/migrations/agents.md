@@ -1709,6 +1709,13 @@ the rollback also removes 0468's `auth.role()` guard — after it, that GRANT li
 is the only thing keeping the RPC off the public internet. The full runnable
 text is in 0483's header.
 
+**0483's header is superseded on one point.** It carries a "NOT changed here,
+deliberately, and reported instead of widened into" note about the refund
+regression, written before the CTO scoped the fix into this PR. That note is
+stale: 0484 below fixes it, in the same PR and the same T3 window. The note
+could not be edited out — a migration file is immutable once written and the
+edit hook enforces it — so this block is the correction of record.
+
 ### `0484_scrum4939_refund_ai_credits.sql` — the AI-credit refund regression from 0467
 
 0467 added `IF p_amount IS NULL OR p_amount <= 0 THEN RETURN false` to

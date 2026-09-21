@@ -113,11 +113,11 @@
  *     by this protocol, and modelling it would need the arithmetic the DSL
  *     does not have. Stated here rather than silently omitted.
  *
- * Not modeled: the credit arithmetic itself (the DSL has no arithmetic — a
- * debit is a boolean "this racer charged the row"), and refunds. On refunds see
- * 0483's header: 0467's `p_amount <= 0 → RETURN false` guard means every
- * negative-amount refund call currently returns false and refunds nothing.
- * That is a reported regression with its own ticket, not modeled behaviour.
+ * Not modeled: the credit arithmetic itself. The DSL has no arithmetic, so a
+ * debit and a refund are each a boolean per racer ("this racer charged the
+ * row" / "this racer returned that charge") and the SQL
+ * `GREATEST(used_this_month - p_amount, 0)` floor is expressed as "refunds
+ * never outnumber debits".
  */
 import {
   defineMachine,
