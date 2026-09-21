@@ -319,6 +319,7 @@ ${fp2},file2.pdf`;
       instantPending: 0,
       instantUnknown: 0,
       recipientLinkFailed: 0,
+      recipientOutcomes: { notPermitted: 0, notLinked: 0, linkedNotSent: 0, linkedUnconfirmed: 0, unknown: 0 },
       partial: false,
       action: 'queue',
     });
@@ -354,16 +355,112 @@ ${fp2},file2.pdf`;
     await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
     fireEvent.click(screen.getByText('Skip Extraction'));
 
+    // S3: `recipient_activation_email_failed` is thrown AFTER the
+    // `anchor_recipients` insert commits, so the recipient IS linked and only
+    // the invitation did not go. The old single string claimed the opposite.
     await waitFor(() => {
-      expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED(1))).toBeInTheDocument();
+      expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_LABEL.linkedNotSent(1))).toBeInTheDocument();
     });
-    expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED_BODY)).toBeInTheDocument();
+    expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY.linkedNotSent)).toBeInTheDocument();
+    expect(screen.queryByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY.notLinked)).not.toBeInTheDocument();
     // The anchor exists: it is counted as created and never as failed.
     expect(screen.getByText('1 Created')).toBeInTheDocument();
     expect(screen.queryByText('1 Failed')).not.toBeInTheDocument();
     expect(mockOnComplete).toHaveBeenCalledWith(expect.objectContaining({
       created: 1, failed: 0, recipientLinkFailed: 1,
+      recipientOutcomes: expect.objectContaining({ linkedNotSent: 1, notLinked: 0 }),
     }));
+  });
+
+  // B1(c): the forbidden case gets its OWN copy. Telling a personal-scope user
+  // that the link "failed" points them at a retry that can never work; the
+  // truthful statement is that recipients need organization authority.
+  it('reports a recipient the caller is not permitted to add with its own copy', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 1,
+        results: [{
+          fingerprint: 'a'.repeat(64), status: 'created_recipient_failed',
+          public_id: 'ARK-1', reason: 'recipient_provisioning_forbidden',
+        }],
+      },
+      error: null,
+    });
+
+    render(<BulkUploadWizard onComplete={mockOnComplete} />);
+    const csvContent = `fingerprint,filename\n${'a'.repeat(64)},file1.pdf`;
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => { expect(screen.getByText('Process 1 Records')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Process 1 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
+
+    await waitFor(() => {
+      expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_LABEL.notPermitted(1))).toBeInTheDocument();
+    });
+    expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY.notPermitted)).toBeInTheDocument();
+    expect(screen.queryByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY.notLinked)).not.toBeInTheDocument();
+    expect(screen.getByText('1 Created')).toBeInTheDocument();
+  });
+
+  it('asserts nothing about a recipient reason it does not recognise', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 1,
+        results: [{
+          fingerprint: 'a'.repeat(64), status: 'created_recipient_failed',
+          public_id: 'ARK-1', reason: 'a_reason_from_a_newer_worker',
+        }],
+      },
+      error: null,
+    });
+
+    render(<BulkUploadWizard onComplete={mockOnComplete} />);
+    const csvContent = `fingerprint,filename\n${'a'.repeat(64)},file1.pdf`;
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => { expect(screen.getByText('Process 1 Records')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Process 1 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
+
+    await waitFor(() => {
+      expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_LABEL.unknown(1))).toBeInTheDocument();
+    });
+    expect(screen.getByText(BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY.unknown)).toBeInTheDocument();
+  });
+
+  // NIT: a batch where EVERY recipient failed rendered the green all-clear
+  // "Upload Complete" title, because hasFailures ignored recipientLinkFailed.
+  it('does not render the all-clear title when every recipient failed', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 1,
+        results: [{
+          fingerprint: 'a'.repeat(64), status: 'created_recipient_failed',
+          public_id: 'ARK-1', reason: 'recipient_link_failed',
+        }],
+      },
+      error: null,
+    });
+
+    render(<BulkUploadWizard onComplete={mockOnComplete} />);
+    const csvContent = `fingerprint,filename\n${'a'.repeat(64)},file1.pdf`;
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => { expect(screen.getByText('Process 1 Records')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Process 1 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
+
+    await waitFor(() => {
+      expect(screen.getByText(BULK_IMPORT_LABELS.COMPLETE_WITH_ISSUES)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(BULK_IMPORT_LABELS.COMPLETE)).not.toBeInTheDocument();
   });
 
   it('should handle mixed success and failure results', async () => {

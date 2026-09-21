@@ -42,10 +42,15 @@ import { AIExtractionStep, type BatchExtractionResult } from './AIExtractionStep
 import { toast } from 'sonner';
 import { BULK_IMPORT_LABELS, TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useBulkAnchors } from '@/hooks/useBulkAnchors';
+import { useBulkAnchors, type CreateBulkAnchorsOptions } from '@/hooks/useBulkAnchors';
 import { parsePrivateTags } from '@/hooks/usePrivateTagSuggestions';
 import { useSecuringCapability } from '@/hooks/useSecuringCapability';
 import type { SecuringPath } from '@/lib/queueContract';
+import {
+  RECIPIENT_OUTCOME_CLASSES,
+  countRecipientOutcomes,
+  type RecipientOutcomeCounts,
+} from '@/lib/bulkRecipientOutcome';
 import {
   type ParsedCsv,
   type ColumnMapping,
@@ -69,6 +74,8 @@ interface ProcessingResult {
   instantUnknown: number;
   /** Secured rows whose recipient link failed; never counted as failed. */
   recipientLinkFailed: number;
+  /** The same rows, split by what actually happened (S3). */
+  recipientOutcomes: RecipientOutcomeCounts;
   partial: boolean;
   action: SecuringPath;
 }
@@ -85,6 +92,7 @@ function toProcessingResult(bulkResult: Awaited<ReturnType<ReturnType<typeof use
     instantUnknown: action === 'instant' ? statuses.filter((row) => row.status !== 'failed' && !row.instant_status).length : 0,
     recipientLinkFailed: bulkResult.recipient_link_failed
       ?? statuses.filter((row) => row.status === 'created_recipient_failed' || row.status === 'skipped_recipient_failed').length,
+    recipientOutcomes: countRecipientOutcomes(statuses),
     partial: bulkResult.partial === true,
     action,
   };
@@ -219,12 +227,26 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     setError(null);
     // Trigger processing via the already-defined handler
     if (parsedCsv && mapping && validation) {
+      // Resolved ONCE, before the import. `submissionOptions()` throws on
+      // invalid private tags, and calling it again AFTER a successful import
+      // would turn a completed batch into a thrown "Failed to process records"
+      // that sends the user back to review — with every record already secured
+      // (#3034 review).
+      let options: CreateBulkAnchorsOptions;
+      try {
+        options = submissionOptions();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to process records';
+        toast.error(message);
+        setError(message);
+        setStep('review');
+        return;
+      }
       extractAnchorRecordsAsync(validation.valid, columns, mapping)
-        .then((records) => createBulkAnchors(mergeExtractionResults(records, results), submissionOptions()))
+        .then((records) => createBulkAnchors(mergeExtractionResults(records, results), options))
         .then((bulkResult) => {
           if (bulkResult) {
-            const selectedAction = submissionOptions().action;
-            const processingResult = toProcessingResult(bulkResult, selectedAction);
+            const processingResult = toProcessingResult(bulkResult, options.action ?? 'queue');
             if (!processingResult) return;
             setResult(processingResult);
             setStep('complete');
@@ -716,7 +738,15 @@ function CompleteStep({
   onReset: () => void;
 }>) {
   const hasInstantIssues = result.needsCredit + result.held + result.instantFailed + result.instantUnknown > 0;
-  const hasFailures = result.failed > 0 || result.partial || hasInstantIssues;
+  // A batch where every recipient failed is not an all-clear: the records are
+  // secured, but something the user asked for did not happen and the summary
+  // must not open with a green "Upload Complete" (#3034 review).
+  const hasFailures = result.failed > 0 || result.partial || hasInstantIssues || result.recipientLinkFailed > 0;
+  // Only the classes actually present are rendered, so a clean import shows
+  // nothing and a mixed one shows one badge + one body per distinct outcome.
+  const recipientOutcomes = RECIPIENT_OUTCOME_CLASSES
+    .map((name) => ({ name, count: result.recipientOutcomes[name] }))
+    .filter((entry) => entry.count > 0);
 
   return (
     <div className="space-y-4 py-4 text-center">
@@ -766,18 +796,18 @@ function CompleteStep({
         {result.instantFailed > 0 && <Badge variant="destructive" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_FAILED(result.instantFailed)}</Badge>}
         {result.instantPending > 0 && <Badge variant="secondary" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_PENDING(result.instantPending)}</Badge>}
         {result.instantUnknown > 0 && <Badge variant="outline" className="text-base px-4 py-1">{BULK_IMPORT_LABELS.INSTANT_UNKNOWN(result.instantUnknown)}</Badge>}
-        {result.recipientLinkFailed > 0 && (
-          <Badge variant="outline" className="text-base px-4 py-1">
-            {BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED(result.recipientLinkFailed)}
+        {recipientOutcomes.map((entry) => (
+          <Badge key={entry.name} variant="outline" className="text-base px-4 py-1">
+            {BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_LABEL[entry.name](entry.count)}
           </Badge>
-        )}
+        ))}
       </div>
 
-      {result.recipientLinkFailed > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {BULK_IMPORT_LABELS.RECIPIENT_LINK_FAILED_BODY}
+      {recipientOutcomes.map((entry) => (
+        <p key={entry.name} className="text-xs text-muted-foreground">
+          {BULK_IMPORT_LABELS.RECIPIENT_OUTCOME_BODY[entry.name]}
         </p>
-      )}
+      ))}
 
       {result.skipped > 0 && (
         <p className="text-xs text-muted-foreground">

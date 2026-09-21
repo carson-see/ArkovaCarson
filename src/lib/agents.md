@@ -914,3 +914,14 @@ worker registry.
 secured but whose recipient could not be linked. The body text must keep saying
 "Do not upload these rows again" — the whole point of the status is to stop a
 re-upload of an anchor that already exists. No §1.3 banned terms.
+
+## 2026-09-21 — bulkRecipientOutcome.ts (PR #3034, S3)
+
+`anchor_recipients` commits BEFORE `deliverBulkActivationOnce`, so a
+`*_recipient_failed` row does NOT always mean "not linked". This module maps the
+worker's reason codes to what actually happened — `notPermitted`, `notLinked`,
+`linkedNotSent`, `linkedUnconfirmed`, `unknown` — with every entry pinned to a
+throw site in `services/worker/src/api/bulk-recipient.ts`. An unrecognised or
+absent code is `unknown`, which asserts nothing, so a newer worker's reason
+code can never make the UI claim something we did not measure (§1.5).
+Classification lives here, not in `copy.ts`: the copy layer stays copy.

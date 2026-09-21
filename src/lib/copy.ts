@@ -5197,14 +5197,34 @@ export const BULK_IMPORT_LABELS = {
   INSTANT_PENDING: (count: number) => `${count} Instant pending`,
   INSTANT_UNKNOWN: (count: number) => `${count} Status unavailable`,
   PARTIAL_TRANSPORT: 'The import stopped after a partial response. Confirmed row receipts were preserved.',
-  // SCRUM-5265 (SHOULD-FIX from the #3020 review). These rows ARE secured —
-  // only the recipient invitation failed. The copy has to say both halves,
+  // SCRUM-5265 (#3020 / #3034 reviews). These rows ARE secured — only the
+  // recipient half did not resolve. Every string has to say both halves,
   // because the reader's obvious next move (re-upload the row) would create a
-  // duplicate submission for a record that already exists. §1.5: states what
-  // is measured (record secured; recipient not linked) and what is not
-  // asserted (nothing about the recipient having been notified).
-  RECIPIENT_LINK_FAILED: (count: number) => `${count} Secured, recipient not linked`,
-  RECIPIENT_LINK_FAILED_BODY: 'These records are secured and permanent. The recipient could not be linked, so no invitation was sent. Do not upload these rows again — invite the recipient from the record instead.',
+  // duplicate submission for a record that already exists.
+  //
+  // S3: there is NO single truthful sentence here. `anchor_recipients` commits
+  // BEFORE the activation email is sent, so an activation reason means the
+  // recipient WAS linked and only the invitation did not go — the previous
+  // single string ("could not be linked, so no invitation was sent") asserted
+  // two things we did not measure and pointed at the wrong remedy. §1.5: each
+  // variant states exactly what is measured and stops there. The `unknown`
+  // variant asserts nothing at all, so a reason code from a newer worker can
+  // never make this summary lie. Classification lives in
+  // `src/lib/bulkRecipientOutcome.ts`, pinned to the worker's throw sites.
+  RECIPIENT_OUTCOME_LABEL: {
+    notPermitted: (count: number) => `${count} Secured, recipient not added`,
+    notLinked: (count: number) => `${count} Secured, recipient not linked`,
+    linkedNotSent: (count: number) => `${count} Secured, invitation not sent`,
+    linkedUnconfirmed: (count: number) => `${count} Secured, invitation unconfirmed`,
+    unknown: (count: number) => `${count} Secured, recipient status unknown`,
+  },
+  RECIPIENT_OUTCOME_BODY: {
+    notPermitted: 'These records are secured and permanent. Recipients can only be added by an owner or admin of the organization the records belong to, so no recipient was added and no invitation was sent. Do not upload these rows again — ask an owner or admin to add the recipient from the record.',
+    notLinked: 'These records are secured and permanent. The recipient could not be linked, so no invitation was sent. Do not upload these rows again — invite the recipient from the record instead.',
+    linkedNotSent: 'These records are secured and permanent, and the recipient was linked to them. The invitation email was not delivered. Do not upload these rows again — resend the invitation from the record.',
+    linkedUnconfirmed: 'These records are secured and permanent, and the recipient was linked to them. We could not confirm whether the invitation email was sent; it may already be on its way. Do not upload these rows again — open the record to check before resending.',
+    unknown: 'These records are secured and permanent. We could not confirm whether the recipient was linked or notified. Do not upload these rows again — open the record to check the recipient.',
+  },
 } as const;
 
 export const ORG_MEMBER_ADD_LABELS = {

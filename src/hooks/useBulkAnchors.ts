@@ -23,11 +23,14 @@ export interface CreateBulkAnchorsOptions {
   privateTags?: { user: string[]; organization: string[] };
 }
 
+/** `*_recipient_failed` means the anchor committed and only the recipient
+ *  link failed — the row must never be re-submitted (SCRUM-5265). */
+export type BulkAnchorResultStatus =
+  'created' | 'skipped' | 'failed' | 'created_recipient_failed' | 'skipped_recipient_failed';
+
 interface BulkAnchorResult {
   fingerprint: string;
-  // `*_recipient_failed` means the anchor committed and only the recipient
-  // link failed — the row must never be re-submitted (SCRUM-5265).
-  status: 'created' | 'skipped' | 'failed' | 'created_recipient_failed' | 'skipped_recipient_failed';
+  status: BulkAnchorResultStatus;
   id?: string;
   reason?: string;
   existingId?: string;
