@@ -163,4 +163,30 @@ describe('profile media signing', () => {
       expect(createSignedUrl).toHaveBeenCalledTimes(5);
     });
   });
+
+  // D7 (PR #3033 review): the hook's no-storage-path branch — the legacy
+  // `avatar_url` / `logo_url` rows that predate UAT-14 — goes through the same
+  // bounding as a rendered fallback, and signs nothing.
+  describe('legacy fallback when no storage path is present', () => {
+    beforeEach(() => { createSignedUrl.mockReset(); });
+
+    it.each([
+      ['https://cdn.example/legacy.png', 'https://cdn.example/legacy.png'],
+      ['/legacy/avatar.png', '/legacy/avatar.png'],
+      ['http://tracker.example/avatar.png', undefined],
+      ['javascript:alert(1)', undefined],
+      ['//tracker.example/avatar.png', undefined],
+      [null, undefined],
+    ])('bounds %s and never signs', (fallback, expected) => {
+      const { result } = renderHook(() => useProfileMediaUrl(null, fallback));
+      expect(result.current).toBe(expected);
+      expect(createSignedUrl).not.toHaveBeenCalled();
+    });
+
+    it('falls back for an empty-string storage path rather than signing it', () => {
+      const { result } = renderHook(() => useProfileMediaUrl('', 'https://cdn.example/legacy.png'));
+      expect(result.current).toBe('https://cdn.example/legacy.png');
+      expect(createSignedUrl).not.toHaveBeenCalled();
+    });
+  });
 });
