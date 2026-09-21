@@ -28,7 +28,7 @@ The full machine-readable v1 API spec is served live at [`https://app.arkova.ai/
 
 Arkova exposes its verification platform through five complementary surfaces. Pick the one that matches your environment:
 
-### 1. REST API — `https://arkova-worker-270018525501.us-central1.run.app/api/v1`
+### 1. REST API — `https://api.arkova.ai/api/v1`
 
 The foundation. v1 is frozen and now publishes a 12-month deprecation calendar. Public endpoints (verify, batch verify) require no auth. Authenticated endpoints take an API key via `X-API-Key` or `Authorization: Bearer ak_live_...`.
 The rich v1 verification response includes shipped API-RICH-02 fields `description`, `confidence_scores`, and `sub_type` when present; `/ai/extract` returns the same concepts as `description`, `confidenceScores`, and `subType`.

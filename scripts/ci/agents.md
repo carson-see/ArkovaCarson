@@ -997,3 +997,33 @@ and all production gate behavior remain unchanged.
 ## 2026-09-19 — load-harness artifact admission rejects interrupted salvage files (SCRUM-3444)
 
 `check-staging-evidence.ts` now treats an explicit `load-harness` claim as a byte-bound artifact claim: `Load/concurrency evidence:` must name a git-tracked `artifact=docs/staging/.../load-*.json` and its exact `sha256=<64 lowercase hex>`. `load-harness-artifact.ts` resolves only a bounded, real non-symlinked file canonically below `docs/staging`, hashes the exact bytes before parsing, requires the completed producer's timestamps/duration/request-count/metric shape, and rejects any artifact carrying the producer's `partial` interruption marker. The digest supplies integrity, not independent authenticity: provenance comes from the gate's existing exact-head/current-checkout binding plus the requirement that the artifact is tracked at that reviewed head. Other load evidence forms remain unchanged. This closes the deferred consumer half of #2492: an interrupted salvage file remains useful diagnostically but cannot satisfy release evidence.
+
+## 2026-09-21 — `check-run-app-host-literal.ts`: repo-wide raw-Cloud-Run-host guard (SCRUM-3888)
+
+New standalone gate, same wiring pattern as `check-webhook-event-registration-drift.ts`:
+its own colocated `.test.ts` (picked up by root vitest's `scripts/**` glob, so it runs
+inside the required root `Tests` job automatically) plus an `npm run ci:run-app-host-literal`
+convenience script. Fails on any git-tracked, text-like file containing a `*.run.app`
+Cloud Run hostname literal that is not named in its own `RUN_APP_ALLOWLIST`
+(exact path) or `RUN_APP_ALLOWLIST_PREFIXES` (whole subtrees — `scripts/staging/`,
+`scripts/soak/`, `scripts/gcp-setup/`, `services/worker/`, `services/api-gateway/`,
+`docs/staging/` — chosen because those trees legitimately and by design reference
+real or synthetic-placeholder Cloud Run hosts directly, or are simply a different
+lane from whatever PR happens to trip this guard). Every allowlist entry carries a
+reason; read the file's own top comment for the full rationale (SCRUM-3888 is the
+Cloudflare origin guard that will 403 direct requests to the raw host, so any
+client default or public-facing doc still naming it breaks once that guard
+enforces). Uses `git grep -l --fixed-strings '.run.app'` as a fast pre-filter
+(~1.5s) before regex-matching the small candidate set in Node — an earlier version
+read and regex-tested every tracked file directly and took ~22s, timing out
+vitest's default 5s per-test budget.
+
+**Temporary entries, remove after #3035 merges:** `packages/sdk/{README.md,src/client.ts,src/types.ts}`
+and `packages/embed/{README.md,src/index.ts,src/report-block.ts,src/web-component.ts}`
+are allowlisted with a "pending #3035" reason — that PR (recovering #2986's
+release-qualification fixes onto `main`) moves their default off the raw host the
+same way this guard's own PR moves `integrations/*`, but landed second and could not
+edit files #3035 was already touching without risking a merge conflict. If this
+guard is still passing with those 7 entries present well after #3035 has merged,
+the merge did not do what it was supposed to — check `packages/sdk/src/client.ts`
+directly rather than trusting a stale allowlist entry.
