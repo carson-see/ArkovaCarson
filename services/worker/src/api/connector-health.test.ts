@@ -837,6 +837,86 @@ describe('connector-health (SCRUM-1146)', () => {
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('grant_exceeds_requested');
     });
   });
+
+  // Fix-round item 6 (scope-reality finding): the FIRST customer failure —
+  // `drive.file` not actually covering an ordinary watched-folder file —
+  // must be visible here, not only in job_queue.last_error.
+  describe('file_access_not_granted signal (fix-round item 6)', () => {
+    function healthyDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly email',
+        ...overrides,
+      };
+    }
+
+    it('a job whose last_error matches DriveFileAccessError\'s message reads degraded/file_access_not_granted', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'dead', last_error: 'Drive file access denied: appNotAuthorizedToFile' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('file_access_not_granted');
+      expect(drive?.last_error).toContain('grant does not cover');
+    });
+
+    it('a job whose last_error matches the export-size-limit message ALSO reads file_access_not_granted', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'failed', last_error: "Drive file export exceeds Google's export size limit" }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('file_access_not_granted');
+    });
+
+    it('outranks the generic fetch_job_failures reason', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [
+          { status: 'dead', last_error: 'Drive file access denied: forbidden' },
+          { status: 'failed', last_error: 'some unrelated transient error' },
+        ],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('file_access_not_granted');
+    });
+
+    it('a failure with an UNRELATED last_error still reads the generic fetch_job_failures, not file_access_not_granted', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'failed', last_error: 'ETIMEDOUT connecting to googleapis.com' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+    });
+  });
 });
 
 describe('Drive health across multiple accounts', () => {

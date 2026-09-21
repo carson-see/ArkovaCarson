@@ -64,6 +64,16 @@ export type HealthReason =
   // read without a migration — `connected_at` — as the staleness clock when
   // the cursor has never moved at all.
   | 'changes_list_never_succeeded'
+  // Fix-round item 6 (SCRUM-2903/3661/5094/2330 scope-reality finding): a
+  // SPECIFIC fetch-job failure reason — the grant does not cover this file
+  // (`drive.file` only allows a file the app created or one selected
+  // through Google's real Picker; Arkova's Connectors-page folder browser
+  // is a custom component, not the Picker, so a newly-connected org will
+  // 403 on ordinary files) or Google's own export size limit. Distinct
+  // from the generic `fetch_job_failures` below so the admin view names
+  // the ACTUAL cause on the very first customer hitting it, not just "some
+  // fetch jobs failed."
+  | 'file_access_not_granted'
   // P0-2: the `google_drive.file_changed` job_queue drain has failed/dead
   // rows — the document-fetch half of the pipeline that
   // organization_rule_executions cannot see (rule dispatch and document
@@ -430,6 +440,12 @@ interface DriveHealthSignals {
   /** Count of failed/dead google_drive.file_changed job_queue rows for this org. */
   fetchJobFailureCount: number;
   /**
+   * Fix-round item 6: SUBSET of `fetchJobFailureCount` whose `last_error`
+   * matches a `DriveFileAccessError`/`DriveExportSizeLimitError` message —
+   * see `HealthReason`'s `file_access_not_granted` doc comment.
+   */
+  fileAccessDeniedCount: number;
+  /**
    * SCRUM-5287 (P1 security, fix-round item 5): non-empty array of excess
    * scope names (`driveGrantExcessScopes(integration.scope)`) when the
    * stored grant exceeds `DRIVE_DEFAULT_SCOPES`; `undefined` when it does
@@ -505,6 +521,16 @@ function classify(
       lastError: `Drive changes cursor has not advanced in over ${hours}h despite an enabled rule and a healthy channel`,
     };
   }
+  // Fix-round item 6: checked BEFORE the generic fetch_job_failures below —
+  // a specific, actionable cause outranks "some fetch jobs failed" once we
+  // actually know why.
+  if (driveSignals && driveSignals.fileAccessDeniedCount > 0) {
+    return {
+      state: 'degraded',
+      reason: 'file_access_not_granted',
+      lastError: `${driveSignals.fileAccessDeniedCount} file(s) could not be fetched — the connected account's grant does not cover them (re-consent required), or exceeded Google's export size limit`,
+    };
+  }
   if (driveSignals && driveSignals.fetchJobFailureCount > 0) {
     return {
       state: 'degraded',
@@ -526,7 +552,8 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  grant_exceeds_requested: 6, subscription_expiry: 5, changes_list_never_succeeded: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
+  grant_exceeds_requested: 7, subscription_expiry: 6, changes_list_never_succeeded: 5, cursor_stale: 4,
+  file_access_not_granted: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
 
@@ -623,11 +650,15 @@ export async function handleConnectorHealth(
     // this org. job_queue has no org_id column — org_id lives on the JSONB
     // payload every enqueuer writes (DriveFileChangedJobPayload), so this
     // filters on the embedded field via PostgREST's `column->>key` syntax.
-    safeFetch<Array<{ status: string }>>(
+    // `last_error` (fix-round item 6) — bounded, PII-scrubbed by
+    // `processNextJob`'s failure path, never document bytes — is read so
+    // `file_access_not_granted` can be distinguished from an ordinary
+    // fetch-job failure below.
+    safeFetch<Array<{ status: string; last_error: string | null }>>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any)
         .from('job_queue')
-        .select('status')
+        .select('status, last_error')
         .eq('type', DRIVE_FILE_CHANGED_JOB_TYPE)
         .eq('payload->>org_id', orgId)
         .in('status', ['failed', 'dead'])
@@ -638,6 +669,17 @@ export async function handleConnectorHealth(
 
   const hasEnabledDriveRules = driveRuleRows.some((row) => driveFolderIds(row.trigger_config).length > 0);
   const driveFetchJobFailureCount = driveFetchFailureRows.length;
+  // Fix-round item 6: a SUBSET of those failures whose recorded reason is
+  // specifically "the grant does not cover this file" (DriveFileAccessError)
+  // or "Google's export size limit" (DriveExportSizeLimitError) — see
+  // oauth/drive.ts's doc comments on both classes. Message-prefix match on
+  // `last_error` is the only signal available without a dedicated column;
+  // `processDriveFileChangedJob`'s error path already writes `err.message`
+  // verbatim into it via the shared job-queue failure handler.
+  const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN = /^Drive file access denied|export size limit/i;
+  const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
+    (row) => typeof row.last_error === 'string' && DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN.test(row.last_error),
+  ).length;
 
   const integrationByProvider = new Map<string, IntegrationRow>();
   for (const row of integrations) integrationByProvider.set(row.provider, row);
@@ -683,6 +725,7 @@ export async function handleConnectorHealth(
         neverSucceeded: hasEnabledDriveRules
           && hasDriveChangesNeverSucceeded(integration.last_token_advanced_at, integration.connected_at),
         fetchJobFailureCount: driveFetchJobFailureCount,
+        fileAccessDeniedCount: driveFileAccessDeniedCount,
         grantExceedsRequested: excessScopesOrUndefined(integration.scope),
       }
       : undefined;
@@ -698,6 +741,7 @@ export async function handleConnectorHealth(
             neverSucceeded: hasEnabledDriveRules
               && hasDriveChangesNeverSucceeded(row.last_token_advanced_at, row.connected_at, now),
             fetchJobFailureCount: driveFetchJobFailureCount,
+            fileAccessDeniedCount: driveFileAccessDeniedCount,
             grantExceedsRequested: excessScopesOrUndefined(row.scope),
           }),
         };

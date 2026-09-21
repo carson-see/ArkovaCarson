@@ -356,6 +356,105 @@ export class DriveDocumentTooLargeError extends Error {
   }
 }
 
+/**
+ * Fix-round item 6: the SCOPE reality — `drive.file` grants per-file access
+ * ONLY for a file the app created, or one selected through Google's REAL
+ * Picker widget (see `DRIVE_DEFAULT_SCOPES`'s doc comment, "CORRECTION"
+ * paragraph). Arkova's Connectors-page folder browser is a custom
+ * `files.list` component over `drive.metadata.readonly`, NOT the Picker —
+ * so for a newly-connected org, an ordinary file in a watched folder will
+ * 403 here. Before this fix that landed as a bare `DriveApiError(403)`,
+ * indistinguishable from any other failure and visible only in
+ * `job_queue.last_error`. This class makes it a DISTINCT, recognizable
+ * outcome the caller can surface loudly (`connector-health.ts`'s
+ * `file_access_not_granted` reason).
+ *
+ * `reason` is ALWAYS one of `KNOWN_DRIVE_FILE_ACCESS_DENIED_REASONS` — a
+ * short, Google-documented code — or the literal `'unknown'`. Never free
+ * text from the error body: §1.6A's "never let anything from this
+ * document-bearing path carry unbounded content into a log/Error" is
+ * upheld even though a REASON CODE (not the body itself) is read to
+ * produce it — see `extractDriveFileErrorReason`'s doc comment for why
+ * that narrow read is safe.
+ */
+export class DriveFileAccessError extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(`Drive file access denied: ${reason}`);
+    this.name = 'DriveFileAccessError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * Fix-round item 6: `files.export` refuses to render a Workspace-native
+ * document above Google's own export size limit (documented reason
+ * `exportSizeLimitExceeded`, typically on a 403). Distinct from
+ * `DriveDocumentTooLargeError` (Arkova's OWN `MAX_DRIVE_DOCUMENT_BYTES`
+ * cap, checked via `content-length` on a SUCCESSFUL response) — this is
+ * Google refusing to even START the export. Both are permanent,
+ * non-retryable dead-letter outcomes for the same underlying reason ("this
+ * artifact will never fit through this pipeline"), so callers should treat
+ * them the same way: fail the ONE artifact, do not retry.
+ */
+export class DriveExportSizeLimitError extends Error {
+  constructor() {
+    super("Drive file export exceeds Google's export size limit");
+    this.name = 'DriveExportSizeLimitError';
+  }
+}
+
+/**
+ * Google-documented `error.errors[].reason` codes this connector
+ * distinguishes as "the grant does not cover this file" (as opposed to a
+ * transient/auth/quota failure, which stays a generic `DriveApiError`).
+ * https://developers.google.com/drive/api/guides/handle-errors and Drive
+ * API v3 error responses observed for `files.get?alt=media` /
+ * `files.export` on a file outside the app's `drive.file` grant.
+ */
+const KNOWN_DRIVE_FILE_ACCESS_DENIED_REASONS = new Set([
+  'appNotAuthorizedToFile',
+  'insufficientFilePermissions',
+  'insufficientPermissions',
+  'forbidden',
+  'cannotDownloadAbusiveFile',
+]);
+
+/**
+ * Bounded, narrow read of a `files.get`/`files.export` non-2xx response —
+ * fix-round item 6. §1.6A's existing discipline for this file ("do NOT
+ * read/attach the body on the document-fetch error path — it can carry
+ * document bytes") is upheld by what this function DOES NOT return: it
+ * extracts ONLY `error.errors[].reason`, a short Google-documented code
+ * (e.g. `appNotAuthorizedToFile`), and discards everything else the moment
+ * it is parsed — no `message`, no other body content ever escapes this
+ * function. A 4xx on these endpoints is Google's own small JSON error
+ * envelope (never partial document content — that only ever rides a 2xx),
+ * but this reads no more of it than the one classification field needs,
+ * bounded by the same `DRIVE_BODY_READ_TIMEOUT_MS` deadline every other
+ * Drive JSON read in this file uses. Returns `null` on ANY failure to
+ * parse/classify (timeout, malformed body, no matching field) — the caller
+ * falls back to the pre-existing generic `DriveApiError(status)` with no
+ * detail, exactly as before this fix-round.
+ */
+async function extractDriveFileErrorReason(res: {
+  json(): Promise<unknown>;
+  body?: { cancel?: (reason?: unknown) => Promise<unknown> } | null;
+}): Promise<string | null> {
+  try {
+    const json = await readJsonBounded(res, 'Drive file bytes fetch (error classification)', DRIVE_BODY_READ_TIMEOUT_MS);
+    const errors = (json as GoogleApiErrorBody | null)?.error?.errors;
+    if (Array.isArray(errors)) {
+      for (const entry of errors) {
+        if (typeof entry?.reason === 'string') return entry.reason;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function requireClient(env: NodeJS.ProcessEnv): { clientId: string; clientSecret: string } {
   const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -907,6 +1006,27 @@ export async function fetchDriveFileBytes(args: {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
   if (!res.ok) {
+    // Fix-round item 6: classify a 403 into a specific, LOUD outcome before
+    // falling back to the generic DriveApiError §1.6A discipline below
+    // (status + message only, no detail) — see `extractDriveFileErrorReason`'s
+    // doc comment for why this narrow, reason-code-only read does not
+    // reopen the "an error body here can carry document bytes" concern.
+    if (res.status === 403) {
+      const reason = await extractDriveFileErrorReason(res);
+      if (reason === 'exportSizeLimitExceeded') {
+        throw new DriveExportSizeLimitError();
+      }
+      if (reason && KNOWN_DRIVE_FILE_ACCESS_DENIED_REASONS.has(reason)) {
+        throw new DriveFileAccessError(reason);
+      }
+      // Deliberately NOT a blanket "every 403 is access-denied": Drive also
+      // returns 403 for `rateLimitExceeded` / `userRateLimitExceeded` /
+      // `dailyLimitExceeded` / `quotaExceeded` — genuinely retryable, unlike
+      // a permissions denial. An unrecognized (or unclassifiable — `reason`
+      // is `null` when the body didn't parse or carried no `errors[]`)
+      // reason falls through to the generic, retryable `DriveApiError`
+      // below rather than being mis-labeled as a permanent access denial.
+    }
     // §1.6A: do NOT read/attach the response body on the document-fetch path —
     // an error response here can carry document bytes. Status + message only,
     // and deliberately NO bounded `detail` (see DriveApiError doc comment).
