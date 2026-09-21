@@ -30,9 +30,11 @@ import {
   createChangesWatch,
   exchangeCode,
   stopDriveChannel,
+  driveGrantExcessScopes,
   // revokeOAuthToken intentionally NOT imported — see SCRUM-1237 / AUDIT-0424-12
   type DriveClientDeps,
 } from '../../../integrations/oauth/drive.js';
+import { recordAuditEvent } from '../../../utils/auditEvent.js';
 import {
   createDefaultKmsClient,
   decryptTokens,
@@ -426,6 +428,37 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         redirectUri: buildRedirectUri(req),
         deps: driveDeps,
       });
+
+      // SCRUM-5287 (P1 security): the grant Google actually returned must
+      // not exceed what was requested (`DRIVE_DEFAULT_SCOPES`, plus the
+      // harmless `openid` Google may bundle — see
+      // `driveGrantExcessScopes`'s doc comment). This is the shared OAuth
+      // client's own history leaking through: a prior, unrelated consent on
+      // the SAME Google account can leave broader scopes (full `drive`,
+      // `gmail.modify`, `contacts`, …) sitting on the token exchange
+      // response even though `include_granted_scopes` is never sent. Refuse
+      // BEFORE any further call uses this token, and before anything is
+      // persisted — an over-scoped token must never reach Postgres.
+      const excessScopes = driveGrantExcessScopes(tokens.scope);
+      if (excessScopes.length > 0) {
+        logger.error(
+          { orgId: callbackOrgId, excessScopes },
+          'Drive OAuth callback: granted scope EXCEEDS the requested set — refusing to persist (SCRUM-5287)',
+        );
+        // Audit event: org id + excess scope NAMES only — never the token,
+        // never an email. Scope names are public OAuth constants, not PII.
+        void recordAuditEvent({
+          event_type: 'drive_oauth_grant_exceeds_requested',
+          event_category: 'AUTH',
+          org_id: callbackOrgId,
+          target_type: 'org_integrations',
+          target_id: null,
+          details: JSON.stringify({ excess_scopes: excessScopes }),
+        });
+        res.redirect(302, appendResult(returnTo, 'drive_error', 'grant_exceeds_requested'));
+        return;
+      }
+
       const identity = await fetchGoogleIdentity(tokens.access_token, deps);
       const kms = deps.kms ?? await createDefaultKmsClient();
       const expiresAt = new Date((deps.now?.() ?? new Date()).getTime() + tokens.expires_in * 1000).toISOString();

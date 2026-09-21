@@ -24,6 +24,15 @@ vi.mock('../../../utils/logger.js', () => ({
 // never used — stub it out the same way drive-oauth.test.ts does.
 vi.mock('../../../utils/db.js', () => ({ db: {} }));
 
+// SCRUM-2903/3661 follow-up (single-flight lease): drive-folders.ts imports
+// `loadDriveAccessToken` from `drive-changes-runner.js`, which now imports
+// `jobs/run-lease.ts` for the per-integration lease — that module reads the
+// Zod-validated `config` export at MODULE LOAD time, which this suite never
+// sets up (same reason `utils/db.js` is stubbed above; `run-lease.ts` is a
+// SEPARATE direct import of `config.js`, not covered by that stub). Mirrors
+// the same mock `drive-changes-runner.test.ts` uses for the identical reason.
+vi.mock('../../../config.js', () => ({ config: { kRevision: 'test-revision' } }));
+
 vi.mock('../../_org-auth.js', () => ({
   isCallerOrgAdminResult: vi.fn(async () => ({ value: true, error: false })),
 }));

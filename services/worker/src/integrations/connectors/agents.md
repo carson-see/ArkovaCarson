@@ -1,6 +1,86 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-21 — 410/404 cursor re-bootstrap + per-integration single-flight lease (SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)
+
+Companion to the `listChanges` fields-mask fix in `oauth/agents.md`. Because
+`changes.list` had never once succeeded in prod, this pipeline had never run
+against a real Google response — reviewed the "first-run flood" risk before
+this deployed and fixed two real gaps found in that review (both verified
+against the flagged prod org's actual state via one read-only Supabase
+`execute_sql` query, project `vzwyaatejekddvltxyye`, org
+`40383eb2-f1cd-4a85-8099-afafff95e5cf`: `last_token_advanced_at` stuck at
+2026-09-14, one enabled `WORKSPACE_FILE_MODIFIED` rule since 2026-09-18,
+`google_drive.file_changed` job_queue rows = 0 — a real but bounded backlog,
+not an empty one):
+
+1. **410/404 "pageToken invalid/expired" recovery**, `drive-changes-processor.ts`.
+   Before this, a `DriveApiError` with status 410 or 404 from `changes.list`
+   just bubbled up like any other failure — Google's documented recovery
+   (call `changes.getStartPageToken`, resume from "now") never ran, so an
+   expired token could fail an integration FOREVER: every future webhook
+   would hit the identical throw. Narrowly scoped to 410/404 only — every
+   other status (400, including this incident's own shape; 401/403; 429;
+   5xx) still fails loud and leaves the OLD cursor untouched, because
+   "recovering" from those by discarding the cursor would silently
+   fast-forward past real, still-retrievable changes for reasons that have
+   nothing to do with token validity. `getStartPageToken` (newly extracted
+   in `oauth/drive.ts`, see `oauth/agents.md`) is the reused primitive.
+   `ProcessChangesResult.cursorReset?: true` marks a pass that recovered this
+   way. Changes made in the expired-token gap are unrecoverable by
+   definition (that is what "expired" means to Drive) — this trades silent
+   permanent failure for a bounded, LOUD gap and a working cursor going
+   forward, still reported via `reportDriveProcessingFailure`.
+
+2. **Per-integration single-flight lease**, `drive-changes-runner.ts`'s
+   `runDriveChanges`. Drive can and does deliver bursts of push notifications
+   for the SAME integration (the flagged org: ~115/day) — without a guard,
+   concurrent webhook deliveries on different Cloud Run instances could each
+   independently decrypt/refresh the OAuth token and walk the SAME
+   `changes.list` backlog. The revision ledger's `UNIQUE(integration, file,
+   revision)` constraint already made this SAFE (a losing concurrent insert
+   23505s and counts as a duplicate — never a double-enqueue), just wasteful
+   (redundant Drive API calls, redundant token refreshes, and
+   `advancePageToken`'s non-CAS UPDATE could regress the cursor to a staler
+   value under a race). Reuses `jobs/run-lease.ts`'s existing cross-instance
+   TTL-lease primitive (`job_queue`-backed compare-and-set — the SAME
+   mechanism `drive-subscription-renewal.ts`'s cron already uses, chosen
+   there specifically because a Postgres advisory lock is unsafe through
+   PostgREST's pooled backends), with `leaseId` set DYNAMICALLY to the
+   integration's own UUID (`driveChangesRunLeaseSpec`, exported for tests)
+   rather than a fixed module constant — every other registered lease in
+   that file is a singleton cron guard; this is the first per-entity use of
+   the primitive. Short TTL (10 min), no heartbeat: a webhook-bound pass is
+   expected to finish in seconds to low minutes, not the near-hour crons that
+   primitive's heartbeat/deadline machinery exists for. New skip reason
+   `{ skipped: 'locked' }` when another run already holds it.
+
+3. **`connector-health.ts` gap fix** (Task 4, "make this failure loud"): the
+   existing `cursor_stale` P0-2 signal is BLIND to a cursor that has NEVER
+   advanced (`last_token_advanced_at` null) — deliberately, so a
+   freshly-connected integration is not false-flagged. But that null is ALSO
+   the exact, indistinguishable state of an integration whose every
+   `changes.list` call has failed since it connected — this incident's own
+   shape. New `changes_list_never_succeeded` `HealthReason`, derived from
+   `connected_at` (already read by the health query, no migration) as the
+   staleness clock when the cursor has never moved. **No dedicated
+   "last changes.list error" column exists on `org_integrations`** (grepped
+   every migration touching that table) and `last_renewal_error` is
+   semantically CHANNEL-RENEWAL-only (already drives `subscription_expiry`,
+   and clears on renewal success even while `changes.list` keeps failing) —
+   reusing it would silently HIDE this exact failure the moment a renewal
+   sweep happens to succeed, so this does NOT reuse it. The webhook handler
+   (`api/v1/webhooks/drive.ts`) also now logs `httpStatus`/`errorDetail` as
+   STRUCTURED fields (bounded + PII-scrubbed by construction, per
+   `DriveApiError`'s own doc comment) rather than relying on pino's default
+   Error serializer to surface `DriveApiError`'s custom properties.
+
+Formally modeled in `machines/driveChangesCursor.machine.ts` (see
+`machines/agents.md`) — TLC-verified, all 5 required invariants hold,
+mutation-tested (dropping the ledger/enqueue guard produces a real
+counterexample; restoring it passes).
 
 ## 2026-09-13 — a NULL `last_page_token` is now bootstrapped at renewal (BUG 2026-09-13, prod: zero Drive artifacts since April)
 
