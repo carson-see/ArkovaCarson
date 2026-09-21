@@ -47,8 +47,8 @@ import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDoc
 import { AdobeSignConnectorCard, adobeSignErrorCopy } from '@/components/integrations/AdobeSignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
-import { replaceProfileMedia } from '@/lib/profileMedia';
 import { ProfileMediaImage, useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
+import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
@@ -234,10 +234,6 @@ function OrgProfilePageInner() {
   const [orgSaved, setOrgSaved] = useState(false);
 
   // Logo upload state
-  const [logoUploading, setLogoUploading] = useState(false);
-  const [bannerUploading, setBannerUploading] = useState(false);
-  const orgIdRef = useRef(orgId ?? null);
-  useEffect(() => { orgIdRef.current = orgId ?? null; }, [orgId]);
 
   // Sub-org affiliation state
   const [parentOrgName, setParentOrgName] = useState<string | null>(null);
@@ -369,29 +365,19 @@ function OrgProfilePageInner() {
     setOrgSettingsInit(true);
   }
 
-  const handleBrandUpload = async (kind: 'logo' | 'banner', e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !orgId || !organization?.public_id) return;
-    const requestOrgId = orgId;
-    if (kind === 'logo') setLogoUploading(true);
-    else setBannerUploading(true);
-    try {
-      const field = kind === 'logo' ? 'logo_storage_path' : 'banner_storage_path';
-      const oldPath = organization?.[field] ?? null;
-      await replaceProfileMedia({ file, scope: 'organizations', scopeId: organization.public_id, kind, previousPath: oldPath,
-        commit: (path) => updateOrganization({ [field]: path }, { field, expected: oldPath }),
-        onCleanupWarning: () => toast.warning(PROFILE_MEDIA_LABELS.CLEANUP_WARNING) });
-      if (orgIdRef.current === requestOrgId) toast.success(kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED);
-    } catch (uploadError) {
-      if (orgIdRef.current === requestOrgId) toast.error(uploadError instanceof Error ? uploadError.message : ORG_LOGO_LABELS.UPLOAD_FAILED);
-    } finally {
-      if (orgIdRef.current === requestOrgId) {
-        if (kind === 'logo') setLogoUploading(false);
-        else setBannerUploading(false);
-      }
-      e.target.value = '';
-    }
-  };
+  const brandField = (kind: ProfileMediaKind) => kind === 'logo' ? 'logo_storage_path' as const : 'banner_storage_path' as const;
+  const brandMedia = useProfileMediaUpload({
+    scope: 'organizations',
+    scopeId: organization?.public_id ?? null,
+    ownerId: orgId ?? null,
+    externallyBusy: orgUpdating,
+    previousPathFor: (kind) => organization?.[brandField(kind)] ?? null,
+    commit: useCallback((kind: ProfileMediaKind, path: string, previousPath: string | null) => {
+      const field = kind === 'logo' ? 'logo_storage_path' as const : 'banner_storage_path' as const;
+      return updateOrganization({ [field]: path }, { field, expected: previousPath }, { silentSuccess: true });
+    }, [updateOrganization]),
+    successMessage: (kind) => kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED,
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
@@ -581,7 +567,7 @@ function OrgProfilePageInner() {
                   className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                   aria-label={resolvedOrgLogoUrl ? ORG_LOGO_LABELS.CHANGE_LOGO : ORG_LOGO_LABELS.UPLOAD_LOGO}
                 >
-                  {logoUploading ? (
+                  {brandMedia.uploading === 'logo' ? (
                     <Loader2 className="h-6 w-6 animate-spin text-white" />
                   ) : (
                     <Camera className="h-6 w-6 text-white" />
@@ -590,8 +576,8 @@ function OrgProfilePageInner() {
                     type="file"
                     className="sr-only"
                     accept="image/png,image/jpeg,image/webp"
-                    onChange={(event) => void handleBrandUpload('logo', event)}
-                    disabled={logoUploading}
+                    onChange={(event) => { void brandMedia.onInputChange('logo')(event); }}
+                    disabled={brandMedia.busy}
                   />
                 </label>
               )}
@@ -1135,7 +1121,7 @@ function OrgProfilePageInner() {
               <div className="space-y-2">
                 <Label htmlFor="org-banner">{PROFILE_MEDIA_LABELS.ORG_BANNER}</Label>
                 <ProfileMediaImage storagePath={organization?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_ORG_BANNER} className="h-32 w-full rounded-lg object-cover" />
-                <Input id="org-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={bannerUploading || orgUpdating} onChange={(event) => void handleBrandUpload('banner', event)} />
+                <Input id="org-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={brandMedia.busy} onChange={(event) => { void brandMedia.onInputChange('banner')(event); }} />
                 <p className="text-xs text-muted-foreground">{PROFILE_MEDIA_LABELS.ORG_BANNER_HINT}</p>
               </div>
 

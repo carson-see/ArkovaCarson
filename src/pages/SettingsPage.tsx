@@ -6,7 +6,7 @@
  * @see P3-TS-03
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
 import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Gift, Camera } from 'lucide-react';
@@ -33,8 +33,8 @@ import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
 import { parseSocialLinksForWrite, pickSocialLinks } from '@/lib/socialLinks';
-import { replaceProfileMedia } from '@/lib/profileMedia';
 import { ProfileMediaImage } from '@/components/shared/ProfileMediaImage';
+import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
 
 export function SettingsPage() {
   const { user, signOut } = useAuth();
@@ -50,9 +50,6 @@ export function SettingsPage() {
   const [socialError, setSocialError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mediaUploading, setMediaUploading] = useState<'avatar' | 'banner' | null>(null);
-  const userIdRef = useRef(user?.id ?? null);
-  useEffect(() => { userIdRef.current = user?.id ?? null; }, [user?.id]);
 
   // Initialize fields once profile loads
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,22 +122,19 @@ export function SettingsPage() {
     await updateProfile({ is_public_profile: checked });
   }, [updateProfile]);
 
-  const handleMediaUpload = useCallback(async (kind: 'avatar' | 'banner', file?: File) => {
-    if (!file || !user || !profile?.public_id) return;
-    const requestUserId = user.id;
-    setMediaUploading(kind);
-    try {
-      const field = kind === 'avatar' ? 'avatar_storage_path' : 'banner_storage_path';
-      const oldPath = profile?.[field] ?? null;
-      await replaceProfileMedia({ file, scope: 'users', scopeId: profile.public_id, kind, previousPath: oldPath,
-        commit: (path) => updateProfile({ [field]: path }, { field, expected: oldPath }),
-        onCleanupWarning: () => toast.warning(PROFILE_MEDIA_LABELS.CLEANUP_WARNING) });
-    } catch (uploadError) {
-      if (userIdRef.current === requestUserId) toast.error(uploadError instanceof Error ? uploadError.message : PROFILE_MEDIA_LABELS.UPLOAD_FAILED);
-    } finally {
-      if (userIdRef.current === requestUserId) setMediaUploading(null);
-    }
-  }, [profile, updateProfile, user]);
+  const mediaField = (kind: ProfileMediaKind) => kind === 'avatar' ? 'avatar_storage_path' as const : 'banner_storage_path' as const;
+  const media = useProfileMediaUpload({
+    scope: 'users',
+    scopeId: profile?.public_id ?? null,
+    ownerId: user?.id ?? null,
+    previousPathFor: (kind) => profile?.[mediaField(kind)] ?? null,
+    commit: useCallback((kind: ProfileMediaKind, path: string, previousPath: string | null) => {
+      const field = kind === 'avatar' ? 'avatar_storage_path' as const : 'banner_storage_path' as const;
+      return updateProfile({ [field]: path }, { field, expected: previousPath });
+    }, [updateProfile]),
+    successMessage: (kind) => kind === 'avatar' ? PROFILE_MEDIA_LABELS.PROFILE_PHOTO_UPDATED : PROFILE_MEDIA_LABELS.PROFILE_BANNER_UPDATED,
+  });
+  const mediaUploading = media.uploading;
 
   return (
     <AppShell
@@ -249,12 +243,12 @@ export function SettingsPage() {
           <CardContent className="space-y-5">
             <div className="flex items-center gap-4">
               <ProfileMediaImage storagePath={profile?.avatar_storage_path} fallbackUrl={profile?.avatar_url} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE} className="h-20 w-20 rounded-full object-cover" />
-              <div className="flex-1 space-y-2"><Label htmlFor="profile-avatar">{PROFILE_MEDIA_LABELS.PROFILE_PHOTO}</Label><Input id="profile-avatar" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(event) => { const input = event.currentTarget; void handleMediaUpload('avatar', input.files?.[0]).finally(() => { input.value = ''; }); }} /></div>
+              <div className="flex-1 space-y-2"><Label htmlFor="profile-avatar">{PROFILE_MEDIA_LABELS.PROFILE_PHOTO}</Label><Input id="profile-avatar" type="file" accept="image/png,image/jpeg,image/webp" disabled={media.busy} onChange={(event) => { void media.onInputChange('avatar')(event); }} /></div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-banner">{PROFILE_MEDIA_LABELS.PROFILE_BANNER}</Label>
               <ProfileMediaImage storagePath={profile?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE_BANNER} className="h-28 w-full rounded-lg object-cover" />
-              <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(event) => { const input = event.currentTarget; void handleMediaUpload('banner', input.files?.[0]).finally(() => { input.value = ''; }); }} />
+              <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={media.busy} onChange={(event) => { void media.onInputChange('banner')(event); }} />
             </div>
             {mediaUploading && <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />{mediaUploading === 'avatar' ? PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_PHOTO : PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_BANNER}</p>}
           </CardContent>

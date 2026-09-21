@@ -3379,6 +3379,8 @@ export const PROFILE_MEDIA_LABELS = {
   CURRENT_ORG_BANNER: 'Current organization banner',
   ORG_BANNER_HINT: 'PNG, JPG, or WebP, up to 2 MB. Visible on the public organization page.',
   ORG_BANNER_UPDATED: 'Organization banner updated.',
+  PROFILE_PHOTO_UPDATED: 'Profile photo updated.',
+  PROFILE_BANNER_UPDATED: 'Profile banner updated.',
   UPLOAD_FAILED: 'Image upload failed.',
   UPLOADING_PROFILE_PHOTO: 'Uploading profile photo…',
   UPLOADING_PROFILE_BANNER: 'Uploading profile banner…',
