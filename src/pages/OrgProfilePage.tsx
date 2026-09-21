@@ -50,6 +50,7 @@ import type { Database } from '@/types/database.types';
 import { ProfileMediaImage, useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
 import { publicMirrorPathFromUrl, type PublicMirror } from '@/lib/profileMedia';
+import { sessionHasAal2 } from '@/lib/mfaSessionKey';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
@@ -128,7 +129,7 @@ function OrgProfilePageInner() {
   const navigate = useNavigate();
   const { orgId } = useParams<{ orgId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const platformAdmin = isPlatformAdmin(profile);
   const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null, platformAdmin);
@@ -417,6 +418,9 @@ function OrgProfilePageInner() {
       return updateOrganization(orgBrandUpdates(kind, path, publicUrl), { field, expected: previousPath }, { silentSuccess: true });
     }, [updateOrganization]),
     successMessage: (kind) => kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED,
+    // `can_write_profile_media` requires an AAL2 session — disable rather than
+    // let the write fail with an RLS rejection the user cannot act on.
+    canUpload: sessionHasAal2(session?.access_token ?? null, user?.id ?? null),
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1163,6 +1167,7 @@ function OrgProfilePageInner() {
                 <ProfileMediaImage storagePath={organization?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_ORG_BANNER} className="h-32 w-full rounded-lg object-cover" />
                 <Input id="org-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={brandMedia.busy} onChange={(event) => { void brandMedia.onInputChange('banner')(event); }} />
                 <p className="text-xs text-muted-foreground">{PROFILE_MEDIA_LABELS.ORG_BANNER_HINT}</p>
+                {brandMedia.blocked && <p className="text-xs text-muted-foreground">{PROFILE_MEDIA_LABELS.MFA_REQUIRED}</p>}
               </div>
 
               <Button

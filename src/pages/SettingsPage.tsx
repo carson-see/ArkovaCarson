@@ -35,9 +35,10 @@ import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
 import { parseSocialLinksForWrite, pickSocialLinks } from '@/lib/socialLinks';
 import { ProfileMediaImage } from '@/components/shared/ProfileMediaImage';
 import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
+import { sessionHasAal2 } from '@/lib/mfaSessionKey';
 
 export function SettingsPage() {
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const { profile, loading: profileLoading, updating, updateProfile, refreshProfile } = useProfile();
 
   const [fullName, setFullName] = useState('');
@@ -133,6 +134,9 @@ export function SettingsPage() {
       return updateProfile({ [field]: path }, { field, expected: previousPath });
     }, [updateProfile]),
     successMessage: (kind) => kind === 'avatar' ? PROFILE_MEDIA_LABELS.PROFILE_PHOTO_UPDATED : PROFILE_MEDIA_LABELS.PROFILE_BANNER_UPDATED,
+    // The storage write policy requires an AAL2 session; at AAL1 the input is
+    // disabled rather than failing with an RLS rejection nobody can act on.
+    canUpload: sessionHasAal2(session?.access_token ?? null, user?.id ?? null),
   });
   const mediaUploading = media.uploading;
 
@@ -250,6 +254,7 @@ export function SettingsPage() {
               <ProfileMediaImage storagePath={profile?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE_BANNER} className="h-28 w-full rounded-lg object-cover" />
               <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={media.busy} onChange={(event) => { void media.onInputChange('banner')(event); }} />
             </div>
+            {media.blocked && <p className="text-sm text-muted-foreground">{PROFILE_MEDIA_LABELS.MFA_REQUIRED}</p>}
             {mediaUploading && <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />{mediaUploading === 'avatar' ? PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_PHOTO : PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_BANNER}</p>}
           </CardContent>
         </Card>

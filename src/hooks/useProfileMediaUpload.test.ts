@@ -12,13 +12,18 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const replaceProfileMedia = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/profileMedia', () => ({ replaceProfileMedia }));
+vi.mock('@/lib/profileMedia', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/profileMedia')>('@/lib/profileMedia');
+  return { ...actual, replaceProfileMedia };
+});
 
 const toastSuccess = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 const toastWarning = vi.hoisted(() => vi.fn());
 vi.mock('sonner', () => ({ toast: { success: toastSuccess, error: toastError, warning: toastWarning } }));
 
+import { PROFILE_MEDIA_LABELS } from '@/lib/copy';
+import { ProfileMediaError } from '@/lib/profileMedia';
 import { useProfileMediaUpload } from './useProfileMediaUpload';
 
 function fileInputEvent(file?: File) {
@@ -130,5 +135,42 @@ describe('useProfileMediaUpload', () => {
     await act(async () => { await result.current.onInputChange('logo')(event); });
     expect(replaceProfileMedia).toHaveBeenCalledWith(expect.objectContaining({ publicMirror: mirror }));
     expect(commit).toHaveBeenCalledWith('logo', 'organizations/pub_acme/logo/x.png', null, 'https://cdn.example/public/org-1/logo-x.png');
+  });
+
+  // D3 — a Supabase/PostgREST failure (an RLS denial at AAL1 is the common one)
+  // must never reach a toast verbatim: it is not actionable and §1.3 requires
+  // all user-visible text to come from copy.ts.
+  describe('AAL1 / raw-error handling', () => {
+    it('renders the generic failure label for a raw PostgREST error and logs the original', async () => {
+      const raw = Object.assign(new Error('new row violates row-level security policy for table "objects"'), {
+        code: '42501', details: null, hint: null,
+      });
+      replaceProfileMedia.mockRejectedValueOnce(raw);
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { result } = setup();
+      const { event } = fileInputEvent(png());
+      await act(async () => { await result.current.onInputChange('logo')(event); });
+      expect(toastError).toHaveBeenCalledWith(PROFILE_MEDIA_LABELS.UPLOAD_FAILED);
+      expect(toastError).not.toHaveBeenCalledWith(expect.stringContaining('row-level security'));
+      expect(consoleError).toHaveBeenCalledWith(expect.any(String), raw);
+      consoleError.mockRestore();
+    });
+
+    it('still surfaces the module\'s own typed errors verbatim', async () => {
+      replaceProfileMedia.mockRejectedValueOnce(new ProfileMediaError(PROFILE_MEDIA_LABELS.TOO_LARGE));
+      const { result } = setup();
+      const { event } = fileInputEvent(png());
+      await act(async () => { await result.current.onInputChange('logo')(event); });
+      expect(toastError).toHaveBeenCalledWith(PROFILE_MEDIA_LABELS.TOO_LARGE);
+    });
+
+    it('blocks uploads and reports the MFA requirement when the session is not AAL2', async () => {
+      const { result } = setup({ canUpload: false });
+      expect(result.current.blocked).toBe(true);
+      expect(result.current.busy).toBe(true);
+      const { event } = fileInputEvent(png());
+      await act(async () => { await result.current.onInputChange('logo')(event); });
+      expect(replaceProfileMedia).not.toHaveBeenCalled();
+    });
   });
 });

@@ -3382,6 +3382,7 @@ export const PROFILE_MEDIA_LABELS = {
   PROFILE_PHOTO_UPDATED: 'Profile photo updated.',
   PROFILE_BANNER_UPDATED: 'Profile banner updated.',
   UPLOAD_FAILED: 'Image upload failed.',
+  MFA_REQUIRED: 'Set up two-factor authentication to upload images.',
   UPLOADING_PROFILE_PHOTO: 'Uploading profile photo…',
   UPLOADING_PROFILE_BANNER: 'Uploading profile banner…',
   TOO_LARGE: 'Image must be 2 MB or smaller.',

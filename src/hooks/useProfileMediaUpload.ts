@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PROFILE_MEDIA_LABELS } from '@/lib/copy';
-import { replaceProfileMedia, type PublicMirror } from '@/lib/profileMedia';
+import { ProfileMediaError, replaceProfileMedia, type PublicMirror } from '@/lib/profileMedia';
 
 export type ProfileMediaKind = 'avatar' | 'banner' | 'logo';
 
@@ -31,6 +31,13 @@ export interface UseProfileMediaUploadOptions {
   publicMirrorFor?: (kind: ProfileMediaKind) => PublicMirror | undefined;
   /** A row update owned by the caller is in flight — inputs stay disabled. */
   externallyBusy?: boolean;
+  /**
+   * Whether this session may write media at all. The storage policies require
+   * an AAL2 (`private.is_human_mfa_verified()`) session, so at AAL1 the inputs
+   * are disabled up front rather than letting the write fail with an RLS
+   * rejection the user cannot act on. Defaults to true.
+   */
+  canUpload?: boolean;
 }
 
 export interface UseProfileMediaUploadResult {
@@ -38,6 +45,8 @@ export interface UseProfileMediaUploadResult {
   uploading: ProfileMediaKind | null;
   /** Single disabled condition for every input on the surface. */
   busy: boolean;
+  /** Uploading is unavailable for this session (AAL1) — show the MFA notice. */
+  blocked: boolean;
   onInputChange: (kind: ProfileMediaKind) => (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
 }
 
@@ -48,7 +57,7 @@ export function useProfileMediaUpload(options: UseProfileMediaUploadOptions): Us
   const ownerRef = useRef(options.ownerId);
   useEffect(() => { ownerRef.current = options.ownerId; }, [options.ownerId]);
 
-  const { scope, scopeId, ownerId, commit, successMessage, publicMirrorFor, previousPathFor } = options;
+  const { scope, scopeId, ownerId, canUpload, commit, successMessage, publicMirrorFor, previousPathFor } = options;
 
   const onInputChange = useCallback((kind: ProfileMediaKind) =>
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,7 +66,7 @@ export function useProfileMediaUpload(options: UseProfileMediaUploadOptions): Us
       const input = event.target;
       try {
         const file = input.files?.[0];
-        if (!file || !scopeId || !ownerId) return;
+        if (!file || !scopeId || !ownerId || canUpload === false) return;
         const requestOwner = ownerId;
         setUploading(kind);
         const previousPath = previousPathFor(kind);
@@ -74,7 +83,14 @@ export function useProfileMediaUpload(options: UseProfileMediaUploadOptions): Us
           });
           if (ownerRef.current === requestOwner) toast.success(successMessage(kind));
         } catch (uploadError) {
-          if (ownerRef.current === requestOwner) toast.error(uploadError instanceof Error ? uploadError.message : PROFILE_MEDIA_LABELS.UPLOAD_FAILED);
+          // Only this module's own errors carry copy.ts text. A Storage /
+          // PostgREST rejection (an RLS denial, most often) is neither
+          // actionable nor allowed in user-visible copy (§1.3), so it is
+          // logged and reported generically. No PII or token is in the value.
+          if (!(uploadError instanceof ProfileMediaError)) console.error('[profile-media] upload failed', uploadError);
+          if (ownerRef.current === requestOwner) {
+            toast.error(uploadError instanceof ProfileMediaError ? uploadError.message : PROFILE_MEDIA_LABELS.UPLOAD_FAILED);
+          }
         } finally {
           if (ownerRef.current === requestOwner) setUploading(null);
         }
@@ -83,7 +99,8 @@ export function useProfileMediaUpload(options: UseProfileMediaUploadOptions): Us
         // after an early return.
         input.value = '';
       }
-    }, [scope, scopeId, ownerId, commit, successMessage, publicMirrorFor, previousPathFor]);
+    }, [scope, scopeId, ownerId, canUpload, commit, successMessage, publicMirrorFor, previousPathFor]);
 
-  return { uploading, busy: uploading !== null || !!options.externallyBusy, onInputChange };
+  const blocked = canUpload === false;
+  return { uploading, blocked, busy: blocked || uploading !== null || !!options.externallyBusy, onInputChange };
 }

@@ -3,6 +3,19 @@ import { supabase } from './supabase';
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * A failure this module raised deliberately, whose message is already
+ * user-facing copy from `PROFILE_MEDIA_LABELS`. Anything else that escapes an
+ * upload (a Storage/PostgREST rejection, most often an RLS denial on an AAL1
+ * session) is NOT safe to show: callers map it to the generic failure label.
+ */
+export class ProfileMediaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProfileMediaError';
+  }
+}
+
 // Accepted input formats. Every accepted input is re-encoded to PNG, so a
 // per-format output extension would be dead weight — the only extension any
 // caller ever sees is `.png` (enforced by the 0481 CHECK constraints).
@@ -13,25 +26,25 @@ const FORMATS = {
 } as const;
 
 export async function validateProfileImage(file: File): Promise<{ blob: Blob; contentType: 'image/png' }> {
-  if (file.size > MAX_IMAGE_BYTES) throw new Error(PROFILE_MEDIA_LABELS.TOO_LARGE);
+  if (file.size > MAX_IMAGE_BYTES) throw new ProfileMediaError(PROFILE_MEDIA_LABELS.TOO_LARGE);
   const format = FORMATS[file.type as keyof typeof FORMATS];
   const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
-  if (!format || !format.matches(header)) throw new Error(PROFILE_MEDIA_LABELS.TYPE_MISMATCH);
-  if (typeof createImageBitmap !== 'function') throw new Error(PROFILE_MEDIA_LABELS.UNSUPPORTED_BROWSER);
+  if (!format || !format.matches(header)) throw new ProfileMediaError(PROFILE_MEDIA_LABELS.TYPE_MISMATCH);
+  if (typeof createImageBitmap !== 'function') throw new ProfileMediaError(PROFILE_MEDIA_LABELS.UNSUPPORTED_BROWSER);
   let bitmap: ImageBitmap;
   try { bitmap = await createImageBitmap(file); }
-  catch { throw new Error(PROFILE_MEDIA_LABELS.DECODE_FAILED); }
+  catch { throw new ProfileMediaError(PROFILE_MEDIA_LABELS.DECODE_FAILED); }
   if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 4096 || bitmap.height > 4096 || bitmap.width * bitmap.height > 16_000_000) {
     bitmap.close();
-    throw new Error(PROFILE_MEDIA_LABELS.DIMENSIONS_INVALID);
+    throw new ProfileMediaError(PROFILE_MEDIA_LABELS.DIMENSIONS_INVALID);
   }
   try {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const context = canvas.getContext('2d');
-    if (!context) throw new Error(PROFILE_MEDIA_LABELS.SANITIZE_FAILED);
+    if (!context) throw new ProfileMediaError(PROFILE_MEDIA_LABELS.SANITIZE_FAILED);
     context.drawImage(bitmap, 0, 0);
     const blob = await canvas.convertToBlob({ type: 'image/png' });
-    if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw new Error(PROFILE_MEDIA_LABELS.SANITIZED_TOO_LARGE);
+    if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw new ProfileMediaError(PROFILE_MEDIA_LABELS.SANITIZED_TOO_LARGE);
     return { blob, contentType: 'image/png' };
   } finally { bitmap.close(); }
 }
@@ -153,7 +166,7 @@ export async function replaceProfileMedia(options: {
   }
 
   try {
-    if (!await options.commit(path, mirrorUrl)) throw new Error(PROFILE_MEDIA_LABELS.METADATA_UPDATE_FAILED);
+    if (!await options.commit(path, mirrorUrl)) throw new ProfileMediaError(PROFILE_MEDIA_LABELS.METADATA_UPDATE_FAILED);
   } catch (error) {
     await removeQuietly(bucket, path, options.onCleanupWarning);
     if (mirrorBucket && mirrorPath) await removeQuietly(mirrorBucket, mirrorPath, options.onCleanupWarning);
