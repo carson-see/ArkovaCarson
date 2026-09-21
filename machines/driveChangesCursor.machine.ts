@@ -30,12 +30,14 @@ const problemObservable = variable("problemObservable");
 // Fix-round item 4A/B (independent TLA + simplify pass on head 7ddf6294b —
 // verifier's real counterexample, see module doc comment).
 const lostLeaseWhileWalking = variable("lostLeaseWhileWalking");
-// Fix-round item 3 mutation-test ratchet (see module doc comment).
-const pushDroppedWhileLocked = variable("pushDroppedWhileLocked");
-// Round-2 fix: gates the ONLY action that can ever set
-// pushDroppedWhileLocked (see beginRunSkippedLockedRegressionDropsPush and
-// the module doc comment's "ROUND-2 FIX" paragraph).
-const pushDropRegressionEnabled = variable("pushDropRegressionEnabled");
+// Round-3 fix (see module doc comment's "ROUND-3 FIX" paragraph): an
+// unconditional witness written by the REAL `beginRunSkippedLocked` action
+// every time it fires, cleared only by the REAL `beginRun` action's
+// legitimate consumption of `pendingPush`. Structurally identical to how
+// `lostLeaseWhileWalking` already achieves real teeth in this same file —
+// NOT a second, disconnected canary action/toggle (that was round 2's
+// mistake, corrected here).
+const justSkippedLocked = variable("justSkippedLocked");
 // Fix-round item 4A CAS sub-model (advancePageToken's compare-and-swap).
 const persistedGen = variable("persistedGen");
 const startedFromGen = variable("startedFromGen");
@@ -137,34 +139,43 @@ const everReachedG2 = variable("everReachedG2");
  * and `cursorNeverRewinds` below, and the mutation-test results recorded in
  * `machines/agents.md`.
  *
- * ROUND-2 FIX (independent second-round verification on head `bc6c84c80`):
- * `pendingPushNeverDroppedWhileLocked` was VACUOUS at that head —
- * `pushDroppedWhileLocked` was declared and read by the invariant, but no
- * action in the model's actual action set ever assigned it `true` (it
- * appeared in `Init` and in every OTHER action's implicit `UNCHANGED` set
- * only). The verifier performed exactly the mutation this file's own prior
- * comment prescribed (`beginRunSkippedLocked`'s `pendingPush` update,
- * `lit(true)` → `lit(false)`) and got a clean `proofPassed: true` — no
- * counterexample — directly contradicting this file's and the PR body's
- * prior claim of a 6-step RED trace. That claim was false; there is no
- * historical head where the prescribed one-line mutation alone produced a
- * violation, because `pushDroppedWhileLocked` was never wired to anything.
+ * ROUND-2 FIX, THEN CORRECTED AGAIN BY ROUND-3 (both rounds found
+ * `pendingPushNeverDroppedWhileLocked` unbacked — read this before trusting
+ * ANY earlier claim about this invariant in git history or the PR body):
  *
- * THE FIX: `pushDropRegressionEnabled` is a new per-integration boolean,
- * `Init`-false, and — like the "fixed" design's own guarantee — never
- * assigned by any action reachable from that `Init` value. The ONLY action
- * that can ever set `pushDroppedWhileLocked` is
- * `beginRunSkippedLockedRegressionDropsPush`, and its guard additionally
- * requires `pushDropRegressionEnabled[i]`. In the SHIPPED model this makes
- * the regression action permanently unreachable (genuinely, not by
- * omission — `check` explores it and finds no path to enable it), so
- * `pendingPushNeverDroppedWhileLocked` now holds for a REAL reason: the
- * code path that would violate it is present in the model and provably
- * unreachable, not merely absent from the model's vocabulary. The mutation
- * test is now: flip `pushDropRegressionEnabled`'s `Init` value from
- * `lit(false)` to `lit(true)` (representing "the pre-item-3 regression is
- * reintroduced") and confirm `check` goes RED with a real counterexample —
- * see `machines/agents.md` for the actual recorded trace.
+ * Round 2 found `pendingPushNeverDroppedWhileLocked` VACUOUS at head
+ * `bc6c84c80` — its subject variable was declared and read by the invariant
+ * but never assigned `true` by any action in the model's actual action set.
+ * Round 2's "fix" added a second, gated canary action
+ * (`beginRunSkippedLockedRegressionDropsPush`, gated on a
+ * `pushDropRegressionEnabled` toggle) parallel to the REAL
+ * `beginRunSkippedLocked` action, and mutation-tested by flipping the
+ * toggle. Round 3 found that this "fix" was STILL a defect: mutating the
+ * REAL `beginRunSkippedLocked` action (dropping `pendingPush` there, with
+ * the toggle left at its shipped `false`) produced a clean
+ * `proofPassed: true` with IDENTICAL state counts — the invariant and the
+ * deadlock check reacted to neither, because they only ever observed the
+ * parallel, permanently-disabled canary, never the real action it was
+ * supposed to stand in for. A constant-false toggle proves only that the
+ * toggle is false.
+ *
+ * THE REAL FIX (round 3): deleted `beginRunSkippedLockedRegressionDropsPush`
+ * and `pushDropRegressionEnabled` entirely — no second code path, no gate.
+ * `justSkippedLocked` is a witness written UNCONDITIONALLY by the ONE real
+ * `beginRunSkippedLocked` action every time it fires, and cleared ONLY by
+ * the ONE real `beginRun` action's legitimate consumption of `pendingPush`
+ * — the exact same pattern `lostLeaseWhileWalking` already uses elsewhere
+ * in this file (set by the real `leaseTtlExpiresWhileWalking` action,
+ * cleared by the real recovery/handoff actions). The invariant is
+ * redefined over this real state: `justSkippedLocked[i] ⇒ pendingPush[i]`
+ * — whenever the locked-skip handler has fired and its legitimate consumer
+ * (`beginRun`) hasn't run since, the push must still be pending. Because
+ * `justSkippedLocked` is written by the SAME action, in the SAME update
+ * list, as the `pendingPush` line under mutation test, a single-line
+ * mutation to `beginRunSkippedLocked`'s `pendingPush` value now decouples
+ * the two writes immediately, visible in the very next state — no second
+ * action, no toggle, no canary. See `machines/agents.md`'s round-3 entry
+ * for the real RED trace this produces.
  */
 export const driveChangesCursorMachine = defineMachine({
   version: 2,
@@ -204,23 +215,14 @@ export const driveChangesCursorMachine = defineMachine({
     // holder taking over (beginRunWhileAlreadyWalking). `noConcurrentWalkers`
     // reads this.
     lostLeaseWhileWalking: mapVar("Integrations", boolType(), lit(false)),
-    // Fix-round item 3 mutation-test ratchet, made genuinely reachable in
-    // round 2 — see the module doc comment's "ROUND-2 FIX" paragraph. Only
-    // `beginRunSkippedLockedRegressionDropsPush` can ever set this true,
-    // and that action is itself gated by `pushDropRegressionEnabled`
-    // (Init-false, never assigned in the shipped model), so this stays
-    // false throughout the reachable state space of the FIXED design —
-    // genuinely, because the regression path is modeled and unreachable,
-    // not because nothing models it.
-    pushDroppedWhileLocked: mapVar("Integrations", boolType(), lit(false)),
-    // Round-2 fix: the gate for `beginRunSkippedLockedRegressionDropsPush`.
-    // Init-false and never written by any action in the shipped model —
-    // the mutation test for `pendingPushNeverDroppedWhileLocked` is to flip
-    // THIS variable's `Init` value to `lit(true)`, which is the honest,
-    // single-point way to represent "the pre-item-3 regression is back" in
-    // a DSL with no model constants (every value here is state, so a
-    // permanently-inert toggle is how a constant is expressed).
-    pushDropRegressionEnabled: mapVar("Integrations", boolType(), lit(false)),
+    // Round-3 fix (see module doc comment's "ROUND-3 FIX" paragraph, and
+    // the corrected `pendingPushNeverDroppedWhileLocked` invariant below).
+    // Written UNCONDITIONALLY by the ONE real `beginRunSkippedLocked`
+    // action every time it fires; cleared ONLY by the ONE real `beginRun`
+    // action's legitimate consumption of `pendingPush`. Exactly the same
+    // set/clear pattern `lostLeaseWhileWalking` already uses two variables
+    // up — no second action, no gate, no toggle.
+    justSkippedLocked: mapVar("Integrations", boolType(), lit(false)),
     // Fix-round item 4A CAS sub-model — see the module doc comment's
     // "DELIBERATELY STANDALONE" paragraph. Three symbolic generations of
     // the persisted page token; G0 is the initial value.
@@ -280,6 +282,12 @@ export const driveChangesCursorMachine = defineMachine({
         setMap("cursorState", param("i"), lit("WALKING")),
         setMap("walkProgress", param("i"), lit("NONE")),
         setMap("cursorAdvancedThisWalk", param("i"), lit(false)),
+        // Round-3 fix: this is the ONE legitimate consumer of `pendingPush`
+        // — clearing the witness here (and ONLY here) is what lets
+        // `pendingPushNeverDroppedWhileLocked` distinguish "consumed
+        // legitimately" from "dropped by the locked-skip handler" using
+        // real state, not a parallel canary.
+        setMap("justSkippedLocked", param("i"), lit(false)),
       ],
     },
     // Fix-round item 3: a push arrives while ANOTHER run already holds the
@@ -287,32 +295,21 @@ export const driveChangesCursorMachine = defineMachine({
     // `beginRun`) so its update list can express the REAL fix precisely —
     // `pendingPush` is deliberately left `lit(true)` (unconsumed, matching
     // `markLeaseDirty`'s real unconditional write) rather than reset to
-    // false.
+    // false. Round-3 fix: ALSO sets `justSkippedLocked` unconditionally,
+    // in the SAME update list as the `pendingPush` line — this is the
+    // real witness `pendingPushNeverDroppedWhileLocked` now checks. A
+    // single-line mutation to the `pendingPush` value below (the realistic
+    // pre-item-3 regression) decouples the two writes immediately, visible
+    // in the very next state; no second action or toggle is needed or
+    // present (round 2's `beginRunSkippedLockedRegressionDropsPush`/
+    // `pushDropRegressionEnabled` canary was deleted — see the module doc
+    // comment's "ROUND-3 FIX" paragraph for why it didn't work).
     beginRunSkippedLocked: {
       params: { i: "Integrations" },
       guard: and(index(pendingPush, param("i")), index(lockHeld, param("i"))),
-      updates: [setMap("pendingPush", param("i"), lit(true))],
-    },
-    // Round-2 fix: the EXPLICIT alternate to `beginRunSkippedLocked` — same
-    // guard shape, PLUS `pushDropRegressionEnabled[i]`, which is Init-false
-    // and never assigned true anywhere in the shipped model. This makes the
-    // action permanently unreachable in the design `check` verifies (a real,
-    // provable unreachability, not an absence from the model's vocabulary),
-    // while still giving `pendingPushNeverDroppedWhileLocked` a genuine
-    // witness to rule out: flip `pushDropRegressionEnabled`'s `Init` value
-    // to `lit(true)` to mutation-test it. See the module doc comment's
-    // "ROUND-2 FIX" paragraph for why this replaced the earlier (vacuous)
-    // approach of just editing `beginRunSkippedLocked`'s own update value.
-    beginRunSkippedLockedRegressionDropsPush: {
-      params: { i: "Integrations" },
-      guard: and(
-        index(pendingPush, param("i")),
-        index(lockHeld, param("i")),
-        index(pushDropRegressionEnabled, param("i")),
-      ),
       updates: [
-        setMap("pendingPush", param("i"), lit(false)),
-        setMap("pushDroppedWhileLocked", param("i"), lit(true)),
+        setMap("pendingPush", param("i"), lit(true)), // <- the line under mutation test
+        setMap("justSkippedLocked", param("i"), lit(true)), // unconditional witness that THIS action fired
       ],
     },
     // Fix-round item 4A (verifier finding on head 7ddf6294b): heartbeat
@@ -362,6 +359,15 @@ export const driveChangesCursorMachine = defineMachine({
         setMap("lockHeld", param("i"), lit(true)),
         setMap("pendingPush", param("i"), lit(false)),
         setMap("lostLeaseWhileWalking", param("i"), lit(false)),
+        // Round-3 fix: this is the SECOND real acquire path that
+        // legitimately consumes `pendingPush` (the first is `beginRun`) —
+        // a fresh `withRunLease` win is a genuine new holder starting
+        // processing, not a dropped push, so it clears the witness the
+        // same way `beginRun` does. Without this, a push skipped while
+        // locked (`beginRunSkippedLocked`) that is later legitimately
+        // picked up via THIS path (rather than plain `beginRun`) would
+        // false-positive `pendingPushNeverDroppedWhileLocked`.
+        setMap("justSkippedLocked", param("i"), lit(false)),
       ],
     },
     // drive_revision_ledger insert succeeds (reserve-then-confirm ordering).
@@ -697,16 +703,35 @@ export const driveChangesCursorMachine = defineMachine({
     // own deadlock-freedom guarantee (a live `pendingPush=true` always
     // leaves `beginRun` reachable once the lock frees), this is the
     // strongest claim provable without temporal operators.
-    // MUTATION-TESTED (round 2 — see the module doc comment's "ROUND-2 FIX"
-    // paragraph; the round-1 claim here was FALSE and has been replaced):
-    // flipping `pushDropRegressionEnabled`'s `Init` value to `lit(true)`
-    // makes `beginRunSkippedLockedRegressionDropsPush` reachable, which
-    // sets `pushDroppedWhileLocked` and fails this invariant — see
-    // machines/agents.md for the real recorded counterexample trace.
+    //
+    // REDEFINED IN ROUND 3 — read the module doc comment's "ROUND-2 FIX,
+    // THEN CORRECTED AGAIN BY ROUND-3" paragraph before trusting any older
+    // version of this invariant in git history. Rounds 1 AND 2 both shipped
+    // an unbacked certificate for this specific property (round 1: no
+    // witness wired at all; round 2: a witness wired ONLY to a parallel,
+    // permanently-gated canary action, never to the real
+    // `beginRunSkippedLocked` action it was supposed to stand in for — a
+    // constant-false toggle proved only that the toggle was false). This
+    // version is stated over REAL state written by the REAL actions:
+    // `justSkippedLocked` is set unconditionally by `beginRunSkippedLocked`
+    // (the SAME update list as the `pendingPush` line under mutation test)
+    // and cleared only by `beginRun`/`beginRunWhileAlreadyWalking`'s
+    // legitimate consumption — no second action, no gate.
+    //
+    // MUTATION-TESTED (round 3, the real test): editing ONLY
+    // `beginRunSkippedLocked`'s `pendingPush` line from `lit(true)` to
+    // `lit(false)` — the realistic single-line pre-item-3 regression,
+    // reintroduced in the actual modeled code path — now fails this
+    // invariant directly, with no toggle to flip. See machines/agents.md
+    // for the real recorded counterexample trace.
     pendingPushNeverDroppedWhileLocked: {
       description:
-        "pushDroppedWhileLocked is never true — the shipped design never discards a push signal that arrived while the lease was held; the pre-item-3 bug (silently dropping it) is the mutation this invariant exists to catch",
-      formula: forall("Integrations", "i", not(index(pushDroppedWhileLocked, param("i")))),
+        "whenever the locked-skip handler has fired and its legitimate consumer (beginRun / beginRunWhileAlreadyWalking) hasn't run since, the push must still be pending — justSkippedLocked[i] implies pendingPush[i]; a mutation that drops pendingPush in beginRunSkippedLocked without ALSO decoupling justSkippedLocked's own write (i.e. any realistic single-line regression) is caught directly, over real state, not a parallel canary",
+      formula: forall(
+        "Integrations",
+        "i",
+        or(not(index(justSkippedLocked, param("i"))), index(pendingPush, param("i"))),
+      ),
     },
   },
   proof: {
