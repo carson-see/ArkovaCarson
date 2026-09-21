@@ -57,7 +57,18 @@ this file). What's load-bearing for future edits:
   its push commit is still the tip of `main` and skips (not fails) if a later
   push has already superseded it — see that step's own comment. Contract:
   `scripts/ci/edge-deploy-workflow-contract.test.ts`.
-- **`sonatype-scan.yml`**: trigger fix; see the file's own header comment.
+- **`sonatype-scan.yml`**: root cause of the "weekly" job running far more
+  often was never a cron misfire — `gh run list` showed 99 of the last 100
+  runs were `pull_request` (only 1 `schedule`), which is largely intentional
+  (it scans PRs that touch a manifest/lockfile) and largely free (a
+  Dependabot-authored PR's job-level `if:` skip never provisions a runner —
+  18 of the last 40 runs were exactly this, zero-cost). The one real waste:
+  Mergify merge-queue speculative PRs forced a full re-scan even though this
+  job is advisory-only (not in `.mergify.yml` `merge_conditions`) and the
+  original PR already ran it — 7 of the last 15 non-skipped runs. Now skipped
+  the same branch-prefix + `mergify[bot]`-author way
+  `staging-evidence.yml`/`ci.yml` do. Also gained `workflow_dispatch` for
+  on-demand runs. Contract: `scripts/ci/sonatype-draft-admission.test.ts`.
 
 ## 2026-09-19 — staging evidence defers ordinary drafts before install
 
