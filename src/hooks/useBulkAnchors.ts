@@ -64,6 +64,35 @@ interface UseBulkAnchorsOptions {
 // and provide fine-grained progress updates (SCRUM-IDT-TASK2)
 const BATCH_SIZE = 10;
 
+/**
+ * The recipient half of a bulk row, or nothing.
+ *
+ * B1 (#3034 review): recipient provisioning is an ORGANIZATION capability —
+ * personal scope can never be granted it. `main` reflected that by skipping the
+ * recipient pass whenever it could not resolve an org; this restores it at the
+ * request boundary. Sending a recipient from personal scope would ask the worker
+ * for something it must refuse, so every row would come back
+ * `*_recipient_failed` for a reason the user cannot act on — and a CSV column
+ * merely CONTAINING "mail" is auto-mapped to `email` by `csvParser`, so this is
+ * the common case, not the exotic one.
+ *
+ * A plain org MEMBER also cannot provision, but the hook has no role
+ * information — only the selected org id — so that case is left to the server,
+ * which now anchors the rows and reports the refusal per row rather than
+ * rejecting the batch.
+ *
+ * `recipient_name` is emitted only alongside an email: the worker's schema
+ * rejects the name-without-email pair for the WHOLE request.
+ */
+function recipientFields(
+  record: BulkAnchorRecord,
+  orgId: string | null,
+): { recipient_email?: string; recipient_name?: string } {
+  if (!orgId || !record.email) return {};
+  const name = typeof record.metadata?.recipient_name === 'string' ? record.metadata.recipient_name : undefined;
+  return { recipient_email: record.email, ...(name === undefined ? {} : { recipient_name: name }) };
+}
+
 export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnchorsReturn {
   const targetOrgId = options.orgId ?? null;
   const { canCreateCount, remaining, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
@@ -150,10 +179,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
                   credential_type: record.credentialType,
                   metadata: record.metadata,
                   fingerprint_provided: record.fingerprintProvided ?? false,
-                  recipient_email: record.email,
-                  recipient_name: typeof record.metadata?.recipient_name === 'string'
-                    ? record.metadata.recipient_name
-                    : undefined,
+                  ...recipientFields(record, targetOrgId),
                 })),
               }),
             });

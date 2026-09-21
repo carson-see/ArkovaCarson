@@ -556,5 +556,78 @@ describe('useBulkAnchors', () => {
       ]));
       expect(mockToastSuccess).toHaveBeenCalledTimes(1);
     });
+
+    // B1(b): `main` never attempted recipient creation when there was no
+    // resolvable org — it simply skipped the pass. Sending a recipient from
+    // personal scope asks the worker for something personal scope can never be
+    // granted, so every row would come back `*_recipient_failed` for a reason
+    // the user cannot act on. The hook knows its own scope, so it strips them.
+    it('omits recipient hints entirely when the active scope is personal', async () => {
+      const { result } = renderHook(() => useBulkAnchors({ orgId: null }));
+      await act(async () => {
+        await result.current.createBulkAnchors([{
+          fingerprint: 'a'.repeat(64),
+          filename: 'test1.pdf',
+          email: 'a@example.com',
+          metadata: { recipient_name: 'Reese Recipient' },
+        }]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.org_id).toBeNull();
+      expect(body.rows[0]).not.toHaveProperty('recipient_email');
+      expect(body.rows[0]).not.toHaveProperty('recipient_name');
+      // The row itself still goes through untouched.
+      expect(body.rows[0]).toMatchObject({ fingerprint: 'a'.repeat(64), filename: 'test1.pdf' });
+      // No email address may survive anywhere in the personal-scope payload.
+      expect(JSON.stringify(body)).not.toContain('a@example.com');
+    });
+
+    it('omits recipient hints when no scope was supplied at all', async () => {
+      const { result } = renderHook(() => useBulkAnchors());
+      await act(async () => {
+        await result.current.createBulkAnchors([
+          { fingerprint: 'a'.repeat(64), filename: 'test1.pdf', email: 'a@example.com' },
+        ]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows[0]).not.toHaveProperty('recipient_email');
+    });
+
+    it('still forwards the recipient name alongside the email in organization scope', async () => {
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+      await act(async () => {
+        await result.current.createBulkAnchors([{
+          fingerprint: 'a'.repeat(64),
+          filename: 'test1.pdf',
+          email: 'a@example.com',
+          metadata: { recipient_name: 'Reese Recipient' },
+        }]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows[0]).toMatchObject({
+        recipient_email: 'a@example.com',
+        recipient_name: 'Reese Recipient',
+      });
+    });
+
+    // A recipient_name with no recipient_email is rejected by the worker's
+    // superRefine for the WHOLE request, so the hook must never emit that pair.
+    it('never sends a recipient name without the email it belongs to', async () => {
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+      await act(async () => {
+        await result.current.createBulkAnchors([{
+          fingerprint: 'a'.repeat(64),
+          filename: 'test1.pdf',
+          metadata: { recipient_name: 'Reese Recipient' },
+        }]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows[0]).not.toHaveProperty('recipient_name');
+      expect(body.rows[0]).not.toHaveProperty('recipient_email');
+    });
   });
 });

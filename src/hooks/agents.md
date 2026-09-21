@@ -274,3 +274,17 @@ Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', 
 `recipient_link_failed` counter, summed across chunks like the other counters.
 Optional because an older worker omits it; absent reads as zero. These rows are
 NOT failures — do not fold them into `failed` in any consumer.
+
+## 2026-09-21 — useBulkAnchors omits recipients in personal scope (PR #3034)
+
+B1(b). The hook sent `recipient_email: record.email` unconditionally, and
+`csvParser` auto-maps ANY column containing "mail" to `email`. Combined with the
+worker's whole-request 403, a personal-scope user importing an ordinary
+spreadsheet got zero anchors. `main` never had this shape: its recipient pass
+was separate and skipped outright when no org could be resolved.
+
+`recipientFields()` now emits the recipient half only when an org scope is
+active, and emits `recipient_name` only alongside an email (the worker's schema
+rejects name-without-email for the whole request). The hook knows its scope but
+NOT the caller's org ROLE, so a plain org member is still left to the server,
+which anchors the rows and reports the refusal per row.
