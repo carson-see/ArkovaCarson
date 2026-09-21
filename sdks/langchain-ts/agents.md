@@ -1,6 +1,6 @@
 # sdks/langchain-ts/agents.md
 
-`@arkova/langchain` — LangChain tool wrappers for the Arkova record verification API. This is the maintained package; `sdks/langchain/` (no `package.json`, never wired up for publishing) is an earlier, superseded draft with a smaller tool set — see its `src/agents.md`.
+`@arkova/langchain` — zero-dependency, LangChain-style callable tools for the Arkova record verification API. This is the maintained package; `sdks/langchain/` (no `package.json`, never wired up for publishing) is an earlier, superseded draft with a smaller tool set — see its `src/agents.md`.
 
 ## Structure
 - **`src/index.ts`** — barrel export + tool classes (`ArkovaVerifyTool`, `ArkovaAnchorStatusTool`, `ArkovaSearchTool`, `ArkovaAttestTool`, `ArkovaBatchVerifyTool`, `ArkovaVerifySignatureTool`, `getArkovaTools`).
@@ -36,6 +36,12 @@ helper, the phrase, and the constant are duplicated here deliberately rather tha
 - `readErrorBody()` uses `try`/`catch`, not `res.json().catch()`, so a synchronously-throwing or
   absent `json()` cannot escape as a tool crash.
 
+Suite for this package is 32 tests after release qualification. Run it from
+this package directory so its local config and pinned dev toolchain are used.
+
+Historical pre-qualification note retained verbatim for append-only policy; the
+2026-09-19 section below supersedes its counts and toolchain state:
+
 Suite for this package is 31 tests; `npx vitest run --root sdks` from the repo root covers both
 packages (80 tests).
 
@@ -43,3 +49,43 @@ packages (80 tests).
 `tsconfig.json(5,25): TS5107 moduleResolution=node10 is deprecated`. It comes from the committed
 `tsconfig.json` (last touched in PR #761) meeting the newer TypeScript resolved from the repo root
 — this package declares no devDependencies of its own. Unrelated to this change and left alone.
+
+## 2026-09-19 — first-public-release qualification
+
+- The package now owns its TypeScript/Vitest dev toolchain, lockfile and local
+  Vitest config, and declares ESM so its emitted `dist/index.js` loads on the
+  advertised Node 18 floor.
+- Every API request rejects redirects before sending the custom `X-API-Key`;
+  the regression was observed red before the shared fetch helper was fixed.
+- README compatibility language is deliberately narrow: these are
+  zero-dependency callable tool objects, not `@langchain/core` subclasses.
+- `ArkovaVerifyTool.valid` derives only from the verification API's authoritative
+  `verified` boolean. `SUBMITTED`, `PENDING`, revoked, and unknown states fail
+  closed; the complete API response is preserved so status and proof evidence
+  remain available to the caller.
+
+## 2026-09-21 — recovered onto `main` + closed publish gaps (PR #2986 never actually landed)
+
+The 2026-09-19 entry above describes changes PR #2986 made but that never reached `main`: the PR's
+branch merged into `fix/hygiene-webhook-payloads`, which had already merged into `main` before #2986
+itself merged, orphaning the diff (GitHub still showed MERGED). Applied here with no conflicts. On
+top of the recovered content:
+
+- **`tsconfig.json` `moduleResolution` was still the deprecated `node10` alias**, despite reading
+  `"node"` in the file — `tsc --showConfig` shows `"node"` normalizes to `"node10"` internally, which
+  is exactly the "TS5107 moduleResolution=node10 is deprecated" error the "pre-existing" paragraph
+  above describes (that paragraph is now stale: this package DOES declare its own devDependencies as
+  of the recovered 2026-09-19 content). Changed to `nodenext`/`nodenext` (matching
+  `sdks/mcp-server/tsconfig.json`'s existing convention) — no source changes needed since this
+  package has no relative imports of its own. Regression test:
+  `src/package-metadata.test.ts`.
+- **README's "in parity with `sdks/mcp-server`'s tool set" claim was stale even at the moment #2986
+  merged its own branch**, and doubly so now: this package has always had 6 tools, but `sdks/mcp-server`
+  has grown to 9 (`arkova_submit_anchor`, `arkova_get_submission_status`, and `arkova_manage_folders`
+  have no equivalent here). Reworded to state the true, non-parity subset relationship.
+- `package-lock.json` didn't exist before this recovery (PR #2986 added one, but it was excluded from
+  the recovered diff and regenerated fresh via `npm install --package-lock-only` per the recovery's
+  "never hand-merge a lockfile" rule) and `src/package-metadata.test.ts` is new — neither is from the
+  original PR.
+
+See `packages/sdk/agents.md`'s 2026-09-21 entry for the sibling-package recovery.

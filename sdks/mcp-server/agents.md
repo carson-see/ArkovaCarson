@@ -8,6 +8,12 @@
   - **P0 fix (npm-publish clean-room verification, 2026-08-18):** the guard used to be a plain `import.meta.url === \`file://${process.argv[1]}\`` string compare. That is true under `node dist/cli.js` but npm's `bin` field is ALWAYS installed as a symlink (`node_modules/.bin/arkova-mcp-server -> ../arkova-mcp-server/dist/cli.js`, same for a global install, same for `npx`'s temp cache) — Node's ESM loader resolves `import.meta.url` through the symlink to the real file while `process.argv[1]` stays the invoked (symlinked) path, so the two never matched for any real install. `main()` silently never ran: the compiled bin printed nothing and exited 0, tools never registered, for `npx -y arkova-mcp-server`, a global install, and the Claude Desktop config this README documents — i.e. every real invocation path. Fixed by resolving both sides with `realpathSync` before comparing (`isRunAsScript()`). Regression-tested in `src/cli.bin.test.ts`, which builds `dist/cli.js`, symlinks it the way npm does, and spawns a real `node` process against the symlink — the in-process `InMemoryTransport` tests in `cli.test.ts` cannot catch this class of bug because importing the module under vitest never exercises the argv-vs-symlink comparison a real spawned process does.
 - **`src/cli.bin.test.ts`** — the symlinked-bin regression test described above. Builds fresh in `beforeAll` so it always exercises the actual shipped `dist/`, not a stale one.
 - **`package.json`** — published to npm as unscoped `arkova-mcp-server` (2026-08-18, CTO ruling — see `packages/sdk/agents.md` for the parallel npm-name history). `bin.arkova-mcp-server -> dist/cli.js`, `"type": "module"` (required — `tsconfig.json` targets `module: ESNext`; without it Node refuses to load the emitted `export`/`import` syntax as CommonJS). Real `dependencies`/`devDependencies` were added in the same change — the package previously declared **none** despite `"test": "vitest run"` and `"build": "tsc"` scripts, silently relying on whatever `npx` happened to resolve. `package-lock.json` is now committed for the same reason `packages/sdk/package-lock.json` is.
+- **`vitest.config.ts`** — package-local test discovery for clean installs and the release script.
+  Do not rely on `sdks/vitest.config.ts`: module resolution for a config starts in that parent
+  directory, where a package-local install cannot resolve this package's `vitest` dependency.
+- `arkovaFetch` sets `redirect: 'error'`. Node preserves custom `X-API-Key` headers across an
+  origin-changing redirect, so following one could disclose the key even when the configured base
+  URL itself is trusted. Keep the transport regression in `src/index.test.ts`.
 - **`node_modules/`, `package-lock.json` before 2026-08-18** — not committed / didn't exist; this package installs independently of the repo root (no npm workspaces here), same as `packages/sdk`.
 
 ## Licensing
@@ -199,3 +205,26 @@ not). They are not covered by root CI — the root `vitest.config.ts` `include` 
 The stdio MCP exposes `arkova_get_submission_status` and keeps `arkova_submit_anchor.action` optional for backward-compatible queue defaulting. Descriptions are public; only user/org tags are private.
 Status-handler tests retain safe string error codes but collapse structured upstream bodies to
 `HTTP <status>` and never echo internal provider messages.
+
+## 2026-09-21 — recovered PR #2986 onto `main` (mostly already superseded here)
+
+PR #2986 ("qualify SDK, MCP, CLI, embed, and LangChain releases") merged into a feature branch that
+had already merged into `main`, orphaning its diff despite showing MERGED on GitHub. For this package
+specifically, the recovery found `src/index.ts`'s `redirect: 'error'` fix and `src/index.test.ts`'s
+matching transport test **already present on `main`** — added independently sometime between #2986's
+2026-09-19 authoring and this 2026-09-21 recovery, so applying the 36-file patch converged those two
+hunks as a no-op rather than a duplicate (verified: exactly one `redirect: 'error'` in `index.ts`,
+one `describe('HTTP transport')` in `index.test.ts`). What #2986 actually added here: `vitest.config.ts`
+(package-local test discovery — needed for `npm ci --ignore-scripts && npm test` to pass with no root
+`node_modules`; verified 56/56 tests green standalone) and a small `qs`/`fast-uri` lockfile bump,
+regenerated fresh via `npm install --package-lock-only` rather than hand-applied from the PR's diff
+(the PR's exact pinned patch versions were themselves already stale against the current registry
+resolution).
+
+Separately, **`src/agents.md`'s "## Files" section was rewritten** during this recovery — it had
+accumulated multiple contradictory, undated bullets for the same `index.ts`/`index.test.ts` files
+(claiming 6 tools with old pre-rename names, then "10 tools", then "10 tools, not 6" in the same
+section) with no clear current-vs-historical framing. Consolidated into one accurate current-state
+entry (9 tools) plus a dated History section for the superseded counts — see that file.
+
+See `packages/sdk/agents.md`'s 2026-09-21 entry for the sibling-package recovery.

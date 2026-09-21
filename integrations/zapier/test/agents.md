@@ -54,3 +54,21 @@ forgets this list. The gate that keys off the source of truth is
 ## 2026-09-19 — Finality event mirror pin
 
 The Zapier allowlist test pins both finality events added by SCRUM-5063.
+
+## 2026-09-21 — drift guard now reads the worker source instead of re-pinning it (#2986 recovery)
+
+`mirrors the worker allowlist exactly (drift guard)` no longer hardcodes the expected id array — the
+prior copy was stale by 4 events (the `folder.created`/`folder.updated`/`folder.deleted`/
+`record.folder_changed` events added by #2968 were never added here, so this test was silently
+asserting a 26-event list against a 30-event `VALID_EVENTS`, i.e. it was already useless as a
+"someone edited VALID_EVENTS and forgot to update the pin" guard, since the pin itself had already
+drifted). It now imports `CANONICAL_SURFACE` and `readSurface` from
+`scripts/ci/check-webhook-event-registration-drift.ts` and reads
+`services/worker/src/webhooks/payload-schemas.ts` directly (as text, via the same static parser the
+root CI job uses — no runtime import of worker code, so no cross-workspace dependency is added) and
+asserts `VALID_EVENTS` equals that live reading. This closes the caveat repeated in every entry
+above: the guard now fires when the worker map grows and this file stands still, not only when
+`VALID_EVENTS` itself is edited — and it does so inside `npm test` for this package, independent of
+whether root CI ever runs this workspace. Root CI's own drift job
+(`scripts/ci/check-webhook-event-registration-drift.ts`, `Tests` job) still separately verifies all
+6 mirror surfaces, unchanged.

@@ -14,6 +14,19 @@ beforeEach(() => {
   mockFetch.mockReset();
 });
 
+describe('HTTP transport', () => {
+  it('refuses redirects so the API key cannot follow a trusted endpoint to another origin', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ verified: true }) });
+
+    await handleToolCall('arkova_verify_anchor', { public_id: 'ARK-DOC-1' });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+});
+
 describe('Tool Definitions', () => {
   it('should define exactly the registered tools', () => {
     // Exact-name ratchet: adding or removing a tool must update this list

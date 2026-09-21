@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import App from '../src/index';
 import { BATCH_SYNC_LIMIT, VALID_EVENTS } from '../src/constants';
+import { CANONICAL_SURFACE, readSurface } from '../../../scripts/ci/check-webhook-event-registration-drift';
 
 describe('Zapier App Structure', () => {
   it('exports a valid Zapier app definition', () => {
@@ -187,46 +188,28 @@ describe('Constants', () => {
   // Drift guard (DI-775 / SCRUM-3538). `VALID_EVENTS` mirrors the worker's
   // `VALID_WEBHOOK_EVENTS`, which is DERIVED from the keys of
   // `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in
-  // services/worker/src/webhooks/payload-schemas.ts. This integration is a
-  // separate workspace and cannot import that constant, so the next-best guard
-  // is pinning the expected set (and its order) here. `anchor.superseded` was
-  // dispatchable and subscribable in the worker for months while this list
-  // omitted it.
+  // services/worker/src/webhooks/payload-schemas.ts. `anchor.superseded` was
+  // dispatchable and subscribable in the worker for months while a prior,
+  // hand-copied version of this list omitted it — and the 4 `folder.*` /
+  // `record.folder_changed` events added by #2968 the same way (SCRUM-5xxx
+  // package-qualification recovery, 2026-09-21).
   //
-  // Two things this pin is NOT. It does not fire when the worker map grows and
-  // this list stands still — it is a hardcoded array, so it only catches an
-  // edit to VALID_EVENTS that forgets to update it here. And it does not run in
-  // PR CI: no workflow runs this package's suite. The gate that covers both
-  // holes is scripts/ci/check-webhook-event-registration-drift.ts, which parses
-  // the worker map and runs inside the required root `Tests` job.
-  it('mirrors the worker allowlist exactly (drift guard)', () => {
-    expect([...VALID_EVENTS]).toEqual([
-      'anchor.submitted',
-      'anchor.secured',
-      'anchor.revoked',
-      'anchor.expired',
-      'anchor.superseded',
-      'anchor.batch_secured',
-      'credential.issued',
-      'credential.verified',
-      'credential.status_changed',
-      'compliance.document_expiring',
-      'job.completed',
-      'compliance.certificate_expiring',
-      'compliance.anchor_delayed',
-      'compliance.signature_revoked',
-      'compliance.timestamp_coverage_low',
-      'attestation.created',
-      'attestation.revoked',
-      'anchor.revocation_anchored',
-      'attestation.active',
-      'suborg.created',
-      'suborg.approved',
-      'suborg.revoked',
-      'suborg.credits_allocated',
-      'suborg.credits_reclaimed',
-      'suborg.suspended',
-      'suborg.offboarded',
-    ]);
+  // Rather than re-hand-copying the worker's id list a third time (the same
+  // class of drift, just moved one file over), this reads the worker's own
+  // source file directly with the exact same static parser
+  // `scripts/ci/check-webhook-event-registration-drift.ts` uses for its
+  // root-CI-gated cross-surface check (`CANONICAL_SURFACE` /
+  // `readSurface`) — no cross-workspace *runtime* import of worker code is
+  // needed since the parser only reads worker source as text. This closes
+  // both gaps a hardcoded pin has: it now fails when the worker map grows and
+  // this file stands still (not just when VALID_EVENTS itself is edited), and
+  // it runs in this package's own `npm test`, independent of whether root CI
+  // exercises this workspace.
+  it('mirrors the worker allowlist exactly (drift guard, read from the worker source of truth)', () => {
+    const repoRoot = new URL('../../..', import.meta.url).pathname;
+    const canonical = readSurface(CANONICAL_SURFACE, repoRoot);
+    expect(canonical.unresolved, `could not locate ${CANONICAL_SURFACE.file}'s event map`).toBeUndefined();
+    expect(canonical.ids.length).toBeGreaterThan(0);
+    expect([...VALID_EVENTS]).toEqual(canonical.ids);
   });
 });

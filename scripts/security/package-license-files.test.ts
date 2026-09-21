@@ -15,6 +15,7 @@ const TS_PACKAGES = [
   'sdks/mcp-server',
   'packages/embed',
   'sdks/langchain-ts',
+  'packages/api-cli',
 ] as const;
 
 const REPO_ROOT = resolve(__dirname, '../..');
