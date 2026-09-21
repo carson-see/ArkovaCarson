@@ -1646,6 +1646,74 @@ for the final C3 source review and fresh qualification.
 | `0470` | `0470_uat17_verified_domain_and_atomic_member_add.sql` | SCRUM-5145 | no — local draft follow-up | Restricts confirmed-signup auto-association to one exact verified domain and adds a service-only, exact-org-authorized atomic existing-member RPC. Disable signup/member intake before rollback; the older body is unsafe with intake enabled. |
 
 - `0468_allocate_monthly_credits_singleton.sql` — preserves the integer RPC contract while taking transaction advisory lock `(8675309,3)` before the monthly credit scan. A concurrent caller returns `0`; the winner row-locks eligible credits, advances `cycle_end`, and writes the existing expiry/allocation ledger rows once. Sequential re-entry returns `0` because no row remains eligible.
+
+## Recent migrations (PR #TBD — SCRUM-4939 follow-ups)
+
+### `0483` reserved — `0483_scrum4939_credit_rpc_followups.sql`
+
+Prefix `0483` is RESERVED by this PR. Inventory taken 2026-09-21 after
+`git fetch origin`: `origin/main` tops out at `0480`; a sweep of every remote
+branch (`git ls-tree` over `git branch -r`) shows `0481` as the highest prefix
+anywhere; `0482` is being taken concurrently by
+`fix/scrum-5280-org-domain-verification-guard` (worktree `cto-scrum5280`), whose
+file is not yet committed. This block is deliberately placed directly after the
+0467/0468 notes rather than at EOF or on the shared anchor, so it cannot collide
+with that PR's own block (CLAUDE.md §6).
+
+Compensating migration for `0467` and `0468`, both already applied on prod and
+therefore immutable. Three corrections, no signature/return/logic change:
+
+1. **The `NOTIFY` 0467 omitted.** 0467 introduced a NEW RPC,
+   `ensure_ai_credits_period(uuid,integer,timestamptz)`, with no
+   `NOTIFY pgrst, 'reload schema';`. Until PostgREST's schema cache refreshes,
+   that RPC answers 404/PGRST202, `ensureAICreditsPeriod()` fails soft, no
+   period is provisioned and the org's first extraction hard-fails — the bug
+   #2999 was written to fix. 0483 issues the NOTIFY; harmless if the cache
+   already caught up.
+2. **`deduct_ai_credits` gains `SET lock_timeout='5s'`.** 0467 set it on
+   `ensure_ai_credits_period` but not on the debit, whose `SELECT … FOR UPDATE`
+   therefore blocked to `statement_timeout` behind a stuck holder. Body,
+   signature and return shape are 0467's verbatim. Proven natively in
+   `scripts/scrum4939/native-pg-credit-rpc-followups.sh`: contended debit
+   SQLSTATE `57014` after 12 s before 0483, `55P03` after 5 s after it, with
+   `used_this_month` unchanged in both cases (fails CLOSED).
+3. **`allocate_monthly_credits()` grants re-asserted** (REVOKE from
+   PUBLIC/anon/authenticated, GRANT to service_role) — idempotent defense in
+   depth for the corrected 0468 rollback below.
+
+**CORRECTED ROLLBACK PROCEDURE FOR 0468 — do not follow 0468's own comment.**
+0468 says to restore `allocate_monthly_credits()` "from the baseline
+definition". A literal reading reopens the hole 0377 closed: the baseline
+(`00000000000000_baseline_at_main_HEAD.sql` lines 13507-13509) GRANTs ALL on
+that function to `anon` and `authenticated`, which 0377 revoked, describing it
+as "Zero-arg, zero-auth … Anon-callable = anyone can trigger a platform-wide
+credit reallocation on demand." The baseline BODY (lines 752-800) is
+nevertheless the correct pre-0468 body — no migration between the baseline and
+0468 redefines the function; 0377 only revokes. So the true pre-0468 state is
+**baseline body + post-0377 grants**. A 0468 rollback is therefore: restore the
+baseline body verbatim, then IMMEDIATELY re-issue
+`REVOKE ALL ON FUNCTION public.allocate_monthly_credits() FROM PUBLIC, anon, authenticated;`
+and `GRANT EXECUTE … TO service_role;` and `NOTIFY pgrst, 'reload schema';`.
+The REVOKE is not optional: `CREATE OR REPLACE` re-triggers Supabase's
+`ALTER DEFAULT PRIVILEGES`, which re-grants anon/authenticated **directly**, and
+the rollback also removes 0468's `auth.role()` guard — after it, that GRANT line
+is the only thing keeping the RPC off the public internet. The full runnable
+text is in 0483's header.
+
+**Reported, NOT fixed here:** 0467 added `IF p_amount IS NULL OR p_amount <= 0
+THEN RETURN false` to `deduct_ai_credits`. The baseline body had no such guard,
+and three live call sites pass a NEGATIVE amount to REFUND
+(`api/v1/ai-extract.ts`, `api/v1/ai-extract-batch.ts`, and all of
+`jobs/ai-credit-reconcile.ts`). Under 0467 every refund returns false and
+refunds nothing, leaving orgs charged for extractions that failed. The native
+harness pins the current behaviour as a characterization assertion. Needs its
+own ticket, soak, and a product decision on whether service_role may push credit
+the other way.
+
+Tier T3 (migration). No hosted or prod application asserted by this PR; the only
+execution to date is the local scratch-database run of
+`scripts/scrum4939/native-pg-credit-rpc-followups.sh`.
+
 ## 2026-09-19 — Referral RPC empty-claims guard (0466)
 
 Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both

@@ -1,6 +1,73 @@
 # machines/agents.md
 
-## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race
+## 2026-09-21 — `aiCreditsPeriodProvision.machine.ts` REWRITTEN (SCRUM-4939 follow-ups, migration 0483)
+
+**The old version was a verified model of deleted code.** It checked the
+application-level `select → insert → RE-READ → delete-the-row-I-just-inserted`
+compensation PR #2837 put in `cost-tracker.ts`. PR #2999 (migration 0467)
+removed that code entirely and replaced it with a DB-native design, so
+`deleteOwn`, `deleteOwnFails` and `firstInserter` modelled nothing that runs.
+That is worse than having no machine: the certificate stayed green while the
+protocol it described ceased to exist. The 2026-09-12 note below describes that
+superseded model and is kept for history only — its "owed follow-up" (a unique
+`(org_id, period_start)` index) was answered by 0467's exclusion constraint.
+
+**What is modelled now** is the protocol the database actually runs:
+`ensure_ai_credits_period` takes `pg_advisory_xact_lock('ai_credits:org:'||org)`
+under a 5 s `lock_timeout`, returns early when a covering row exists, otherwise
+inserts, with the `ai_credits_org_period_no_overlap` gist exclusion constraint
+as the backstop; `deduct_ai_credits` serializes on
+`SELECT … ORDER BY created_at,id LIMIT 1 FOR UPDATE` under the same 5 s budget
+(the budget is what migration 0483 adds).
+
+The `IF EXISTS` check and the `INSERT` are **separate actions**
+(`checkFoundNone` → `insertPeriod`), because they are separate statements. An
+earlier draft collapsed them into one atomic step; the model then passed every
+mutation, because atomicity — not the advisory lock — was doing the work. If
+you touch this machine, keep those two steps apart.
+
+One invariant per mechanism, each mutation-tested against the real checker
+(mutation applied → run → exactly the named invariant fails → revert):
+
+| Invariant | Mechanism it pins | Mutation that breaks it |
+|---|---|---|
+| `atMostOnePeriodRow` | the exclusion constraint | let the losing INSERT land instead of being rejected → violated |
+| `exclusionConstraintNeverFires` | the advisory lock | drop the mutex from `acquireProvisionLock` → violated (two racers both pass the EXISTS check; the loser eats a 23P01 that would abort provisioning and 503 the org's first extraction) |
+| `noDebitWithoutPeriod` | the row lock's precondition | drop the "a period row exists" guard from `acquireRowLock` → violated |
+| `debitSerializedByRowLock` | `FOR UPDATE` | make `debitLockTimeout` acquire the lock instead of timing out → violated |
+| `lockTimeoutNeverDebits` | fail-CLOSED on 55P03 | make `debitLockTimeout` record a charge → violated |
+
+Certificate (tier `pr`, 2 racers, run 2026-09-21): `proofPassed: true`; graph
+equivalence true (73/73 states, 100/100 edges); deadlock check off (an
+all-DONE/all-FAILED_CLOSED world is the correct terminal state of a race, same
+resolution as `agentPassport` / `partnerProvisioning` / `drainRunAccounting`).
+Tier `nightly`, 3 racers: `proofPassed: true`, 1285 generated / 679 distinct.
+
+**Gotcha found while doing this — `checks.graphEquivalence` is inert.**
+tla-precheck 0.1.7 reads graph equivalence from `tier.graphEquivalence`
+(`dist/core/validate.js:386`, `dist/core/proof.js:327/387`); only
+`checks.deadlock` is consulted from `checks`. Every machine in this directory
+writes `checks: { graphEquivalence: … }`, which the tool ignores — so graph
+equivalence is effectively ON everywhere regardless, and the 100 000-state
+equivalence budget cap applies to every tier. That cap is why this machine's
+`nightly` tier declares `graphEquivalence: false` at TIER level: without it the
+three-racer tier is rejected outright (`equivalence-budget-cap-exceeded`) on an
+estimate of 2 809 856, which is a product-of-domains upper bound rather than the
+679 reachable states TLC actually finds. Other machines are small enough that
+nobody has hit this; it is not fixed repo-wide here.
+
+Not modelled: credit arithmetic (the DSL has no arithmetic — a debit is a
+boolean), and refunds. On refunds, see 0483's header: 0467's
+`p_amount <= 0 → RETURN false` guard makes every negative-amount refund call
+return false and refund nothing. That is a reported regression with its own
+ticket, not modelled behaviour.
+
+CI picks the machine up automatically (`scripts/verify-machines.sh` globs
+`machines/*.machine.ts`; the `tla-verify` job runs `npm run verify:machines`).
+No workflow edit is needed for this rewrite — the file name is unchanged and no
+workflow names machines individually.
+
+## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race — SUPERSEDED, see the 2026-09-21 entry above
 
 New machine for `ensureAICreditsPeriod` in `services/worker/src/ai/cost-tracker.ts`. `public.ai_credits` has no unique constraint on `(org_id, period_start)` — PK on `id` only, three non-unique indexes — so provisioning cannot be an upsert and is a select-then-insert with a genuine TOCTOU window. Adding the constraint is DDL on a table read by every extraction: its own migration, its own lock-timeout review (CLAUDE.md §1.2), a T3 PR. The window is closed in application code instead, and this machine is what checks that protocol: insert → re-read → the racer whose row is not the keeper (lowest `(created_at, id)`) deletes **only the row it itself inserted**, by id.
 

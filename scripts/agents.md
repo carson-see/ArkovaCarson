@@ -127,3 +127,23 @@ retry and an initial zero-credit offboard. This regression failed on the prior
 ## UAT-19 native queue authorization proof
 
 `uat19/native-pg-queue-resolution.sh` owns a loopback-only throwaway PostgreSQL database. It exercises migration 0477 with service-role ACL, exact secondary/no-primary membership, approved direct parent, stale/null authorization denial with zero mutations, server-bound collision keys, and a different-winner concurrent race that must produce one winner without deadlock.
+
+## SCRUM-4939 credit-RPC follow-up native proof
+
+`scrum4939/native-pg-credit-rpc-followups.sh` owns a loopback-only throwaway
+PostgreSQL database (created and dropped by the script; it never touches an
+existing one). It replays 0467 → 0468 → 0483 against a minimal Supabase-shaped
+fixture and asserts RED-then-GREEN in one run: a contended
+`deduct_ai_credits` returns SQLSTATE `57014` after the full statement timeout
+before 0483 and `55P03` inside the 5 s budget after it, with `used_this_month`
+unchanged in both cases; all four credit RPCs are service_role-only on all three
+grantee axes; eight concurrent debits against an allocation of five produce
+exactly five successes and `used_this_month = 5` on one row; `NOTIFY pgrst` is
+observed delivered via `LISTEN`. It also pins, as a characterization assertion,
+that a negative `p_amount` (the refund path) returns false and refunds nothing
+under 0467's guard.
+
+The SQLSTATE is read from psql's verbose error line, not from a plpgsql
+`EXCEPTION WHEN OTHERS` handler: `statement_timeout` raises `query_canceled`,
+which plpgsql deliberately does not let `WHEN OTHERS` swallow, so a
+handler-based probe cannot observe the pre-0483 case at all.
