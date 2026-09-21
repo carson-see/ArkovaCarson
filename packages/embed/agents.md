@@ -45,3 +45,16 @@ branch merged into `fix/hygiene-webhook-payloads`, which had already merged into
 cleanly here with no conflicts against `main`'s current state — `esbuild` pin and the `api.arkova.ai`
 default were both still absent. See `packages/sdk/agents.md`'s 2026-09-21 entry for the sibling-package
 recovery and what did conflict there.
+
+## 2026-09-21 — source maps excluded from the published tarball (independent review)
+
+`npm pack` shipped `dist/embed.{es,umd,iife}.js.map` — `vite.config.ts` set `build.sourcemap: true`
+with no exclusion in `package.json`'s `files` array (unlike `packages/verifier-cli`'s
+`!dist/**/*.map` pattern, or `packages/api-cli`'s `tsconfig.json` `sourceMap: false`). Pre-existing
+condition, not introduced by this recovery — caught by an independent tarball-hygiene pass over the
+real `npm pack` output of every package this PR touches. Fixed: `vite.config.ts`
+`build.sourcemap: false`; new `src/package-metadata.test.ts` walks `dist/` recursively (not a flat
+`readdirSync`, matching the fix `packages/api-cli/src/package-metadata.test.ts` needed for the same
+class of bug) and asserts zero `.map` files; `package.json` gained a `pretest: "npm run build"` hook
+so `npm test` alone (the CI-equivalent invocation) exercises a freshly built `dist/`, not a stale one
+from a prior local build.

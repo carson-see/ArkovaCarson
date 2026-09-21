@@ -8,6 +8,7 @@
   "files": ["dist", "LICENSE"],
   "scripts": {
     "build": "vite build",
+    "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

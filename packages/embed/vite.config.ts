@@ -32,7 +32,9 @@ export default defineConfig({
       },
     },
     minify: 'esbuild',
-    sourcemap: true,
+    // 2026-09-21 (independent review): source maps must never ship in the
+    // published tarball — see packages/embed/src/package-metadata.test.ts.
+    sourcemap: false,
     emptyOutDir: true,
     target: 'es2018',
   },
