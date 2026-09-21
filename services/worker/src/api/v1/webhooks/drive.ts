@@ -74,6 +74,10 @@ interface DriveChannelLookup {
   encrypted_tokens: Buffer | string | null;
   token_kms_key_id: string | null;
   last_page_token: string | null;
+  // Fix-round item 2 (gap visibility): captured here, BEFORE runDriveChanges
+  // can overwrite it via advancePageToken, so a 410/404 recovery can record
+  // the pre-reset value as the gap's start bound.
+  last_token_advanced_at: string | null;
 }
 
 /**
@@ -89,7 +93,7 @@ async function resolveDriveChannel(channelId: string): Promise<DriveChannelLooku
   // eslint-disable-next-line arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
   const { data, error } = await dbAny
     .from('org_integrations')
-    .select('org_id, id, account_label, encrypted_tokens, token_kms_key_id, last_page_token')
+    .select('org_id, id, account_label, encrypted_tokens, token_kms_key_id, last_page_token, last_token_advanced_at')
     .eq('provider', GOOGLE_DRIVE_VENDOR)
     .eq('subscription_id', channelId)
     .is('revoked_at', null)
@@ -105,6 +109,7 @@ async function resolveDriveChannel(channelId: string): Promise<DriveChannelLooku
     encrypted_tokens: data.encrypted_tokens ?? null,
     token_kms_key_id: data.token_kms_key_id ?? null,
     last_page_token: data.last_page_token ?? null,
+    last_token_advanced_at: data.last_token_advanced_at ?? null,
   };
 }
 
@@ -255,6 +260,7 @@ router.post('/', async (req: Request, res: Response) => {
     encrypted_tokens: lookup.encrypted_tokens,
     token_kms_key_id: lookup.token_kms_key_id,
     last_page_token: lookup.last_page_token,
+    last_token_advanced_at: lookup.last_token_advanced_at,
   };
   try {
     const kms = await createDefaultKmsClient();

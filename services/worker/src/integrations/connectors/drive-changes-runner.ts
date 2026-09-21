@@ -44,7 +44,6 @@ import {
 import {
   processDriveChanges,
   type DriveProcessorDb,
-  type DriveProcessorIntegration,
   type ProcessChangesResult,
 } from './drive-changes-processor.js';
 import {
@@ -59,11 +58,11 @@ import {
 import { reportDriveProcessingFailure } from './drive-connect-health.js';
 import { driveFolderIds } from './drive-folder-bindings.js';
 import {
-  acquireRunLease,
-  releaseRunLease,
-  runLeaseHolder,
+  withRunLease,
+  stillHoldsRunLease,
   type RunLeaseSpec,
 } from '../../jobs/run-lease.js';
+import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 // Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
 // CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
@@ -95,6 +94,9 @@ const RevisionLedgerRowSchema = z.object({
 const AdvancePageTokenArgsSchema = z.object({
   integration_id: dbUuid('integration_id'),
   new_page_token: z.string().min(1),
+  // Fix-round item 4A: the CAS anchor — the UPDATE only lands
+  // WHERE last_page_token = expected_page_token.
+  expected_page_token: z.string().min(1),
 });
 
 const EnqueueRuleEventPayloadSchema = z.object({
@@ -117,7 +119,9 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * Per-integration single-flight guard (orchestrator first-run-flood review,
- * SCRUM-2903/3661 follow-up).
+ * SCRUM-2903/3661 follow-up; upgraded to `withRunLease` + CAS in the
+ * fix-round after an independent TLA pass found a real counterexample —
+ * see `machines/driveChangesCursor.machine.ts`'s header).
  *
  * Without this, a burst of Drive push notifications for the SAME
  * integration (Drive can and does deliver bursts — the flagged prod org
@@ -126,11 +130,11 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
  * walking the SAME changes.list backlog. The revision ledger's
  * UNIQUE(integration, file, revision) constraint already stops that from
  * double-enqueueing a rule event or a file-changed job (a losing writer's
- * insert 23505s and is counted as a duplicate) — so a race here was never a
- * correctness bug — but it wastes Drive API quota and token-refresh calls
- * proportional to the concurrency, and `advancePageToken`'s UPDATE is a
- * last-writer-wins overwrite (no CAS), so a straggler run can rewrite the
- * cursor backwards after a faster run already advanced it past that point.
+ * insert 23505s and is counted as a duplicate) — so that half was never a
+ * correctness bug. `advancePageToken`'s cursor write is a SEPARATE risk, now
+ * closed by making it a compare-and-swap keyed on the token this run
+ * started from (see `DriveProcessorDb.advancePageToken`'s doc comment in
+ * drive-changes-processor.ts) rather than trusting the lease alone.
  *
  * Reuses the SAME cross-instance TTL-lease primitive `jobs/run-lease.ts`
  * already uses for the singleton anchor-pipeline crons (SCRUM-3031) — a
@@ -145,14 +149,33 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
  * logical lease, so a distinct row per integration is exactly as safe as the
  * fixed-id case the other specs use.
  *
- * Short TTL/no heartbeat, deliberately: `withRunLease`'s heartbeat+deadline
- * machinery exists for crons that can legitimately run up to an hour; a
- * webhook-triggered pass is bounded by `SAFE_PAGE_LIMIT` and expected to
- * finish in seconds to low minutes. A plain acquire/release (this module) is
- * simpler and correct for that shape — a crashed holder self-heals via TTL
- * expiry, same as every other lease here.
+ * HEARTBEAT + maxRunMs (fix-round item 4A — corrected from a plain
+ * acquire/release with no renewal, which an independent TLA pass proved
+ * unsafe: a healthy-but-slow walk — SAFE_PAGE_LIMIT=25 pages, each
+ * potentially paying folder-path-resolution latency, on a first-run
+ * backlog — can run tens of seconds to low minutes, comfortably able to
+ * outlive a flat un-renewed 10-minute TTL under load, at which point a
+ * SECOND push could acquire the "expired" lease and walk the same pages
+ * concurrently). Routed through `withRunLease`, the SAME heartbeat+deadline
+ * primitive every other lease here uses — renews at ttl/3 for as long as
+ * the walk is actually alive. `ttlMs` stays 10 min (a webhook-triggered
+ * pass has no fixed cadence to floor against, and is expected to finish in
+ * seconds to low minutes even with renewal); `maxRunMs` is now a REAL
+ * abandonment bound, not a dead field — 2× `ttlMs` (20 min), the same
+ * multiplier `PUBLIC_RECORD_ANCHOR_RUN_LEASE` uses, comfortably under the
+ * 60-minute Cloud Run request timeout (`CLOUD_RUN_REQUEST_TIMEOUT_MS`) so a
+ * genuinely hung walk is abandoned and its lease freed well before the
+ * request itself would be killed.
+ *
+ * BELT AND SUSPENDERS: heartbeat renewal alone cannot stop an in-flight
+ * walk that already lost the lease (a definitively-lost renewal only logs
+ * and lets the run continue — see `RunLeaseContext`'s doc comment in
+ * run-lease.ts). `processDriveChanges` therefore independently re-verifies
+ * ownership via `stillHoldsRunLease` before every page and aborts without
+ * advancing if it cannot.
  */
 const DRIVE_CHANGES_RUN_LEASE_TTL_MS = 10 * 60_000;
+const DRIVE_CHANGES_RUN_LEASE_MAX_RUN_MS = 2 * DRIVE_CHANGES_RUN_LEASE_TTL_MS;
 
 export function driveChangesRunLeaseSpec(integrationId: string): RunLeaseSpec {
   return {
@@ -163,11 +186,8 @@ export function driveChangesRunLeaseSpec(integrationId: string): RunLeaseSpec {
     // Not cron-scheduled — there is no fixed cadence to floor against, and
     // this spec is never registered in `RUN_LEASE_SPECS` (whose shared test
     // asserts `ttlMs > slowestRecordedCadenceMs` for every entry there).
-    // Unused by the plain acquire/release path below; set equal to ttlMs so
-    // the field is never silently wrong if a future refactor DOES route this
-    // spec through `withRunLease`.
     slowestRecordedCadenceMs: 0,
-    maxRunMs: DRIVE_CHANGES_RUN_LEASE_TTL_MS,
+    maxRunMs: DRIVE_CHANGES_RUN_LEASE_MAX_RUN_MS,
   };
 }
 
@@ -191,6 +211,22 @@ export interface DriveIntegrationRow {
   encrypted_tokens: Buffer | string | null;
   token_kms_key_id: string | null;
   last_page_token: string | null;
+  /**
+   * Orchestrator fix-round item 2 (gap visibility): read BEFORE this run's
+   * `processDriveChanges` call so a 410/404 re-bootstrap can record the
+   * PRE-reset value as the gap's start — `advancePageToken` overwrites this
+   * column to "now" unconditionally on every successful advance, including
+   * a reset, so the caller (`webhooks/drive.ts`'s row lookup) must capture
+   * it before that happens. `null` for a never-advanced cursor.
+   *
+   * OPTIONAL (`?:`) rather than required: `jobs/drive-file-changed.ts`
+   * builds a `DriveIntegrationRow` purely to resolve an access token for
+   * the file-fetch job — it never runs `processDriveChanges` and has no
+   * reason to select this column. Every call site that DOES feed
+   * `runDriveChanges` (the webhook, the reconciliation sweep) sets it;
+   * `runDriveChanges` treats `undefined` the same as `null`.
+   */
+  last_token_advanced_at?: string | null;
 }
 
 export class DriveRunnerError extends Error {
@@ -467,15 +503,28 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
           `advancePageToken payload failed Zod validation: ${parsed.error.issues.map((i) => i.path.join('.') + ':' + i.message).join('; ')}`,
         );
       }
+      // Fix-round item 4A: COMPARE-AND-SWAP, not an unconditional write —
+      // same read-back-after-CAS pattern `loadDriveAccessToken` above uses
+      // for the token-refresh race. The UPDATE only lands
+      // `WHERE id = integration_id AND last_page_token = expected_page_token`;
+      // a zero-row match (another run already advanced past this run's
+      // starting point) is an EXPECTED, non-error outcome — `{advanced:
+      // false}` — never a rewind. `.select('id').maybeSingle()` reads back
+      // whether OUR write actually landed, mirroring the CAS-lost handling
+      // in `loadDriveAccessToken`.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
-      const { error } = await (deps.db as any)
+      const { data: persistedRow, error } = await (deps.db as any)
         .from('org_integrations')
         .update({
           last_page_token: parsed.data.new_page_token,
           last_token_advanced_at: new Date().toISOString(),
         })
-        .eq('id', parsed.data.integration_id);
+        .eq('id', parsed.data.integration_id)
+        .eq('last_page_token', parsed.data.expected_page_token)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      return { advanced: Boolean(persistedRow) };
     },
     async enqueueRuleEvent(payload) {
       const parsed = EnqueueRuleEventPayloadSchema.safeParse(payload);
@@ -579,6 +628,37 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
       }
       return jobId;
     },
+    // Orchestrator fix-round item 2 (gap visibility). `audit_events` — no
+    // migration: an append-only "notable thing happened" table that already
+    // exists, chosen over `org_integrations.last_renewal_error` because that
+    // column is semantically channel-RENEWAL-only (see connectors/agents.md
+    // — reusing it for a DIFFERENT failure class already backfired once in
+    // this same incident's connector-health fix) and would in any case be
+    // overwritten by the very `advancePageToken` write the gap is about.
+    // NEVER throws — `recordAuditEvent` already never rejects; this adapter
+    // additionally logs on `!ok` so a lost gap record is itself visible in
+    // Cloud Run logs even though it cannot fail the recovery (see the
+    // processor's own doc comment on this method).
+    async recordCursorGap(args) {
+      const result = await recordAuditEvent({
+        event_type: 'drive_changes_cursor_gap',
+        event_category: 'WEBHOOK',
+        org_id: args.org_id,
+        target_type: 'org_integrations',
+        target_id: args.integration_id,
+        details: JSON.stringify({
+          gap_start: args.gap_start,
+          gap_end: args.gap_end,
+          reason: 'pageTokenInvalid',
+        }),
+      });
+      if (!result.ok) {
+        log?.error?.(
+          { integrationId: args.integration_id, orgId: args.org_id, gapStart: args.gap_start, gapEnd: args.gap_end },
+          'drive changes cursor gap: audit_events write failed — gap happened but is NOT durably recorded',
+        );
+      }
+    },
   };
 }
 
@@ -626,6 +706,65 @@ export function createFolderPathCache(
 }
 
 /**
+ * Fix-round item 3 (dirty/rerun-requested marker): "a push arrives while
+ * the lease is held" must not be dropped silently — before this, `webhooks/
+ * drive.ts` finding the lease locked just returned `{skipped:'locked'}` and
+ * NOTHING re-ran for that push. `job_queue.attempts` is the marker:
+ * completely UNUSED by the lease mechanism itself (`claim_next_job` is
+ * TYPE-scoped away from lease rows — see run-lease.ts's own doc comment)
+ * and defaults to 0, so it doubles as a boolean hint with NO payload merge
+ * (a merge would risk racing `releaseRunLease`'s payload reset and
+ * resurrecting stale holder info — see the withRunLease body below for why
+ * that matters) and NO migration.
+ *
+ * `markLeaseDirty` is an UNCONDITIONAL write — no ownership check. Setting
+ * it when nobody currently holds the lease is a harmless no-op (the next
+ * `acquireRunLease` bootstrap-upserts around it, and the flag is read once,
+ * at the end of whichever run next holds the lease, then cleared). Setting
+ * it while a run IS in flight is the entire point: that run reads it back
+ * (`checkAndClearLeaseDirty`) after finishing its own pass and, if set,
+ * does exactly ONE more `processDriveChanges` pass before releasing —
+ * bounded, not a retry loop — so a push that arrived mid-run is honored
+ * within THIS request rather than waiting for the periodic reconciliation
+ * sweep (below) to eventually notice.
+ */
+async function markLeaseDirty(client: SupabaseClient, spec: RunLeaseSpec, log?: DriveChangesRunnerDeps['logger']): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (client as any).from('job_queue').update({ attempts: 1 }).eq('id', spec.leaseId);
+    if (error) {
+      log?.warn?.({ error, leaseId: spec.leaseId }, 'drive runner: markLeaseDirty write failed — periodic reconciliation is the backstop');
+    }
+  } catch (error) {
+    log?.warn?.({ error, leaseId: spec.leaseId }, 'drive runner: markLeaseDirty threw — periodic reconciliation is the backstop');
+  }
+}
+
+async function checkAndClearLeaseDirty(client: SupabaseClient, spec: RunLeaseSpec): Promise<boolean> {
+  try {
+    // Plain `.select().eq()` + array indexing, deliberately NOT
+    // `.maybeSingle()` — matches `compareAndSetLease`'s own read-back
+    // pattern in run-lease.ts (a point lookup by primary key, read as
+    // `rows[0]`).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (client as any)
+      .from('job_queue')
+      .select('attempts')
+      .eq('id', spec.leaseId);
+    if (error) return false;
+    const rows = (data ?? []) as Array<{ attempts?: number }>;
+    const dirty = (rows[0]?.attempts ?? 0) > 0;
+    if (dirty) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (client as any).from('job_queue').update({ attempts: 0 }).eq('id', spec.leaseId);
+    }
+    return dirty;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Top-level runner. Webhook handler calls this with the resolved
  * integration row; everything else is dependency-injected.
  */
@@ -670,27 +809,15 @@ export async function runDriveChanges(
   // Single-flight guard — see the doc comment on driveChangesRunLeaseSpec.
   // Acquired AFTER the cheap skip checks above (no point burning a lease
   // round-trip on a pass that would immediately no-op) and BEFORE the token
-  // refresh + changes.list work this guards.
+  // refresh + changes.list work this guards. `withRunLease` (fix-round item
+  // 4A) heartbeat-renews for the whole body and bounds abandonment at
+  // `maxRunMs` — see driveChangesRunLeaseSpec's doc comment.
   const leaseClient = deps.db as unknown as SupabaseClient;
   const leaseSpec = driveChangesRunLeaseSpec(integration.id);
-  const leaseHolder = runLeaseHolder();
-  const acquired = await acquireRunLease(leaseClient, leaseSpec, leaseHolder);
-  if (!acquired) {
-    deps.logger?.info?.(
-      { integrationId: integration.id, orgId: integration.org_id },
-      'drive runner: another run already holds the per-integration lease — skipping (single-flight)',
-    );
-    return { skipped: 'locked' };
-  }
+  const nonNullLastPageToken = integration.last_page_token;
 
-  try {
+  const outcome = await withRunLease({ ...leaseSpec, client: leaseClient }, async ({ holder }) => {
     const { accessToken } = await loadDriveAccessToken(integration, deps);
-    const procIntegration: DriveProcessorIntegration = {
-      id: integration.id,
-      org_id: integration.org_id,
-      last_page_token: integration.last_page_token,
-      watched_folder_ids: watched,
-    };
     const db = createProcessorDbAdapter(deps);
     // SCRUM-1837 (GH #1837): wire the folder-path resolver so
     // folder_path_starts_with rules can finally match. Bound once per run
@@ -708,15 +835,126 @@ export async function runDriveChanges(
         // produces a log line instead of just quietly degrading rule matching.
         deps: { fetchImpl: deps.drive?.fetchImpl, logger: deps.logger },
       });
-    return await processDriveChanges({
-      integration: procIntegration,
+    // Fix-round item 4A: on-demand ownership re-check the processor calls
+    // before every page — belt-and-suspenders alongside the heartbeat (see
+    // driveChangesRunLeaseSpec's doc comment for why the heartbeat alone
+    // cannot stop an in-flight walk that already lost the lease).
+    const stillHoldsLease = () => stillHoldsRunLease(leaseClient, leaseSpec, holder);
+
+    let result = await processDriveChanges({
+      integration: {
+        id: integration.id,
+        org_id: integration.org_id,
+        last_page_token: nonNullLastPageToken,
+        watched_folder_ids: watched,
+        last_token_advanced_at: integration.last_token_advanced_at ?? null,
+      },
       accessToken,
       db,
-      deps: { logger: deps.logger, resolveFolderPath },
+      deps: { logger: deps.logger, resolveFolderPath, stillHoldsLease },
     });
-  } finally {
-    // Best-effort: a failed release is not itself a failure of this run —
-    // the TTL is the backstop (see run-lease.ts's own release doc comment).
-    await releaseRunLease(leaseClient, leaseSpec, leaseHolder);
+
+    // Fix-round item 3: a push that arrived WHILE this run held the lease
+    // must not be dropped. Bounded — exactly ONE extra pass, never a loop —
+    // using the cursor THIS pass itself just committed (or, if that pass
+    // itself lost the lease/CAS race, the ORIGINAL starting token — a
+    // no-op re-run is harmless and cheap; it is not this pass's job to
+    // resolve a race it already lost).
+    const dirty = await checkAndClearLeaseDirty(leaseClient, leaseSpec);
+    if (dirty) {
+      const resumeToken = result.newPageToken ?? nonNullLastPageToken;
+      deps.logger?.info?.(
+        { integrationId: integration.id, orgId: integration.org_id, resumeToken },
+        'drive runner: a push arrived while this run held the lease — running one more bounded pass before releasing',
+      );
+      const secondResult = await processDriveChanges({
+        integration: {
+          id: integration.id,
+          org_id: integration.org_id,
+          last_page_token: resumeToken,
+          watched_folder_ids: watched,
+          last_token_advanced_at: new Date().toISOString(),
+        },
+        accessToken,
+        db,
+        deps: { logger: deps.logger, resolveFolderPath, stillHoldsLease },
+      });
+      result = secondResult;
+    }
+
+    return result;
+  });
+
+  if (!outcome.acquired) {
+    // Fix-round item 3: mark the CURRENT holder dirty rather than dropping
+    // this push — see markLeaseDirty's doc comment.
+    await markLeaseDirty(leaseClient, leaseSpec, deps.logger);
+    deps.logger?.info?.(
+      { integrationId: integration.id, orgId: integration.org_id },
+      'drive runner: another run already holds the per-integration lease — marked dirty for one more pass, skipping (single-flight)',
+    );
+    return { skipped: 'locked' };
   }
+  return outcome.result;
+}
+
+/**
+ * Periodic RECONCILIATION sweep (fix-round item 3, second half). A webhook
+ * proves DELIVERY, not COMPLETENESS — a push can be dropped (a locked lease
+ * whose dirty-mark write also failed, a Cloud Run instance recycled
+ * mid-request, Drive itself failing to deliver). Called from the existing
+ * hourly `drive-subscription-renewal.ts` sweep (see that file), this is the
+ * backstop: for every connected `google_drive` integration whose cursor has
+ * not advanced in over `staleForMs`, invoke `runDriveChanges`. Respects the
+ * SAME single-flight lease and `SAFE_PAGE_LIMIT` as every other caller —
+ * this is not a bypass, it is just another (bounded-count) source of
+ * `beginRun` attempts. An org with zero enabled Drive rules is a cheap
+ * no-op via `runDriveChanges`'s own existing `no_watched_folders` skip, so
+ * this function does not need to duplicate that filter.
+ */
+export async function runDriveReconciliationSweep(
+  deps: DriveChangesRunnerDeps & { staleForMs?: number; maxIntegrations?: number },
+): Promise<{ scanned: number; ran: number; skipped: number; errored: number }> {
+  const staleForMs = deps.staleForMs ?? 30 * 60_000;
+  const maxIntegrations = deps.maxIntegrations ?? 25;
+  const cutoff = new Date(Date.now() - staleForMs).toISOString();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- cross-org sweep by design (a cron, not a request)
+  const { data, error } = await (deps.db as any)
+    .from('org_integrations')
+    .select('id, org_id, encrypted_tokens, token_kms_key_id, last_page_token, last_token_advanced_at')
+    .eq('provider', 'google_drive')
+    .is('revoked_at', null)
+    .not('last_page_token', 'is', null)
+    .or(`last_token_advanced_at.lt.${cutoff},last_token_advanced_at.is.null`)
+    .limit(maxIntegrations);
+
+  if (error) {
+    deps.logger?.error?.({ error }, 'drive reconciliation sweep: integration scan failed');
+    return { scanned: 0, ran: 0, skipped: 0, errored: 1 };
+  }
+
+  const rows = (data ?? []) as DriveIntegrationRow[];
+  let ran = 0;
+  let skipped = 0;
+  let errored = 0;
+  for (const row of rows) {
+    try {
+      const result = await runDriveChanges(row, deps);
+      if ('skipped' in result) skipped += 1;
+      else ran += 1;
+    } catch (err) {
+      errored += 1;
+      deps.logger?.error?.(
+        { err, integrationId: row.id, orgId: row.org_id },
+        'drive reconciliation sweep: runDriveChanges failed for one integration — continuing with the rest',
+      );
+      reportDriveProcessingFailure(err, {
+        stage: 'webhook_run_changes',
+        orgId: row.org_id,
+        integrationId: row.id,
+      });
+    }
+  }
+  return { scanned: rows.length, ran, skipped, errored };
 }

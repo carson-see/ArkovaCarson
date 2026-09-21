@@ -22,6 +22,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // `drive-subscription-renewal-deps.test.ts` already uses for the identical
 // reason; only `kRevision` (read by `runLeaseHolder()`) matters here.
 vi.mock('../../config.js', () => ({ config: { kRevision: 'test-revision' } }));
+// Fix-round item 2 (gap visibility): createProcessorDbAdapter's
+// recordCursorGap now imports utils/auditEvent.js, which imports
+// utils/db.js -> config.ts's real Zod boot validation. Mock it the same way
+// jobQueue.js is mocked below — this suite injects its own `deps.db` and
+// never wants the real Supabase client instantiated.
+const recordAuditEventMock = vi.fn();
+vi.mock('../../utils/auditEvent.js', () => ({
+  recordAuditEvent: (...args: unknown[]) => recordAuditEventMock(...args),
+}));
 vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -201,6 +210,8 @@ beforeEach(() => {
   process.env.GCP_KMS_INTEGRATION_TOKEN_KEY = KEY;
   submitJobMock.mockReset();
   submitJobMock.mockResolvedValue('job-default');
+  recordAuditEventMock.mockReset();
+  recordAuditEventMock.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -490,14 +501,40 @@ describe('createProcessorDbAdapter', () => {
     expect(fake.inserts).toHaveLength(1);
   });
 
-  it('advancePageToken updates org_integrations.last_page_token + last_token_advanced_at', async () => {
+  it('advancePageToken updates org_integrations.last_page_token + last_token_advanced_at, CAS-scoped to expected_page_token', async () => {
     const fake = makeFakeDb();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adapter = createProcessorDbAdapter({ db: fake.db as any });
-    await adapter.advancePageToken({ integration_id: INT, new_page_token: 'pt-2' });
+    const result = await adapter.advancePageToken({ integration_id: INT, new_page_token: 'pt-2', expected_page_token: 'pt-1' });
+    expect(result).toEqual({ advanced: true });
     expect(fake.updates).toHaveLength(1);
     expect(fake.updates[0].patch).toMatchObject({ last_page_token: 'pt-2' });
     expect(typeof fake.updates[0].patch.last_token_advanced_at).toBe('string');
+    // Fix-round item 4A: the CAS predicate — both the target row AND the
+    // expected pre-write value must be present as filters.
+    expect(fake.updates[0].eqs).toContainEqual(['id', INT]);
+    expect(fake.updates[0].eqs).toContainEqual(['last_page_token', 'pt-1']);
+  });
+
+  it('advancePageToken reports advanced:false (CAS miss) without throwing when last_page_token no longer matches expected_page_token', async () => {
+    // Standalone double simulating PostgREST's zero-row CAS-miss response
+    // (a `WHERE last_page_token = expected` that matches nothing returns
+    // `data: null, error: null`, not an error) — deliberately not the
+    // generic top-of-file fake, which always resolves a successful match.
+    const casMissDb = {
+      from: (_table: string) => {
+        const chain: Record<string, unknown> = {};
+        chain.update = () => chain;
+        chain.eq = () => chain;
+        chain.select = () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) });
+        return chain;
+      },
+      rpc: vi.fn(),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: casMissDb as any });
+    const result = await adapter.advancePageToken({ integration_id: INT, new_page_token: 'pt-2', expected_page_token: 'stale-expectation' });
+    expect(result).toEqual({ advanced: false });
   });
 
   it('enqueueRuleEvent calls the enqueue_rule_event RPC with WORKSPACE_FILE_MODIFIED + google_drive vendor', async () => {
@@ -627,8 +664,20 @@ describe('createProcessorDbAdapter', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adapter = createProcessorDbAdapter({ db: fake.db as any });
     await expect(
-      adapter.advancePageToken({ integration_id: INT, new_page_token: '' }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately malformed to exercise Zod rejection
+      adapter.advancePageToken({ integration_id: INT, new_page_token: '', expected_page_token: 'pt-1' } as any),
     ).rejects.toThrow(/invalid_advance_page_token_args|new_page_token/);
+    expect(fake.updates).toHaveLength(0);
+  });
+
+  it('advancePageToken rejects malformed args via Zod (missing expected_page_token)', async () => {
+    const fake = makeFakeDb();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any });
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately malformed to exercise Zod rejection
+      adapter.advancePageToken({ integration_id: INT, new_page_token: 'pt-2' } as any),
+    ).rejects.toThrow(/invalid_advance_page_token_args|expected_page_token/);
     expect(fake.updates).toHaveLength(0);
   });
 

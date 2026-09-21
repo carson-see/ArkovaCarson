@@ -9,11 +9,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   processDriveChanges,
-  type DriveProcessorDb,
   type DriveProcessorIntegration,
 } from './drive-changes-processor.js';
 import { DriveApiError, type DriveChangesListResponseT } from '../oauth/drive.js';
 import { DRIVE_REVISION_KINDS } from './drive-artifact-producer.js';
+import {
+  createFakeDriveProcessorDb,
+  type FakeDriveProcessorDb,
+  type FakeDriveProcessorDbOptions,
+} from './__test-helpers__/drive-processor-db.js';
 
 const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const INTEGRATION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -27,108 +31,19 @@ function makeIntegration(overrides: Partial<DriveProcessorIntegration> = {}): Dr
     org_id: ORG_ID,
     last_page_token: 'token-1',
     watched_folder_ids: [WATCHED_FOLDER_A, WATCHED_FOLDER_B],
+    last_token_advanced_at: null,
     ...overrides,
   };
 }
 
-interface FakeDb extends DriveProcessorDb {
-  ledgerInserts: Array<{ file_id: string; revision_id: string; outcome: string; parent_ids: string[]; actor_email: string | null }>;
-  ledgerDeletes: Array<{ file_id: string; revision_id: string }>;
-  enqueueCalls: Array<{ file_id: string; parent_ids: string[]; actor_email: string | null; revision_id: string; folder_path: string | null }>;
-  fileChangedJobCalls: Array<{ file_id: string; revision_id: string | null; mime_type: string | null; modified_time: string | null; rule_event_id: string }>;
-  /**
-   * SCRUM-4507: the FULL payload, captured verbatim. `fileChangedJobCalls`
-   * above is a deliberately narrow projection that several existing tests
-   * assert with `toEqual`; widening it would break them for no reason. The
-   * link-back fields are asserted against this raw capture instead.
-   */
-  fileChangedJobPayloads: Array<Record<string, unknown>>;
-  advancedPageTokens: string[];
-  duplicateKeys: Set<string>;
-  enqueueResult: string | null;
-  fileChangedJobResult: string | null;
-}
-
-function makeFakeDb(opts: {
-  duplicateKeys?: string[];
-  enqueueResult?: string | null;
-  enqueueImpl?: (payload: { file_id: string; revision_id: string }) => Promise<string | null>;
-  fileChangedJobResult?: string | null;
-  fileChangedJobImpl?: (payload: { file_id: string; rule_event_id: string }) => Promise<string | null>;
-} = {}): FakeDb {
-  const ledgerInserts: FakeDb['ledgerInserts'] = [];
-  const ledgerDeletes: FakeDb['ledgerDeletes'] = [];
-  const enqueueCalls: FakeDb['enqueueCalls'] = [];
-  const fileChangedJobCalls: FakeDb['fileChangedJobCalls'] = [];
-  const fileChangedJobPayloads: FakeDb['fileChangedJobPayloads'] = [];
-  const advancedPageTokens: string[] = [];
-  const duplicateKeys = new Set(opts.duplicateKeys ?? []);
-  const enqueueResult = opts.enqueueResult === undefined ? 'evt-out' : opts.enqueueResult;
-  const fileChangedJobResult = opts.fileChangedJobResult === undefined ? 'job-out' : opts.fileChangedJobResult;
-
-  return {
-    ledgerInserts,
-    ledgerDeletes,
-    enqueueCalls,
-    fileChangedJobCalls,
-    fileChangedJobPayloads,
-    advancedPageTokens,
-    duplicateKeys,
-    enqueueResult,
-    fileChangedJobResult,
-    insertRevisionLedger: vi.fn(async (row) => {
-      const key = `${row.file_id}::${row.revision_id}`;
-      if (duplicateKeys.has(key)) {
-        return { inserted: false, conflict: true };
-      }
-      duplicateKeys.add(key);
-      ledgerInserts.push({
-        file_id: row.file_id,
-        revision_id: row.revision_id,
-        outcome: row.outcome,
-        parent_ids: row.parent_ids,
-        actor_email: row.actor_email,
-      });
-      return { inserted: true, conflict: false };
-    }),
-    deleteRevisionLedgerEntry: vi.fn(async ({ file_id, revision_id }) => {
-      const key = `${file_id}::${revision_id}`;
-      duplicateKeys.delete(key);
-      const idx = ledgerInserts.findIndex((r) => r.file_id === file_id && r.revision_id === revision_id);
-      if (idx >= 0) ledgerInserts.splice(idx, 1);
-      ledgerDeletes.push({ file_id, revision_id });
-    }),
-    advancePageToken: vi.fn(async ({ new_page_token }) => {
-      advancedPageTokens.push(new_page_token);
-    }),
-    enqueueRuleEvent: vi.fn(async (payload) => {
-      enqueueCalls.push({
-        file_id: payload.file_id,
-        parent_ids: payload.parent_ids,
-        actor_email: payload.actor_email,
-        revision_id: payload.revision_id,
-        folder_path: payload.folder_path,
-      });
-      if (opts.enqueueImpl) return opts.enqueueImpl(payload);
-      return enqueueResult;
-    }),
-    // SCRUM-2903 (GD-PROD): default fake mirrors production's happy path —
-    // every enqueueRuleEvent success is immediately followed by a file-changed
-    // job enqueue. Tests that want to exercise the failure/rollback path pass
-    // fileChangedJobResult: null or fileChangedJobImpl.
-    enqueueFileChangedJob: vi.fn(async (payload) => {
-      fileChangedJobPayloads.push({ ...payload } as Record<string, unknown>);
-      fileChangedJobCalls.push({
-        file_id: payload.file_id,
-        revision_id: payload.revision_id,
-        mime_type: payload.mime_type,
-        modified_time: payload.modified_time,
-        rule_event_id: payload.rule_event_id,
-      });
-      if (opts.fileChangedJobImpl) return opts.fileChangedJobImpl(payload);
-      return fileChangedJobResult;
-    }),
-  };
+// Fix-round item D (simplify): the DB double lives in
+// __test-helpers__/drive-processor-db.ts, shared with drive-changes-e2e.test.ts
+// (previously two near-duplicate hand-rolled fakes). `makeFakeDb` here is a
+// thin, file-local alias so the many existing `makeFakeDb(...)` call sites
+// below don't all need renaming.
+type FakeDb = FakeDriveProcessorDb;
+function makeFakeDb(opts: FakeDriveProcessorDbOptions = {}): FakeDb {
+  return createFakeDriveProcessorDb(opts);
 }
 
 function pageOf(changes: Array<unknown>, opts: { newStartPageToken?: string; nextPageToken?: string } = {}): DriveChangesListResponseT {
@@ -655,6 +570,119 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     expect(listMock).not.toHaveBeenCalled();
   });
 
+  describe('single-flight lease races (fix-round item 4A)', () => {
+    it('aborts BEFORE the first page when stillHoldsLease reports false — no Drive call, no advance', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn();
+      const stillHoldsLease = vi.fn().mockResolvedValue(false);
+      const result = await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, stillHoldsLease },
+      });
+      expect(listMock).not.toHaveBeenCalled();
+      expect(result.leaseLost).toBe(true);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('aborts mid-walk (before page 2) when stillHoldsLease flips to false — page 1 work is preserved, cursor NOT advanced', async () => {
+      const db = makeFakeDb();
+      let checkCall = 0;
+      const stillHoldsLease = vi.fn().mockImplementation(async () => {
+        checkCall += 1;
+        return checkCall === 1; // true before page 1, false before page 2
+      });
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf(
+          [{ file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } }],
+          { nextPageToken: 'token-2' },
+        ),
+      );
+      const result = await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, stillHoldsLease },
+      });
+      expect(listMock).toHaveBeenCalledTimes(1);
+      expect(db.enqueueCalls).toHaveLength(1);
+      expect(result.leaseLost).toBe(true);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('when stillHoldsLease is NOT injected, behaves exactly as before this fix-round (no lease re-check at all)', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(pageOf([], { newStartPageToken: 'token-9' }));
+      const result = await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      });
+      expect(result.leaseLost).toBeUndefined();
+      expect(db.advancedPageTokens).toEqual(['token-9']);
+    });
+
+    it('CAS miss on a NORMAL final-page advance (no recovery involved) stands down without rewinding', async () => {
+      const db = makeFakeDb({ persistedPageToken: 'someone-elses-token' });
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf(
+          [{ file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } }],
+          { newStartPageToken: 'token-2' },
+        ),
+      );
+      const result = await processDriveChanges({
+        integration: makeIntegration({ last_page_token: 'token-1' }),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      });
+      // The enqueue already landed — only the cursor write was skipped.
+      expect(db.enqueueCalls).toHaveLength(1);
+      expect(result.cursorAdvanceLost).toBe(true);
+      expect(result.newPageToken).toBeNull();
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('CAS miss on a cap-reached advance stands down without rewinding', async () => {
+      const db = makeFakeDb({ persistedPageToken: 'someone-elses-token' });
+      const listMock = vi.fn().mockImplementation(async ({ pageToken }: { pageToken: string }) => {
+        const next = `token-after-${pageToken}`;
+        return pageOf(
+          [{ file: { id: `file-${pageToken}`, parents: [WATCHED_FOLDER_A], headRevisionId: `rev-${pageToken}` } }],
+          { nextPageToken: next },
+        );
+      });
+      const result = await processDriveChanges({
+        integration: makeIntegration({ last_page_token: 'token-1' }),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      });
+      expect(result.cursorAdvanceLost).toBe(true);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('every advancePageToken call carries the ORIGINAL starting token as expected_page_token, even on page 3+', async () => {
+      const db = makeFakeDb();
+      let call = 0;
+      const listMock = vi.fn().mockImplementation(async () => {
+        call += 1;
+        if (call < 3) return pageOf([], { nextPageToken: `token-${call + 1}` });
+        return pageOf([], { newStartPageToken: 'token-final' });
+      });
+      await processDriveChanges({
+        integration: makeIntegration({ last_page_token: 'token-1' }),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      });
+      expect(db.advancePageTokenCalls).toHaveLength(1);
+      expect(db.advancePageTokenCalls[0].expected_page_token).toBe('token-1');
+    });
+  });
+
   describe('changes.list failure handling (orchestrator first-run-flood review)', () => {
     it('a mid-walk (page 2) changes.list failure does NOT advance the persisted cursor', async () => {
       const db = makeFakeDb();
@@ -669,7 +697,7 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
             { nextPageToken: 'token-2' },
           );
         }
-        // Page 2 fails — a generic 5xx, not a 410/404.
+        // Page 2 fails — a generic 5xx, not a pageToken-invalid condition.
         const err = new DriveApiError('Drive changes.list failed', 503);
         throw err;
       });
@@ -704,8 +732,13 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       expect(db.advancedPageTokens).toEqual([]);
     });
 
-    it('a 400 (this incident\'s own status code) does NOT trigger 410/404 cursor-reset recovery', async () => {
+    it('a 400 (this incident\'s own status code) with NO pageTokenInvalid signal does NOT trigger recovery — fails loud', async () => {
       const db = makeFakeDb();
+      // Bare 400 — exactly the shape this incident's own fields-mask bug
+      // produced: no `pageTokenInvalid` flag, because `isInvalidPageTokenError`
+      // never matched (the real Google error named the `fields` param, not
+      // `pageToken`). This is the self-consistency guard: this exact PR's own
+      // root-cause bug must NEVER be silently "recovered" instead of failing.
       const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 400));
       const getStartPageTokenMock = vi.fn();
       await expect(
@@ -720,11 +753,28 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       expect(db.advancedPageTokens).toEqual([]);
     });
 
+    it('a 400 WITH the pageTokenInvalid signal (Google issue tracker 196413673 shape) DOES trigger recovery', async () => {
+      const db = makeFakeDb({ persistedPageToken: 'stale-token' });
+      const listMock = vi.fn().mockRejectedValue(
+        new DriveApiError('Drive changes.list failed', 400, 'Invalid Value', true),
+      );
+      const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-400');
+      const result = await processDriveChanges({
+        integration: makeIntegration({ last_page_token: 'stale-token' }),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+      });
+      expect(getStartPageTokenMock).toHaveBeenCalledWith({ accessToken: 'tok' });
+      expect(db.advancedPageTokens).toEqual(['fresh-start-token-400']);
+      expect(result.cursorReset).toBe(true);
+    });
+
     it.each([410, 404])(
       'a %d "pageToken invalid/expired" response re-bootstraps the cursor via changes.getStartPageToken and returns cleanly (no throw)',
       async (status) => {
-        const db = makeFakeDb();
-        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', status));
+        const db = makeFakeDb({ persistedPageToken: 'stale-token' });
+        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', status, undefined, true));
         const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token');
         const result = await processDriveChanges({
           integration: makeIntegration({ last_page_token: 'stale-token' }),
@@ -743,8 +793,8 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     );
 
     it('a 410 whose recovery (changes.getStartPageToken) ALSO fails bubbles up and does not touch the cursor', async () => {
-      const db = makeFakeDb();
-      const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410));
+      const db = makeFakeDb({ persistedPageToken: 'stale-token' });
+      const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410, undefined, true));
       const getStartPageTokenMock = vi.fn().mockRejectedValue(new DriveApiError('Drive startPageToken failed', 500));
       await expect(
         processDriveChanges({
@@ -768,7 +818,7 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
             { nextPageToken: 'token-2' },
           );
         }
-        throw new DriveApiError('Drive changes.list failed', 410);
+        throw new DriveApiError('Drive changes.list failed', 410, undefined, true);
       });
       const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-2');
       const result = await processDriveChanges({
@@ -780,6 +830,84 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       expect(db.enqueueCalls).toHaveLength(1);
       expect(result.cursorReset).toBe(true);
       expect(db.advancedPageTokens).toEqual(['fresh-start-token-2']);
+    });
+
+    describe('gap visibility (fix-round item 2)', () => {
+      it('records the gap (gap_start = last_token_advanced_at, gap_end = now) on a 410 recovery', async () => {
+        const db = makeFakeDb({ persistedPageToken: 'stale-token' });
+        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410, undefined, true));
+        const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-gap');
+        const before = Date.now();
+        const result = await processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'stale-token', last_token_advanced_at: '2026-09-14T00:00:01.000Z' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+        });
+        expect(result.cursorReset).toBe(true);
+        expect(db.cursorGapRecords).toHaveLength(1);
+        const record = db.cursorGapRecords[0];
+        expect(record.integration_id).toBe(INTEGRATION_ID);
+        expect(record.org_id).toBe(ORG_ID);
+        expect(record.gap_start).toBe('2026-09-14T00:00:01.000Z');
+        expect(Date.parse(record.gap_end)).toBeGreaterThanOrEqual(before);
+      });
+
+      it('records gap_start=null for an integration whose cursor had never advanced', async () => {
+        const db = makeFakeDb({ persistedPageToken: 'stale-token' });
+        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410, undefined, true));
+        const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-gap-2');
+        await processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'stale-token', last_token_advanced_at: null }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+        });
+        expect(db.cursorGapRecords[0]?.gap_start).toBeNull();
+      });
+
+      it('when advancePageToken (the post-bootstrap persist) fails, logs the gap bounds and rethrows — never silently widens the gap', async () => {
+        const db = makeFakeDb({ persistedPageToken: 'stale-token' });
+        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410, undefined, true));
+        const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-gap-3');
+        const persistError = new Error('org_integrations update failed');
+        (db.advancePageToken as ReturnType<typeof vi.fn>).mockRejectedValueOnce(persistError);
+        const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+        await expect(
+          processDriveChanges({
+            integration: makeIntegration({ last_page_token: 'stale-token', last_token_advanced_at: '2026-09-14T00:00:01.000Z' }),
+            accessToken: 'tok',
+            db,
+            deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock, logger: log },
+          }),
+        ).rejects.toThrow(persistError);
+        // The gap-widening warning fired with both bounds present.
+        expect(log.error).toHaveBeenCalledWith(
+          expect.objectContaining({ gapStart: '2026-09-14T00:00:01.000Z', gapEnd: expect.any(String) }),
+          expect.stringContaining('WIDENING'),
+        );
+        // recordCursorGap is never reached — the persist failed first.
+        expect(db.cursorGapRecords).toHaveLength(0);
+      });
+
+      it('CAS miss on the post-bootstrap persist stands down without recording a gap or rewinding', async () => {
+        // Persisted token is already 'someone-elses-token' — NOT 'stale-token',
+        // simulating another run having already advanced past this run's
+        // starting point (e.g. it recovered first).
+        const db = makeFakeDb({ persistedPageToken: 'someone-elses-token' });
+        const listMock = vi.fn().mockRejectedValue(new DriveApiError('Drive changes.list failed', 410, undefined, true));
+        const getStartPageTokenMock = vi.fn().mockResolvedValue('fresh-start-token-gap-4');
+        const result = await processDriveChanges({
+          integration: makeIntegration({ last_page_token: 'stale-token', last_token_advanced_at: '2026-09-14T00:00:01.000Z' }),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock, getStartPageToken: getStartPageTokenMock },
+        });
+        expect(result.cursorAdvanceLost).toBe(true);
+        expect(result.cursorReset).toBeUndefined();
+        expect(db.cursorGapRecords).toHaveLength(0);
+        expect(db.advancedPageTokens).toEqual([]);
+      });
     });
   });
 

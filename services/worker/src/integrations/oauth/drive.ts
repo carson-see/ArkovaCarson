@@ -52,6 +52,32 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
  *     Arkova org's own google_drive grant already includes
  *     `auth/drive` + `drive.file`, so the picker works for that org today;
  *     every OTHER org's existing connection needs the re-consent above.
+ *
+ *     CORRECTION (2026-09-21, independent review, SCRUM-2903 fields-mask PR
+ *     follow-up — read this before trusting the paragraph above for a NEW
+ *     connection): `drive.file` per-file access is granted ONLY for a file
+ *     the app itself created, OR a file the user explicitly selected through
+ *     Google's REAL Picker UI
+ *     (https://developers.google.com/workspace/drive/picker/guides/overview)
+ *     — NOT merely "a file listed via drive.metadata.readonly." Arkova's
+ *     Connectors-page folder browser (`DriveFolderPicker` /
+ *     `api/v1/integrations/drive-folders.ts`, this scope's actual
+ *     consumer) is a CUSTOM component built on `files.list` over
+ *     `drive.metadata.readonly` — it is not, and does not load, Google's
+ *     Picker widget. Selecting a folder through it does NOT grant
+ *     `drive.file` per-file access to that folder's contents. Practical
+ *     effect: for a newly-connected org whose only grant is this scope set,
+ *     `fetchDriveFileBytes()` (the byte-fetch this scope was believed to
+ *     cover) will 403 (`appNotAuthorizedToFile` / `insufficientFilePermissions`
+ *     / similar) on an ordinary file the folder browser showed as watchable.
+ *     The Arkova org's own grant working today (verified 2026-09-13, cited
+ *     above) is because that grant ALSO includes the broad `auth/drive`
+ *     scope from an earlier, wider consent — not because this scope set is
+ *     sufficient on its own. This PR makes that 403 LOUD and specific (see
+ *     `fetchDriveFileBytes`'s doc comment and `connector-health.ts`'s
+ *     `file_access_not_granted` reason) rather than fixing the scope here —
+ *     the scope decision (real Picker integration vs. widening
+ *     `DRIVE_DEFAULT_SCOPES`) is being made separately.
  *   - userinfo.email: the callback's account-identity lookup
  *     (drive-oauth.ts fetchGoogleIdentity → oauth2/v3/userinfo). Without an
  *     identity scope that endpoint 401s and account_id degrades to a
@@ -124,12 +150,86 @@ export class DriveApiError extends Error {
   detail?: string;
   /** Google's `Retry-After` response header, when present (429/5xx). */
   retryAfter?: string;
-  constructor(msg: string, status: number, detail?: string) {
+  /**
+   * True when this failure is Google's "the pageToken is no longer valid"
+   * signal — 410/404 always, OR a 400 whose parsed error body carries an
+   * explicit `invalidPageToken`-shaped reason/message (see
+   * `isInvalidPageTokenError` below; Google's issue tracker 196413673
+   * documents `changes.list` returning 400 for this condition on some
+   * accounts, not only 410). Computed once, at throw time, by the ONE call
+   * site (`listChanges`) that still has the parsed JSON body in hand — the
+   * processor's 410/404 re-bootstrap recovery reads this flag instead of
+   * re-deriving Google's error shape itself. Deliberately undefined/false
+   * on every OTHER DriveApiError throw site in this file; a bare 400 with no
+   * matching reason (e.g. this incident's own fields-mask defect) must
+   * NEVER read as an invalid-pageToken signal — see the doc comment on
+   * `isInvalidPageTokenError`.
+   */
+  pageTokenInvalid?: true;
+  constructor(msg: string, status: number, detail?: string, pageTokenInvalid?: true) {
     super(msg);
     this.name = 'DriveApiError';
     this.status = status;
     if (detail !== undefined) this.detail = detail;
+    if (pageTokenInvalid) this.pageTokenInvalid = true;
   }
+}
+
+/** One entry of Google's standard `error.errors[]` array (handle-errors guide). */
+interface GoogleApiErrorEntry {
+  reason?: string;
+  message?: string;
+  location?: string;
+  locationType?: string;
+}
+
+/** Google's standard JSON error envelope: `{ error: { code, message, errors: [...] } }`. */
+interface GoogleApiErrorBody {
+  error?: {
+    code?: number;
+    message?: string;
+    errors?: GoogleApiErrorEntry[];
+  };
+}
+
+/**
+ * Does this parsed Google error body signal "the pageToken is invalid /
+ * expired"? Google's own docs
+ * (developers.google.com/drive/api/guides/handle-errors) confirm the
+ * `error.errors[]` shape (`reason`, `message`, `location`,
+ * `locationType`) but do not enumerate a token-specific reason string;
+ * Google's issue tracker 196413673 reports `changes.list` returning
+ * `400 invalidPageToken` for some accounts where the documented behavior
+ * (`developers.google.com/drive/api/guides/manage-changes`) is a 410. This
+ * SEPARATE, narrow detector recognizes that 400 shape — 410/404 are handled
+ * unconditionally by the caller's own status check and never reach this
+ * function.
+ *
+ * DELIBERATELY NARROW: must match either an explicit `invalidPageToken`
+ * reason/message, or a `reason` containing "invalid" WHOSE `location` is
+ * literally `pageToken`. A bare 400 with an unrelated `reason`/`location` —
+ * e.g. this incident's OWN fields-mask bug, whose Google error names the
+ * `fields` parameter, not `pageToken` — must NEVER match here. Matching too
+ * broadly would silently convert a genuine, still-fixable bug into a
+ * cursor-discarding "recovery," which is the exact failure mode this
+ * detector exists to prevent, not reintroduce.
+ */
+export function isInvalidPageTokenError(json: unknown): boolean {
+  if (json === null || typeof json !== 'object') return false;
+  const err = (json as GoogleApiErrorBody).error;
+  if (!err) return false;
+  const topMessage = (err.message ?? '').toLowerCase();
+  if (topMessage.includes('invalidpagetoken')) return true;
+  const entries = Array.isArray(err.errors) ? err.errors : [];
+  return entries.some((entry) => {
+    const reason = (entry?.reason ?? '').toLowerCase();
+    const message = (entry?.message ?? '').toLowerCase();
+    const location = (entry?.location ?? '').toLowerCase();
+    if (reason === 'invalidpagetoken') return true;
+    if (message.includes('invalidpagetoken')) return true;
+    if (reason.includes('invalid') && location === 'pagetoken') return true;
+    return false;
+  });
 }
 
 /**
@@ -660,7 +760,22 @@ export async function listChanges(args: {
   if (!res.ok) {
     // Non-document path: changes.list returns a metadata-only feed (fields mask
     // pulls file id/parents/revision/actor — no bytes); bounded+scrubbed detail.
-    throw new DriveApiError('Drive changes.list failed', res.status, boundedErrorDetail(json));
+    //
+    // pageTokenInvalid: 410/404 are Google's unconditional "token no longer
+    // valid" statuses; a 400 additionally qualifies ONLY when the parsed
+    // error body itself names pageToken as invalid (isInvalidPageTokenError)
+    // — never on a bare/generic 400, which must keep failing loud (see that
+    // function's doc comment for why, including this incident's own
+    // fields-mask 400 as the concrete counter-example).
+    const pageTokenInvalid = res.status === 410
+      || res.status === 404
+      || (res.status === 400 && isInvalidPageTokenError(json));
+    throw new DriveApiError(
+      'Drive changes.list failed',
+      res.status,
+      boundedErrorDetail(json),
+      pageTokenInvalid ? true : undefined,
+    );
   }
   return ChangesListResponse.parse(json);
 }

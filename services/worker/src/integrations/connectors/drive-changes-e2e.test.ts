@@ -33,11 +33,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   processDriveChanges,
-  type DriveProcessorDb,
   type DriveProcessorIntegration,
 } from './drive-changes-processor.js';
 import { DriveFileChangedJobPayload } from './drive-artifact-producer.js';
 import type { DriveChangesListResponseT } from '../oauth/drive.js';
+import { createFakeDriveProcessorDb } from './__test-helpers__/drive-processor-db.js';
 
 const ORG_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const INTEGRATION_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -45,50 +45,28 @@ const WATCHED_FOLDER = 'folder-watched';
 const UNWATCHED_FOLDER = 'folder-elsewhere';
 
 /**
- * A working `DriveProcessorDb` double that behaves like real Postgres for
- * the properties this test cares about: the `drive_revision_ledger`
- * UNIQUE(integration, file, revision) constraint (dedupe/idempotency), and
- * capturing exactly what would be persisted / enqueued — never bytes,
- * because none of these calls ever carry a byte payload (§1.6A: the ONLY
- * document-bearing Drive call is `fetchDriveFileBytes`, which this pipeline
- * stage never touches — it hands off connector-native ids only).
+ * Fix-round item D (simplify): this used to be a hand-rolled
+ * `DriveProcessorDb` double, near-duplicate of
+ * `drive-changes-processor.test.ts`'s own fake. Both now share
+ * `__test-helpers__/drive-processor-db.ts`. `makeRealisticDb` is kept as a
+ * thin wrapper — with `persistedPageToken` matching `makeIntegration`'s
+ * default `'cursor-0'`, so the shared fake's CAS-based `advancePageToken`
+ * (fix-round item 4A) behaves correctly against this file's fixtures — so
+ * the call sites below don't need renaming, and to re-expose the fields
+ * this file's assertions read under their existing names.
  */
 function makeRealisticDb() {
-  const ledgerRows = new Map<string, { file_id: string; revision_id: string; outcome: string }>();
-  const enqueuedRuleEvents: Array<Record<string, unknown>> = [];
-  const enqueuedFileChangedJobs: Array<Record<string, unknown>> = [];
-  const advancedPageTokens: string[] = [];
-  let ruleEventCounter = 0;
-  let jobCounter = 0;
-
-  const db: DriveProcessorDb = {
-    async insertRevisionLedger(row) {
-      const key = `${row.integration_id}::${row.file_id}::${row.revision_id}`;
-      if (ledgerRows.has(key)) return { inserted: false, conflict: true };
-      ledgerRows.set(key, { file_id: row.file_id, revision_id: row.revision_id, outcome: row.outcome });
-      return { inserted: true, conflict: false };
-    },
-    async deleteRevisionLedgerEntry(key) {
-      ledgerRows.delete(`${key.integration_id}::${key.file_id}::${key.revision_id}`);
-    },
-    async advancePageToken(args) {
-      advancedPageTokens.push(args.new_page_token);
-    },
-    async enqueueRuleEvent(payload) {
-      ruleEventCounter += 1;
-      const id = `evt-${ruleEventCounter}`;
-      enqueuedRuleEvents.push({ ...payload, id });
-      return id;
-    },
-    async enqueueFileChangedJob(payload) {
-      jobCounter += 1;
-      const id = `job-${jobCounter}`;
-      enqueuedFileChangedJobs.push({ ...payload, id });
-      return id;
-    },
+  const fake = createFakeDriveProcessorDb({ persistedPageToken: 'cursor-0' });
+  return {
+    db: fake,
+    // `ledgerInserts` carries `{file_id, revision_id, outcome, ...}` per row
+    // — the shared fake's real ledger record, not a reconstruction.
+    ledgerRows: fake.ledgerInserts,
+    enqueuedRuleEvents: fake.enqueueCalls as unknown as Array<Record<string, unknown>>,
+    enqueuedFileChangedJobs: fake.fileChangedJobPayloads,
+    advancedPageTokens: fake.advancedPageTokens,
+    fake,
   };
-
-  return { db, ledgerRows, enqueuedRuleEvents, enqueuedFileChangedJobs, advancedPageTokens };
 }
 
 function makeIntegration(overrides: Partial<DriveProcessorIntegration> = {}): DriveProcessorIntegration {
@@ -97,6 +75,7 @@ function makeIntegration(overrides: Partial<DriveProcessorIntegration> = {}): Dr
     org_id: ORG_ID,
     last_page_token: 'cursor-0',
     watched_folder_ids: [WATCHED_FOLDER],
+    last_token_advanced_at: null,
     ...overrides,
   };
 }
@@ -232,13 +211,13 @@ describe('Drive changes pipeline — realistic multi-scenario, multi-page dry-re
     expect(result.parentMismatch).toBe(1);
 
     // Removed change never reached the ledger at all.
-    expect([...ledgerRows.keys()].some((k) => k.includes('file-removed'))).toBe(false);
+    expect(ledgerRows.some((r) => r.file_id === 'file-removed')).toBe(false);
 
     // The absent-`parents` shared-drive item is neither queued nor counted
     // as a parent_mismatch — Drive gave nothing to match against, so it is
     // ledgered as 'unrelated_change' (parents.length === 0), same as any
     // change with zero parents.
-    const sharedDriveLedgerEntry = [...ledgerRows.values()].find((r) => r.file_id === 'file-shared-drive-no-parents');
+    const sharedDriveLedgerEntry = ledgerRows.find((r) => r.file_id === 'file-shared-drive-no-parents');
     expect(sharedDriveLedgerEntry?.outcome).toBe('unrelated_change');
 
     // Cursor: advanced to newStartPageToken exactly ONCE, at the end of the
@@ -322,7 +301,7 @@ describe('Drive changes pipeline — realistic multi-scenario, multi-page dry-re
     });
     expect(firstRun.queued).toBe(2);
     expect(enqueuedFileChangedJobs).toHaveLength(2);
-    const ledgerSizeAfterFirstRun = ledgerRows.size;
+    const ledgerSizeAfterFirstRun = ledgerRows.length;
 
     // Second run: SAME cursor (Drive redelivered the identical webhook, or a
     // retry replayed the same window), SAME response shape.
@@ -343,10 +322,17 @@ describe('Drive changes pipeline — realistic multi-scenario, multi-page dry-re
     expect(secondRun.queued).toBe(0);
     expect(secondRun.duplicates).toBe(4);
     expect(enqueuedFileChangedJobs).toHaveLength(2); // unchanged — no new jobs.
-    expect(ledgerRows.size).toBe(ledgerSizeAfterFirstRun); // no new rows either.
+    expect(ledgerRows.length).toBe(ledgerSizeAfterFirstRun); // no new rows either.
 
-    // Cursor still advances to the same newStartPageToken both times — an
-    // idempotent replay is safe to re-persist.
-    expect(advancedPageTokens).toEqual(['cursor-final', 'cursor-final']);
+    // Fix-round item 4A: `advancePageToken` is now a CAS keyed on the token
+    // this run STARTED from. Both runs share the same (stale, unmutated)
+    // `integration` snapshot — `last_page_token: 'cursor-0'` — so the
+    // SECOND run's CAS correctly reports a miss (run 1 already advanced the
+    // persisted cursor to 'cursor-final') rather than blindly re-writing
+    // the same value a second time. This is the intended behavior change:
+    // a true duplicate/concurrent delivery now detects staleness via CAS,
+    // not just via the ledger.
+    expect(secondRun.cursorAdvanceLost).toBe(true);
+    expect(advancedPageTokens).toEqual(['cursor-final']);
   });
 });
