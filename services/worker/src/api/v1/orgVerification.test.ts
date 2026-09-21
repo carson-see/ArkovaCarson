@@ -81,6 +81,7 @@ function mockQuery(result: { data?: unknown; error?: unknown }) {
   chain.eq = vi.fn().mockReturnValue(chain);
   chain.neq = vi.fn().mockReturnValue(chain);
   chain.not = vi.fn().mockReturnValue(chain);
+  chain.is = vi.fn().mockReturnValue(chain);
   chain.update = vi.fn().mockReturnValue(chain);
   chain.insert = vi.fn().mockReturnValue(chain);
   chain.single = vi.fn().mockImplementation(terminal);
@@ -958,6 +959,54 @@ describe('SCRUM-5285 — domain verification compare-and-swap', () => {
       expect(predicates).toContainEqual(['id', 'org-abc']);
       expect(predicates).toContainEqual(['domain', 'example.com']);
       expect(predicates).toContainEqual(['domain_verification_token', FRESH_TOKEN]);
+    });
+
+    // Review of #3058 (S2): `verification_status = 'VERIFIED'` is decided from the
+    // `ein_tax_id` read in the SELECT, and `ein_tax_id` is NOT one of 0482's guarded
+    // columns — an admin can PATCH it to NULL between the read and the write and
+    // still come out VERIFIED. Same TOCTOU shape, same statement, same cure.
+    it('compare-and-swaps the grant against the EIN it based VERIFIED on', async () => {
+      const { writeChain } = setupCas({ orgData: pendingOrg({ ein_tax_id: '12-3456789' }) });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      expect(res.status).toBe(200);
+      expect(eqArgs(writeChain)).toContainEqual(['ein_tax_id', '12-3456789']);
+    });
+
+    it('uses IS NULL, not = NULL, for the EIN predicate when no EIN was read', async () => {
+      // `.eq('ein_tax_id', null)` renders `ein_tax_id=eq.null`, which matches nothing
+      // and would turn every partial verification into a 409.
+      const { writeChain } = setupCas({ orgData: pendingOrg({ ein_tax_id: null }) });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      expect(res.status).toBe(200);
+      expect((writeChain.is as ReturnType<typeof vi.fn>).mock.calls).toContainEqual(['ein_tax_id', null]);
+      expect(eqArgs(writeChain).some(([col]) => col === 'ein_tax_id')).toBe(false);
+    });
+
+    // Review of #3058 (S3): a token with NO expiry must not live forever.
+    it('refuses a pending token that has no expiry (fails closed)', async () => {
+      const { writeChain } = setupCas({ orgData: pendingOrg({ domain_verification_token_expires_at: null }) });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/expired|start over/i);
+      expect((writeChain.update as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('refuses a pending token whose expiry is unparseable (fails closed)', async () => {
+      const { writeChain } = setupCas({ orgData: pendingOrg({ domain_verification_token_expires_at: 'not-a-date' }) });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      expect(res.status).toBe(400);
+      expect((writeChain.update as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    // Review of #3058 (S5): the 6-digit code is the secret; compare it in constant time,
+    // and never let a length mismatch throw (timingSafeEqual throws on unequal lengths).
+    it('rejects a wrong code of a different length with 400, not a 500', async () => {
+      for (const code of ['1234567', '12345678901234567890', '999999']) {
+        setupCas({ orgData: pendingOrg() }); // fresh call counter per request
+        const res = await request(app).post('/org/confirm-domain').send({ code });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('Invalid');
+      }
     });
 
     it('asks PostgREST which rows it actually changed', async () => {

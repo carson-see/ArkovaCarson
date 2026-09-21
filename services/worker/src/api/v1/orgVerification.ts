@@ -416,9 +416,14 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
       return;
     }
 
-    // Check expiry
-    if (org.domain_verification_token_expires_at &&
-        new Date(org.domain_verification_token_expires_at) < new Date()) {
+    // Check expiry. FAILS CLOSED (review of #3058): a pending token with a NULL or
+    // unparseable expiry used to skip this check and so never expired. 0482 makes
+    // the column client-unwritable today, but this handler is the application-layer
+    // second line, and "no expiry" must not mean "valid forever".
+    const expiresAtMs = org.domain_verification_token_expires_at
+      ? new Date(org.domain_verification_token_expires_at).getTime()
+      : Number.NaN;
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs < Date.now()) {
       res.status(400).json({ error: 'Verification code has expired. Please start over.' });
       return;
     }
@@ -426,7 +431,12 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
     // Verify code (stored as "code:token:binding")
     const tokenParts: string[] = org.domain_verification_token.split(':');
     const storedCode = tokenParts[0];
-    if (storedCode !== code.trim()) {
+    // The code is the secret: compare in constant time. timingSafeEqual throws on
+    // unequal lengths, so a length mismatch is an ordinary wrong code, decided first.
+    const suppliedCode = Buffer.from(code.trim(), 'utf8');
+    const expectedCode = Buffer.from(storedCode ?? '', 'utf8');
+    if (suppliedCode.length !== expectedCode.length || expectedCode.length === 0
+        || !crypto.timingSafeEqual(suppliedCode, expectedCode)) {
       res.status(400).json({ error: 'Invalid verification code' });
       return;
     }
@@ -452,7 +462,12 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
     // the admin's own PATCH window; the token predicate additionally closes a
     // concurrent verify-domain restart (which rotates the token and would
     // otherwise have its fresh, unconfirmed code cleared by this write).
-    const { data: grantedRows, error: updateError } = await db
+    // …and on the EIN, because `isFullyVerified` above decides whether this write
+    // grants `verification_status = 'VERIFIED'`, and `ein_tax_id` is NOT one of
+    // 0482's guarded columns: an admin can PATCH it away between the read and
+    // this write. NULL needs `.is()`, never `.eq()` — `ein_tax_id=eq.null` matches
+    // nothing and would 409 every partial verification.
+    const grantBase = db
       .from('organizations')
       .update({
         domain_verified: true,
@@ -464,8 +479,12 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
       })
       .eq('id', orgId)
       .eq('domain', org.domain)
-      .eq('domain_verification_token', org.domain_verification_token)
-      .select('id');
+      .eq('domain_verification_token', org.domain_verification_token);
+    const { data: grantedRows, error: updateError } = await (
+      org.ein_tax_id
+        ? grantBase.eq('ein_tax_id', org.ein_tax_id)
+        : grantBase.is('ein_tax_id', null)
+    ).select('id');
 
     if (updateError) {
       logger.error({ error: updateError }, 'Failed to confirm domain verification');
