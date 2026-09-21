@@ -1827,3 +1827,20 @@ skips that org-only quota, and HTTP must not pre-increment or compensate usage a
 ## PR #2904 integration with #2844 atomic offboarding
 
 Approve/revoke, credit transfer and offboard events emit once inside the shared successful cores, covering session and API-key callers. Approve/revoke requires its audit write before emission. Offboard waits for0460's single transaction and uses its returned locked balances; it never re-reads or reclaims credits in HTTP. Idempotent retries emit offboard completion without repeating a reclaim or suspension. Public response shapes are unchanged.
+
+## 2026-09-21 — SCRUM-5285: `orgVerification.ts` domain grants are compare-and-swapped AND domain-bound
+
+`POST /org/verify-domain` and `POST /org/confirm-domain` each read `organizations` in one PostgREST statement and wrote it in a second, keyed only by `.eq('id', orgId)`. RLS policy `organizations_update_admin` grants an org admin UPDATE on every column of their own row, and the same admin drives both requests — so a PATCH of `organizations.domain` between the two statements landed `domain_verified = true` on a domain the org never proved. That matters because migration `0470`'s `auto_associate_profile_to_org_by_email_domain` auto-joins every confirmed signup whose email domain matches an org with `domain_verified IS TRUE`, and `verification_status = 'VERIFIED'` gates credential issuance and every connector OAuth.
+
+**Two windows, two mechanisms — do not remove either thinking the other covers it.**
+
+1. *Within a request* (SELECT → UPDATE): both writes now carry the values read in the SELECT into the WHERE clause and read the affected-row list back with `.select('id')`. confirm-domain CAS-guards on `domain` **and** `domain_verification_token`; verify-domain on `domain` **and** `.not('domain_verified', 'is', true)` (NULL-safe: the column is nullable and `.eq(…, false)` would lock a NULL row out of verification entirely). Zero rows is 409 `verification_superseded` with no audit row — never a hollow 200.
+2. *Between the two requests*: the CAS cannot see this one, because nothing on the row records which domain the pending token was issued FOR. The binding therefore travels inside the token: `domain_verification_token` is now `code:token:binding`, binding = `sha256(domain)` truncated to 16 hex chars. confirm-domain recomputes it from the domain it is about to grant. The check runs AFTER the code check so it never becomes an oracle that answers before the code does. A two-segment legacy token is refused (fail closed, 24h lifetime bounds the cost), and a case or whitespace edit to `organizations.domain` invalidates the pending code — deliberate.
+
+`confirm-domain` reads `domain` in the SAME SELECT as the token, and refuses outright (400) when it is null: `.eq('domain', null)` renders as `domain = NULL` and matches nothing, so a CAS on it would be an unreachable refusal rather than a guard.
+
+`dev-verify` is deliberately NOT compare-and-swapped: it reads no domain, makes no claim about one, and is hard-gated on `isDev`. If it ever grows a "verify THIS domain" parameter it needs the same treatment.
+
+Proven by `machines/orgDomainVerification.machine.ts`, which found window 2 and the not-verified predicate — neither was in the original report. The `error` field stays a plain string for the existing frontend; `code` is an additive sibling.
+
+**Not fixed here, and not a TOCTOU:** changing `organizations.domain` AFTER a legitimate grant leaves `domain_verified = true` beside a domain nobody proved. No trigger demotes it — none exists in `supabase/migrations/`. That is a schema-level fix (a demoting trigger, its own migration and lock-timeout review per CLAUDE.md §1.2) and is unreachable from application code.
