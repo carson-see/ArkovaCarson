@@ -73,4 +73,94 @@ describe('profile media signing', () => {
     await waitFor(() => expect(screen.queryByRole('img', { name: 'Profile' })).not.toBeInTheDocument());
     expect(onError).toHaveBeenCalledTimes(1);
   });
+
+  // D4 (PR #3033 independent review, pass 2): the retry was a flat 5 s,
+  // unconditional and forever — an AAL1 user looking at their own private media
+  // polled Storage 12x/min per image indefinitely, including in a hidden tab.
+  describe('signing retry', () => {
+    const PATH = 'users/person/avatar/a.png';
+    const FALLBACK = 'https://cdn.example/legacy.png';
+
+    function setVisibility(state: 'visible' | 'hidden') {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+
+    it('backs off exponentially up to a ceiling instead of retrying every five seconds', async () => {
+      vi.useFakeTimers();
+      createSignedUrl.mockResolvedValue({ data: null, error: { message: 'temporarily unavailable', status: 500 } });
+      renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+      await act(async () => { await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(1);
+      // 5s, 10s, 20s, 40s, then the 60s ceiling.
+      for (const [index, delay] of [5_000, 10_000, 20_000, 40_000, 60_000].entries()) {
+        await act(async () => { vi.advanceTimersByTime(delay - 1); await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(index + 1);
+        await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(index + 2);
+      }
+    });
+
+    it('gives up after a bounded number of consecutive failures and stays on the fallback', async () => {
+      vi.useFakeTimers();
+      createSignedUrl.mockResolvedValue({ data: null, error: { message: 'temporarily unavailable', status: 500 } });
+      const { result } = renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+      await act(async () => { await Promise.resolve(); });
+      for (let i = 0; i < 12; i += 1) {
+        await act(async () => { vi.advanceTimersByTime(60_000); await Promise.resolve(); });
+      }
+      expect(createSignedUrl.mock.calls.length).toBeLessThanOrEqual(6);
+      expect(result.current).toBe(FALLBACK);
+      const settled = createSignedUrl.mock.calls.length;
+      await act(async () => { vi.advanceTimersByTime(600_000); await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(settled);
+    });
+
+    it('stops immediately on a permission-style denial rather than backing off', async () => {
+      vi.useFakeTimers();
+      createSignedUrl.mockResolvedValue({ data: null, error: { message: 'Object not found', status: 403 } });
+      renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+      await act(async () => { await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(1);
+      await act(async () => { vi.advanceTimersByTime(600_000); await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not poll while the tab is hidden and re-signs when it comes back', async () => {
+      vi.useFakeTimers();
+      createSignedUrl.mockResolvedValue({ data: { signedUrl: 'https://signed.example/one' }, error: null });
+      renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+      await act(async () => { await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(1);
+      act(() => { setVisibility('hidden'); });
+      await act(async () => { vi.advanceTimersByTime(300_000); await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(1);
+      await act(async () => { setVisibility('visible'); await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('resets the backoff after a success', async () => {
+      vi.useFakeTimers();
+      createSignedUrl
+        .mockResolvedValueOnce({ data: null, error: { message: 'unavailable', status: 500 } })
+        .mockResolvedValueOnce({ data: null, error: { message: 'unavailable', status: 500 } })
+        .mockResolvedValueOnce({ data: { signedUrl: 'https://signed.example/ok' }, error: null })
+        .mockResolvedValue({ data: null, error: { message: 'unavailable', status: 500 } });
+      const { result } = renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+      await act(async () => { await Promise.resolve(); });
+      await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve(); });
+      await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); });
+      expect(result.current).toBe('https://signed.example/ok');
+      // Healthy lease refresh is unchanged at 25s...
+      await act(async () => { vi.advanceTimersByTime(25_000); await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(4);
+      // ...and the next failure restarts the backoff at its base, not the ceiling.
+      await act(async () => { vi.advanceTimersByTime(5_000); await Promise.resolve(); });
+      expect(createSignedUrl).toHaveBeenCalledTimes(5);
+    });
+  });
 });
