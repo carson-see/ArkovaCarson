@@ -901,6 +901,7 @@ UAT-23 user-facing import and per-row instant-state strings live in `copy.ts`; k
 ## 2026-09-14 — SCRUM-5145 signup email policy
 
 `authEmailPolicy.ts` is the application authority for the 15-minute link lifetime and 90-second resend cooldown. `supabase/config.toml` mirrors both values; the hosted Auth configuration must match before release.
+UAT-17 add-existing-member labels live in `copy.ts`; the dialog describes the exact-email add action truthfully and does not call it a search.
 ## 2026-09-19 — Finality webhook copy
 
 `WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and

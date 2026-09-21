@@ -1,5 +1,29 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-19 — staging evidence defers ordinary drafts before install
+
+`staging-evidence.yml` resolves the PR's live `draft` field before checkout or
+dependency installation. Ordinary drafts publish the distinct `Staging evidence
+deferred (Draft)` job and stop there; `ready_for_review` mints the full required
+`Staging Soak Evidence Gate`, while `converted_to_draft` cancels obsolete work
+through the existing concurrency group. A frozen ready-event rerun that finds a
+live draft fails before checkout rather than publishing a reusable green required
+status. Genuine Mergify speculative PRs retain their actor-bound behavior.
+
+## 2026-09-19 — Python SDK installs are lock-bound in CI and publication
+
+The Python SDK test and PyPI workflows use the same exact `setup-uv` commit,
+uv version, Python 3.12 interpreter, and committed `packages/arkova-py/uv.lock`.
+`uv sync --locked --all-extras --no-install-project --no-build` installs only
+locked third-party wheels. The local project is built once with the locked
+Hatchling and no isolated resolver, then its wheel is installed with
+`uv pip --no-deps --no-build`; tests and lint run with `uv run --no-build`.
+Commands run with `--no-sync` so uv cannot silently resolve again. Keep the two
+workflows in parity; `ci-workflow-contract.test.ts` fails if either drifts.
+
+## 2026-09-19 — SCRUM-5253 People mobile layout regression
+
+The E2E job runs `npm run test:e2e:people-layout` after the shared Chromium suite whenever the existing app-affecting change detector enables E2E. The standalone config owns a local Vite server and synthetic HTTP boundaries, so it is intentionally ignored by the shared Playwright config; this explicit CI step is its durable invocation.
 ## 2026-09-19 — authoritative PR base resolution
 
 The staging and identity gates resolve the target branch through GitHub’s authenticated git/ref API. The PR resource’s cached base SHA can lag main and must not select the trusted release snapshot. When staging sees this mismatch, it checks out the exact source head and merges the authoritative base before running the checker; conflicts fail closed. This local merge is never pushed and does not assert new soak evidence.

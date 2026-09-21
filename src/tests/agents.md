@@ -196,6 +196,9 @@ untrusted queue labels because the runner's queue head leaked into the child.
 All four failures reproduce under a queue-shaped runner environment. Explicit
 forged-queue negative cases still reject those labels; resolver authentication
 and all production gate behavior remain unchanged.
+# UAT-17
+
+`uat17-verified-domain-member-add-migration.test.ts` pins verified-only, ambiguity-fail-closed domain association and service-only atomic member-add invariants.
 
 ## 2026-09-19 — Referral RPC nullable-role ratchet
 

@@ -1,5 +1,9 @@
 # supabase/migrations/agents.md
 
+## 0469 — inbound webhook DLQ resolution audit
+
+Adds nullable `resolved_note` (1–500 characters when present) and `resolved_by` to `webhook_dlq`. Existing unresolved and historical rows remain valid. The worker writes these fields only in the same guarded update that first sets `resolved_at`; retrying resolution does not replace the original audit record.
+
 _Last updated: 2026-08-01 (rewritten: 15 unordered `## Recent migrations` sections replaced by one sorted table)._
 
 This directory starts with the Path C baseline,
@@ -96,6 +100,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 
 | Prefix | File | PR | Applied to prod? | Note |
 |---|---|---|---|---|
+| `0467` | `0467_scrum4939_atomic_ai_credit_periods.sql` | SCRUM-4939 / hygiene follow-up to #2837 | **no — candidate only** | Atomic advisory-lock period provisioning, overlap exclusion, and single-row debit. Production read-only preflight on 2026-09-19 found 209 rows, zero overlap pairs, zero active duplicate owners; migration never guesses how to merge balances and fails closed if drift appears before apply. |
 | `0402` | `0402_retire_activate_user_rpc.sql` | branch `worktree-agent-a7c53c44dc75c06bc` (this PR) | **no — file only, pre-soak** | **Launch blocker: account activation was 100% broken.** Retires `public.activate_user(text, text)` — same shape and rationale as `0401` retiring `create_pending_recipient`. Two defects: (1) `ActivateAccountPage.tsx:44` called `activate_user({p_token, p_claim_key})`, but prod has ONLY the `(p_token, p_password)` overload and PostgREST binds by argument NAME, so every call returned PGRST202; the `p_claim_key` variant is in `docs/migrations-archive/0175` and was never deployed (no `activation_tokens` table, no `claim_key` column anywhere in the live schema). (2) The deployed body ACCEPTS `p_password` and never references it — it only flipped `status` to ACTIVE, so no password ever reached `auth.users` and the recipient could not sign in. SQL cannot fix (2): the password hash / `auth.identities` / confirmation state are GoTrue's and need the service_role admin API, which §1.4 bars from the browser — so the function raises `feature_not_supported` pointing at `POST /api/activation/complete` (`services/worker/src/api/activation.ts`, same PR). **Also a security fix:** the baseline granted this SECURITY DEFINER `profiles` writer to `anon` AND `authenticated` (baseline:13479-13481) — revoked here `FROM PUBLIC, anon, authenticated`, `service_role` retained (PUBLIC named explicitly per 0364's no-op-revoke catch). Cannot regress a working caller: 100% of calls already failed. Signature unchanged, so no `database.types.ts` delta. Prefix derived from `git fetch --prune` + full-ref scan (`git log --all --diff-filter=A`): main head `0400`, `0401` claimed by PR #2047 on `fix/create-pending-recipient-fk`, so `0402` is next free. Tier T3. **Next author claims `0403` — re-derive, do not trust this line.** |
 | `0436` | `0436_scrum4035_oauth_email_confirmation.sql` | SCRUM-4035 / UAT-03 | **no — candidate only** | New OAuth mailbox confirmation, restricted pending role and service-only challenge completion. Prefix verified against main/prod 0419 and all open-PR migrations through 0435 on 2026-09-05. Rollout remains disabled until hook and all consumers are verified. |
 | `0443` | `0443_backfill_anchor_proof_block_height.sql` | #2825 / SCRUM-4879; original #2782 / SCRUM-3953 | **no — production held; applied to Owie staging** | Existing reserved prefix, moved intact to `release/scrum-3953-proof-history-0443`. Data-only correction of confirmed proof height/time for matching block identities. Exact SQL SHA-256 `b2582ebb8a1c7983a429bfb386e8b9bf4da1c30b9948725e77534348117c091d`; no renumbering or SQL edit. Production completion requires protected repair, corrected-producer drain, final reconciliation and actual application/ledger proof; see [release record](https://arkova.atlassian.net/wiki/spaces/A/pages/143196161). Older next-prefix statements below record authorship history; this prefix is unavailable. |
@@ -1569,6 +1574,9 @@ remains held until its own production and CI requirements are satisfied.
 [Proof release evidence](https://arkova.atlassian.net/wiki/spaces/A/pages/141492232)
 retains the staged recovery and separately dated production pilot receipts.
 
+## 2026-09-14 — 0459 restores omitted auth.users triggers (SCRUM-5145)
+
+Fresh hosted replay evidence showed only `aa_enroll_oauth_email_confirmation`; the squashed baseline omits Auth-schema triggers. Migration 0459 installs `on_auth_user_created` → `public.create_profile_for_new_user()` and `zz_auth_user_auto_associate_org` → `public.handle_auth_user_email_verified_org_join()` only when missing. Existing canonical triggers are no-ops with stable OID/body; any same-name trigger with different timing, events, columns, function, or enabled state fails closed.
 ## Recent migrations (PR #TBD — SCRUM-5120)
 
 | Prefix | Branch | Ticket | File | Status |
@@ -1619,11 +1627,14 @@ balance read; the existing public offboard HTTP shape stays unchanged.
 The native harness asserts exact balances across both serialization orders and
 zero/retry outcomes. 0453 remains immutable; 0460 is still unapplied and held
 for the final C3 source review and fresh qualification.
+| `0470` | `0470_uat17_verified_domain_and_atomic_member_add.sql` | SCRUM-5145 | no — local draft follow-up | Restricts confirmed-signup auto-association to one exact verified domain and adds a service-only, exact-org-authorized atomic existing-member RPC. Disable signup/member intake before rollback; the older body is unsafe with intake enabled. |
+
 +
 ## 0471 — UAT-23 activation delivery claim (2026-09-19)
 
 `0471_uat23_activation_delivery_claim.sql` adds a service-role-only, FORCE-RLS, PII-free receipt keyed by `(profile_id, token_hash)`. The worker claims before contacting the email provider; replay reads the durable `sending|sent|failed` disposition and never automatically sends twice. The token itself is never stored. A provider ambiguity remains `sending` and is surfaced as pending rather than reclaimed. The same migration adds service-only `recover_bulk_recipient_profile`, a bounded crash-recovery RPC that accepts only one exact unconfirmed Auth identity carrying both server markers and refuses deleted/inactive, tenant-assigned, member, confirmed, unmarked, or ambiguous identities. Safe rollback disables dispatch and recovery callers while retaining receipts; ordinary rollback must not drop the claims and re-enable duplicate email. Native local harness: `scripts/uat23/native-pg-activation-delivery.sh`.
 
+- `0468_allocate_monthly_credits_singleton.sql` — preserves the integer RPC contract while taking transaction advisory lock `(8675309,3)` before the monthly credit scan. A concurrent caller returns `0`; the winner row-locks eligible credits, advances `cycle_end`, and writes the existing expiry/allocation ledger rows once. Sequential re-entry returns `0` because no row remains eligible.
 ## 2026-09-19 — Referral RPC empty-claims guard (0466)
 
 Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both

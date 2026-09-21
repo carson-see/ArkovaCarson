@@ -36,8 +36,10 @@ import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { chunkForInFilter } from '../utils/postgrest-filter.js';
+import { z } from 'zod';
 
 const FORBIDDEN = { error: 'Forbidden — platform admin access required' };
+const ORG_FORBIDDEN = { error: 'Forbidden' };
 
 /** RFC-4122-ish UUID guard (accepts any version). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -71,6 +73,90 @@ interface ProfileRow {
   email: string;
   full_name: string | null;
   avatar_url: string | null;
+}
+
+interface AddedMemberRow {
+  user_id: string;
+  email: string;
+  full_name: string | null;
+  idempotent: boolean;
+}
+
+const addExistingMemberInput = z.object({
+  email: z.string().trim().email().max(320).transform((value) => value.toLowerCase()),
+  role: z.enum(['INDIVIDUAL', 'ORG_ADMIN']),
+}).strict();
+
+/**
+ * Add an existing account by exact email for an organization administrator.
+ * Authorization, lookup, membership, profile backfill and audit are one SQL
+ * transaction; the worker never performs an email lookup before authority is
+ * established by the RPC.
+ */
+export async function handleOrgAdminAddExistingMember(
+  userId: string,
+  orgId: string,
+  req: Request,
+  res: Response,
+  client: Pick<typeof db, 'rpc'> = db,
+): Promise<void> {
+  if (!isUuid(orgId)) {
+    res.status(400).json({ error: 'Invalid organization id' });
+    return;
+  }
+
+  const parsed = addExistingMemberInput.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request' });
+    return;
+  }
+
+  const { data, error } = await client.rpc('add_existing_org_member', {
+    p_actor_id: userId,
+    p_org_id: orgId,
+    p_email: parsed.data.email,
+    p_role: parsed.data.role,
+  });
+
+  if (error) {
+    const message = error.message ?? '';
+    if (message.includes('forbidden') || message.includes('organization_unavailable')) {
+      res.status(403).json(ORG_FORBIDDEN);
+      return;
+    }
+    if (message.includes('ambiguous_user')) {
+      res.status(409).json({ error: 'Account lookup is ambiguous; contact support' });
+      return;
+    }
+    if (message.includes('membership_role_conflict')) {
+      res.status(409).json({ error: 'membership_role_conflict' });
+      return;
+    }
+    if (message.includes('user_not_found')) {
+      res.status(404).json({ error: 'No existing account found for that email' });
+      return;
+    }
+    if (message.includes('invalid_')) {
+      res.status(400).json({ error: 'Invalid request' });
+      return;
+    }
+    logger.error({ code: error.code, orgId, userId }, 'Organization add-existing-member RPC failed');
+    res.status(500).json({ error: 'Failed to add member' });
+    return;
+  }
+
+  const row = (data as AddedMemberRow[] | null)?.[0];
+  if (!row) {
+    logger.error({ orgId, userId }, 'Organization add-existing-member RPC returned no row');
+    res.status(500).json({ error: 'Failed to add member' });
+    return;
+  }
+
+  res.json({
+    success: true,
+    member: { id: row.user_id, email: row.email, fullName: row.full_name },
+    idempotent: row.idempotent,
+  });
 }
 
 // ─── GET /api/admin/organizations/:id/members ────────────────────────────────

@@ -61,7 +61,7 @@ export type InProcessCronGuard =
 
 /** What a second concurrent copy actually costs. Ordered least to most severe. */
 export type InProcessCronDoubleFireImpact =
-  /** Fully guarded — the loser no-ops. */
+  /** The loser no-ops while the recorded guard is held; rationale names any lease-loss edge. */
   | 'none'
   /** Duplicated reads/CPU; no incorrect state. */
   | 'wasted-work'
@@ -129,24 +129,17 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
   },
   {
     jobName: 'process-revoked-anchors',
-    entrypointModule: 'jobs/revocation.ts',
-    guard: 'unguarded',
-    doubleFireImpact: 'chain',
+    entrypointModule: 'jobs/leased-chain-jobs.ts',
+    guard: 'run-lease',
+    doubleFireImpact: 'none',
     rationale:
-      'Selects up to 50 REVOKED anchors with revocation_tx_id IS NULL and broadcasts a chain '
-      + 'revocation per anchor. Its own comment states that UTXO selection is unsafe under '
-      + 'concurrency and that safety comes from processing the list SEQUENTIALLY — which holds '
-      + 'only within one run. Nothing claims the rows before the broadcast, so every warm '
-      + 'instance selects the same 50 anchors and spends from the same treasury UTXO set at the '
-      + 'same time. The RACE-5 compare-and-set in processRevocation (.eq(status,REVOKED) '
-      + '.is(revocation_tx_id,null)) does NOT prevent this: it runs AFTER submitFingerprint '
-      + 'returns, so it de-duplicates the DB row while both chain transactions have already been '
-      + 'signed and broadcast. The row is protected; the treasury is not.',
-    followUp:
-      'Highest-severity entry in this audit. Needs withRunLease with a spec derived from the live '
-      + 'Cloud Scheduler cadence for /jobs/process-revocations, or a claim on revocation_tx_id '
-      + 'taken BEFORE the broadcast (the existing post-broadcast RACE-5 guard is not that, and '
-      + 'tightening it in place is not sufficient). File against SCRUM-3384.',
+      'Both the five-minute in-process task and /jobs/process-revocations call '
+      + 'runLeasedRevocationSweep, which holds REVOCATION_RUN_LEASE before selecting any anchor. '
+      + 'The ordinary losing instance no-ops before treasury UTXO selection or a chain call. This '
+      + 'is strong overlap reduction, not an exactly-once broadcast claim: withRunLease abandons '
+      + 'a body after maxRunMs and cannot cancel its promise, so a pathologically hung chain call '
+      + 'could resume after the lease is released. Revocation still needs a durable pre-broadcast '
+      + 'per-anchor claim/journal to eliminate that residual chain window.',
   },
   {
     jobName: 'process-webhook-retries',
@@ -170,23 +163,14 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
   {
     jobName: 'process-monthly-credits',
     entrypointModule: 'jobs/credit-expiry.ts',
-    guard: 'unguarded',
-    doubleFireImpact: 'money',
+    guard: 'atomic-claim',
+    doubleFireImpact: 'none',
     rationale:
-      'Calls allocate_monthly_credits(), which holds no lock (no advisory lock, no FOR UPDATE) '
-      + 'and loops over credits rows with cycle_end <= now(). The UPDATE of credits.balance is '
-      + 'value-idempotent (both writers compute purchased + plan_allocation), but each iteration '
-      + 'also INSERTs an unconditional ALLOCATION row into credit_transactions — plus an EXPIRY '
-      + 'row whose IF v_expired_monthly > 0 test both writers evaluate against the same '
-      + 'pre-UPDATE snapshot, so they take the same branch. Two instances therefore write two '
-      + 'ledger entries for one allocation while the balance moves once, which is precisely the '
-      + 'shape of a conservation break. It fires at 0 0 1 * *, so every warm instance starts '
-      + 'within the same second.',
-    followUp:
-      'Money-conservation exposure — this is exactly the drift reconcile-credit-conservation '
-      + 'pages on. Needs either withRunLease on the caller or an advisory lock inside '
-      + 'allocate_monthly_credits (the latter is a compensating migration). File against '
-      + 'SCRUM-3384.',
+      'Migration 0468 takes pg_try_advisory_xact_lock(8675309, 3) inside '
+      + 'allocate_monthly_credits(), before reading or writing credit rows. The loser returns the '
+      + 'existing integer zero result, while the winner locks each credits row FOR UPDATE. The '
+      + 'transaction-scoped lock covers in-process, HTTP, and operator RPC callers and is released '
+      + 'automatically on failure.',
   },
   {
     jobName: 'reconcile-credit-conservation',
@@ -219,17 +203,14 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
   {
     jobName: 'cleanup-expired-data',
     entrypointModule: 'routes/scheduled.ts',
-    guard: 'unguarded',
-    doubleFireImpact: 'duplicate-side-effect',
+    guard: 'atomic-claim',
+    doubleFireImpact: 'none',
     rationale:
-      'Calls cleanup_expired_data() with no lock. The function DROPs and re-CREATEs the '
-      + 'reject_audit_delete trigger around its audit_events purge, so concurrent runs contend on '
-      + 'trigger DDL — observed deadlocking (SQLSTATE 40P01) on four of six consecutive nights in '
-      + 'prod. The window between one instance DROPping the trigger and re-CREATEing it is also a '
-      + 'window in which the other instance deletes audit rows unprotected.',
-    followUp:
-      'Already in flight: PR #2335 makes cleanup_expired_data() a singleton. This entry moves to '
-      + 'atomic-claim when that lands; it is recorded unguarded because that is the state of main.',
+      'Migration 0417 places pg_try_advisory_xact_lock(8675309, 2) at the top of '
+      + 'cleanup_expired_data(). The winner performs the purge; every concurrent caller returns '
+      + 'skipped_concurrent_run=true before touching rows or trigger DDL. The lock lives inside '
+      + 'the RPC, so it covers in-process cron, Cloud Scheduler HTTP, and operator calls, and '
+      + 'Postgres releases it automatically at transaction end.',
   },
   {
     jobName: 'detect-reorgs',
@@ -254,19 +235,16 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
   },
   {
     jobName: 'rebroadcast-dropped-transactions',
-    entrypointModule: 'jobs/chain-maintenance.ts',
-    guard: 'unguarded',
-    doubleFireImpact: 'chain',
+    entrypointModule: 'jobs/leased-chain-jobs.ts',
+    guard: 'run-lease',
+    doubleFireImpact: 'none',
     rationale:
-      'Re-POSTing the stored raw transaction hex is itself harmless — it is the same txid, and '
-      + 'nodes reject the duplicate. The defect is the attempt counter: metadata._rebroadcast_'
-      + 'attempts is read, incremented in JS, and written back with a filter on anchor id only, '
-      + 'so concurrent instances both read N and both write N+1. Attempts are LOST, not doubled, '
-      + 'and MAX_REBROADCAST_ATTEMPTS can therefore never be reached — which strands an anchor in '
-      + 'SUBMITTED instead of rewinding it to PENDING for a fresh broadcast.',
-    followUp:
-      'Make the counter a compare-and-set on the observed attempt value, or move the job under a '
-      + 'run lease. File against SCRUM-3384.',
+      'Both the six-hour in-process task and /jobs/rebroadcast-txs call '
+      + 'runLeasedRebroadcastSweep. REBROADCAST_RUN_LEASE serializes the read/increment/write '
+      + 'sequence in ordinary operation. The body is bounded to 20 transactions with 10-second '
+      + 'network timeouts, far below maxRunMs, but the lease deadline still abandons rather than '
+      + 'cancels a promise; a pathological late continuation can therefore duplicate idempotent '
+      + 'raw-tx broadcast work or race the advisory attempt counter.',
   },
   {
     jobName: 'consolidate-utxos',

@@ -1,5 +1,9 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-19 — inbound webhook DLQ resolution audit
+
+Migration 0469 adds bounded `resolved_note` and `resolved_by` columns to `webhook_dlq`. The platform-admin resolve endpoint writes both atomically with `resolved_at` only for unresolved rows, so retries cannot overwrite the first operator's audit record. Notes remain absent from logs and list responses because they may contain partner-identifying context.
+
 ## UAT-22 selected-org invitation list (2026-09-14)
 
 `handleAdminListInvitations` independently requires platform-admin authority and validates the selected UUID before service-role reads. It returns at most 100 unaccepted invitations newest first using explicit public columns and a separate response whitelist; the accept token and private row fields never leave this endpoint. No schema or RLS change.
@@ -427,6 +431,8 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `audit-event.ts` | Audit event creation and query |
 | `admin-stats.ts` / `admin-lists.ts` / `admin-pipeline-stats.ts` | Admin dashboard data endpoints |
 | `admin-org-members.ts` | Platform-admin org roster + user-search + add-member (service_role, RLS-bypass; backs the org profile UI when an admin views a non-member org) |
+
+- UAT-17 adds `handleOrgAdminAddExistingMember`: an AAL2-authenticated exact-email action backed by the service-only atomic `add_existing_org_member` RPC. The RPC establishes exact-org admin authority before email lookup and owns membership, conditional profile backfill, and audit in one transaction; errors remain bounded and never log the supplied email.
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |
 | `rules-crud.ts` / `rules-draft.ts` | Rules engine CRUD and draft management |
 | `queue-resolution.ts` | Review queue resolution endpoint |

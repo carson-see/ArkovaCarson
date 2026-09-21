@@ -41,17 +41,14 @@
  * finds nothing left to claim and reports them under `already_resolved`
  * instead of erroring or double-counting.
  *
- * No `resolved_note` (or equivalent) column exists on `webhook_dlq` (verified
- * against `database.types.ts`). Adding one is a migration — a T3 surface this
- * SCRUM-4514 change deliberately does not cross. The `note` field in the
- * resolve request is validated (bounded) but stored nowhere; it exists for
- * the operator's own record-keeping (e.g. in their own ticket/runbook), not
- * as a durable audit trail on this table. It is also never logged — treated
- * with the same discipline as `reason`/`payload_hash`, since an operator note
- * could reference partner-identifying detail.
+ * Migration 0469 adds `resolved_note` and `resolved_by`, so the bounded
+ * operator rationale and actor are a durable audit trail on the row they
+ * resolve. The note is never logged or returned by the list endpoint because
+ * it may reference partner-identifying detail.
  */
 
 import type { Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
@@ -172,8 +169,7 @@ function isValidIdsArray(value: unknown): value is string[] {
  * does not match any row is silently ignored (contributes to neither count) —
  * there is no third "not_found" bucket in this response shape.
  *
- * `note` is validated but not persisted (see module doc comment) and is
- * never logged.
+ * `note` is validated, persisted with the resolving actor, and never logged.
  */
 export async function handleWebhookDlqResolve(userId: string, req: Request, res: Response): Promise<void> {
   const isAdmin = await isPlatformAdmin(userId);
@@ -195,17 +191,17 @@ export async function handleWebhookDlqResolve(userId: string, req: Request, res:
 
   const uniqueIds = [...new Set(ids)];
   const nowIso = new Date().toISOString();
+  const requestId = randomUUID();
 
   try {
     // Atomic claim: only rows currently unresolved are matched, so calling
     // this twice with the same ids resolves them once, then resolves zero.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: justResolved, error: updateError } = await (db as any)
+    const { error: updateError } = await (db as any)
       .from('webhook_dlq')
-      .update({ resolved_at: nowIso })
+      .update({ resolved_at: nowIso, resolved_note: note, resolved_by: userId, resolved_request_id: requestId })
       .in('id', uniqueIds)
-      .is('resolved_at', null)
-      .select('id');
+      .is('resolved_at', null);
 
     if (updateError) {
       logger.error({ error: updateError }, 'webhook-dlq resolve UPDATE failed');
@@ -213,6 +209,21 @@ export async function handleWebhookDlqResolve(userId: string, req: Request, res:
       return;
     }
 
+    // Do not use UPDATE ... .select() to count the CAS winners. PostgREST
+    // reapplies the mutated `resolved_at IS NULL` filter to RETURNING, which
+    // yields an empty set after a successful write. Read back the exact audit
+    // tuple written by this request instead.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: justResolved, error: readbackError } = await (db as any)
+      .from('webhook_dlq')
+      .select('id')
+      .in('id', uniqueIds)
+      .eq('resolved_request_id', requestId);
+    if (readbackError) {
+      logger.error({ error: readbackError }, 'webhook-dlq resolve ownership read-back failed');
+      res.status(500).json({ error: 'Failed to verify webhook DLQ resolution' });
+      return;
+    }
     const resolvedIds = (justResolved ?? []) as Array<{ id: string }>;
     const resolvedCount = resolvedIds.length;
 
