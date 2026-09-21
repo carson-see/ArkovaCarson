@@ -66,3 +66,11 @@ dependency declaration and prove a clean sync before publishing or testing.
 ## 2026-09-19 — UAT-23 row import
 
 Sync and async `anchor_import()` accept 1–100 already-fingerprinted rows, derive tenant from the API key, send no document bytes, and never automatically retry the write. This source change is versioned 2.4.0 with a changelog entry; no package publication or tag is authorized here.
+
+## 2026-09-21 — import reason codes documented truthfully (PR #3034)
+
+`AnchorImportResultRow.reason` and `AnchorImportResponse.recipient_link_failed`
+doc comments now say that a `*_recipient_failed` status does NOT imply the
+recipient was unlinked: `anchor_recipients` commits before the activation email,
+so `recipient_activation_*` codes mean the link succeeded and only the
+invitation did not go out (or its delivery is unknown). No runtime change.
