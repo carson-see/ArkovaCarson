@@ -45,15 +45,26 @@
  * No migration, no new column.
  *
  * ── WHAT IS DELIBERATELY *NOT* MODELED ──────────────────────────────────────
- * • **A trigger that demotes `domain_verified` when `domain` changes DOES NOT
- *   EXIST** in `supabase/migrations/` — checked file by file. `adminChangesDomain`
- *   therefore moves `domain` and touches NOTHING ELSE, which is what a bare
- *   PostgREST PATCH does today. Modeling a demote-and-clear would be modeling a
- *   trigger this repo does not ship, and it would also CONCEAL the finding
- *   above: clearing the token on every domain change would make the
- *   issue→confirm window unreachable and the binding look like dead code. If
- *   such a trigger ever lands, it is defence in depth on top of this, not a
- *   replacement for it.
+ * • **The database-level demotion is deliberately left out — and it DOES exist.**
+ *   CORRECTED 2026-09-21 (independent review of PR #3058): an earlier version of
+ *   this header said no such trigger exists "checked file by file". That was true
+ *   of this branch's tree and FALSE of production: migration `0482`
+ *   (`protect_org_tenancy_fields`, PR #3036, applied to prod 2026-09-21) makes a
+ *   non-service_role change to `organizations.domain` set `domain_verified :=
+ *   false` and clear the pending token. The only writer of `domain` is the
+ *   browser's own PostgREST PATCH, so on prod the BETWEEN-REQUESTS window
+ *   (issue for A → rename to B → confirm) is already closed at the database and
+ *   the token binding here is the second layer. The WITHIN-REQUEST window
+ *   (SELECT → UPDATE) is NOT closed by 0482 — the worker's grant runs as
+ *   service_role and skips that guard — so the compare-and-swap is load-bearing
+ *   on prod today.
+ *   `adminChangesDomain` still moves `domain` and touches nothing else, ON
+ *   PURPOSE: this machine proves the application layer is sound WITHOUT leaning
+ *   on the trigger. Modeling demote-and-clear would make the issue→confirm
+ *   window unreachable and the binding look like dead code, hiding exactly the
+ *   property this file exists to check. Note the binding is also STRICTER than
+ *   0482: 0482 normalizes case and a trailing dot, so a case-only rename keeps
+ *   the token alive at the database while the byte-exact sha256 here refuses it.
  * • **A post-grant domain change is not treated as a violation.** After a
  *   legitimate grant the admin can still PATCH `domain`, leaving
  *   `domain_verified = true` beside a domain nobody proved. That is a real
