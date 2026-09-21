@@ -21,11 +21,11 @@ function file(bytes: number[], type: string, name = 'image.bin') {
 describe('validateProfileImage', () => {
   beforeEach(() => { upload.mockReset().mockResolvedValue({ error: null }); remove.mockReset().mockResolvedValue({ error: null }); });
   it.each([
-    [file([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'image/png', 'a.png'), 'png'],
-    [file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg'), 'jpg'],
-    [file([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50], 'image/webp', 'a.webp'), 'webp'],
-  ])('accepts a declared image only when its bytes match', async (input, _extension) => {
-    await expect(validateProfileImage(input)).resolves.toMatchObject({ extension: 'png', contentType: 'image/png' });
+    file([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'image/png', 'a.png'),
+    file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg'),
+    file([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50], 'image/webp', 'a.webp'),
+  ])('accepts a declared image only when its bytes match', async (input) => {
+    await expect(validateProfileImage(input)).resolves.toMatchObject({ contentType: 'image/png' });
   });
 
   it.each([

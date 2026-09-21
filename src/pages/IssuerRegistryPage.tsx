@@ -130,121 +130,121 @@ export function IssuerRegistryPage() {
         <div className="overflow-hidden rounded-2xl border border-[#00d4ff]/10 bg-gradient-to-br from-[#0d141b] to-[#111a24] mb-6">
           {bannerUrl && <img src={bannerUrl} referrerPolicy="no-referrer" alt="" className="h-32 sm:h-44 w-full object-cover" />}
           <div className="p-6 sm:p-8">
-          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
-            {/* Logo */}
-            <div className="shrink-0">
-              {logoUrl ? (
-                <img
-                  src={logoUrl}
-                  referrerPolicy="no-referrer"
-                  alt={`${profile.display_name} organization logo`}
-                  className="h-16 w-16 sm:h-20 sm:w-20 rounded-2xl object-contain bg-[#192028] p-2"
-                />
-              ) : (
-                <div className="flex h-16 w-16 sm:h-20 sm:w-20 items-center justify-center rounded-2xl bg-[#192028]">
-                  <Building2 className="h-8 w-8 sm:h-10 sm:w-10 text-[#00d4ff]" />
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
+              {/* Logo */}
+              <div className="shrink-0">
+                {logoUrl ? (
+                  <img
+                    src={logoUrl}
+                    referrerPolicy="no-referrer"
+                    alt={`${profile.display_name} organization logo`}
+                    className="h-16 w-16 sm:h-20 sm:w-20 rounded-2xl object-contain bg-[#192028] p-2"
+                  />
+                ) : (
+                  <div className="flex h-16 w-16 sm:h-20 sm:w-20 items-center justify-center rounded-2xl bg-[#192028]">
+                    <Building2 className="h-8 w-8 sm:h-10 sm:w-10 text-[#00d4ff]" />
+                  </div>
+                )}
+              </div>
+
+              {/* Name + meta */}
+              <div className="flex-1 min-w-0 text-center sm:text-left">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 mb-1">
+                  <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+                    {profile.display_name}
+                  </h1>
+                  {profile.verification_status === 'VERIFIED' && (
+                    <Badge className="bg-[#00d4ff]/10 text-[#00d4ff] border-[#00d4ff]/20 gap-1 shrink-0">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Verified
+                    </Badge>
+                  )}
+                  {profile.industry_tag && (
+                    <Badge variant="outline" className="text-xs shrink-0 border-[#3c494e]/40 text-[#bbc9cf]">
+                      {INDUSTRY_TAG_LABELS[profile.industry_tag] ?? profile.industry_tag}
+                    </Badge>
+                  )}
                 </div>
-              )}
+
+                {profile.description && (
+                  <p className="text-[#bbc9cf] text-sm mb-3 line-clamp-2">
+                    {profile.description}
+                  </p>
+                )}
+
+                {/* Meta row */}
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {profile.org_type && (
+                    <span className="inline-flex items-center gap-1">
+                      <Building2 className="h-3 w-3" />
+                      {formatOrgType(profile.org_type)}
+                    </span>
+                  )}
+                  {profile.location && (
+                    <span className="inline-flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      {profile.location}
+                    </span>
+                  )}
+                  {profile.founded_date && (
+                    <span className="inline-flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      Founded {new Date(profile.founded_date).getFullYear()}
+                    </span>
+                  )}
+                  {domainHref && (
+                    <a
+                      href={domainHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 hover:text-[#00d4ff] transition-colors"
+                    >
+                      <Globe className="h-3 w-3" />
+                      {profile.domain}
+                    </a>
+                  )}
+                </div>
+
+                {/* Links */}
+                <div className="flex justify-center sm:justify-start gap-2 mt-4">
+                  {websiteHref && (
+                    <a
+                      href={websiteHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-[#00d4ff] hover:text-[#00d4ff]/80 border border-[#00d4ff]/20 rounded-full px-3 py-1 hover:bg-[#00d4ff]/5 transition-colors"
+                    >
+                      <Globe className="h-3 w-3" />
+                      Website
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                  )}
+                  {twitterHref && (
+                    <a
+                      href={twitterHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
+                    >
+                      X / Twitter
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                  )}
+                  {linkedinHref && (
+                    <a
+                      href={linkedinHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
+                    >
+                      LinkedIn
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                  )}
+                </div>
+              </div>
+              <div className="shrink-0 rounded-lg bg-white p-2" aria-label="Organization profile QR code"><QRCodeSVG value={pageUrl} size={96} level="M" /></div>
             </div>
-
-            {/* Name + meta */}
-            <div className="flex-1 min-w-0 text-center sm:text-left">
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 mb-1">
-                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-                  {profile.display_name}
-                </h1>
-                {profile.verification_status === 'VERIFIED' && (
-                  <Badge className="bg-[#00d4ff]/10 text-[#00d4ff] border-[#00d4ff]/20 gap-1 shrink-0">
-                    <CheckCircle2 className="h-3 w-3" />
-                    Verified
-                  </Badge>
-                )}
-                {profile.industry_tag && (
-                  <Badge variant="outline" className="text-xs shrink-0 border-[#3c494e]/40 text-[#bbc9cf]">
-                    {INDUSTRY_TAG_LABELS[profile.industry_tag] ?? profile.industry_tag}
-                  </Badge>
-                )}
-              </div>
-
-              {profile.description && (
-                <p className="text-[#bbc9cf] text-sm mb-3 line-clamp-2">
-                  {profile.description}
-                </p>
-              )}
-
-              {/* Meta row */}
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                {profile.org_type && (
-                  <span className="inline-flex items-center gap-1">
-                    <Building2 className="h-3 w-3" />
-                    {formatOrgType(profile.org_type)}
-                  </span>
-                )}
-                {profile.location && (
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin className="h-3 w-3" />
-                    {profile.location}
-                  </span>
-                )}
-                {profile.founded_date && (
-                  <span className="inline-flex items-center gap-1">
-                    <Calendar className="h-3 w-3" />
-                    Founded {new Date(profile.founded_date).getFullYear()}
-                  </span>
-                )}
-                {domainHref && (
-                  <a
-                    href={domainHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 hover:text-[#00d4ff] transition-colors"
-                  >
-                    <Globe className="h-3 w-3" />
-                    {profile.domain}
-                  </a>
-                )}
-              </div>
-
-              {/* Links */}
-              <div className="flex justify-center sm:justify-start gap-2 mt-4">
-                {websiteHref && (
-                  <a
-                    href={websiteHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-[#00d4ff] hover:text-[#00d4ff]/80 border border-[#00d4ff]/20 rounded-full px-3 py-1 hover:bg-[#00d4ff]/5 transition-colors"
-                  >
-                    <Globe className="h-3 w-3" />
-                    Website
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                )}
-                {twitterHref && (
-                  <a
-                    href={twitterHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
-                  >
-                    X / Twitter
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                )}
-                {linkedinHref && (
-                  <a
-                    href={linkedinHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
-                  >
-                    LinkedIn
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                )}
-              </div>
-            </div>
-            <div className="shrink-0 rounded-lg bg-white p-2" aria-label="Organization profile QR code"><QRCodeSVG value={pageUrl} size={96} level="M" /></div>
-          </div>
           </div>
         </div>
 

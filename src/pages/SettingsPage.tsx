@@ -256,7 +256,7 @@ export function SettingsPage() {
               <ProfileMediaImage storagePath={profile?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE_BANNER} className="h-28 w-full rounded-lg object-cover" />
               <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={mediaUploading !== null} onChange={(event) => { const input = event.currentTarget; void handleMediaUpload('banner', input.files?.[0]).finally(() => { input.value = ''; }); }} />
             </div>
-            {mediaUploading && <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />{PROFILE_MEDIA_LABELS.UPLOADING(mediaUploading)}</p>}
+            {mediaUploading && <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />{mediaUploading === 'avatar' ? PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_PHOTO : PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_BANNER}</p>}
           </CardContent>
         </Card>
 

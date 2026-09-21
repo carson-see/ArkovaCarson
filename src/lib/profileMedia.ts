@@ -1,14 +1,18 @@
 import { PROFILE_MEDIA_LABELS } from './copy';
+import { supabase } from './supabase';
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
+// Accepted input formats. Every accepted input is re-encoded to PNG, so a
+// per-format output extension would be dead weight — the only extension any
+// caller ever sees is `.png` (enforced by the 0481 CHECK constraints).
 const FORMATS = {
-  'image/png': { extension: 'png', matches: (b: Uint8Array) => b.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((v, i) => b[i] === v) },
-  'image/jpeg': { extension: 'jpg', matches: (b: Uint8Array) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  'image/webp': { extension: 'webp', matches: (b: Uint8Array) => b.length >= 12 && new TextDecoder().decode(b.slice(0, 4)) === 'RIFF' && new TextDecoder().decode(b.slice(8, 12)) === 'WEBP' },
+  'image/png': { matches: (b: Uint8Array) => b.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((v, i) => b[i] === v) },
+  'image/jpeg': { matches: (b: Uint8Array) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  'image/webp': { matches: (b: Uint8Array) => b.length >= 12 && new TextDecoder().decode(b.slice(0, 4)) === 'RIFF' && new TextDecoder().decode(b.slice(8, 12)) === 'WEBP' },
 } as const;
 
-export async function validateProfileImage(file: File): Promise<{ blob: Blob; extension: 'png'; contentType: 'image/png' }> {
+export async function validateProfileImage(file: File): Promise<{ blob: Blob; contentType: 'image/png' }> {
   if (file.size > MAX_IMAGE_BYTES) throw new Error(PROFILE_MEDIA_LABELS.TOO_LARGE);
   const format = FORMATS[file.type as keyof typeof FORMATS];
   const header = new Uint8Array(await file.slice(0, 16).arrayBuffer());
@@ -28,7 +32,7 @@ export async function validateProfileImage(file: File): Promise<{ blob: Blob; ex
     context.drawImage(bitmap, 0, 0);
     const blob = await canvas.convertToBlob({ type: 'image/png' });
     if (!blob.size || blob.size > MAX_IMAGE_BYTES) throw new Error(PROFILE_MEDIA_LABELS.SANITIZED_TOO_LARGE);
-    return { blob, extension: 'png', contentType: 'image/png' };
+    return { blob, contentType: 'image/png' };
   } finally { bitmap.close(); }
 }
 
@@ -36,10 +40,9 @@ export function profileMediaPath(
   scope: 'users' | 'organizations',
   scopeId: string,
   kind: 'avatar' | 'banner' | 'logo',
-  extension: 'png' | 'jpg' | 'webp',
   objectId = crypto.randomUUID(),
 ) {
-  return `${scope}/${scopeId}/${kind}/${objectId}.${extension}`;
+  return `${scope}/${scopeId}/${kind}/${objectId}.png`;
 }
 
 export async function replaceProfileMedia(options: {
@@ -52,7 +55,7 @@ export async function replaceProfileMedia(options: {
   onCleanupWarning?: () => void;
 }): Promise<string> {
   const validated = await validateProfileImage(options.file);
-  const path = profileMediaPath(options.scope, options.scopeId, options.kind, validated.extension);
+  const path = profileMediaPath(options.scope, options.scopeId, options.kind);
   const bucket = supabase.storage.from('profile-media');
   const { error } = await bucket.upload(path, validated.blob, { contentType: validated.contentType, upsert: false });
   if (error) throw error;
@@ -78,4 +81,3 @@ export async function replaceProfileMedia(options: {
   }
   return path;
 }
-import { supabase } from './supabase';
