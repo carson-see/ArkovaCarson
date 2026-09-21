@@ -228,3 +228,33 @@ section) with no clear current-vs-historical framing. Consolidated into one accu
 entry (9 tools) plus a dated History section for the superseded counts — see that file.
 
 See `packages/sdk/agents.md`'s 2026-09-21 entry for the sibling-package recovery.
+
+## 2026-09-21 — `overrides` pin fast-uri and qs (independent-review, npm audit --omit=dev)
+
+Two runtime-reachable vulnerabilities, confirmed shipping in this package's own dependency tree
+(not devDependency-only, unlike the postcss/nanoid/@vitest-mocker findings sibling packages had —
+those are 100% build-toolchain-only and absent from every `--omit=dev` audit and every tarball):
+
+- **`fast-uri@3.1.5`** (via `@modelcontextprotocol/sdk@1.30.0` → `ajv@8.20.0`, used by the MCP SDK's
+  own request/schema validation at runtime) — **HIGH**, 4 GHSAs (host confusion via percent-encoded
+  scheme normalization / skipped IDN canonicalization; SSRF via malformed IPv6 normalization /
+  repeated hostname percent-decoding). Fixed in 3.1.6+.
+- **`qs@6.15.3`** (via `@modelcontextprotocol/sdk@1.30.0` → `express@5.2.1` → body-parser) —
+  **MODERATE**, 2 GHSAs (array-limit bypass via bracket-key comma parsing; DoS via
+  attacker-controlled `isBuffer`). Fixed in 6.16.0.
+
+`@modelcontextprotocol/sdk@1.30.0` is already the latest published version and does not itself bump
+either transitive dependency, so `"overrides"` in `package.json` (`fast-uri: ^3.1.8`, `qs: ^6.16.0`)
+is the only lever available short of forking or waiting on an upstream SDK release.
+`fast-uri` was pinned to the patched 3.x line (`^3.1.8`), not the 4.x major (`latest`), to avoid an
+unreviewed major bump of a transitive dependency in what is otherwise a pure security fix.
+
+After the override + `npm install --package-lock-only` regeneration: `npm audit` (with or without
+`--omit=dev`) reports **0 vulnerabilities** — both the HIGH and the MODERATE finding are fully
+resolved, not just below a severity bar. `src/package-metadata.test.ts` asserts both override
+entries exist and are in the patched range, so a future lockfile regeneration or dependency bump
+that silently drops the override is caught immediately rather than waiting for the next manual
+audit. Verified after the fix: clean `npm ci --ignore-scripts`, typecheck, 58/58 tests (was 56, +2
+for the new test), build, `npm pack --dry-run` (unchanged, 7 files), and a real stdio JSON-RPC
+smoke test (`initialize` + `tools/list` against the built `dist/cli.js`) — still exactly the 9
+tools, unaffected by the override.
