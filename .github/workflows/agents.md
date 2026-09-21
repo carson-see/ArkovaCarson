@@ -45,8 +45,13 @@ this file). What's load-bearing for future edits:
   `s33-wave2-batch-acceptance.yml` has the same pattern at six call sites
   (`--trusted-main-head`, `--candidate-head`, etc.) but is out of scope here —
   see the file's own note below; it is `disabled_manually` and untouched.
-- **`revision-drift.yml`**: cron cadence changed; see the file's own header
-  comment for the current interval and why.
+- **`revision-drift.yml`**: cron widened 30 min -> hourly (~1,400 -> ~720
+  runs/mo). The file's own header previously went stale against the actual
+  cron once already (still said "every 10 minutes" after the 2026-09-12
+  30-min widening) — now carries the full cadence history plus the current
+  worst-case detection SLA (~2h) so the next change can't repeat that. The
+  alert condition is commit AGE vs the 1h drift threshold, not poll cadence,
+  so hourly still catches every real regression — only later.
 - **`edge-deploy.yml`**: the `concurrency: { group: deploy-edge,
   cancel-in-progress: false }` group already existed (queue-of-one, mirroring
   `deploy-worker.yml`) but only serialized a push burst, never coalesced it —
