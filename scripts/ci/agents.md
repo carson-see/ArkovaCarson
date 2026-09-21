@@ -15,6 +15,25 @@ yml back to `=true`. DO NOT re-add an acknowledgment to let a `=true` line pass 
 fix the line. Still open (R-7 claims, warnings on every run): `DevelopersPage.tsx`
 prices `POST /ai/search` while semantic search is OFF, and the SOC 2 evidence
 matrix cites fraud detection as a continuous control while it is OFF.
+## 2026-09-21 — `check-dependabot-fastpath-eligible.ts` (new, Actions-budget hygiene)
+
+Called only from `staging-evidence.yml`'s Dependabot fast-path (see
+`.github/workflows/agents.md` 2026-09-21 for the full picture). Imports and
+calls `requiredTierFor()` from this directory's `check-staging-evidence.ts`
+over a changed-file list read from `$CHANGED_FILES_PATH` (one path per line,
+populated by the calling workflow from `gh api .../pulls/<n>/files` — no git
+diff needed since `requiredTierFor` classifies file paths, not diff content).
+Writes `eligible=true|false` to `$GITHUB_OUTPUT`; always exits 0 — it is a
+probe the caller branches on, never a gate that can fail the job on its own.
+Missing/unreadable `$CHANGED_FILES_PATH`, an empty file list, or any file
+that classifies above T0 all resolve to `eligible=false`, which sends the
+calling workflow to the full, authoritative check. Deliberately NOT a second
+classifier: see the script's own header for why a parallel T0 rule set was
+rejected. Tests in `check-dependabot-fastpath-eligible.test.ts` pin two
+things independently — that `requiredTierFor()` itself still classifies the
+fixture shapes the way the fast path assumes (so a future `PATH_RULES` edit
+that changes one is caught here too), and that the CLI wiring (env in, output
+file out, fail-closed on bad input) behaves as the workflow expects.
 
 ## 2026-09-19 — protected-main T0 admission
 
