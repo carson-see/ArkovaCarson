@@ -59,9 +59,7 @@ function executeLivePrShell(
     .split("\n")
     .map((line) => (line.startsWith("          ") ? line.slice(10) : line))
     .join("\n")
-    .replaceAll("${{ github.event.pull_request.number }}", "42")
-    .replaceAll("${{ github.repository }}", "carson-see/ArkovaCarson")
-    .replaceAll("${{ github.event.pull_request.draft }}", String(eventDraft));
+    .replaceAll("${{ github.repository }}", "carson-see/ArkovaCarson");
   const dir = mkdtempSync(resolve(tmpdir(), "live-pr-base-"));
   const callsPath = resolve(dir, "calls");
   const outputPath = resolve(dir, "output");
@@ -79,6 +77,12 @@ function executeLivePrShell(
         ...process.env,
         PATH: `${dir}:${process.env.PATH}`,
         GITHUB_OUTPUT: outputPath,
+        // ARK-SEC-012: the real workflow now binds these via the job-level
+        // (PR_NUMBER) and step-level (EVENT_DRAFT) env: blocks instead of
+        // interpolating the expression into the run: script — mirror that
+        // here instead of substituting into the shell text.
+        PR_NUMBER: "42",
+        EVENT_DRAFT: String(eventDraft),
       },
       stdio: "pipe",
     });

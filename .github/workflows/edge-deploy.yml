@@ -145,7 +145,13 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Generate build-info (dry run — not written back to git)
-        run: node scripts/generate-build-info.mjs "${{ github.event.pull_request.head.sha }}"
+        # ARK-SEC-012 (Actions-budget hygiene sweep, 2026-09-21): assign to an
+        # env var rather than interpolating the expression directly into the
+        # run: script — same fix as ci.yml's workflow-level BASE_REF_SHA and
+        # staging-evidence.yml's live_pr step.
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/generate-build-info.mjs "$PR_HEAD_SHA"
 
       # Execute only the binary installed by the locked npm ci above. A missing
       # binary fails immediately, with no registry download or lifecycle-script
