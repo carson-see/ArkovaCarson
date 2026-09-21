@@ -54,3 +54,30 @@ forgets this list. The gate that keys off the source of truth is
 ## 2026-09-19 — Finality event mirror pin
 
 The Zapier allowlist test pins both finality events added by SCRUM-5063.
+
+## 2026-09-21 — drift guard now reads the worker source instead of re-pinning it
+
+`mirrors the worker allowlist exactly (drift guard)` no longer hardcodes the expected id
+array (it had drifted 4 events stale, missing the `folder.*`/`record.folder_changed`
+events #2968 added — a pin that has already drifted is not a guard). It imports
+`CANONICAL_SURFACE`/`readSurface` from `scripts/ci/check-webhook-event-registration-drift.ts`
+and reads `services/worker/src/webhooks/payload-schemas.ts` directly (as text, via the same
+static parser root CI uses — no runtime import of worker code, so no cross-workspace
+runtime dependency). Two things to know if you touch this:
+
+- **Path resolution uses `fileURLToPath(new URL('../../..', import.meta.url))`, not
+  `new URL(...).pathname`.** `.pathname` on a `file://` URL is percent-encoded (spaces
+  become `%20`, etc.) and is NOT a valid filesystem path on its own — `fileURLToPath`
+  is the correct, platform-aware decode. Both resolve to the same string on a typical
+  CI runner path, which is exactly why the bug is easy to miss locally and only bites
+  on an unusual checkout path.
+- **A dedicated test (`the imported CI drift-guard script imports only node: builtins`)
+  reads `scripts/ci/check-webhook-event-registration-drift.ts`'s own import lines and
+  asserts every one names a `node:` builtin.** Why this matters here specifically:
+  `.github/workflows/ci.yml`'s "Validate Zapier clean installation and build" step runs
+  `npm ci --ignore-scripts --no-fund` with working-directory `integrations/zapier`
+  ONLY — it never installs the repo root's `node_modules`. If the imported script ever
+  grew a dependency on an external (non-`node:`) package, this whole test file would
+  fail to load in THAT CI job specifically, as an opaque module-resolution error, not
+  a clear message — because the package that would supply it was never installed
+  there. This test turns that into a same-file, clearly-named failure instead.
