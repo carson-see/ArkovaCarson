@@ -35,9 +35,20 @@ statuses and the additive `recipientLinkFailed` counter). **Do not publish
 0.2.0 against `arkova` 3.1.x**: 3.1.x predates that contract, and a CLI built
 and tested against 3.2.0 must not be shipped resolving to it.
 
-Note for the release owner: the dependency in `package.json` is still declared
-as `file:../sdk`, and `package-lock.json` records it as a local link with no
-registry entry or integrity hash. Converting it to the published `^3.2.0` range
-requires regenerating the lockfile, which could not be done in this change (no
-`npm install` is possible against the symlinked `node_modules`). The package is
-also still `private: true`, so nothing publishes from this state yet.
+### Publish gate
+
+0.2.0 is not tagged or published until both hold:
+
+1. **The API serves the route.** `import` calls `POST /api/v1/anchor/import`
+   directly; it does not go through the SDK's `anchorImport`. So the hard
+   runtime dependency of this release is a deployed worker, not an SDK method.
+   A smoke call against `api.arkova.ai` must return something other than 404
+   before the tag is cut.
+2. **The SDK floor is `^3.2.0`.** In the repository the dependency is declared
+   as `file:../sdk`. The package's publish procedure (`PUBLISHING.md`, added with the first-publish
+   change, PR #3035) rewrites it to a
+   caret range on the version in `packages/sdk/package.json` at the release
+   commit and regenerates the lockfile in an isolated copy; the package
+   metadata test refuses any other state. It is deliberately not rewritten by
+   hand here, because a `package.json` range without a regenerated lockfile
+   breaks `npm ci`.
