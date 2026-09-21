@@ -119,9 +119,14 @@ function affectedRowCount(rows: unknown): number {
  * fail closed, restart the flow. Tokens live 24h, so the cost is bounded.
  * Comparison is over the stored bytes, so a case or whitespace edit to
  * `organizations.domain` also invalidates the pending code — deliberate.
+ *
+ * The digest is NOT truncated. The attacker here controls BOTH domains (they
+ * set `organizations.domain`), so a truncated tag invites a search for a pair
+ * `(X, Y)` with a colliding prefix where they hold `admin@X` — and the column
+ * is unbounded text, so the full digest costs nothing.
  */
 function domainBinding(domain: string): string {
-  return crypto.createHash('sha256').update(domain).digest('hex').slice(0, 16);
+  return crypto.createHash('sha256').update(domain).digest('hex');
 }
 
 /**

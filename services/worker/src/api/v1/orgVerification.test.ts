@@ -90,14 +90,14 @@ function mockQuery(result: { data?: unknown; error?: unknown }) {
 
 /**
  * A pending token for `example.com`, in the stored `code:token:binding` shape
- * (SCRUM-5285). The binding is `sha256('example.com')` truncated to 16 hex
- * chars — hardcoded on purpose rather than recomputed, so a change to how the
- * producer derives it turns these fixtures red instead of silently following
- * along. That the producer and the consumer actually agree is proven
+ * (SCRUM-5285). The binding is the full `sha256('example.com')` — hardcoded on
+ * purpose rather than recomputed, so a change to how the producer derives it
+ * turns these fixtures red instead of silently following along. That the producer and the consumer actually agree is proven
  * separately, by the verify-domain → confirm-domain round trip in
  * "SCRUM-5285 — a verification code proves ONE domain".
  */
-const EXAMPLE_COM_TOKEN = '123456:abcdef:a379a6f6eeafb9a5';
+const EXAMPLE_COM_TOKEN =
+  '123456:abcdef:a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947';
 
 beforeEach(() => {
   vi.clearAllMocks();
