@@ -108,6 +108,23 @@ describe('handleImportRows', () => {
     expect(serialized).toContain('ARK-1');
   });
 
+  // Same rule as the stdio server: an unrecognised status is `unknown`, never
+  // `failed` -- a `failed` row gets re-submitted, and the anchor may be permanent.
+  it('reports an unrecognised row status as unknown, never as failed', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 0,
+      results: [{ fingerprint: 'b'.repeat(64), status: 'created_some_future_state', public_id: 'ARK-2' }],
+    }), { status: 200 }));
+    const result = await handleImportRows({ rows: [{ fingerprint: 'b'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }], action: 'queue' }, {
+      ...CONFIG, workerBaseUrl: 'https://worker.example', callerApiKey: 'ak_test',
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).toContain('unknown');
+    expect(serialized).toContain('ARK-2');
+    expect(serialized).not.toContain('created_some_future_state');
+    expect(serialized).not.toMatch(/status[^a-z]+failed/);
+  });
+
   it('forwards the validated API key and preserves a 207 result without retry', async () => {
     mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, created: 0, skipped: 0, failed: 1, results: [{ fingerprint: 'a'.repeat(64), status: 'failed', reason: 'invalid_public_metadata' }] }), { status: 207 }));
     const result = await handleImportRows({ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }], action: 'queue' }, {

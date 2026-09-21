@@ -123,6 +123,23 @@ describe('Tool Definitions', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  // A status this client does not recognise must never be relabelled `failed`:
+  // an agent reading `failed` re-submits the row, and the anchor may already
+  // be permanent. That is the exact defect #3034 removed from the worker.
+  it('reports an unrecognised row status as unknown, never as failed', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({
+      total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 0,
+      results: [{ fingerprint: 'b'.repeat(64), status: 'created_some_future_state', public_id: 'ARK-2' }],
+    }) });
+    const result = await handleToolCall('arkova_import_rows', {
+      action: 'queue', rows: JSON.stringify([{ fingerprint: 'b'.repeat(64), filename: 'row.pdf', fingerprint_provided: true }]),
+    });
+    const payload = JSON.parse(result.content[0].text as string);
+    expect(payload.results[0].status).toBe('unknown');
+    expect(payload.results[0].public_id).toBe('ARK-2');
+    expect(JSON.stringify(result)).not.toContain('created_some_future_state');
+  });
+
   // Issuer-/user-controlled text must not flow straight to the model: the
   // result is an allowlisted, bounded projection of the API response.
   it('returns an allowlisted bounded result and drops free text from the response', async () => {

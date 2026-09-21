@@ -430,7 +430,9 @@ export function projectImportResponse(body: Record<string, unknown>): Record<str
     results: rows.map((entry) => {
       const row = (entry ?? {}) as Record<string, unknown>;
       const fingerprint = typeof row.fingerprint === 'string' && /^[a-fA-F0-9]{64}$/.test(row.fingerprint) ? row.fingerprint : '';
-      const status = typeof row.status === 'string' && IMPORT_RESULT_STATUSES.has(row.status) ? row.status : 'failed';
+      const status = typeof row.status === 'string' && IMPORT_RESULT_STATUSES.has(row.status) ? row.status : 'unknown';
+      // `unknown`, never `failed`: a caller that reads `failed` re-submits the row,
+      // and a status this client predates may well describe a committed anchor.
       const publicId = typeof row.public_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(row.public_id) ? row.public_id : undefined;
       const reason = typeof row.reason === 'string' && BOUNDED_CODE_RE.test(row.reason) ? row.reason : undefined;
       const instantStatus = typeof row.instant_status === 'string' && IMPORT_INSTANT_STATUSES.has(row.instant_status) ? row.instant_status : undefined;
