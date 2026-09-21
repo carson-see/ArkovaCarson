@@ -28,6 +28,7 @@ import {
 import { orgProfilePath, ROUTES } from '@/lib/routes';
 import type { Database } from '@/types/database.types';
 import { resolveSocialLinks } from '@/lib/socialLinks';
+import { useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 
@@ -56,6 +57,10 @@ function parseSocialLinks(raw: unknown): { linkedin: string | null; twitter: str
 
 export function ProfileCard({ profile, organization, loading, onTogglePrivacy }: Readonly<ProfileCardProps>) {
   const [privacyUpdating, setPrivacyUpdating] = useState(false);
+  // UAT-14 writes `avatar_storage_path` (private bucket); `avatar_url` is the
+  // legacy fallback for rows uploaded before it. Hook order — must run before
+  // the loading early-return below.
+  const avatarUrl = useProfileMediaUrl(profile?.avatar_storage_path, profile?.avatar_url);
 
   if (loading || !profile) {
     return (
@@ -95,9 +100,10 @@ export function ProfileCard({ profile, organization, loading, onTogglePrivacy }:
         <div className="flex flex-col sm:flex-row items-start gap-5">
           {/* Avatar */}
           <div className="relative group shrink-0">
-            {profile.avatar_url ? (
+            {avatarUrl ? (
               <img
-                src={profile.avatar_url}
+                src={avatarUrl}
+                referrerPolicy="no-referrer"
                 alt={profile.full_name ?? 'Profile'}
                 className="h-20 w-20 rounded-full object-cover border-2 border-white/[0.08]"
               />
