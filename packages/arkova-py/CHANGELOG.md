@@ -6,6 +6,12 @@ anything earlier, see `git log -- packages/arkova-py/`.
 ## 2.5.0
 
 - Add synchronous and asynchronous `anchor_import()` for canonical 1–100 row spreadsheet imports. Inputs contain fingerprints and metadata only; write requests are never automatically retried.
+- `AnchorImportResultRow.status` accepts `created_recipient_failed` and
+  `skipped_recipient_failed`. Both mean the anchor committed and only the
+  recipient link failed: the record exists, so do not re-submit the row.
+- `AnchorImportResponse.recipient_link_failed` counts those rows and defaults
+  to `0`. Additive: they are already counted in `created`/`skipped` and never
+  in `failed`, so `created + skipped + failed` still equals `total`.
 
 ## 2.4.1
 
