@@ -288,16 +288,15 @@ describe('Drive OAuth router', () => {
     expect(url.searchParams.get('client_id')).toBe('google-client');
     expect(url.searchParams.get('redirect_uri')).toBe('http://worker.test/api/v1/integrations/google_drive/oauth/callback');
     expect(url.searchParams.get('state')).toBeTruthy();
-    // End-to-end scope minimality (FULLSOAK 2026-08, shared-resource register
-    // #9): the URL the route actually hands the browser requests exactly the
-    // minimal scope set and does NOT carry include_granted_scopes — the flag
-    // that made one Drive connect inherit a 33-scope grant (gmail.modify,
-    // calendar, …) previously granted to the shared OAuth client.
+    // End-to-end scope minimality (SCRUM-5287/SCRUM-2903/SCRUM-2330,
+    // 2026-09-21 CTO decision): the URL the route actually hands the
+    // browser requests exactly drive.readonly + userinfo.email and does NOT
+    // carry include_granted_scopes — the flag that made one Drive connect
+    // inherit a 33-scope grant (gmail.modify, calendar, …) previously
+    // granted to the shared OAuth client.
     expect(url.searchParams.get('scope')).toBe(
       [
-        'https://www.googleapis.com/auth/drive.file',
-        'https://www.googleapis.com/auth/drive.activity.readonly',
-        'https://www.googleapis.com/auth/drive.metadata.readonly',
+        'https://www.googleapis.com/auth/drive.readonly',
         'https://www.googleapis.com/auth/userinfo.email',
       ].join(' '),
     );
@@ -499,7 +498,7 @@ describe('Drive OAuth router', () => {
         .query({ code: 'google-code', state });
     }
 
-    it('an EXACT-match grant (the full requested scope set) is accepted and persisted normally', async () => {
+    it('an EXACT-match grant of the CURRENT (post-cutover) scope set is accepted and persisted normally', async () => {
       const captured: Record<string, unknown[]> = {};
       const capture = (method: string, value: unknown) => {
         captured[method] = [...(captured[method] ?? []), value];
@@ -519,7 +518,55 @@ describe('Drive OAuth router', () => {
             access_token: 'access-token-secret',
             expires_in: 3600,
             refresh_token: 'refresh-token-secret',
-            // The FULL requested set, exactly — drive.file,
+            // The FULL current requested set, exactly — drive.readonly,
+            // userinfo.email (SCRUM-5287/SCRUM-2903/SCRUM-2330 cutover).
+            scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email',
+            token_type: 'Bearer',
+          }), { status: 200 });
+        }
+        if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
+          return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
+        }
+        if (url.includes('/changes/startPageToken')) {
+          return new Response(JSON.stringify({ startPageToken: 'page-token' }), { status: 200 });
+        }
+        if (url.includes('/changes/watch')) {
+          return new Response(JSON.stringify({ resourceId: 'drive-resource-1', expiration: String(Date.now() + 1000) }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      });
+
+      const callback = await runCallback(buildApp(db, fetchImpl));
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive=connected');
+      expect(captured.upsert?.[0]).toBeDefined();
+      expect(recordAuditEventMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ event_type: 'drive_oauth_grant_exceeds_requested' }),
+      );
+    });
+
+    it('an EXACT-match grant of the LEGACY (pre-cutover) scope set is ALSO accepted — a re-consent through the still-shared client can legitimately return it', async () => {
+      const captured: Record<string, unknown[]> = {};
+      const capture = (method: string, value: unknown) => {
+        captured[method] = [...(captured[method] ?? []), value];
+      };
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+          if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+          if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+          return mockQuery({ data: null, error: null }, capture);
+        }),
+      };
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') {
+          return new Response(JSON.stringify({
+            access_token: 'access-token-secret',
+            expires_in: 3600,
+            refresh_token: 'refresh-token-secret',
+            // The PRE-cutover requested set, exactly — drive.file,
             // drive.activity.readonly, drive.metadata.readonly, userinfo.email.
             scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/userinfo.email',
             token_type: 'Bearer',

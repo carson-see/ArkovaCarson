@@ -391,10 +391,29 @@ const ConfigSchema = z.object({
    * PR.
    */
   enableDriveLegacyChannelTokenRejection: boolFlag(false),
-  /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
+  /** Google OAuth client id (Drive, legacy shared client). Required when ENABLE_DRIVE_OAUTH=true in production, unless googleDriveOauthClientId/Secret is set. */
   googleOauthClientId: z.string().optional(),
-  /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
+  /** Google OAuth client secret (Drive, legacy shared client). See googleOauthClientId. */
   googleOauthClientSecret: z.string().optional(),
+  /**
+   * SCRUM-5287 / FD-DRIVE-READONLY (2026-09-21 CTO decision): the NEW
+   * dedicated `arkova-connectors` GCP project's OAuth client, requesting
+   * exactly `drive.readonly` + `userinfo.email` (see
+   * `services/worker/src/integrations/oauth/drive.ts`'s
+   * `DRIVE_DEFAULT_SCOPES`). DOES NOT EXIST YET as of this PR — a human
+   * must create the GCP project + OAuth client and provision these as
+   * Secret Manager values (`google-drive-oauth-client-id` /
+   * `google-drive-oauth-client-secret`) before setting them. When BOTH are
+   * set, `requireClient('current')` in drive.ts prefers this pair for new
+   * consent and for refreshing rows already connected under it; when
+   * either is unset the worker falls back to the legacy
+   * `googleOauthClientId`/`googleOauthClientSecret` pair unconditionally —
+   * see the unconditional half-set guard below for why a partial pair is
+   * always rejected rather than silently falling back.
+   */
+  googleDriveOauthClientId: z.string().optional(),
+  /** Client secret for the pair above. See its doc comment. */
+  googleDriveOauthClientSecret: z.string().optional(),
   /**
    * The worker's own externally-reachable base URL. Needed outside any HTTP
    * request context (crons, e.g. GH #1835's drive-subscription-renewal) to
@@ -851,18 +870,44 @@ const ConfigSchema = z.object({
   // Drive OAuth: if the flow is enabled in production, both client id and
   // client secret must be present. Otherwise the OAuth callback throws when
   // exchanging the code.
+  // SCRUM-5287 / FD-DRIVE-READONLY: accept EITHER a complete legacy pair
+  // (GOOGLE_OAUTH_CLIENT_ID/SECRET) or a complete new pair
+  // (GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET) — the new secrets do not exist yet
+  // (see googleDriveOauthClientId's doc comment), so this must not force
+  // their presence before a human provisions them.
+  const hasLegacyDriveClient = Boolean(cfg.googleOauthClientId && cfg.googleOauthClientSecret);
+  const hasNewDriveClient = Boolean(cfg.googleDriveOauthClientId && cfg.googleDriveOauthClientSecret);
   if (
     cfg.nodeEnv === 'production'
     && cfg.enableDriveOauth
-    && (!cfg.googleOauthClientId || !cfg.googleOauthClientSecret)
+    && !hasLegacyDriveClient
+    && !hasNewDriveClient
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        'ENABLE_DRIVE_OAUTH=true in production requires both GOOGLE_OAUTH_CLIENT_ID '
-        + 'and GOOGLE_OAUTH_CLIENT_SECRET. Set ENABLE_DRIVE_OAUTH=false to disable '
-        + 'the route or provision both secrets.',
+        'ENABLE_DRIVE_OAUTH=true in production requires one COMPLETE OAuth client pair — '
+        + 'either GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET (the new dedicated arkova-connectors '
+        + 'client) or GOOGLE_OAUTH_CLIENT_ID/SECRET (the legacy shared client). Set '
+        + 'ENABLE_DRIVE_OAUTH=false to disable the route or provision one complete pair.',
       path: ['googleOauthClientId'],
+    });
+  }
+  // Unconditional (not nodeEnv-gated): a HALF-set new pair (id without
+  // secret, or vice versa) is always a misconfiguration in any environment
+  // — requireClient() in drive.ts only ever reads the pair as a whole, so a
+  // half-set pair would either silently fall back to the legacy client (id
+  // set, secret missing — masking that the new client was ever intended) or
+  // throw at first use (secret set, id missing) instead of failing loudly
+  // at boot.
+  if (Boolean(cfg.googleDriveOauthClientId) !== Boolean(cfg.googleDriveOauthClientSecret)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'GOOGLE_DRIVE_OAUTH_CLIENT_ID and GOOGLE_DRIVE_OAUTH_CLIENT_SECRET must be set together, '
+        + 'or both left unset to fall back to GOOGLE_OAUTH_CLIENT_ID/SECRET — a half-set pair is '
+        + 'always a misconfiguration.',
+      path: ['googleDriveOauthClientId'],
     });
   }
 
@@ -1210,6 +1255,8 @@ function loadConfig(): Config {
     enableDriveLegacyChannelTokenRejection: process.env.ENABLE_DRIVE_LEGACY_CHANNEL_TOKEN_REJECTION,
     googleOauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
     googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    googleDriveOauthClientId: process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID,
+    googleDriveOauthClientSecret: process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET,
     workerPublicUrl: process.env.WORKER_PUBLIC_URL,
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,

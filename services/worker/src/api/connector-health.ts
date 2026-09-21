@@ -18,7 +18,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
-import { driveGrantExcessScopes } from '../integrations/oauth/drive.js';
+import { driveGrantExcessScopes, isDriveLegacyGrant } from '../integrations/oauth/drive.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
 import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
 import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
@@ -90,6 +90,26 @@ export type HealthReason =
   // first. See `DRIVE_CHANGES_GAP_LOOKBACK_MS` for the bounded lookback
   // window and `DRIVE_HEALTH_PRIORITY` for the exact ranking.
   | 'changes_gap'
+  // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): this
+  // connection's stored `scope` is exactly (a subset of) the scope set
+  // Arkova requested BEFORE the cutover (`DRIVE_LEGACY_REQUESTED_SCOPES` —
+  // drive.file + drive.metadata.readonly + drive.activity.readonly +
+  // userinfo.email) and is NOT within the current `DRIVE_DEFAULT_SCOPES`
+  // (drive.readonly + userinfo.email). This is deliberately NOT the
+  // `grant_exceeds_requested` security finding above — it is a legitimate
+  // historical grant that simply predates the request Arkova now makes
+  // (`isDriveLegacyGrant` in oauth/drive.ts draws that line). It is,
+  // however, the ROOT CAUSE of most `file_access_not_granted` symptoms an
+  // org on this grant will see (`drive.file` only covers files the app
+  // created or the user picked through Google's real Picker — see
+  // oauth/drive.ts's doc comment on `DRIVE_DEFAULT_SCOPES`), so it is
+  // checked, and ranked, ABOVE `file_access_not_granted` below — the admin
+  // view should name the actual, fixable cause (reconnect) rather than the
+  // downstream symptom. It does NOT rank above `changes_gap` or the
+  // currently-broken-connector signals: this grant still lists changes
+  // (drive.metadata.readonly is retained), so those are independent,
+  // more urgent failures when they co-occur.
+  | 'reconnect_required_scope_change'
   // P0-2: the `google_drive.file_changed` job_queue drain has failed/dead
   // rows — the document-fetch half of the pipeline that
   // organization_rule_executions cannot see (rule dispatch and document
@@ -550,6 +570,14 @@ interface DriveHealthSignals {
    */
   grantExceedsRequested?: string[];
   /**
+   * SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): true
+   * when `isDriveLegacyGrant(integration.scope)` — the stored grant is
+   * (a subset of) the PRE-cutover requested set and not within the current
+   * one. Mutually exclusive with `grantExceedsRequested` by construction
+   * (see `isDriveLegacyGrant`'s doc comment in oauth/drive.ts).
+   */
+  legacyGrant?: boolean;
+  /**
    * Round-2 fix (item 2): set when a `drive_changes_cursor_gap` audit_events
    * row exists for this integration within `DRIVE_CHANGES_GAP_LOOKBACK_MS`.
    * No enabled-rule guard (unlike cursorStale/neverSucceeded) — a gap
@@ -639,6 +667,20 @@ function classify(
       lastError: `Drive changes were missed ${bounds} — a cursor re-bootstrap could not recover them (Drive does not allow enumerating a window after the token expires)`,
     };
   }
+  // SCRUM-5287 follow-up (2026-09-21 cutover, task 2): checked BEFORE
+  // `file_access_not_granted` — a legacy (pre-cutover) grant is the actual,
+  // fixable CAUSE of most file_access_not_granted symptoms an org on it
+  // will see; the admin view should name that, not the downstream symptom.
+  // See the `reconnect_required_scope_change` HealthReason doc comment for
+  // the full precedence rationale.
+  if (driveSignals?.legacyGrant) {
+    return {
+      state: 'degraded',
+      reason: 'reconnect_required_scope_change',
+      lastError: 'This connection was authorized under a scope set Arkova no longer requests. '
+        + 'Reconnect Google Drive to grant read access so file fetches and full folder browsing keep working.',
+    };
+  }
   // Fix-round item 6: checked BEFORE the generic fetch_job_failures below —
   // a specific, actionable cause outranks "some fetch jobs failed" once we
   // actually know why.
@@ -670,12 +712,18 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  grant_exceeds_requested: 8, subscription_expiry: 7, changes_list_never_succeeded: 6, cursor_stale: 5,
+  grant_exceeds_requested: 9, subscription_expiry: 8, changes_list_never_succeeded: 7, cursor_stale: 6,
   // Round-2 fix (item 2): changes_gap sits BELOW every currently-broken-
   // connector signal above (a gap is a past, already-recovered-from event)
   // but ABOVE the retryable fetch-failure signals below (lost data outranks
   // a fetch that can simply be retried) — see the HealthReason doc comment.
-  changes_gap: 4,
+  changes_gap: 5,
+  // SCRUM-5287 follow-up (2026-09-21 cutover, task 2): below changes_gap
+  // (this grant still lists changes; a gap is an independent, more urgent
+  // failure when it co-occurs) but ABOVE file_access_not_granted (a legacy
+  // grant is that symptom's actual cause) — see both HealthReason doc
+  // comments.
+  reconnect_required_scope_change: 4,
   file_access_not_granted: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
@@ -880,6 +928,7 @@ export async function handleConnectorHealth(
         fetchJobFailureCount: driveFetchJobFailureCount,
         fileAccessDeniedCount: driveFileAccessDeniedCount,
         grantExceedsRequested: excessScopesOrUndefined(integration.scope),
+        legacyGrant: isDriveLegacyGrant(integration.scope),
         gap: driveGapByIntegrationId.get(integration.id),
       }
       : undefined;
@@ -897,6 +946,7 @@ export async function handleConnectorHealth(
             fetchJobFailureCount: driveFetchJobFailureCount,
             fileAccessDeniedCount: driveFileAccessDeniedCount,
             grantExceedsRequested: excessScopesOrUndefined(row.scope),
+            legacyGrant: isDriveLegacyGrant(row.scope),
             gap: driveGapByIntegrationId.get(row.id),
           }),
         };

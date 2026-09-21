@@ -871,7 +871,12 @@ describe('connector-health (SCRUM-1146)', () => {
         last_renewal_at: '2026-09-01T00:00:00Z',
         last_renewal_error: null,
         last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly email',
+        // CURRENT (post-cutover) scope — NOT the legacy set. This describe
+        // block isolates `file_access_not_granted`; a legacy-scope row
+        // reads `reconnect_required_scope_change` instead (see that
+        // describe block below), which would make these fixtures test the
+        // wrong signal.
+        scope: 'https://www.googleapis.com/auth/drive.readonly email',
         ...overrides,
       };
     }
@@ -934,6 +939,86 @@ describe('connector-health (SCRUM-1146)', () => {
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+    });
+  });
+
+  // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): an
+  // EXISTING row whose stored scope is the pre-cutover requested set needs
+  // re-consent — distinct from both `grant_exceeds_requested` (a security
+  // finding) and `file_access_not_granted` (the downstream symptom this
+  // reason should outrank, since it is the actual cause).
+  describe('reconnect_required_scope_change signal (SCRUM-5287 follow-up)', () => {
+    function legacyGrantDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly email',
+        ...overrides,
+      };
+    }
+
+    it('a row holding exactly the pre-cutover scope set reads degraded/reconnect_required_scope_change', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [legacyGrantDriveRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('reconnect_required_scope_change');
+      expect(drive?.last_error).toContain('Reconnect Google Drive');
+    });
+
+    it('a row holding the CURRENT scope set (drive.readonly) is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [legacyGrantDriveRow({ scope: 'https://www.googleapis.com/auth/drive.readonly email' })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('reconnect_required_scope_change');
+    });
+
+    it('outranks file_access_not_granted — the legacy grant is the actual cause of that symptom', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [legacyGrantDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'dead', last_error: 'Drive file access denied: appNotAuthorizedToFile' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('reconnect_required_scope_change');
+    });
+
+    it('does NOT outrank grant_exceeds_requested — a genuine over-grant stays the top finding', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [legacyGrantDriveRow({
+          scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify',
+        })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('grant_exceeds_requested');
+    });
+
+    it('a row with no stored scope (null) is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [legacyGrantDriveRow({ scope: null })], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('reconnect_required_scope_change');
     });
   });
 

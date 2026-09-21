@@ -33,6 +33,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { dbUuid } from '../../utils/db-row-validation.js';
 import {
   refreshAccessToken,
+  isDriveLegacyGrant,
   type DriveClientDeps,
 } from '../oauth/drive.js';
 import {
@@ -297,6 +298,15 @@ export async function loadDriveAccessToken(
 
   const refreshed = await refreshAccessToken({
     refreshToken: tokens.refresh_token,
+    // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover): a refresh
+    // token is bound to the OAuth client that issued it — see
+    // requireClient's doc comment in oauth/drive.ts. Classify from the
+    // CACHED scope on the decrypted token blob (set at connect/last-refresh
+    // time, never Drive-supplied mid-refresh) — cheap, already in hand, and
+    // is exactly what a pre-cutover connection's grant looks like. Getting
+    // this wrong sends an old-client refresh token to the new client's
+    // token endpoint, which Google rejects with invalid_grant.
+    clientGeneration: isDriveLegacyGrant(tokens.scope) ? 'legacy' : 'current',
     deps: deps.drive,
   });
   const merged: OAuthTokens = {

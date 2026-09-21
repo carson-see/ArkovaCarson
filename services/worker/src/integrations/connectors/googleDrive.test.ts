@@ -125,14 +125,14 @@ describe('Google Drive connector OAuth', () => {
       },
     });
     const params = new URL(url).searchParams;
-    // Minimal set (FULLSOAK 2026-08, shared-resource register #9): the two
-    // Drive scopes the connector uses plus userinfo.email for the callback's
+    // Minimal set (SCRUM-5287/SCRUM-2903/SCRUM-2330, 2026-09-21 CTO
+    // decision): drive.readonly (confirmed sufficient for every Drive API
+    // call this connector makes — see DRIVE_DEFAULT_SCOPES's doc comment in
+    // oauth/drive.ts) plus userinfo.email for the callback's
     // account-identity lookup. Nothing else.
     expect(params.get('scope')).toBe(
       [
-        'https://www.googleapis.com/auth/drive.file',
-        'https://www.googleapis.com/auth/drive.activity.readonly',
-        'https://www.googleapis.com/auth/drive.metadata.readonly',
+        'https://www.googleapis.com/auth/drive.readonly',
         'https://www.googleapis.com/auth/userinfo.email',
       ].join(' '),
     );

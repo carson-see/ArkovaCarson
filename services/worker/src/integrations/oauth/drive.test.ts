@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DRIVE_DEFAULT_SCOPES,
+  DRIVE_LEGACY_REQUESTED_SCOPES,
   buildAuthorizationUrl,
   exchangeCode,
   refreshAccessToken,
@@ -22,6 +23,7 @@ import {
   DriveApiError,
   DRIVE_FOLDER_LISTING_SCOPES,
   driveGrantExcessScopes,
+  isDriveLegacyGrant,
   isInvalidPageTokenError,
 } from './drive.js';
 import { assertValidFieldsMask } from './__test-helpers__/fields-mask.js';
@@ -33,12 +35,21 @@ beforeEach(() => {
 // SCRUM-5287 (P1 security, fix-round item 5): prod holds a 32-scope grant
 // (full drive, gmail.modify, contacts) for the one connected org, because
 // the OAuth callback persisted whatever Google returned without checking it
-// against DRIVE_DEFAULT_SCOPES. driveGrantExcessScopes is the shared
-// detector both the callback (refuse+don't persist) and connector-health.ts
-// (flag an EXISTING over-scoped row) build on.
+// against DRIVE_DEFAULT_SCOPES ∪ DRIVE_LEGACY_REQUESTED_SCOPES.
+// driveGrantExcessScopes is the shared detector both the callback
+// (refuse+don't persist) and connector-health.ts (flag an EXISTING
+// over-scoped row) build on. The legacy set is included in "requested" here
+// (2026-09-21 cutover) so an existing/still-being-issued pre-cutover grant
+// is NOT flagged as an over-grant attack — see isDriveLegacyGrant below for
+// the distinction that DOES surface it (as a reconnect need, not a security
+// finding).
 describe('driveGrantExcessScopes', () => {
-  it('returns [] for an EXACT match of the full requested scope set', () => {
+  it('returns [] for an EXACT match of the CURRENT requested scope set', () => {
     expect(driveGrantExcessScopes(DRIVE_DEFAULT_SCOPES.join(' '))).toEqual([]);
+  });
+
+  it('returns [] for an EXACT match of the LEGACY (pre-cutover) requested scope set', () => {
+    expect(driveGrantExcessScopes(DRIVE_LEGACY_REQUESTED_SCOPES.join(' '))).toEqual([]);
   });
 
   it('returns [] for a SUBSET of the requested scopes (Google not echoing every granted scope back)', () => {
@@ -68,6 +79,56 @@ describe('driveGrantExcessScopes', () => {
     expect(driveGrantExcessScopes(null)).toEqual([]);
     expect(driveGrantExcessScopes(undefined)).toEqual([]);
     expect(driveGrantExcessScopes('')).toEqual([]);
+  });
+});
+
+// SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): the
+// classifier connector-health.ts and drive-changes-runner.ts both use to
+// tell "this row predates the cutover and needs re-consent" from "this row
+// is already current" and from "this row is a genuine over-grant" (which
+// driveGrantExcessScopes above already owns, and isDriveLegacyGrant must
+// NOT also flag).
+describe('isDriveLegacyGrant', () => {
+  it('returns false for the CURRENT exact grant', () => {
+    expect(isDriveLegacyGrant(DRIVE_DEFAULT_SCOPES.join(' '))).toBe(false);
+  });
+
+  it('returns false for a subset of the CURRENT grant', () => {
+    expect(isDriveLegacyGrant('https://www.googleapis.com/auth/drive.readonly')).toBe(false);
+  });
+
+  it('returns true for the exact LEGACY (pre-cutover) grant', () => {
+    expect(isDriveLegacyGrant(DRIVE_LEGACY_REQUESTED_SCOPES.join(' '))).toBe(true);
+  });
+
+  it('returns true for a subset of the legacy grant (e.g. drive.file + userinfo.email only)', () => {
+    expect(
+      isDriveLegacyGrant('https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email'),
+    ).toBe(true);
+  });
+
+  it('tolerates openid on a legacy grant (harmless OIDC bookkeeping, same as driveGrantExcessScopes)', () => {
+    expect(isDriveLegacyGrant(`${DRIVE_LEGACY_REQUESTED_SCOPES.join(' ')} openid`)).toBe(true);
+  });
+
+  it('normalizes the `email` alias on a legacy grant', () => {
+    expect(
+      isDriveLegacyGrant('https://www.googleapis.com/auth/drive.file email'),
+    ).toBe(true);
+  });
+
+  it('returns false for a SUPERSET grant — driveGrantExcessScopes owns that finding, not this one', () => {
+    expect(
+      isDriveLegacyGrant(
+        'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive.file',
+      ),
+    ).toBe(false);
+  });
+
+  it('returns false for null/undefined/empty', () => {
+    expect(isDriveLegacyGrant(null)).toBe(false);
+    expect(isDriveLegacyGrant(undefined)).toBe(false);
+    expect(isDriveLegacyGrant('')).toBe(false);
   });
 });
 
@@ -147,23 +208,65 @@ describe('buildAuthorizationUrl', () => {
     expect(url).toContain('scope=');
     expect(url).toContain('prompt=consent');
     expect(new URL(url).searchParams.get('scope')).toBe(DRIVE_DEFAULT_SCOPES.join(' '));
-    // Scope-minimality ratchet (FULLSOAK 2026-08, shared-resource register #9):
-    // this is the COMPLETE allowlist. drive.file + drive.activity.readonly for
-    // the connector itself; drive.metadata.readonly added for the Connectors
-    // page folder picker (SPEC-CONNECTORS §2.1 "Option A" — reviewed as part
-    // of that CTO spec session, 2026-09-13: metadata-only, cannot read file
-    // bytes, is the minimum scope that makes a pre-existing folder listable);
-    // userinfo.email because the callback's fetchGoogleIdentity
-    // (oauth2/v3/userinfo) needs it for the stable account_id (`sub`) —
-    // without it userinfo 401s and account_id degrades to a constant,
-    // breaking the org_integrations upsert key. Any addition here widens what
-    // a leaked refresh token can reach — treat as a security review.
+    // Scope-minimality ratchet (SCRUM-5287/SCRUM-2903/SCRUM-2330,
+    // 2026-09-21 CTO decision): this is the COMPLETE allowlist. drive.readonly
+    // is confirmed sufficient for every Drive API call this module makes
+    // (files.get incl. alt=media, files.export, files.list, changes.list,
+    // changes.watch, changes.getStartPageToken — see DRIVE_DEFAULT_SCOPES's
+    // doc comment for the Google REST reference URLs); userinfo.email because
+    // the callback's fetchGoogleIdentity (oauth2/v3/userinfo) needs it for
+    // the stable account_id (`sub`) — without it userinfo 401s and account_id
+    // degrades to a constant, breaking the org_integrations upsert key. Any
+    // addition here widens what a leaked refresh token can reach — treat as
+    // a security review.
     expect(DRIVE_DEFAULT_SCOPES).toEqual([
-      'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/drive.activity.readonly',
-      'https://www.googleapis.com/auth/drive.metadata.readonly',
+      'https://www.googleapis.com/auth/drive.readonly',
       'https://www.googleapis.com/auth/userinfo.email',
     ]);
+  });
+
+  // SCRUM-5287 follow-up (2026-09-21 cutover): requireClient()'s dual-client
+  // selection, exercised through the public buildAuthorizationUrl surface.
+  it('prefers the NEW GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET pair when both are set', () => {
+    const url = buildAuthorizationUrl({
+      redirectUri: 'https://arkova.ai/cb',
+      state: 'x',
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+        GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+        GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+      },
+    });
+    expect(new URL(url).searchParams.get('client_id')).toBe('new-id');
+  });
+
+  it('falls back to the legacy GOOGLE_OAUTH_CLIENT_ID/SECRET pair when the new pair is only HALF set', () => {
+    // config.ts's cross-field guard rejects this at boot, but drive.ts's own
+    // requireClient() must independently be defensive — it is a
+    // dependency-free module a caller could invoke with any env object.
+    const url = buildAuthorizationUrl({
+      redirectUri: 'https://arkova.ai/cb',
+      state: 'x',
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+        GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id-only',
+      },
+    });
+    expect(new URL(url).searchParams.get('client_id')).toBe('legacy-id');
+  });
+
+  it('falls back to the legacy pair when the new pair is entirely unset', () => {
+    const url = buildAuthorizationUrl({
+      redirectUri: 'https://arkova.ai/cb',
+      state: 'x',
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+      },
+    });
+    expect(new URL(url).searchParams.get('client_id')).toBe('legacy-id');
   });
 
   it('never sends include_granted_scopes — a Drive connect must not inherit scopes previously granted to the OAuth client', () => {
@@ -254,6 +357,72 @@ describe('refreshAccessToken', () => {
     });
     expect(res.access_token).toBe('new-at');
     expect(res.expires_in).toBe(1800);
+  });
+
+  // SCRUM-5287 follow-up (2026-09-21 cutover): `clientGeneration` selects
+  // WHICH client_id/secret are sent to the token endpoint — a refresh token
+  // is bound to the client that issued it (requireClient's doc comment).
+  // Captured via the request body, not just "did it succeed", because
+  // sending the wrong client_id is exactly the failure mode this exists to
+  // prevent and it does NOT surface as a thrown error in this stub — only a
+  // real Google `invalid_grant` would catch it, which these unit tests
+  // cannot exercise.
+  it('defaults to the NEW client pair (clientGeneration omitted = "current") when both pairs are configured', async () => {
+    let sentBody = '';
+    const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+      sentBody = String(init?.body ?? '');
+      return new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 });
+    };
+    await refreshAccessToken({
+      refreshToken: 'rt',
+      deps: {
+        env: {
+          GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+          GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+          GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+          GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+        },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    });
+    expect(new URLSearchParams(sentBody).get('client_id')).toBe('new-id');
+  });
+
+  it('clientGeneration: "legacy" ALWAYS uses the original client, even when the new pair is configured', async () => {
+    let sentBody = '';
+    const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+      sentBody = String(init?.body ?? '');
+      return new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 });
+    };
+    await refreshAccessToken({
+      refreshToken: 'rt',
+      clientGeneration: 'legacy',
+      deps: {
+        env: {
+          GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+          GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+          GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+          GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+        },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    });
+    expect(new URLSearchParams(sentBody).get('client_id')).toBe('legacy-id');
+  });
+
+  it('clientGeneration: "legacy" throws DriveConfigError when the legacy pair is unset — never silently falls forward to the new client', async () => {
+    await expect(
+      refreshAccessToken({
+        refreshToken: 'rt',
+        clientGeneration: 'legacy',
+        deps: {
+          env: {
+            GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+            GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+          },
+        },
+      }),
+    ).rejects.toBeInstanceOf(DriveConfigError);
   });
 });
 
