@@ -16,6 +16,7 @@ import { createExtractionProvider } from '../../ai/factory.js';
 import {
   checkAICredits,
   deductAICredits,
+  refundAICredits,
   ensureAICreditsPeriod,
   logAIUsageEvent,
 } from '../../ai/cost-tracker.js';
@@ -333,11 +334,32 @@ router.post('/', async (req: Request, res: Response) => {
         : 'provider extraction failed';
       degraded = true;
 
-      // RISK-6: Synchronous refund on extraction failure
+      // RISK-6: Synchronous refund on extraction failure.
+      //
+      // This was `deductAICredits(orgId, userId, -1)` until migration 0483.
+      // 0467 had closed `deduct_ai_credits` to non-positive amounts, so from
+      // 2026-09-19 this refunded NOTHING and every failed extraction stayed
+      // charged — the AI-credit refund regression from 0467. It now calls the
+      // dedicated `refund_ai_credits` RPC with a positive amount.
       if (deductedCredit) {
-        const refunded = await deductAICredits(orgId, userId, -1);
+        const refunded = await refundAICredits(orgId, userId, 1);
         if (!refunded) {
-          logger.warn({ orgId, userId }, 'Failed to refund AI credit after extraction failure');
+          // An un-refunded debit is an overcharge, so this is `error`, not
+          // `warn`. It does NOT change the response: the caller still gets the
+          // degraded fallback. A failed refund is an ops problem.
+          logger.error(
+            { orgId, userId, amount: 1 },
+            'AI credit refund failed after extraction failure — org remains overcharged',
+          );
+          captureCreditRpcFailureAlert({
+            rpc: 'refund_ai_credits',
+            operation: 'ai-extract.refundAICredits',
+            failMode: 'closed',
+            error: new Error('refund_ai_credits failed — org remains charged for a failed extraction'),
+            orgId,
+            userId,
+            extra: { amount: 1 },
+          });
         }
       }
 

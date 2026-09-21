@@ -13,11 +13,15 @@
 #      no EXECUTE after the full replay (0467 → 0468 → 0483).
 #   3. Concurrent debits conserve credits: N racers against an allocation of M
 #      produce exactly M successes and used_this_month = M.
+#   4. The AI-credit refund regression from 0467: a refund issued the old way
+#      (`deduct_ai_credits` with -1) returns false and changes nothing, and
+#      `refund_ai_credits` does not exist. After 0484 the dedicated RPC
+#      decrements by exactly the amount, floors at zero, is service_role-only,
+#      aborts with 55P03 under contention, and interleaves with debits so that
+#      used_this_month == debits - refunds >= 0.
 #
-# Plus two characterization assertions that document current behaviour rather
-# than assert a fix: `NOTIFY pgrst, 'reload schema'` really is delivered by
-# 0483, and 0467's `p_amount <= 0` guard makes every REFUND call return false
-# (see the "NOT changed here" note in 0483's header).
+# Plus one characterization assertion: `NOTIFY pgrst, 'reload schema'` really is
+# delivered by 0483.
 #
 # Local PostgreSQL only. Creates and drops its own scratch database; never
 # touches an existing one.
@@ -55,6 +59,17 @@ CREATE SCHEMA auth;
 CREATE SCHEMA extensions;
 CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE
   AS $fn$ SELECT coalesce(current_setting('request.jwt.claim.role', true), current_user::text) $fn$;
+-- Faithful to the baseline definition's first branch: the legacy PostgREST GUC,
+-- returning NULL when claims are absent. 0484's guard must fail CLOSED on that
+-- NULL, which is exactly what this harness exercises below.
+CREATE FUNCTION public.get_caller_role() RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER
+  SET search_path TO 'public' AS $fn$
+DECLARE role_val text;
+BEGIN
+  role_val := current_setting('request.jwt.claim.role', true);
+  IF role_val IS NOT NULL AND role_val != '' THEN RETURN role_val; END IF;
+  RETURN NULL;
+END $fn$;
 
 CREATE TABLE public.ai_credits (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -91,13 +106,22 @@ $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0468_allocate_monthly_credits_singlet
 ORG_LOCK=11111111-1111-4111-8111-111111111111
 ORG_RACE=22222222-2222-4222-8222-222222222222
 ORG_REFUND=33333333-3333-4333-8333-333333333333
+ORG_FLOOR=44444444-4444-4444-8444-444444444444
+ORG_MIX=55555555-5555-4555-8555-555555555555
 
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" <<SQL >/dev/null
 INSERT INTO public.ai_credits(org_id,monthly_allocation,used_this_month,period_start,period_end) VALUES
  ('$ORG_LOCK',  100, 0, date_trunc('month',now()), date_trunc('month',now())+interval '1 month'),
  ('$ORG_RACE',    5, 0, date_trunc('month',now()), date_trunc('month',now())+interval '1 month'),
- ('$ORG_REFUND', 10, 4, date_trunc('month',now()), date_trunc('month',now())+interval '1 month');
+ ('$ORG_REFUND', 10, 4, date_trunc('month',now()), date_trunc('month',now())+interval '1 month'),
+ ('$ORG_FLOOR',  10, 2, date_trunc('month',now()), date_trunc('month',now())+interval '1 month'),
+ ('$ORG_MIX',    50, 0, date_trunc('month',now()), date_trunc('month',now())+interval '1 month');
 SQL
+
+# Every call the worker makes arrives through PostgREST as service_role, which
+# sets the request.jwt.claim.role GUC. `svc` reproduces that; `anonq` does not,
+# so it is what an absent-claims caller looks like to 0484's guard.
+svc()   { $PSQL -At -v ON_ERROR_STOP=1 -d "$DB" -c "SELECT set_config('request.jwt.claim.role','service_role',false); $1" | tail -1; }
 
 # ---------------------------------------------------------------------------
 # Helper: hold a real row lock on the org's ai_credits row, then probe.
@@ -109,7 +133,7 @@ SQL
 # probe cannot observe the pre-0483 case at all.
 # ---------------------------------------------------------------------------
 probe_under_lock() {
-  local org="$1" holder_tag="holder_${RANDOM}"
+  local org="$1" op="${2:-deduct}" holder_tag="holder_${RANDOM}"
   (
     PGAPPNAME="$holder_tag" $PSQL -At -v ON_ERROR_STOP=1 -d "$DB" \
       -c "BEGIN; SELECT id FROM public.ai_credits WHERE org_id='$org' FOR UPDATE; SELECT pg_sleep(20); COMMIT;" >/dev/null 2>&1
@@ -126,8 +150,9 @@ probe_under_lock() {
   start="$(date +%s)"
   raw="$($PSQL -At -q -d "$DB" <<PROBE 2>&1 || true
 \set VERBOSITY verbose
+SELECT set_config('request.jwt.claim.role','service_role',false);
 SET statement_timeout='12s';
-SELECT public.deduct_ai_credits('$org', NULL, 1);
+SELECT public.${op}_ai_credits('$org', NULL, 1);
 PROBE
 )"
   end="$(date +%s)"
@@ -165,10 +190,22 @@ ok "pre-0483 the debit blocks ~12s to statement_timeout instead of failing fast"
   || fail "a timed-out debit must not record a charge"
 ok "no debit recorded on the timed-out call (fails CLOSED either way)"
 
+# --- the refund regression, before the fix ----------------------------------
+[[ "$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='refund_ai_credits';")" == 0 ]] \
+  || fail "refund_ai_credits already exists before 0484 — premise of this test is wrong"
+ok "no refund_ai_credits RPC exists yet"
+
+red_refund="$(q "SELECT public.deduct_ai_credits('$ORG_REFUND',NULL,-1);")"
+red_used="$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")"
+[[ "$red_refund" == "f" && "$red_used" == 4 ]] \
+  || fail "expected the old refund path to no-op; returned '$red_refund', used=$red_used"
+ok "the old refund path (deduct with -1) returns false and refunds NOTHING — regression reproduced"
+
 echo
-echo "== apply 0483 =="
+echo "== apply 0483 + 0484 =="
 $PSQL -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0483_scrum4939_credit_rpc_followups.sql" >/dev/null
-ok "0483 applied"
+$PSQL -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0484_scrum4939_refund_ai_credits.sql" >/dev/null
+ok "0483 + 0484 applied"
 
 echo
 echo "== GREEN: after 0483 =="
@@ -194,7 +231,7 @@ ok "contended debit aborts with 55P03 inside the 5s budget"
 ok "still no debit recorded — 55P03 fails CLOSED, no hollow success"
 
 # --- grants -----------------------------------------------------------------
-for fn in "deduct_ai_credits(uuid,uuid,integer)" "ensure_ai_credits_period(uuid,integer,timestamptz)" "check_ai_credits(uuid,uuid)" "allocate_monthly_credits()"; do
+for fn in "deduct_ai_credits(uuid,uuid,integer)" "refund_ai_credits(uuid,uuid,integer)" "ensure_ai_credits_period(uuid,integer,timestamptz)" "check_ai_credits(uuid,uuid)" "allocate_monthly_credits()"; do
   acl="$(q "SELECT has_function_privilege('anon','public.$fn','EXECUTE')::text||' '||has_function_privilege('authenticated','public.$fn','EXECUTE')::text||' '||has_function_privilege('service_role','public.$fn','EXECUTE')::text;")"
   [[ "$acl" == "false false true" ]] || fail "public.$fn ACL is [$acl], expected [false false true] (anon authenticated service_role)"
   ok "public.$fn — anon:no authenticated:no service_role:yes"
@@ -213,6 +250,80 @@ echo "  8 concurrent debits against an allocation of 5 => $wins successes, used_
   || fail "credit conservation broken: wins=$wins used=$used rows=$rows (expected 5/5/1)"
 ok "concurrent debits conserve credits exactly (no over-debit, no free credit)"
 
+# --- GREEN: the dedicated refund RPC ----------------------------------------
+refund_proconfig="$(q "SELECT array_to_string(proconfig,',') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='refund_ai_credits';")"
+[[ "$refund_proconfig" == *"lock_timeout=5s"* && "$refund_proconfig" == *"search_path=public"* ]] \
+  || fail "refund_ai_credits proconfig is [$refund_proconfig]"
+[[ "$(q "SELECT prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='refund_ai_credits';")" == "t" ]] \
+  || fail "refund_ai_credits must be SECURITY DEFINER"
+ok "refund_ai_credits: SECURITY DEFINER, search_path=public, lock_timeout=5s"
+
+# The in-body guard must fail CLOSED when request claims are absent, i.e. when
+# get_caller_role() returns NULL. A bare `<> 'service_role'` would fall through.
+noclaims="$($PSQL -At -q -d "$DB" -c "SELECT public.refund_ai_credits('$ORG_REFUND',NULL,1);" 2>&1 || true)"
+grep -q 'Only service_role can refund AI credits' <<<"$noclaims" \
+  || fail "refund with absent role claims must RAISE insufficient_privilege; got: $noclaims"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")" == 4 ]] \
+  || fail "a refused refund must not move credit"
+ok "absent role claims => insufficient_privilege, nothing refunded (NULL fails CLOSED)"
+
+[[ "$(svc "SELECT public.refund_ai_credits('$ORG_REFUND',NULL,1);")" == "t" ]] || fail "service_role refund should succeed"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")" == 3 ]] \
+  || fail "refund of 1 should take used_this_month 4 -> 3"
+ok "refund of 1 decrements used_this_month by exactly 1 (4 -> 3)"
+
+# Bounds: <=0, over the 1000 cap, and both-ids-NULL are refused without moving credit.
+for bad in "0" "-5" "1001"; do
+  [[ "$(svc "SELECT public.refund_ai_credits('$ORG_REFUND',NULL,$bad);")" == "f" ]] \
+    || fail "refund with p_amount=$bad must return false"
+done
+[[ "$(svc "SELECT public.refund_ai_credits(NULL,NULL,1);")" == "f" ]] || fail "refund with no org and no user must return false"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")" == 3 ]] \
+  || fail "a refused refund must not move credit"
+ok "p_amount <=0 / >1000 and both-ids-NULL are refused, credit unmoved"
+
+# Floor: used=2, refund 7 -> 0, never negative. A second refund at 0 stays 0.
+[[ "$(svc "SELECT public.refund_ai_credits('$ORG_FLOOR',NULL,7);")" == "t" ]] || fail "over-refund should still report a credited row"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_FLOOR';")" == 0 ]] \
+  || fail "refund larger than used must floor at 0"
+[[ "$(svc "SELECT public.refund_ai_credits('$ORG_FLOOR',NULL,1);")" == "t" ]] || fail "refund at used=0 should still report a row"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_FLOOR';")" == 0 ]] \
+  || fail "refund at used=0 must stay 0 — a refund can never mint credit"
+ok "GREATEST floor holds: over-refund lands on 0, refund at 0 stays 0 (double refund cannot mint)"
+
+# No covering period row -> false, nothing to refund.
+[[ "$(svc "SELECT public.refund_ai_credits('99999999-9999-4999-8999-999999999999',NULL,1);")" == "f" ]] \
+  || fail "refund for an org with no period row must return false"
+ok "no covering period row => false"
+
+# Contended refund aborts with 55P03 inside the 5s budget and changes nothing.
+read -r refund_state refund_secs <<<"$(probe_under_lock "$ORG_REFUND" refund)"
+echo "  contended refund => SQLSTATE=$refund_state after ${refund_secs}s"
+[[ "$refund_state" == "55P03" ]] || fail "expected 55P03 on a contended refund; got $refund_state"
+[[ "$refund_secs" -le 9 ]] || fail "refund lock budget did not fire inside 5s; took ${refund_secs}s"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")" == 3 ]] \
+  || fail "a lock-timed-out refund must not move credit"
+ok "contended refund aborts with 55P03 in ~5s and refunds nothing"
+
+# Interleaved debits and refunds across 8 sessions must conserve:
+# used_this_month == debits_applied - refunds_applied, and never go negative.
+for i in $(seq 1 5); do
+  ( svc "SELECT public.deduct_ai_credits('$ORG_MIX',NULL,1);" >"$WORK/mix-d-$i.out" 2>/dev/null ) &
+done
+for i in $(seq 1 3); do
+  ( svc "SELECT public.refund_ai_credits('$ORG_MIX',NULL,1);" >"$WORK/mix-r-$i.out" 2>/dev/null ) &
+done
+wait
+mix_d="$(cat "$WORK"/mix-d-*.out | grep -c '^t$' || true)"
+mix_r="$(cat "$WORK"/mix-r-*.out | grep -c '^t$' || true)"
+mix_used="$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_MIX';")"
+echo "  8 interleaved sessions => $mix_d debits applied, $mix_r refunds applied, used_this_month=$mix_used"
+[[ "$mix_d" == 5 && "$mix_r" == 3 ]] || fail "expected all 5 debits and all 3 refunds to apply; got $mix_d/$mix_r"
+[[ "$mix_used" -ge 0 ]] || fail "used_this_month went negative: $mix_used"
+[[ "$mix_used" == "$((mix_d - mix_r))" ]] \
+  || fail "conservation broken: used=$mix_used, expected debits-refunds=$((mix_d - mix_r))"
+ok "interleaved debits/refunds conserve exactly (used = debits - refunds, never negative)"
+
 # --- NOTIFY is really delivered ---------------------------------------------
 cat >"$WORK/notify.sql" <<SQL
 LISTEN pgrst;
@@ -224,12 +335,12 @@ grep -q 'Asynchronous notification "pgrst" .*received' <<<"$notify_out" \
   || fail "0483 did not deliver NOTIFY pgrst (finding 1 fix missing). psql said: $notify_out"
 ok "NOTIFY pgrst, 'reload schema' is delivered on COMMIT (and 0483 re-applies cleanly — idempotent)"
 
-# --- characterization: the refund regression 0483 deliberately does NOT fix ---
-refund="$(q "SELECT public.deduct_ai_credits('$ORG_REFUND',NULL,-1);")"
-refund_used="$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")"
-[[ "$refund" == "f" && "$refund_used" == 4 ]] \
-  || fail "unexpected refund behaviour: returned '$refund', used_this_month=$refund_used"
-ok "CHARACTERIZATION — a refund (p_amount=-1) returns false and refunds nothing under 0467's guard; unchanged by 0483, reported separately"
+# --- the debit RPC stays closed to negative amounts --------------------------
+[[ "$(svc "SELECT public.deduct_ai_credits('$ORG_REFUND',NULL,-1);")" == "f" ]] \
+  || fail "deduct_ai_credits must stay closed to negative amounts"
+[[ "$(q "SELECT used_this_month FROM public.ai_credits WHERE org_id='$ORG_REFUND';")" == 3 ]] \
+  || fail "a negative deduct must not move credit"
+ok "deduct_ai_credits still refuses negative amounts (0467's guard kept; refunds have their own RPC)"
 
 echo
 echo "PASS — scripts/scrum4939/native-pg-credit-rpc-followups.sh"

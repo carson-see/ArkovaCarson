@@ -34,14 +34,39 @@ One invariant per mechanism, each mutation-tested against the real checker
 | `atMostOnePeriodRow` | the exclusion constraint | let the losing INSERT land instead of being rejected → violated |
 | `exclusionConstraintNeverFires` | the advisory lock | drop the mutex from `acquireProvisionLock` → violated (two racers both pass the EXISTS check; the loser eats a 23P01 that would abort provisioning and 503 the org's first extraction) |
 | `noDebitWithoutPeriod` | the row lock's precondition | drop the "a period row exists" guard from `acquireRowLock` → violated |
-| `debitSerializedByRowLock` | `FOR UPDATE` | make `debitLockTimeout` acquire the lock instead of timing out → violated |
+| `creditMutationSerializedByRowLock` | `FOR UPDATE`, shared by debit and refund | make `debitLockTimeout` acquire the lock instead of timing out → violated; drop the lock guard from `acquireRefundLock` → violated |
 | `lockTimeoutNeverDebits` | fail-CLOSED on 55P03 | make `debitLockTimeout` record a charge → violated |
+| `refundNeverExceedsDebits` | refund is reachable only from DEBITED | let `acquireRefundLock` fire from PROVISIONED → violated; let `commitRefund` clear `debited` → violated |
+| `lockTimeoutNeverRefunds` | fail-CLOSED on a refund 55P03 | make `refundLockTimeout` record the refund → violated |
+| `usedNeverNegative` | aggregate floor (`GREATEST(used - amount, 0)`) | **derived** — implied by `refundNeverExceedsDebits`, so it cannot fail alone. Weaken that invariant to a tautology AND let a refund fire without a debit → violated. Kept as a ratchet: the aggregate is what a customer's balance sees. |
+
+**The refund stage (2026-09-21, migration 0484).** `commitDebit` now lands in
+`DEBITED` rather than `DONE`; from there a racer either `succeedAfterDebit`
+(the charge stands) or refunds, taking the SAME row lock with the SAME
+predicate the debit used. Refund is reachable ONLY from `DEBITED`, mirroring
+the `if (deductedCredit)` / `if (didDebit)` guard at every call site — a refund
+for work that was never charged is a credit grant. `refundLockTimeout` models
+the 55P03 abort: nothing is returned and the charge stands, which is why the
+worker logs at error and enqueues `ai_credits.reconcile_refund`.
+
+NOT modelled, and said out loud rather than omitted: a DOUBLE refund. It is
+reachable in production — a refund that commits and whose response is lost is
+re-applied by the reconciler, and there is no idempotency key — but it is
+bounded by the SQL `GREATEST(...,0)` floor rather than by this protocol, and
+modelling it needs arithmetic the DSL does not have.
+
+`constraintRejected` was folded from a per-racer boolean into a terminal phase
+(`CONSTRAINT_REJECTED`) when the refund stage landed: with the extra variable
+the two-racer estimate was 230 400, over the 100 000 graph-equivalence budget
+cap, and the phase encoding brings it to 69 696 while expressing the same
+thing.
 
 Certificate (tier `pr`, 2 racers, run 2026-09-21): `proofPassed: true`; graph
-equivalence true (73/73 states, 100/100 edges); deadlock check off (an
-all-DONE/all-FAILED_CLOSED world is the correct terminal state of a race, same
-resolution as `agentPassport` / `partnerProvisioning` / `drainRunAccounting`).
-Tier `nightly`, 3 racers: `proofPassed: true`, 1285 generated / 679 distinct.
+equivalence true (181/181 states, 260/260 edges); 8 invariants; deadlock check
+off (an all-terminal world — DONE / FAILED_CLOSED / CONSTRAINT_REJECTED /
+REFUND_FAILED — is the correct end of a race, same resolution as
+`agentPassport` / `partnerProvisioning` / `drainRunAccounting`).
+Tier `nightly`, 3 racers: `proofPassed: true`, 5611 generated / 2800 distinct.
 
 **Gotcha found while doing this — `checks.graphEquivalence` is inert.**
 tla-precheck 0.1.7 reads graph equivalence from `tier.graphEquivalence`
@@ -56,11 +81,9 @@ estimate of 2 809 856, which is a product-of-domains upper bound rather than the
 679 reachable states TLC actually finds. Other machines are small enough that
 nobody has hit this; it is not fixed repo-wide here.
 
-Not modelled: credit arithmetic (the DSL has no arithmetic — a debit is a
-boolean), and refunds. On refunds, see 0483's header: 0467's
-`p_amount <= 0 → RETURN false` guard makes every negative-amount refund call
-return false and refund nothing. That is a reported regression with its own
-ticket, not modelled behaviour.
+Not modelled: credit arithmetic (the DSL has no arithmetic — a debit and a
+refund are booleans per racer, and the `GREATEST` floor is expressed as
+"refunds never outnumber debits").
 
 CI picks the machine up automatically (`scripts/verify-machines.sh` globs
 `machines/*.machine.ts`; the `tla-verify` job runs `npm run verify:machines`).

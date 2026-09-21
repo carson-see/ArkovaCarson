@@ -42,6 +42,20 @@ export interface UsageEvent {
   resultJson?: Record<string, unknown>;
 }
 
+/**
+ * Upper bound on a single refund, enforced here AND in
+ * `public.refund_ai_credits` (migration 0483).
+ *
+ * It is the same 1000 the reconcile job's Zod schema has always enforced on
+ * this operation (`MAX_RECONCILABLE_AMOUNT` in `jobs/ai-credit-reconcile.ts`),
+ * for the same reason: every real caller refunds exactly 1 (one row's credit),
+ * so anything near this ceiling is already a bug, and the bound exists so a
+ * corrupted caller cannot mint an arbitrary balance. Duplicated rather than
+ * imported to keep `cost-tracker.ts` free of a job-module dependency; the two
+ * are pinned equal by test.
+ */
+export const MAX_REFUNDABLE_AMOUNT = 1000;
+
 /** Default credit allocations per billing tier */
 export const CREDIT_ALLOCATIONS = {
   free: 50,
@@ -104,6 +118,22 @@ export async function deductAICredits(
   userId?: string,
   amount: number = 1,
 ): Promise<boolean> {
+  // A NEGATIVE amount used to be how this codebase issued a refund. Migration
+  // 0467 closed `deduct_ai_credits` to non-positive amounts — correctly: a
+  // negative debit is an unbounded credit grant — but nothing told the three
+  // refund call sites, so from 2026-09-19 every refund returned false and
+  // refunded nothing while looking like an ordinary failure. Refunds now go
+  // through `refundAICredits`. Rejecting it here, before the RPC, means the
+  // mistake produces a loud log line instead of silently reappearing behind an
+  // RPC that answers `false` for both reasons.
+  if (!Number.isInteger(amount) || amount <= 0) {
+    logger.error(
+      { orgId, userId, amount },
+      'deductAICredits called with a non-positive amount — refusing; use refundAICredits to return credit',
+    );
+    return false;
+  }
+
   try {
     const { data, error } = await callRpc<boolean>(db, 'deduct_ai_credits', {
       p_org_id: orgId ?? null,
@@ -130,6 +160,73 @@ export async function deductAICredits(
     logger.error(
       { error: err, code: (err as { code?: string })?.code, orgId, userId, amount },
       'Failed to deduct AI credits',
+    );
+    return false;
+  }
+}
+
+/**
+ * Return AI credits to an org/user after work that was charged for did not
+ * happen (a failed or timed-out extraction), via `public.refund_ai_credits`
+ * (migration 0483).
+ *
+ * This is the other half of the AI-credit refund regression from 0467. The
+ * three refund sites — `api/v1/ai-extract.ts`, `api/v1/ai-extract-batch.ts`
+ * and `jobs/ai-credit-reconcile.ts` — all called
+ * `deductAICredits(org, user, -amount)`, and 0467's new
+ * `p_amount <= 0 -> RETURN false` guard turned every one of them into a silent
+ * no-op. `deduct_ai_credits` deliberately stays closed to negative amounts;
+ * returning credit is a separate, separately-bounded operation.
+ *
+ * Returns true only when a row was actually credited. False means NOTHING was
+ * refunded — the org is still overcharged — and every caller must log that at
+ * `error` level with the org/user ids and, where it has one, fall back to the
+ * `ai_credits.reconcile_refund` queue. It must never be turned into a 5xx for
+ * the end user: a failed refund is an ops problem, not a request failure.
+ *
+ * The RPC floors `used_this_month` at zero, so a refund can never mint credit
+ * beyond what the period actually consumed.
+ */
+export async function refundAICredits(
+  orgId?: string,
+  userId?: string,
+  amount: number = 1,
+): Promise<boolean> {
+  if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_REFUNDABLE_AMOUNT) {
+    logger.error(
+      { orgId, userId, amount, max: MAX_REFUNDABLE_AMOUNT },
+      'refundAICredits called with an out-of-range amount — refusing to move credit',
+    );
+    return false;
+  }
+  if (!orgId && !userId) {
+    logger.error(
+      { orgId, userId, amount },
+      'refundAICredits called with neither org nor user — credit would be unattributable',
+    );
+    return false;
+  }
+
+  try {
+    const { data, error } = await callRpc<boolean>(db, 'refund_ai_credits', {
+      p_org_id: orgId ?? null,
+      p_user_id: userId ?? null,
+      p_amount: amount,
+    });
+
+    if (error) {
+      logger.error(
+        { error, code: (error as { code?: string }).code, orgId, userId, amount },
+        'Failed to refund AI credits',
+      );
+      return false;
+    }
+
+    return data === true;
+  } catch (err) {
+    logger.error(
+      { error: err, code: (err as { code?: string })?.code, orgId, userId, amount },
+      'Failed to refund AI credits',
     );
     return false;
   }

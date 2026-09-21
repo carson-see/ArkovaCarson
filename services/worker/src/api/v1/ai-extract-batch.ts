@@ -36,6 +36,7 @@ import { createExtractionProvider } from '../../ai/factory.js';
 import {
   checkAICredits,
   deductAICredits,
+  refundAICredits,
   ensureAICreditsPeriod,
   logAIUsageEvent,
 } from '../../ai/cost-tracker.js';
@@ -387,15 +388,23 @@ router.post('/', async (req: Request, res: Response) => {
           // RISK-6: refund THIS row's credit (only if we actually debited it).
           // If the refund itself fails, do NOT swallow it — enqueue a
           // reconciliation job so the credit is recovered out-of-band.
+          // Was `deductAICredits(orgId, userId, -1)` until migration 0483 —
+          // a silent no-op since 0467 closed that RPC to non-positive amounts
+          // (the AI-credit refund regression from 0467). Now the dedicated
+          // `refund_ai_credits` RPC with a positive amount.
           if (didDebit) {
-            const refunded = await deductAICredits(orgId, userId, -1).catch((refundErr) => {
-              logger.warn(
+            const refunded = await refundAICredits(orgId, userId, 1).catch((refundErr) => {
+              logger.error(
                 { error: refundErr, orgId, userId, rowIndex: i },
-                'Exception refunding credit for failed batch row',
+                'Exception refunding credit for failed batch row — org remains overcharged',
               );
               return false;
             });
             if (!refunded) {
+              logger.error(
+                { orgId, userId, rowIndex: i, amount: 1 },
+                'AI credit refund failed for a failed batch row — enqueueing reconciliation',
+              );
               await enqueueRefundReconciliation({
                 orgId,
                 userId,

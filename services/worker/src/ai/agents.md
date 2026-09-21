@@ -199,3 +199,27 @@ exactly one thing: **nothing was charged.**
   guard means every REFUND call (`deductAICredits(org, user, -n)` in
   `api/v1/ai-extract.ts`, `api/v1/ai-extract-batch.ts`, `jobs/ai-credit-reconcile.ts`)
   returns false and refunds nothing. See migration 0483's header.
+
+# Refunds have their own RPC — 2026-09-21 (migration 0484)
+
+**Never refund with a negative debit.** `deductAICredits(org, user, -1)` was how
+this codebase returned credit until migration 0484. Migration 0467 closed
+`deduct_ai_credits` to non-positive amounts on 2026-09-19 — correctly, since a
+negative debit is an unbounded credit grant — and nothing told the three refund
+call sites, so for three weeks every refund returned `false` and refunded
+nothing while looking like an ordinary failure. Failed extractions stayed
+charged.
+
+- **DO** use `refundAICredits(orgId, userId, amount)` → `public.refund_ai_credits`.
+  Positive amounts only, bounded by `MAX_REFUNDABLE_AMOUNT` (1000, pinned equal
+  to `MAX_RECONCILABLE_AMOUNT` in `jobs/ai-credit-reconcile.ts` by test).
+- **DO NOT** pass a non-positive amount to `deductAICredits`. It now rejects it
+  before the RPC and logs at error, so the mistake cannot recur silently.
+- The RPC floors `used_this_month` at zero, so a refund can never mint credit
+  beyond what the period consumed. There is **no idempotency key** on a refund:
+  one that commits and whose response is lost is re-applied by the reconciler.
+  The floor is what bounds that, not an exactly-once guarantee.
+- A false refund is an **overcharge**: log it at `error` with the org/user ids,
+  raise the credit-RPC Sentry alert and/or enqueue
+  `ai_credits.reconcile_refund`. Never turn it into a 5xx for the end user — a
+  failed refund is an ops problem, not a request failure.

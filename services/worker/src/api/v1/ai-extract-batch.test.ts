@@ -39,6 +39,7 @@ vi.mock('../../ai/cost-tracker.js', () => ({
     hasCredits: true,
   }),
   deductAICredits: vi.fn().mockResolvedValue(true),
+  refundAICredits: vi.fn().mockResolvedValue(true),
   ensureAICreditsPeriod: vi.fn().mockResolvedValue(true),
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -110,7 +111,13 @@ vi.mock('../../ai/eval/calibration.js', () => ({
 
 import { aiBatchExtractRouter, BATCH_ROW_LATENCY_BUDGET_MS } from './ai-extract-batch.js';
 import { db } from '../../utils/db.js';
-import { checkAICredits, deductAICredits, ensureAICreditsPeriod } from '../../ai/cost-tracker.js';
+import {
+  checkAICredits,
+  deductAICredits,
+  refundAICredits,
+  ensureAICreditsPeriod,
+} from '../../ai/cost-tracker.js';
+import { logger } from '../../utils/logger.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { submitJob } from '../../utils/jobQueue.js';
 
@@ -164,6 +171,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
       hasCredits: true,
     });
     vi.mocked(deductAICredits).mockResolvedValue(true);
+    vi.mocked(refundAICredits).mockResolvedValue(true);
     vi.mocked(ensureAICreditsPeriod).mockResolvedValue(true);
     vi.mocked(submitJob).mockResolvedValue('job-1');
   });
@@ -455,13 +463,49 @@ describe('POST /api/v1/ai/extract-batch', () => {
         ],
       });
 
-    // Exactly ONE refund of a single credit (only the failed row).
-    const refundCalls = vi
-      .mocked(deductAICredits)
-      .mock.calls.filter(([, , amount]) => amount === -1);
+    // Exactly ONE refund of a single credit (only the failed row), through the
+    // dedicated refund RPC. A NEGATIVE deduct is the 0467 regression and must
+    // never reappear: 0467's `p_amount <= 0 -> RETURN false` made it a no-op.
+    const refundCalls = vi.mocked(refundAICredits).mock.calls;
     expect(refundCalls).toHaveLength(1);
-    // Never a batch-level negative refund.
-    expect(deductAICredits).not.toHaveBeenCalledWith('org-1', 'user-1', -2);
+    expect(refundAICredits).toHaveBeenCalledWith('org-1', 'user-1', 1);
+    expect(
+      vi.mocked(deductAICredits).mock.calls.filter(([, , amount]) => (amount ?? 1) < 0),
+    ).toHaveLength(0);
+    // Never a batch-level blanket refund.
+    expect(refundAICredits).not.toHaveBeenCalledWith('org-1', 'user-1', 2);
+  });
+
+  it('logs a failed row refund at ERROR with the ids before enqueueing reconciliation', async () => {
+    let extractCall = 0;
+    mockExtractionProvider.extractMetadata.mockImplementation(() => {
+      extractCall++;
+      if (extractCall === 2) throw new Error('AI provider timeout');
+      return Promise.resolve({
+        fields: { credentialType: 'DEGREE' },
+        confidence: 0.9,
+        provider: 'mock',
+        tokensUsed: 50,
+      });
+    });
+    vi.mocked(refundAICredits).mockResolvedValue(false);
+
+    const app = createApp();
+    const res = await request(app)
+      .post('/')
+      .send({
+        rows: [
+          { text: 'row 1', credentialType: 'DEGREE' },
+          { text: 'row 2', credentialType: 'LICENSE' },
+        ],
+      });
+
+    // An overcharge is an ops problem: logged at error with ids, never a 500.
+    expect(res.status).toBe(200);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org-1', userId: 'user-1' }),
+      expect.stringContaining('refund'),
+    );
   });
 
   it('does NOT silently swallow a refund failure — it enqueues a reconciliation job', async () => {
@@ -477,10 +521,8 @@ describe('POST /api/v1/ai/extract-batch', () => {
         tokensUsed: 50,
       });
     });
-    vi.mocked(deductAICredits).mockImplementation((_org, _user, amount) => {
-      if (amount === -1) return Promise.resolve(false); // refund fails
-      return Promise.resolve(true); // debits succeed
-    });
+    vi.mocked(refundAICredits).mockResolvedValue(false); // refund fails
+    vi.mocked(deductAICredits).mockResolvedValue(true); // debits succeed
 
     const app = createApp();
     const res = await request(app)
@@ -556,9 +598,11 @@ describe('POST /api/v1/ai/extract-batch', () => {
         results: Array<{ success: boolean }>;
       };
       expect(responseJson.results[0].success).toBe(false);
-      // Debited once, refunded once → net zero for the timed-out row.
+      // Debited once, refunded once → net zero for the timed-out row. The
+      // refund is a POSITIVE amount through refund_ai_credits; a negative
+      // deduct is the 0467 regression and refunds nothing.
       const debits = vi.mocked(deductAICredits).mock.calls.filter(([, , a]) => a === 1);
-      const refunds = vi.mocked(deductAICredits).mock.calls.filter(([, , a]) => a === -1);
+      const refunds = vi.mocked(refundAICredits).mock.calls.filter(([, , a]) => a === 1);
       expect(debits).toHaveLength(1);
       expect(refunds).toHaveLength(1);
     } finally {

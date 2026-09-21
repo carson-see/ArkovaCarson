@@ -139,9 +139,18 @@ before 0483 and `55P03` inside the 5 s budget after it, with `used_this_month`
 unchanged in both cases; all four credit RPCs are service_role-only on all three
 grantee axes; eight concurrent debits against an allocation of five produce
 exactly five successes and `used_this_month = 5` on one row; `NOTIFY pgrst` is
-observed delivered via `LISTEN`. It also pins, as a characterization assertion,
-that a negative `p_amount` (the refund path) returns false and refunds nothing
-under 0467's guard.
+observed delivered via `LISTEN`. It also replays 0484 and proves the refund half RED-then-GREEN: before it, no
+`refund_ai_credits` exists and the old refund path (`deduct_ai_credits` with
+-1) returns false having refunded nothing; after it, a refund decrements by
+exactly the amount, floors at zero (over-refund lands on 0, a refund at 0 stays
+0, so a double refund cannot mint), refuses `p_amount` <=0 / >1000 and
+both-ids-NULL, returns false with no covering period row, RAISES
+`insufficient_privilege` when request claims are absent (`get_caller_role()`
+NULL must fail CLOSED), aborts with 55P03 in ~5 s under contention having moved
+nothing, and conserves exactly across eight interleaved debit/refund sessions
+(`used_this_month` = debits - refunds, never negative). `deduct_ai_credits` is
+re-checked to still refuse negative amounts — 0467's guard is kept, not
+reverted.
 
 The SQLSTATE is read from psql's verbose error line, not from a plpgsql
 `EXCEPTION WHEN OTHERS` handler: `statement_timeout` raises `query_canceled`,

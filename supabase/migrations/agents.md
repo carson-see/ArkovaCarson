@@ -1649,16 +1649,25 @@ for the final C3 source review and fresh qualification.
 
 ## Recent migrations (PR #TBD — SCRUM-4939 follow-ups)
 
-### `0483` reserved — `0483_scrum4939_credit_rpc_followups.sql`
+### `0483` and `0484` reserved
 
-Prefix `0483` is RESERVED by this PR. Inventory taken 2026-09-21 after
-`git fetch origin`: `origin/main` tops out at `0480`; a sweep of every remote
-branch (`git ls-tree` over `git branch -r`) shows `0481` as the highest prefix
-anywhere; `0482` is being taken concurrently by
-`fix/scrum-5280-org-domain-verification-guard` (worktree `cto-scrum5280`), whose
-file is not yet committed. This block is deliberately placed directly after the
-0467/0468 notes rather than at EOF or on the shared anchor, so it cannot collide
-with that PR's own block (CLAUDE.md §6).
+Prefixes `0483` and `0484` are RESERVED by this PR. Inventory re-taken
+2026-09-21 after `git fetch origin`: `origin/main` tops out at `0480`; a sweep
+of every remote branch (`git ls-tree` over `git branch -r`) shows `0482` as the
+highest prefix anywhere, held by
+`fix/scrum-5280-org-domain-verification-guard`; `0483` is this PR's first file.
+This block is deliberately placed directly after the 0467/0468 notes rather
+than at EOF or on the shared anchor, so it cannot collide with that PR's own
+block (CLAUDE.md §6).
+
+Two prefixes rather than one because a migration file is immutable once
+written: 0483 was already committed when the refund fix was scoped in, and
+`.claude/hooks/check-constitution-on-edit.sh` correctly refuses to edit any
+existing `supabase/migrations/*.sql`. The split is also useful on its own — the
+refund function can be rolled back without giving up 0483's lock_timeout
+hardening.
+
+### `0483_scrum4939_credit_rpc_followups.sql`
 
 Compensating migration for `0467` and `0468`, both already applied on prod and
 therefore immutable. Three corrections, no signature/return/logic change:
@@ -1700,15 +1709,49 @@ the rollback also removes 0468's `auth.role()` guard — after it, that GRANT li
 is the only thing keeping the RPC off the public internet. The full runnable
 text is in 0483's header.
 
-**Reported, NOT fixed here:** 0467 added `IF p_amount IS NULL OR p_amount <= 0
-THEN RETURN false` to `deduct_ai_credits`. The baseline body had no such guard,
-and three live call sites pass a NEGATIVE amount to REFUND
-(`api/v1/ai-extract.ts`, `api/v1/ai-extract-batch.ts`, and all of
-`jobs/ai-credit-reconcile.ts`). Under 0467 every refund returns false and
-refunds nothing, leaving orgs charged for extractions that failed. The native
-harness pins the current behaviour as a characterization assertion. Needs its
-own ticket, soak, and a product decision on whether service_role may push credit
-the other way.
+### `0484_scrum4939_refund_ai_credits.sql` — the AI-credit refund regression from 0467
+
+0467 added `IF p_amount IS NULL OR p_amount <= 0 THEN RETURN false` to
+`deduct_ai_credits`. That guard is correct — a negative debit is an unbounded
+credit grant — but three live call sites were issuing refunds through exactly
+that door (`api/v1/ai-extract.ts:338`, `api/v1/ai-extract-batch.ts:391`,
+`jobs/ai-credit-reconcile.ts:138`), and `services/worker/src/api/v1/agents.md`
+documents the intent: "each failed/timed-out row refunds its own single
+credit". From 0467 reaching prod on 2026-09-19 until this PR, every refund
+returned false and refunded nothing — failed and timed-out extractions stayed
+charged, and the reconciler that exists to catch exactly that overcharge
+reconciled nothing and dead-lettered every job it claimed.
+
+0484 adds `public.refund_ai_credits(uuid,uuid,integer)`. `deduct_ai_credits`
+stays closed to non-positive amounts. The new function is SECURITY DEFINER,
+`search_path=public`, `lock_timeout=5s`, service_role-only by GRANT **and** by
+an in-body `coalesce(public.get_caller_role() = 'service_role', false)` check
+(0466's idiom — a bare `<> 'service_role'` falls through on NULL claims and
+fails OPEN, which is what 0466 compensated for in 0456 and what 0468's
+`auth.role() != 'service_role'` still carries). It rejects `p_amount` <= 0,
+> 1000 and the both-ids-NULL case; it locks the SAME active period row as the
+debit with the same predicate and `ORDER BY created_at,id LIMIT 1 FOR UPDATE`
+(0467 lines 36-41), which 0467's exclusion constraint makes unambiguous; and it
+sets `used_this_month = GREATEST(used_this_month - p_amount, 0)` so a refund
+can never mint credit beyond what the period consumed.
+
+**Double refund is possible today and is bounded, not prevented.** There is no
+idempotency key on this operation — the reconcile payload carries a fingerprint
+but the job legitimately retries — so a refund that COMMITS and whose response
+is lost is re-applied. The `GREATEST` floor caps that at this period's
+`used_this_month`: it can over-return within a month, never produce a net
+credit grant. No key was invented, because the callers do not carry one.
+
+**Rolling 0484 back also requires reverting the worker callers** — dropping the
+function alone leaves `refundAICredits()` failing with PGRST202/42883 on every
+call and no refund applied. The rollback block says so; what you roll back TO
+is the 0467 behaviour in which refunds silently do nothing.
+
+Native proof extends the same harness: RED (no `refund_ai_credits`; the old
+`deduct(-1)` path returns false and moves nothing) then GREEN (exact decrement,
+floor at 0 twice over, bounds refused, absent-claims RAISE with nothing moved,
+55P03 in ~5 s with nothing moved, and eight interleaved sessions conserving
+`used_this_month` = debits - refunds >= 0).
 
 Tier T3 (migration). No hosted or prod application asserted by this PR; the only
 execution to date is the local scratch-database run of

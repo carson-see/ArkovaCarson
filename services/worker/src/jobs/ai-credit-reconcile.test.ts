@@ -23,6 +23,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockProcessNextJob = vi.fn();
 const mockDeductAICredits = vi.fn();
+const mockRefundAICredits = vi.fn();
 const mockCaptureException = vi.fn();
 const mockLoggerError = vi.fn();
 const mockLoggerWarn = vi.fn();
@@ -33,6 +34,7 @@ vi.mock('../utils/jobQueue.js', () => ({
 }));
 vi.mock('../ai/cost-tracker.js', () => ({
   deductAICredits: (...args: unknown[]) => mockDeductAICredits(...args),
+  refundAICredits: (...args: unknown[]) => mockRefundAICredits(...args),
 }));
 vi.mock('../utils/sentry.js', () => ({
   Sentry: { captureException: (...args: unknown[]) => mockCaptureException(...args) },
@@ -122,6 +124,7 @@ function withClaimedJob(claimed: CapturedJob): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDeductAICredits.mockResolvedValue(true);
+  mockRefundAICredits.mockResolvedValue(true);
   mockProcessNextJob.mockResolvedValue({ claimed: false, status: 'idle' });
 });
 
@@ -136,12 +139,18 @@ describe('ai_credits.reconcile_refund consumer', () => {
     );
   });
 
-  it('re-applies the lost refund as a NEGATIVE deduction for the exact amount', async () => {
+  // Was `deductAICredits(org, user, -amount)` until migration 0483. 0467 had
+  // added `p_amount <= 0 -> RETURN false` to that RPC, so this reconciler —
+  // the last line of defence against an overcharge — silently reconciled
+  // nothing and dead-lettered every job it ever claimed. It now calls the
+  // dedicated `refund_ai_credits` RPC with a POSITIVE amount.
+  it('re-applies the lost refund through refundAICredits with a POSITIVE amount', async () => {
     withClaimedJob(job(validPayload));
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).toHaveBeenCalledWith(ORG_ID, USER_ID, -1);
+    expect(mockRefundAICredits).toHaveBeenCalledWith(ORG_ID, USER_ID, 1);
+    expect(mockDeductAICredits).not.toHaveBeenCalled();
     expect(result.reconciled).toBe(1);
     expect(result.failed).toBe(0);
   });
@@ -151,11 +160,11 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).toHaveBeenCalledWith(ORG_ID, USER_ID, -3);
+    expect(mockRefundAICredits).toHaveBeenCalledWith(ORG_ID, USER_ID, 3);
   });
 
   it('throws when the refund fails again so processNextJob retries then dead-letters', async () => {
-    mockDeductAICredits.mockResolvedValue(false);
+    mockRefundAICredits.mockResolvedValue(false);
     withClaimedJob(job(validPayload));
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
@@ -166,7 +175,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
   });
 
   it('emits a Sentry event when the job dead-letters — a permanently lost refund is an overcharge', async () => {
-    mockDeductAICredits.mockResolvedValue(false);
+    mockRefundAICredits.mockResolvedValue(false);
     // Last attempt: processNextJob will mark this `dead`, not `failed`.
     withClaimedJob(job(validPayload, { attempts: 3, max_attempts: 3 }));
 
@@ -180,7 +189,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).not.toHaveBeenCalled();
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
   });
 
@@ -189,7 +198,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).not.toHaveBeenCalled();
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
   });
 
@@ -198,7 +207,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).not.toHaveBeenCalled();
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
   });
 
@@ -209,7 +218,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
   });
 
   it('never logs the reconciliation payload verbatim (no fingerprint in log values)', async () => {
-    mockDeductAICredits.mockResolvedValue(false);
+    mockRefundAICredits.mockResolvedValue(false);
     withClaimedJob(job(validPayload));
 
     await runAiCreditReconcileJobs({ limit: 1 });

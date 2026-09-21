@@ -33,9 +33,11 @@ import { logger } from '../utils/logger.js';
 import {
   checkAICredits,
   deductAICredits,
+  refundAICredits,
   logAIUsageEvent,
   ensureAICreditsPeriod,
   CREDIT_ALLOCATIONS,
+  MAX_REFUNDABLE_AMOUNT,
 } from './cost-tracker.js';
 
 describe('AI Cost Tracker', () => {
@@ -199,6 +201,24 @@ describe('AI Cost Tracker', () => {
       expect(result).toBe(false);
     });
 
+    // 0467 added `p_amount <= 0 -> RETURN false` to the RPC, which turned every
+    // `deductAICredits(org, user, -1)` refund into a silent no-op for three
+    // weeks. Refunds now go through `refundAICredits`; a negative amount here
+    // is a caller bug and must be rejected in TypeScript so the mistake cannot
+    // recur silently behind an RPC that answers `false` either way.
+    it('rejects a non-positive amount without calling the RPC', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
+
+      await expect(deductAICredits('org-123', 'user-123', -1)).resolves.toBe(false);
+      await expect(deductAICredits('org-123', 'user-123', 0)).resolves.toBe(false);
+
+      expect(db.rpc).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: -1, orgId: 'org-123' }),
+        expect.stringContaining('refundAICredits'),
+      );
+    });
+
     // The SQLSTATE has to reach the operator: 55P03 means "a stuck holder is
     // sitting on the org's credit row", which is a different page than
     // "connection refused". Flattening every error into a bare message makes
@@ -218,6 +238,74 @@ describe('AI Cost Tracker', () => {
         expect.objectContaining({ code: '55P03', orgId: 'org-123', userId: 'user-123' }),
         expect.stringContaining('Failed to deduct AI credits'),
       );
+    });
+  });
+
+  // Migration 0483 adds `public.refund_ai_credits`, a DEDICATED credit-return
+  // RPC. `deduct_ai_credits` deliberately stays closed to negative amounts —
+  // a negative debit is an unbounded credit grant.
+  describe('refundAICredits', () => {
+    it('calls refund_ai_credits with a POSITIVE amount, never deduct_ai_credits', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
+
+      const result = await refundAICredits('org-123', 'user-123', 1);
+
+      expect(result).toBe(true);
+      expect(db.rpc).toHaveBeenCalledWith('refund_ai_credits', {
+        p_org_id: 'org-123',
+        p_user_id: 'user-123',
+        p_amount: 1,
+      });
+      expect(db.rpc).not.toHaveBeenCalledWith('deduct_ai_credits', expect.anything());
+    });
+
+    it('returns false when the RPC reports no row was credited', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: false, error: null });
+
+      await expect(refundAICredits('org-123')).resolves.toBe(false);
+    });
+
+    it('fails CLOSED and logs the SQLSTATE on a 55P03 lock timeout', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: null,
+        error: { code: '55P03', message: 'canceling statement due to lock timeout' },
+      });
+
+      await expect(refundAICredits('org-123', 'user-123', 1)).resolves.toBe(false);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ code: '55P03', orgId: 'org-123', userId: 'user-123' }),
+        expect.stringContaining('Failed to refund AI credits'),
+      );
+    });
+
+    it('returns false on exception', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('timeout'));
+
+      await expect(refundAICredits('org-123')).resolves.toBe(false);
+    });
+
+    // The DB caps the amount too; this bound is the TypeScript half so a
+    // corrupted caller cannot even attempt to mint an arbitrary balance. It
+    // mirrors MAX_RECONCILABLE_AMOUNT, the bound the reconcile job's Zod
+    // schema has enforced on the same operation since it shipped.
+    it('refuses a non-positive or over-cap amount without calling the RPC', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
+
+      expect(MAX_REFUNDABLE_AMOUNT).toBe(1000);
+      await expect(refundAICredits('org-123', undefined, 0)).resolves.toBe(false);
+      await expect(refundAICredits('org-123', undefined, -5)).resolves.toBe(false);
+      await expect(
+        refundAICredits('org-123', undefined, MAX_REFUNDABLE_AMOUNT + 1),
+      ).resolves.toBe(false);
+
+      expect(db.rpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses when neither org nor user is identified', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
+
+      await expect(refundAICredits(undefined, undefined, 1)).resolves.toBe(false);
+      expect(db.rpc).not.toHaveBeenCalled();
     });
   });
 

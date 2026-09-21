@@ -21,8 +21,12 @@
  *
  * WHAT THIS DOES
  *
- *   1. Re-applies the lost refund (`deductAICredits(org, user, -amount)`),
- *      which is the actual remedy — the customer gets the credit back.
+ *   1. Re-applies the lost refund (`refundAICredits(org, user, amount)`),
+ *      which is the actual remedy — the customer gets the credit back. Until
+ *      migration 0483 this was `deductAICredits(org, user, -amount)`, which
+ *      migration 0467 had already turned into a no-op, so this last line of
+ *      defence against an overcharge reconciled nothing and dead-lettered
+ *      every job it claimed.
  *   2. On a refund that still fails, throws so `processNextJob` applies the
  *      shared exponential-backoff retry and, on the final attempt, the dead
  *      letter policy.
@@ -40,7 +44,7 @@
 import { z } from 'zod';
 import { dbUuid } from '../utils/db-row-validation.js';
 
-import { deductAICredits } from '../ai/cost-tracker.js';
+import { refundAICredits } from '../ai/cost-tracker.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob, type Job } from '../utils/jobQueue.js';
 import { Sentry } from '../utils/sentry.js';
@@ -132,10 +136,12 @@ async function reconcileOne(job: Job<unknown>): Promise<void> {
     source: source ?? null,
   };
 
-  // A NEGATIVE deduction is the refund. Same helper (and therefore the same
-  // `deduct_ai_credits` RPC) the inline refund used, so this is a retry of the
-  // exact operation that failed, not a second, divergent code path.
-  const refunded = await deductAICredits(orgId ?? undefined, userId ?? undefined, -amount);
+  // Same helper (and therefore the same `refund_ai_credits` RPC) the inline
+  // refund used, so this is a retry of the exact operation that failed, not a
+  // second, divergent code path. `amount` is POSITIVE — the payload's Zod
+  // schema already bounds it to a positive integer <= MAX_RECONCILABLE_AMOUNT,
+  // which `refundAICredits` and the RPC independently re-check.
+  const refunded = await refundAICredits(orgId ?? undefined, userId ?? undefined, amount);
 
   if (!refunded) {
     logger.error(context, 'AI credit refund reconciliation failed — org remains overcharged');

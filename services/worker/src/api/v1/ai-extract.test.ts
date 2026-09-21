@@ -32,6 +32,7 @@ vi.mock('../../ai/gemini.js', () => ({
 vi.mock('../../ai/cost-tracker.js', () => ({
   checkAICredits: vi.fn(),
   deductAICredits: vi.fn(),
+  refundAICredits: vi.fn().mockResolvedValue(true),
   ensureAICreditsPeriod: vi.fn().mockResolvedValue(true),
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -42,7 +43,13 @@ vi.mock('../../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
 import { db } from '../../utils/db.js';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { GeminiProvider } from '../../ai/gemini.js';
-import { checkAICredits, deductAICredits, ensureAICreditsPeriod } from '../../ai/cost-tracker.js';
+import {
+  checkAICredits,
+  deductAICredits,
+  refundAICredits,
+  ensureAICreditsPeriod,
+} from '../../ai/cost-tracker.js';
+import { logger } from '../../utils/logger.js';
 import { Request, Response } from 'express';
 import {
   AI_EXTRACTION_LATENCY_BUDGET_MS,
@@ -310,6 +317,60 @@ describe('AI Extraction Endpoint', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ error: 'credit_system_unavailable' }),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // The AI-credit refund regression from 0467.
+  //
+  // This path debits 1 credit, then refunds it when the provider fails or
+  // blows the latency budget. It did that with `deductAICredits(org, user, -1)`
+  // — and 0467 added `IF p_amount <= 0 THEN RETURN false` to the RPC, so since
+  // 2026-09-19 the refund has returned false and refunded nothing. Every failed
+  // extraction stayed charged. Migration 0483 adds a dedicated
+  // `refund_ai_credits` RPC; `deduct_ai_credits` deliberately stays closed to
+  // negative amounts.
+  // ---------------------------------------------------------------------
+  describe('refund on extraction failure', () => {
+    async function runFailingExtraction() {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+      mockExtractionDatabase();
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 500,
+        usedThisMonth: 10,
+        remaining: 490,
+        hasCredits: true,
+      });
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+        name: 'gemini',
+        extractMetadata: vi.fn().mockRejectedValue(new Error('provider exploded')),
+      });
+      await handler!(req, res);
+      return res;
+    }
+
+    it('refunds via refund_ai_credits with a POSITIVE amount, not a negative debit', async () => {
+      await runFailingExtraction();
+
+      expect(refundAICredits).toHaveBeenCalledWith('org-456', 'user-123', 1);
+      expect(deductAICredits).not.toHaveBeenCalledWith('org-456', 'user-123', -1);
+    });
+
+    it('logs a failed refund at ERROR with the ids and still answers the caller', async () => {
+      (refundAICredits as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+
+      const res = await runFailingExtraction();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: 'org-456', userId: 'user-123' }),
+        expect.stringContaining('refund'),
+      );
+      // A failed refund is an ops problem, not a user-facing failure: the
+      // degraded-fallback response is unchanged.
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalled();
     });
   });
 
@@ -705,7 +766,10 @@ describe('AI Extraction Endpoint', () => {
           issuerName: 'University of Michigan',
         }),
       );
-      expect(deductAICredits).toHaveBeenCalledWith('org-456', 'user-123', -1);
+      // A latency-budget overrun is a failed extraction: the credit comes back
+      // through refund_ai_credits, not a negative debit (0467 closed that door
+      // and nothing refunded for three weeks as a result).
+      expect(refundAICredits).toHaveBeenCalledWith('org-456', 'user-123', 1);
     } finally {
       vi.useRealTimers();
     }

@@ -24,6 +24,14 @@
  * that makes a second overlapping period impossible even if the guard above
  * were ever bypassed.
  *
+ * `public.refund_ai_credits(uuid,uuid,integer)` (0484) returns credit after work
+ * that was charged for did not happen. It locks the SAME row with the SAME
+ * predicate as the debit and floors `used_this_month` at zero. It exists
+ * because 0467 closed `deduct_ai_credits` to non-positive amounts while three
+ * call sites were issuing refunds through exactly that door — the AI-credit
+ * refund regression from 0467, in which every failed extraction stayed charged
+ * from 2026-09-19.
+ *
  * `public.deduct_ai_credits(uuid,uuid,integer)` (0467, hardened by 0483):
  *
  *     SET search_path='public' SET lock_timeout='5s'   -- 0483 adds lock_timeout
@@ -44,11 +52,22 @@
  *     the org's FIRST extraction 503s — the exact bug #2999 exists to remove.
  *     The lock converts that error into the clean `checkFoundRow` no-op. Stated
  *     as an unreachability claim: no racer is ever rejected by the constraint.
- *   - `noDebitWithoutPeriod` / `debitSerializedByRowLock` — the ROW LOCK.
+ *   - `noDebitWithoutPeriod` / `creditMutationSerializedByRowLock` — the ROW
+ *     LOCK. Debits and refunds take the same lock on the same row, so at most
+ *     one of EITHER is ever in flight.
  *   - `lockTimeoutNeverDebits` — fail-CLOSED. A 5 s lock timeout (SQLSTATE
  *     55P03) must never be recorded as a charge; treating it as success is a
  *     free extraction, the defect class ai-extract.ts closed in SCRUM-3502 and
  *     this PR closes in embeddings.ts.
+ *   - `refundNeverExceedsDebits` / `usedNeverNegative` — the refund can only
+ *     undo a charge that was actually recorded, and never more of them than
+ *     were recorded. These are the model's stand-in for
+ *     `GREATEST(used_this_month - p_amount, 0)`: the DSL has no arithmetic, so
+ *     a debit and a refund are booleans per racer and the floor is expressed as
+ *     "refunds never outnumber debits".
+ *   - `lockTimeoutNeverRefunds` — a refund that aborted on 55P03 recorded
+ *     nothing, so the worker's error log + `ai_credits.reconcile_refund`
+ *     enqueue is the whole remedy and it cannot double-apply silently.
  *
  * MODELING CHOICES, stated so the proof is not read as stronger than it is:
  *   - One domain element = one concurrent request for ONE org's ONE period.
@@ -82,6 +101,17 @@
  *     precisely what `exclusionConstraintNeverFires` asserts.
  *   - `insufficientCredits` covers `remaining < amount` (RETURN false under the
  *     row lock, no debit).
+ *   - A racer may refund ONLY after `commitDebit` (phase DEBITED). That mirrors
+ *     the code: every call site refunds under an `if (deductedCredit)` /
+ *     `if (didDebit)` guard, because a refund for work that was never charged
+ *     would be a credit grant. `succeedAfterDebit` is the ordinary path where
+ *     the work succeeded and the charge stands.
+ *   - NOT modelled: a DOUBLE refund. It is reachable in production — a refund
+ *     that commits and whose response is lost is re-applied by
+ *     `jobs/ai-credit-reconcile.ts`, and there is no idempotency key on the
+ *     operation. It is bounded by the SQL `GREATEST(...,0)` floor rather than
+ *     by this protocol, and modelling it would need the arithmetic the DSL
+ *     does not have. Stated here rather than silently omitted.
  *
  * Not modeled: the credit arithmetic itself (the DSL has no arithmetic — a
  * debit is a boolean "this racer charged the row"), and refunds. On refunds see
@@ -116,7 +146,7 @@ import {
 const phase = variable("phase");
 const rowInserted = variable("rowInserted");
 const debited = variable("debited");
-const constraintRejected = variable("constraintRejected");
+const refunded = variable("refunded");
 const advisoryHolder = variable("advisoryHolder");
 const rowLockHolder = variable("rowLockHolder");
 
@@ -127,11 +157,31 @@ const periodRows = count(
   eq(index(rowInserted, param("q")), lit(true)),
 );
 
-/** Racers currently holding the `FOR UPDATE` row lock inside the debit RPC. */
-const debitsInFlight = count(
+/**
+ * Racers holding the `FOR UPDATE` row lock — the debit and the refund take the
+ * same lock on the same row, so both phases count.
+ */
+const creditMutationsInFlight = count(
   "Racers",
   "q",
-  eq(index(phase, param("q")), lit("DEBIT_HELD")),
+  or(
+    eq(index(phase, param("q")), lit("DEBIT_HELD")),
+    eq(index(phase, param("q")), lit("REFUND_HELD")),
+  ),
+);
+
+/** Charges actually recorded against the period row. */
+const debitCount = count(
+  "Racers",
+  "q",
+  eq(index(debited, param("q")), lit(true)),
+);
+
+/** Charges actually returned. */
+const refundCount = count(
+  "Racers",
+  "q",
+  eq(index(refunded, param("q")), lit(true)),
 );
 
 export const aiCreditsPeriodProvisionMachine = defineMachine({
@@ -153,10 +203,18 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
         "PROVISIONED",
         /** Inside deduct_ai_credits, holding the FOR UPDATE row lock. */
         "DEBIT_HELD",
+        /** A charge is recorded; the work may still fail and be refunded. */
+        "DEBITED",
+        /** Inside refund_ai_credits, holding the same FOR UPDATE row lock. */
+        "REFUND_HELD",
         /** Request finished. */
         "DONE",
         /** Aborted with no debit recorded: 55P03, or no covering row. */
         "FAILED_CLOSED",
+        /** The INSERT was rejected by ai_credits_org_period_no_overlap. */
+        "CONSTRAINT_REJECTED",
+        /** The refund aborted on 55P03: the charge STANDS, nothing returned. */
+        "REFUND_FAILED",
       ),
       lit("START"),
     ),
@@ -164,8 +222,8 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
     rowInserted: mapVar("Racers", boolType(), lit(false)),
     /** This racer's UPDATE committed a debit against that row. */
     debited: mapVar("Racers", boolType(), lit(false)),
-    /** This racer's INSERT was rejected by ai_credits_org_period_no_overlap. */
-    constraintRejected: mapVar("Racers", boolType(), lit(false)),
+    /** This racer's refund committed, returning the charge it had recorded. */
+    refunded: mapVar("Racers", boolType(), lit(false)),
     /** Holder of `pg_advisory_xact_lock('ai_credits:org:'||org_id)`. */
     advisoryHolder: scalarVar(optionType(domainType("Racers")), lit(null)),
     /** Holder of the `SELECT … FOR UPDATE` row lock in deduct_ai_credits. */
@@ -259,9 +317,8 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
         not(eq(periodRows, lit(0))),
       ),
       updates: [
-        setMap("constraintRejected", param("r"), lit(true)),
         setVar("advisoryHolder", lit(null)),
-        setMap("phase", param("r"), lit("FAILED_CLOSED")),
+        setMap("phase", param("r"), lit("CONSTRAINT_REJECTED")),
       ],
     },
 
@@ -317,6 +374,57 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
       updates: [
         setMap("debited", param("r"), lit(true)),
         setVar("rowLockHolder", lit(null)),
+        setMap("phase", param("r"), lit("DEBITED")),
+      ],
+    },
+
+    /** The paid work succeeded — the charge stands, nothing is returned. */
+    succeedAfterDebit: {
+      params: { r: "Racers" },
+      guard: eq(index(phase, param("r")), lit("DEBITED")),
+      updates: [setMap("phase", param("r"), lit("DONE"))],
+    },
+
+    /**
+     * The work failed after the charge, so `refund_ai_credits` (0484) takes the
+     * SAME row lock with the SAME predicate the debit used. Reachable only from
+     * DEBITED: every call site refunds under `if (deductedCredit)` /
+     * `if (didDebit)`, because refunding work that was never charged is a
+     * credit grant.
+     */
+    acquireRefundLock: {
+      params: { r: "Racers" },
+      guard: and(
+        eq(index(phase, param("r")), lit("DEBITED")),
+        eq(rowLockHolder, lit(null)),
+      ),
+      updates: [
+        setVar("rowLockHolder", param("r")),
+        setMap("phase", param("r"), lit("REFUND_HELD")),
+      ],
+    },
+
+    /**
+     * The refund's 5 s `lock_timeout` fires (55P03). NOTHING is returned and
+     * the charge stands: the worker logs at error and enqueues
+     * `ai_credits.reconcile_refund`. Pinned by `lockTimeoutNeverRefunds`.
+     */
+    refundLockTimeout: {
+      params: { r: "Racers" },
+      guard: and(
+        eq(index(phase, param("r")), lit("DEBITED")),
+        not(eq(rowLockHolder, lit(null))),
+      ),
+      updates: [setMap("phase", param("r"), lit("REFUND_FAILED"))],
+    },
+
+    /** `UPDATE … used_this_month = GREATEST(used - amount, 0)` commits. */
+    commitRefund: {
+      params: { r: "Racers" },
+      guard: eq(index(phase, param("r")), lit("REFUND_HELD")),
+      updates: [
+        setMap("refunded", param("r"), lit(true)),
+        setVar("rowLockHolder", lit(null)),
         setMap("phase", param("r"), lit("DONE")),
       ],
     },
@@ -343,7 +451,7 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
       description:
         "No racer is ever rejected by ai_credits_org_period_no_overlap: pg_advisory_xact_lock serializes the EXISTS check and the INSERT, so the second racer takes the clean no-op path instead of a 23P01 that would abort ensure_ai_credits_period and 503 the org's first extraction",
       formula: forall("Racers", "c",
-        eq(index(constraintRejected, param("c")), lit(false)),
+        not(eq(index(phase, param("c")), lit("CONSTRAINT_REJECTED"))),
       ),
     },
 
@@ -358,10 +466,45 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
       ),
     },
 
-    debitSerializedByRowLock: {
+    creditMutationSerializedByRowLock: {
       description:
-        "At most one debit is ever in flight against the row: SELECT … FOR UPDATE is the serialization point, so two concurrent debits cannot both read the same remaining balance",
-      formula: lte(debitsInFlight, lit(1)),
+        "At most one credit mutation — debit OR refund — is ever in flight against the row: both take the same SELECT … FOR UPDATE on the same deterministic row, so a debit and a refund cannot interleave on one stale read of the balance",
+      formula: lte(creditMutationsInFlight, lit(1)),
+    },
+
+    refundNeverExceedsDebits: {
+      description:
+        "A refund can only undo a charge that was actually recorded: no racer refunds without having debited, so refund_ai_credits can never be turned into a credit grant for work that was never paid for",
+      formula: forall("Racers", "c",
+        or(
+          not(eq(index(refunded, param("c")), lit(true))),
+          eq(index(debited, param("c")), lit(true)),
+        ),
+      ),
+    },
+
+    // DERIVED, and deliberately kept. `refundNeverExceedsDebits` is the
+    // stronger per-racer statement and implies this one, so this invariant
+    // cannot fail on its own in the current model — mutation-testing it needs
+    // the per-racer invariant weakened first, and then it does fire. It stays
+    // as a ratchet: the aggregate property is the one that matters to a
+    // customer's balance, and a future edit that loosens the per-racer
+    // guarantee must not be able to pass silently.
+    usedNeverNegative: {
+      description:
+        "Refunds never outnumber debits — the model's stand-in for GREATEST(used_this_month - p_amount, 0), since the DSL has no arithmetic: used_this_month = debits - refunds can never go below zero and a refund can never mint credit beyond what the period consumed",
+      formula: lte(refundCount, debitCount),
+    },
+
+    lockTimeoutNeverRefunds: {
+      description:
+        "A refund that aborted on a 55P03 lock timeout returned nothing and the charge stands — so the caller's error log plus the ai_credits.reconcile_refund enqueue is the entire remedy, never a half-applied refund",
+      formula: forall("Racers", "c",
+        or(
+          not(eq(index(phase, param("c")), lit("REFUND_FAILED"))),
+          eq(index(refunded, param("c")), lit(false)),
+        ),
+      ),
     },
 
     lockTimeoutNeverDebits: {
@@ -391,9 +534,10 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
         // therefore inert — harmless here, where the intent was `true` anyway,
         // but it is why the nightly tier below has to say so at tier level.
         graphEquivalence: true,
-        // An all-DONE / all-FAILED_CLOSED world is the correct terminal state
-        // of a provisioning + debit race, not a liveness bug — same resolution
-        // as agentPassport / partnerProvisioning / drainRunAccounting.
+        // An all-terminal world (DONE / FAILED_CLOSED / CONSTRAINT_REJECTED /
+        // REFUND_FAILED) is the correct end of a provisioning + debit + refund
+        // race, not a liveness bug — same resolution as agentPassport /
+        // partnerProvisioning / drainRunAccounting.
         checks: { deadlock: false, graphEquivalence: true },
       },
       nightly: {
@@ -404,10 +548,10 @@ export const aiCreditsPeriodProvisionMachine = defineMachine({
         // tla-precheck actually honours it (see the pr tier's note). Without
         // that, the 100_000 equivalence budget cap applies and the tier cannot
         // run at all: the budget is a product-of-domains UPPER BOUND
-        // (7 phases x 2^3 x 2^3 x 2^3 x 4 x 4 = 2_809_856 at three racers), not
-        // the reachable graph, which TLC enumerates as a small fraction of it.
+        // (11 phases x 2^3 x 2^3 x 2^3 x 4 x 4 = 10_903_552 at three racers),
+        // not the reachable graph, which TLC enumerates as a small fraction.
         graphEquivalence: false,
-        budgets: { maxEstimatedStates: 3_000_000 },
+        budgets: { maxEstimatedStates: 11_000_000 },
         checks: { deadlock: false, graphEquivalence: false },
       },
     },
