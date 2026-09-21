@@ -63,6 +63,42 @@ async function getUserOrgId(userId: string): Promise<string | null> {
 const MAX_EIN_LENGTH = 32;
 
 /**
+ * SCRUM-5285 — the domain-verification compare-and-swap.
+ *
+ * Both domain routes read `organizations` in one PostgREST statement and write
+ * it in a second. `organizations_update_admin` grants an org admin UPDATE on
+ * every column of their own row, so the SAME admin can PATCH
+ * `organizations.domain` between those two statements. Keyed only by
+ * `.eq('id', orgId)`, the write then lands on a row whose domain is no longer
+ * the one the code was mailed to — i.e. `domain_verified = true` for a domain
+ * the organization never proved.
+ *
+ * That is not a cosmetic badge. Migration `0470`'s
+ * `auto_associate_profile_to_org_by_email_domain` auto-joins every confirmed
+ * signup whose email domain matches an org with `domain_verified IS TRUE`, and
+ * `verification_status = 'VERIFIED'` additionally gates credential issuance and
+ * every connector OAuth. A forged grant captures accounts.
+ *
+ * The close: carry the values read in the SELECT into the UPDATE's WHERE clause
+ * so Postgres — not the handler — evaluates freshness in the same statement
+ * that performs the write, then ask PostgREST which rows it actually changed.
+ * Zero rows means the row moved under us; it is reported as 409, never as a
+ * hollow 200 (`memory/project_hollow_200_statement_timeout_swallow.md`).
+ *
+ * NOTE on NULL: `.eq('domain', null)` is NOT `.is('domain', null)` — PostgREST
+ * renders it as `domain=eq.null`, which is `domain = NULL`, which is NULL, which
+ * matches nothing. Both handlers therefore refuse a null domain BEFORE building
+ * a predicate on it: there is no domain to prove verification for, so the
+ * correct answer is a refusal, not a CAS that can never match.
+ */
+const VERIFICATION_SUPERSEDED = 'verification_superseded';
+
+/** The affected-row count of an `.update(...).select(...)`, NULL-safe. */
+function affectedRowCount(rows: unknown): number {
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+/**
  * Auth gate for the three self-serve verification writers: resolve the
  * caller's org from their OWN profiles row (never a client-supplied org id),
  * then require ORG_ADMIN via the shared _org-auth.ts precedence
@@ -217,17 +253,36 @@ orgVerificationRouter.post('/verify-domain', async (req: Request, res: Response)
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h expiry
 
-    const { error: updateError } = await db
+    // CAS on the domain read above: the token this write issues is a proof
+    // obligation about `org.domain` and nothing else. There is no token
+    // predicate here because this statement is what CREATES the token — the
+    // previous value is deliberately overwritten (restarting verification is
+    // allowed), so only the domain has to still hold.
+    const { data: tokenRows, error: updateError } = await db
       .from('organizations')
       .update({
         domain_verification_token: `${code}:${token}`,
         domain_verification_token_expires_at: expiresAt,
       })
-      .eq('id', orgId);
+      .eq('id', orgId)
+      .eq('domain', org.domain)
+      .select('id');
 
     if (updateError) {
       logger.error({ error: updateError }, 'Failed to set domain verification token');
       res.status(500).json({ error: 'Failed to start domain verification' });
+      return;
+    }
+
+    if (affectedRowCount(tokenRows) === 0) {
+      // The domain changed between the read and the write. Issuing the code
+      // anyway would mail a proof for the OLD domain onto a row carrying the
+      // NEW one.
+      logger.warn({ orgId }, 'Domain verification start superseded by a concurrent domain change');
+      res.status(409).json({
+        error: 'The organization domain changed while verification was starting. Start domain verification again.',
+        code: VERIFICATION_SUPERSEDED,
+      });
       return;
     }
 
@@ -295,7 +350,10 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
 
     const { data: org, error: orgError } = await db
       .from('organizations')
-      .select('domain_verification_token, domain_verification_token_expires_at, ein_tax_id, domain_verified')
+      // `domain` is read HERE, in the same statement as the token, because the
+      // grant below is a claim about this exact pair. Reading it separately (or
+      // re-reading it later) would reopen the window.
+      .select('domain, domain_verification_token, domain_verification_token_expires_at, ein_tax_id, domain_verified')
       .eq('id', orgId)
       .single();
 
@@ -306,6 +364,13 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
 
     if (org.domain_verified) {
       res.status(400).json({ error: 'Domain already verified' });
+      return;
+    }
+
+    if (!org.domain) {
+      // Nothing to prove verification FOR. See the NULL note on
+      // VERIFICATION_SUPERSEDED: this is a refusal, not a CAS.
+      res.status(400).json({ error: 'Organization must have a domain set before verification' });
       return;
     }
 
@@ -332,7 +397,12 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
     // If EIN is also set, fully verify the org.
     const isFullyVerified = !!org.ein_tax_id;
 
-    const { error: updateError } = await db
+    // CAS on BOTH halves of what the code actually proved: the domain it was
+    // mailed to, and the token it was mailed as. The domain predicate closes
+    // the admin's own PATCH window; the token predicate additionally closes a
+    // concurrent verify-domain restart (which rotates the token and would
+    // otherwise have its fresh, unconfirmed code cleared by this write).
+    const { data: grantedRows, error: updateError } = await db
       .from('organizations')
       .update({
         domain_verified: true,
@@ -342,11 +412,25 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
         domain_verification_token_expires_at: null,
         ...(isFullyVerified ? { verification_status: 'VERIFIED' } : {}),
       })
-      .eq('id', orgId);
+      .eq('id', orgId)
+      .eq('domain', org.domain)
+      .eq('domain_verification_token', org.domain_verification_token)
+      .select('id');
 
     if (updateError) {
       logger.error({ error: updateError }, 'Failed to confirm domain verification');
       res.status(500).json({ error: 'Failed to verify domain' });
+      return;
+    }
+
+    if (affectedRowCount(grantedRows) === 0) {
+      // Nothing was granted. Do NOT emit the audit row and do NOT answer 200 —
+      // the caller must know the proof no longer binds and restart.
+      logger.warn({ orgId }, 'Domain verification confirm superseded by a concurrent row change');
+      res.status(409).json({
+        error: 'The organization domain or verification code changed before this confirmation landed. Start domain verification again.',
+        code: VERIFICATION_SUPERSEDED,
+      });
       return;
     }
 
@@ -381,6 +465,13 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
  * POST /api/v1/org/dev-verify
  *
  * Dev-only: bypass all verification and set org to VERIFIED.
+ *
+ * SCRUM-5285: deliberately NOT compare-and-swapped. This handler reads no
+ * domain and makes no claim about one — it is an unconditional bypass, so
+ * there is no read value for a CAS to swap against and a domain predicate
+ * would only be an arbitrary refusal. It is also hard-gated on `isDev`
+ * (`nodeEnv` is `development` or `test`), so it cannot run in production. If it
+ * ever grows a "verify THIS domain" parameter, it needs the CAS.
  */
 orgVerificationRouter.post('/dev-verify', async (req: Request, res: Response) => {
   if (!isDev) {

@@ -254,8 +254,12 @@ describe('POST /verify-domain', () => {
             error: opts.orgError ?? null,
           });
         }
-        // update token
-        return mockQuery({ data: null, error: opts.updateError ?? null });
+        // update token — SCRUM-5285: the handler now CAS-guards this write and
+        // reads the affected-row list back, so the mock must return rows.
+        return mockQuery({
+          data: opts.updateError ? null : [{ id: 'org-abc' }],
+          error: opts.updateError ?? null,
+        });
       }
       return mockQuery({ data: null });
     });
@@ -324,6 +328,7 @@ describe('POST /confirm-domain', () => {
         if (orgCallIdx.current === 1) {
           return mockQuery({
             data: opts.orgData ?? {
+              domain: 'example.com',
               domain_verification_token: '123456:abcdef',
               domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
               ein_tax_id: null,
@@ -332,8 +337,11 @@ describe('POST /confirm-domain', () => {
             error: opts.orgError ?? null,
           });
         }
-        // update
-        return mockQuery({ data: null, error: opts.updateError ?? null });
+        // update — SCRUM-5285: CAS-guarded, affected rows read back.
+        return mockQuery({
+          data: opts.updateError ? null : [{ id: 'org-abc' }],
+          error: opts.updateError ?? null,
+        });
       }
       if (table === 'audit_events') {
         return mockQuery({ data: null });
@@ -358,6 +366,7 @@ describe('POST /confirm-domain', () => {
   it('returns 400 when domain already verified', async () => {
     setupMocks({
       orgData: {
+        domain: 'example.com',
         domain_verification_token: '123456:abcdef',
         domain_verification_token_expires_at: null,
         ein_tax_id: null,
@@ -372,6 +381,7 @@ describe('POST /confirm-domain', () => {
   it('returns 400 when no pending verification', async () => {
     setupMocks({
       orgData: {
+        domain: 'example.com',
         domain_verification_token: null,
         domain_verification_token_expires_at: null,
         ein_tax_id: null,
@@ -386,6 +396,7 @@ describe('POST /confirm-domain', () => {
   it('returns 400 when code expired', async () => {
     setupMocks({
       orgData: {
+        domain: 'example.com',
         domain_verification_token: '123456:abcdef',
         domain_verification_token_expires_at: new Date(Date.now() - 3600_000).toISOString(),
         ein_tax_id: null,
@@ -416,6 +427,7 @@ describe('POST /confirm-domain', () => {
   it('confirms domain + fully verifies when EIN present', async () => {
     setupMocks({
       orgData: {
+        domain: 'example.com',
         domain_verification_token: '123456:abcdef',
         domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
         ein_tax_id: '12-3456789',
@@ -607,11 +619,15 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
       }
       if (table === 'organizations') {
         const chain = mockQuery({ data: orgSelectData, error: null });
+        // SCRUM-5285: a CAS-guarded write reads its affected-row list back, so
+        // the WRITE chain must resolve to rows rather than to the SELECT
+        // fixture — an object has no `.length` and would read as zero rows.
+        const writeChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
         const capture = (payload: Record<string, unknown>) => {
           // Snapshot, not reference: a handler that mutated the payload object
           // after the call must not be able to rewrite what we captured.
           captured.push({ ...payload });
-          return chain;
+          return writeChain;
         };
         (chain.update as ReturnType<typeof vi.fn>).mockImplementation(capture);
         (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(capture);
@@ -628,6 +644,7 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
 
   it('confirm-domain full verification (EIN present) grants VERIFIED without any kyb_* column', async () => {
     const updates = captureOrgUpdates({
+      domain: 'example.com',
       domain_verification_token: '123456:abcdef',
       domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
       ein_tax_id: '12-3456789',
@@ -651,6 +668,7 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
 
   it('confirm-domain partial verification (no EIN) writes no kyb_* column', async () => {
     const updates = captureOrgUpdates({
+      domain: 'example.com',
       domain_verification_token: '123456:abcdef',
       domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
       ein_tax_id: null,
@@ -819,5 +837,186 @@ describe('ORG_ADMIN gate — self-serve verification routes', () => {
     const res = await request(app).get('/org/verification-status');
     expect(res.status).toBe(200);
     expect(res.body.verificationStatus).toBe('PENDING');
+  });
+});
+
+// ─── SCRUM-5285: domain verification is bound to the domain it proved ───
+
+/**
+ * TOCTOU on the self-serve domain grant. Both `verify-domain` and
+ * `confirm-domain` read the organization row in one PostgREST statement and
+ * write the verification columns in a second one keyed only by `.eq('id', …)`.
+ * `organizations_update_admin` lets an org admin UPDATE every column of their
+ * own row, so the same admin can PATCH `organizations.domain` between the two
+ * requests and have the NEW domain come out `domain_verified = true` on the
+ * strength of a code emailed to `admin@<the OLD domain>`.
+ *
+ * That is not a cosmetic badge: migration `0470`'s
+ * `auto_associate_profile_to_org_by_email_domain` auto-joins every confirmed
+ * signup whose email domain matches an org with `domain_verified IS TRUE`, so a
+ * forged grant captures new accounts on a domain the org never proved.
+ *
+ * The fix is a compare-and-swap: carry the domain read in the SELECT into the
+ * UPDATE's WHERE clause (plus the token, where one exists), ask PostgREST for
+ * the affected rows, and refuse with 409 `verification_superseded` when the
+ * predicate matched nothing. Zero rows must never be reported as success.
+ */
+describe('SCRUM-5285 — domain verification compare-and-swap', () => {
+  const app = createApp('user-123');
+
+  type Chain = ReturnType<typeof mockQuery>;
+
+  const FRESH_TOKEN = '123456:abcdef';
+
+  /**
+   * Keeps the organizations SELECT chain and the organizations UPDATE chain
+   * apart, so a test can assert on the predicates attached to the WRITE without
+   * the read's own `.eq('id', …)` polluting the call list.
+   */
+  function setupCas(opts: {
+    orgData: Record<string, unknown> | null;
+    updateRows?: unknown;
+    updateError?: unknown;
+  }) {
+    const readChain = mockQuery({ data: opts.orgData, error: null });
+    const writeChain = mockQuery({
+      data: opts.updateRows === undefined ? [{ id: 'org-abc' }] : opts.updateRows,
+      error: opts.updateError ?? null,
+    });
+    const auditInserts: Record<string, unknown>[] = [];
+    let orgCalls = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        orgCalls += 1;
+        return orgCalls === 1 ? readChain : writeChain;
+      }
+      if (table === 'audit_events') {
+        const chain = mockQuery({ data: null });
+        (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            auditInserts.push({ ...payload });
+            return chain;
+          },
+        );
+        return chain;
+      }
+      return mockQuery({ data: null });
+    });
+    return { readChain, writeChain, auditInserts };
+  }
+
+  /** Every `(column, value)` pair attached to a chain's WHERE clause. */
+  function eqArgs(chain: Chain): [string, unknown][] {
+    return (chain.eq as ReturnType<typeof vi.fn>).mock.calls as [string, unknown][];
+  }
+
+  /** The columns of a `.select('a, b, c')` call, as a list. */
+  function selectedColumns(chain: Chain): string[] {
+    const arg = (chain.select as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    return typeof arg === 'string' ? arg.split(',').map((c) => c.trim()) : [];
+  }
+
+  const pendingOrg = (overrides: Record<string, unknown> = {}) => ({
+    domain: 'example.com',
+    domain_verification_token: FRESH_TOKEN,
+    domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    ein_tax_id: null,
+    domain_verified: false,
+    ...overrides,
+  });
+
+  describe('POST /confirm-domain', () => {
+    it('reads the domain in the SAME statement as the token it is about to trust', async () => {
+      // The code is proof about ONE domain. Reading the token here and the
+      // domain anywhere else re-opens the window this suite exists to close.
+      const { readChain } = setupCas({ orgData: pendingOrg() });
+      await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      expect(selectedColumns(readChain)).toContain('domain');
+    });
+
+    it('compare-and-swaps the grant against BOTH the domain and the token it read', async () => {
+      const { writeChain } = setupCas({ orgData: pendingOrg() });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+
+      expect(res.status).toBe(200);
+      const predicates = eqArgs(writeChain);
+      expect(predicates).toContainEqual(['id', 'org-abc']);
+      expect(predicates).toContainEqual(['domain', 'example.com']);
+      expect(predicates).toContainEqual(['domain_verification_token', FRESH_TOKEN]);
+    });
+
+    it('asks PostgREST which rows it actually changed', async () => {
+      const { writeChain } = setupCas({ orgData: pendingOrg() });
+      await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      // `.select()` on the UPDATE is the only way to see the affected-row count.
+      expect((writeChain.select as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    });
+
+    it('returns 409 verification_superseded when the domain moved under the grant', async () => {
+      // The admin PATCHed organizations.domain between the SELECT and the
+      // UPDATE: the CAS predicate matches zero rows.
+      const { auditInserts } = setupCas({ orgData: pendingOrg(), updateRows: [] });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('verification_superseded');
+      expect(res.body.domainVerified).toBeUndefined();
+      expect(typeof res.body.error).toBe('string');
+      expect(res.body.error).toMatch(/start|restart|again/i);
+      // No hollow success trail either.
+      expect(auditInserts).toEqual([]);
+    });
+
+    it('treats a null affected-row list as zero rows, never as success', async () => {
+      setupCas({ orgData: pendingOrg(), updateRows: null });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('verification_superseded');
+    });
+
+    it('refuses outright when the organization has no domain at read time', async () => {
+      // `.eq('domain', null)` is not `.is('domain', null)`, and there is nothing
+      // to prove verification FOR — so this never reaches the write at all.
+      const { writeChain } = setupCas({ orgData: pendingOrg({ domain: null }) });
+      const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/domain/i);
+      expect((writeChain.update as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /verify-domain', () => {
+    it('compare-and-swaps the token write against the domain it read', async () => {
+      // A token issued for example.com must not end up sitting on a row whose
+      // domain is now attacker.example — the confirm step would then be
+      // proving the wrong domain with a code mailed to the right one.
+      const { writeChain } = setupCas({
+        orgData: { domain: 'example.com', domain_verified: false },
+      });
+      const res = await request(app).post('/org/verify-domain').send({});
+
+      expect(res.status).toBe(200);
+      const predicates = eqArgs(writeChain);
+      expect(predicates).toContainEqual(['id', 'org-abc']);
+      expect(predicates).toContainEqual(['domain', 'example.com']);
+    });
+
+    it('returns 409 verification_superseded and issues no code when the domain moved', async () => {
+      const { auditInserts } = setupCas({
+        orgData: { domain: 'example.com', domain_verified: false },
+        updateRows: [],
+      });
+      const res = await request(app).post('/org/verify-domain').send({});
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('verification_superseded');
+      expect(res.body.devCode).toBeUndefined();
+      expect(mockSendEmail).not.toHaveBeenCalled();
+      expect(auditInserts).toEqual([]);
+    });
   });
 });
