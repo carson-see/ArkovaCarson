@@ -1889,3 +1889,10 @@ here from the shared anchor after the `(PR #2825)` section, where `main`'s
 ignores this repo's `.gitattributes` `agents.md merge=union` driver — reported
 the PR CONFLICTING. A later author claiming a higher PR number orders after
 this block.
+
+## 0483–0485 apply order — correction of record for 0485's header (2026-09-21, PR #3053)
+
+- **Database first, all three in one motion (0483 → 0484 → 0485), then merge → worker deploy.** Never apply 0484 without 0485.
+- DB-first is safe because the deployed worker (`7a98c3d2f`) has zero calls to `refund_ai_credits`; it still attempts refunds as `deduct_ai_credits(…, -1)`, which 0467 refuses. 0483's changes to functions it does call are behaviour-compatible (5 s `lock_timeout` → a contended debit fails fast with `55P03`).
+- 0485's header says "worker first is the safe order". That answers a worker built against 0484's boolean result alone; no such revision was ever deployed, and migrate-before-merge (the drift gate) makes worker-first unavailable anyway. The file is immutable, so this block is the correction.
+- Not expedited ahead of its soak: unlike 0482 it closes no live exploit.
