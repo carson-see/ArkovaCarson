@@ -210,12 +210,17 @@ describe('canonical agent workflow documentation', () => {
     ).map((match) => match[1]);
     // `arkova_anchor_document` is registered at runtime only when
     // `MCP_ENABLE_ANCHOR_DOCUMENT=true` (see mcp-server.ts) — it is not
-    // part of the default read-only launch surface.
+    // part of the default read-only launch surface. `arkova_import_rows`
+    // (UAT-23) is registered inside that same `telemetry.anchorDocumentEnabled`
+    // block, so it is conditional for the same reason and is excluded here
+    // too — the default launch surface stays at fifteen read-only tools.
     const launchToolNames = definedToolNames.filter((name) =>
-      name !== 'arkova_anchor_document' && name !== 'arkova_get_submission_status');
+      name !== 'arkova_anchor_document'
+      && name !== 'arkova_get_submission_status'
+      && name !== 'arkova_import_rows');
 
     expect(launchToolNames).toHaveLength(15);
-    expect(mcpToolsDoc).toContain('exposes fifteen default launch tools plus two conditionally registered submission-lifecycle tools');
+    expect(mcpToolsDoc).toContain('exposes fifteen default launch tools plus three conditionally registered submission-lifecycle tools');
     expect(launchToolNames).not.toContain('arkova_anchor_document');
     expect(mcpToolsDoc).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
 
@@ -262,7 +267,10 @@ describe('canonical agent workflow documentation', () => {
     expect(mcpServerSource).toContain("scopes: Array.isArray(data.scopes) ? data.scopes : []");
     expect(mcpServerSource).toContain('scopes: local.scopes');
     expect(mcpJwtSource).toContain('scopesFromPayload');
-    expect(mcpToolsDoc).toContain('Both are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true`');
+    // UAT-23 added a third tool (`arkova_import_rows`) behind the same gate,
+    // so the reference now says "All three" rather than "Both" — the claim the
+    // assertion guards (conditional registration on the flag) is unchanged.
+    expect(mcpToolsDoc).toContain('All three are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true`');
     expect(mcpToolsDoc).toContain('gated write tool');
   });
 });
