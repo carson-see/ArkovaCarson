@@ -101,7 +101,15 @@ describe('SCRUM-5145 email signup organization association', () => {
           ('${targetId}','${targetEmail}','{"provider":"email"}',now(),now());
       INSERT INTO public.organizations(id,legal_name,display_name)
         VALUES('${orgId}','Member fixture LLC','Member fixture');
-      UPDATE public.profiles SET org_id='${orgId}', role='ORG_ADMIN' WHERE id='${actorId}';
+      -- SCRUM-5280: the actor's authority is an exact org_members admin row,
+      -- not profiles.role. The original fixture wrote profiles.org_id directly
+      -- as an unprivileged caller, which protect_privileged_profile_fields
+      -- refuses ("Cannot modify org_id directly") — so this case failed in
+      -- setup and never reached add_existing_org_member. Migration 0482 removes
+      -- the profile-role fallback this fixture used to depend on; see
+      -- scrum-5280-org-domain-verification-guard.test.ts for the negative case.
+      INSERT INTO public.org_members(user_id,org_id,role)
+        VALUES('${actorId}','${orgId}','admin');
       SELECT set_config('request.jwt.claim.role','service_role',true);
       SELECT idempotent FROM public.add_existing_org_member(
         '${actorId}','${orgId}','${targetEmail}','INDIVIDUAL');
@@ -133,7 +141,11 @@ describe('SCRUM-5145 email signup organization association', () => {
         VALUES
           ('${actorOrgId}','Actor fixture LLC','Actor fixture'),
           ('${targetOrgId}','Target fixture LLC','Target fixture');
-      UPDATE public.profiles SET org_id='${actorOrgId}', role='ORG_ADMIN' WHERE id='${actorId}';
+      -- SCRUM-5280: exact org_members authority over the actor's OWN org only;
+      -- see the note in the preceding case for why the profiles UPDATE this
+      -- replaces could never run.
+      INSERT INTO public.org_members(user_id,org_id,role)
+        VALUES('${actorId}','${actorOrgId}','admin');
       SELECT set_config('request.jwt.claim.role','service_role',true);
       DO $do$ BEGIN
         PERFORM public.add_existing_org_member(
