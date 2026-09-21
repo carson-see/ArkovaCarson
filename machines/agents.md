@@ -533,3 +533,25 @@ a runtime adapter. Actual migration 0460 lock waiting, credit amounts, authority
 audit attribution and transactional rollback are exercised independently by
 `scripts/verify-suborg-offboard.py`; integer conservation, other credit sources
 and live staging qualification are not established by the boolean TLA model.
+
+## 2026-09-21 — `aiCreditsPeriodProvision`: cross-period independence was not structural for refunds (SCRUM-4939)
+
+The machine's docstring claimed cross-org AND cross-period independence were
+both "structural … and not modeled". The cross-ORG half is true (the advisory
+key is `'ai_credits:org:'||org_id` and every statement is scoped by `org_id`).
+The cross-PERIOD half was true of the debit and **false of the refund**: 0484's
+`refund_ai_credits` evaluated its period window at the instant it refunded, so a
+reconciled refund crossing a month boundary decremented the NEW period. Calling
+that structural is what kept it out of the model AND out of review.
+
+Migration 0485 scopes the refund by `coalesce(p_debited_at, now())`, so debit
+and refund act on one row again — which is the premise the single-period domain,
+and therefore `refundNeverExceedsDebits` / `usedNeverNegative`, rest on. The
+docstring now states each claim separately and names the residual (a caller
+supplying a WRONG `p_debited_at` — a worker type-level property of
+`AICreditDebit`, not of this protocol).
+
+**Rule this leaves behind:** a "not modelled because it is structural" note must
+name the mechanism that makes it structural, per claim. Two claims sharing one
+justification is how a false one travels on a true one's credibility. No
+invariant or action changed, so the mutation kills are unaffected.

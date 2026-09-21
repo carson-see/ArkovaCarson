@@ -156,3 +156,24 @@ The SQLSTATE is read from psql's verbose error line, not from a plpgsql
 `EXCEPTION WHEN OTHERS` handler: `statement_timeout` raises `query_canceled`,
 which plpgsql deliberately does not let `WHEN OTHERS` swallow, so a
 handler-based probe cannot observe the pre-0483 case at all.
+
+## 2026-09-21 — `scrum4939/native-pg-credit-rpc-followups.sh` stopped leaking scratch databases
+
+Two fixes, both of which had been producing silent damage:
+
+- **`dropdb --force`** (PG13+), with a `pg_terminate_backend` sweep and a plain
+  `dropdb` fallback. The concurrency sections fork psql sessions, so the EXIT
+  trap's `dropdb` regularly raced a backend that had not finished
+  disconnecting, failed with 55006, and had that failure swallowed by `|| true`.
+  Five `arkova_scrum4939_0483_*` databases had accumulated on the dev host; they
+  are dropped. A drop that still fails now prints a WARN naming the database.
+- **The lock-contention probe terminates the holder BACKEND**, not just its psql
+  client, and waits for it to leave `pg_stat_activity`. The holder runs
+  `pg_sleep(20)`; killing the client does not interrupt that, so the row stayed
+  locked for the rest of the budget and whatever ran next against the same org
+  failed with a spurious 55P03 that looked like a real finding.
+
+The harness also covers migration 0485 now: RED for both 0484 findings (a
+fully-clamped refund answering `true`; a last-month debit refunded against this
+month's period) then GREEN for the integer return, the NULL-vs-0 distinction,
+`p_debited_at` selecting the debit's period, and omitting it behaving as 0484.

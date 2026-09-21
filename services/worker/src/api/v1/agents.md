@@ -1828,3 +1828,37 @@ skips that org-only quota, and HTTP must not pre-increment or compensate usage a
 ## PR #2904 integration with #2844 atomic offboarding
 
 Approve/revoke, credit transfer and offboard events emit once inside the shared successful cores, covering session and API-key callers. Approve/revoke requires its audit write before emission. Offboard waits for0460's single transaction and uses its returned locked balances; it never re-reads or reclaims credits in HTTP. Idempotent retries emit offboard completion without repeating a reclaim or suspension. Public response shapes are unchanged.
+
+## 2026-09-21 — AI credit failures: 402 is for the CUSTOMER, 503 is for US (SCRUM-4939)
+
+`ai-embed.ts` chose its status with `result.error?.includes('credit') ? 402 : 500`.
+Every credit failure in `ai/embeddings.ts` says "credit", so a 55P03 lock
+timeout on `deduct_ai_credits` or a plain RPC outage answered
+`402 insufficient_credits` — telling a customer who HAS credits to go buy more,
+for a failure that is ours and retryable. Provider errors mentioning
+"credential" matched the same substring from the other direction.
+
+**Never classify a failure by its message text on these routes.** The embedding
+result carries a typed `EmbeddingFailureCode`; both `/ai/embed` and
+`/ai/embed/batch` branch on it. `credit_debit_unavailable` /
+`credit_check_unavailable` → **503 + `Retry-After`**, body
+`credit_system_unavailable` — the reasoning `ai-extract.ts` already carried.
+`insufficient_credits` → 402, genuine exhaustion only. A batch that failed
+ENTIRELY for one credit reason takes that reason's status; a PARTIAL failure
+stays 200 with the per-row codes, because no single status describes it. Both
+are documented additively in `docs.ts`.
+
+**Both extraction routes now enqueue `ai_credits.reconcile_refund` when a refund
+fails after a successful debit.** `ai-extract.ts` previously raised the
+credit-RPC Sentry alert and stopped there — an alert is a notification, not a
+remedy, so an overcharge on the SINGLE path was surfaced to us and never
+returned to the customer, while the identical failure on the batch path was
+reconciled automatically. The producer lives in
+`ai/credit-refund-reconciliation.ts` and is shared.
+
+**Refunds address the DEBIT, not the moment of refunding.** Both routes capture
+an `AICreditDebit` (`recordAICreditDebit()`) when the debit succeeds and pass it
+to `refundAICredits` and to the queue: both credit RPCs select their row with an
+OR across `org_id`/`user_id`, and since migration 0485 the period is scoped by
+`coalesce(p_debited_at, now())`. A refund that returns ZERO credits (the 0485
+`clamped` outcome) is logged at `warn` and is NOT reconciled — nothing is owed.
