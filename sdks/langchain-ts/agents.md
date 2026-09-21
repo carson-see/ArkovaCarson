@@ -89,3 +89,34 @@ top of the recovered content:
   original PR.
 
 See `packages/sdk/agents.md`'s 2026-09-21 entry for the sibling-package recovery.
+
+## 2026-09-21 — ESM-only decision (review finding, same recovery)
+
+`nodenext`/`"type": "module"` (both from the recovered content above) made this package ESM-only
+while `engines.node` still said `>=18` with no `exports` map — a CJS consumer on Node 18/20 hits
+`ERR_REQUIRE_ESM` with no warning ahead of time. Two ways to close that gap: dual-build (CJS+ESM
+with an `exports` map covering both) or stay ESM-only and make the constraint explicit + honest.
+**Decision: ESM-only, no dual build this wave.** Reasoning: a CJS build target here would be the
+first one in any `packages/`/`sdks/` package in this repo (every sibling — `packages/sdk`,
+`sdks/mcp-server`, `packages/verifier*`, `packages/embed` — is ESM-only or dual-format via `tsup`,
+none via a hand-rolled CJS `tsc` target), and this package's own consumer story (LangChain-adjacent
+agent tooling) skews overwhelmingly ESM already. Revisit if a real CJS consumer actually shows up.
+
+What changed instead:
+- `package.json` gained an `exports` map (`"."` → `types` + `import` only, no `require` condition)
+  — this is the actual, version-independent contract: a strict resolver or bundler now sees
+  "ESM-only" from the manifest itself, not just from `"type": "module"` (which some legacy tooling
+  still misreads).
+- `engines.node` stays `>=18` — verified, not assumed: the package's only Node-version-gated runtime
+  features are global `fetch` (unflagged since Node 18.0, stable since 21) and `AbortSignal.timeout`
+  (since Node 17.3), both present at the Node 18 floor. Being ESM-only is an orthogonal constraint
+  on TOP of that floor, not a reason to raise it — Node 18 runs this package fine via `import`, it
+  just cannot `require()` it.
+- README states the ESM-only contract prominently, including the Node 22.12 `require(esm)` native
+  interop nuance (see `src/packed-import.test.ts`'s comment for why that interop is NOT asserted on
+  in a test — it is Node-version-dependent runtime behavior, not something this package publishes).
+- `src/packed-import.test.ts` (new): builds fresh, `npm pack`s the real tarball, installs it into an
+  empty temp project (no monorepo hoisting), and runs a real `node` process that `import`s it —
+  proving the published `exports` map actually resolves for a real consumer, which importing the
+  source under vitest cannot prove. Also asserts the packed `package.json`'s `exports.["."]` has
+  exactly `{types, import}` keys, no `require`.

@@ -8,6 +8,19 @@ LangChain `Tool`, `StructuredTool`, or `Runnable`. Use them directly in code tha
 accepts this small callable shape, or wrap them in the adapter required by your
 installed LangChain version before passing them to an agent executor.
 
+**ESM only.** This package ships as `"type": "module"` with an `exports` map
+declaring only `import`/`types` conditions — there is no CJS build and no
+`require` entry point. `import { getArkovaTools } from '@arkova/langchain'`
+works everywhere Node `>=18` runs it. A plain `require('@arkova/langchain')`
+in a CommonJS file will fail with `ERR_REQUIRE_ESM` on Node before 22.12
+(the version that added native `require(esm)` interop for pure-ESM packages);
+on Node `>=22.12` a bare `require()` may transparently succeed via that
+interop, but that is Node doing extra work on your behalf, not a contract
+this package publishes or tests. If your project is CommonJS and you cannot
+move to `import`/dynamic `import()`, use `sdks/mcp-server` instead (published
+as `arkova-mcp-server`) or wait for a dual-build release — see `agents.md`
+for why this package did not add one in this pass.
+
 ## Installation
 
 **Not yet published.** `@arkova/langchain` returns a 404 on the npm registry — no package name has
@@ -56,11 +69,20 @@ variables, or stored secrets.
 | `arkova_batch_verify` | Verify up to 20 public IDs at once, results returned inline |
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |
 
-`arkova_verify_anchor` preserves the verification API response and adds a
-`valid` convenience field derived only from the API's authoritative `verified`
-boolean. Pending states such as `PENDING` and `SUBMITTED`, plus revoked or
-unknown states, return `valid: false`; callers can still inspect `status` and
-the returned proof fields as evidence.
+`arkova_verify_anchor` returns an **explicit allowlist** of the verification
+API response — `verified`, `valid` (a convenience field derived only from the
+API's authoritative `verified` boolean), `public_id`, `status`,
+`credential_type`, `anchored_at`, `network_receipt_id`, `proof_availability`,
+and `issuer`. It does **not** pass through the full API response: the real
+endpoint's frozen schema includes issuer- or extraction-authored free-text
+fields (e.g. `description`, `sub_type`) this package has never reviewed, and
+a tool's return value becomes an LLM's context — an unreviewed free-text
+field is exactly where a prompt-injection payload would live. `issuer`
+(institution name) is the one allowlisted field that is still issuer-authored
+text; it is bounded to 200 characters and has control characters (newlines
+included) stripped before it is returned. Pending states such as `PENDING`
+and `SUBMITTED`, plus revoked or unknown states, return `valid: false`;
+callers can still inspect `status` and the returned proof fields as evidence.
 
 ## Configuration
 

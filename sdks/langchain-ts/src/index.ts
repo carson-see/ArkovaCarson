@@ -32,7 +32,16 @@ interface VerifyResult {
   issuer?: string;
   credential_type?: string;
   anchored_at?: string;
+  network_receipt_id?: string | null;
+  proof_availability?: string;
   tx_id?: string;
+  // The real API response (services/worker/src/api/v1/verify.ts
+  // `VerificationResult`) carries many more fields than this, including
+  // issuer- or extraction-authored free text (`description`, `sub_type`,
+  // ...). Declaring the index signature keeps that possibility visible in
+  // the type instead of silently widening it — `ArkovaVerifyTool.call()`
+  // reads through an explicit allowlist, never a spread, specifically so an
+  // unreviewed or free-text field here cannot reach the caller unfiltered.
   [key: string]: unknown;
 }
 
@@ -121,6 +130,35 @@ function disabledCapabilityMessage(
   return `${subject} ${DISABLED_CAPABILITY_PHRASE} Server detail: ${detail}`;
 }
 
+/** Cap on any issuer-controlled free-text field allowed into tool output. */
+const FREE_TEXT_FIELD_MAX_LENGTH = 200;
+
+/**
+ * Bound and strip control characters from an issuer-controlled string field
+ * before it can reach an LLM as tool output (2026-09-21 security review).
+ *
+ * `issuer` (institution name) is kept in `ArkovaVerifyTool`'s allowlist
+ * because the README documents it, but it is still issuer-authored text —
+ * Arkova does not constrain its content server-side. Newlines and other
+ * control characters are a structural risk (they let a value visually
+ * impersonate multiple "fields" or a role-switch in a downstream LLM
+ * prompt), and an unbounded length is a resource/prompt-budget risk. Both
+ * are removed unconditionally, independent of whether any specific value
+ * looks hostile today.
+ *
+ * `undefined`/non-string input passes through as `undefined` — this never
+ * invents a value the API didn't send.
+ */
+function sanitizeFreeText(value: unknown, maxLength = FREE_TEXT_FIELD_MAX_LENGTH): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  // Strip C0 controls (\x00-\x1F) and DEL (\x7F), which covers \n, \r, \t,
+  // ESC, NUL, etc. — every character a terminal or an LLM's prompt framing
+  // could treat as structural rather than literal text.
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them
+  const stripped = value.replace(/[\x00-\x1F\x7F]/g, ' ').trim();
+  return stripped.slice(0, maxLength);
+}
+
 // ─── HTTP Client ───────────────────────────────────────────────────────
 
 async function arkovaFetch(
@@ -169,13 +207,33 @@ export class ArkovaVerifyTool {
       }
 
       const data = await res.json() as VerifyResult;
+      // Explicit allowlist, never `...data` (2026-09-21 security review).
+      // The real API response schema (services/worker/src/api/v1/verify.ts
+      // `VerificationResult`) carries far more fields than this, including
+      // issuer- or extraction-authored free text (`description`, `sub_type`,
+      // and any future additive-nullable field Arkova adds under
+      // Constitution 1.8) that this package has never reviewed. `call()`'s
+      // return value becomes an LLM's context — an unreviewed free-text
+      // field is exactly where a prompt-injection payload would live, and a
+      // spread had no allowlist to stop it. Every field below is either
+      // structural (an opaque id, an enum, a timestamp) or, for `issuer`
+      // alone, README-documented AND passed through `sanitizeFreeText` —
+      // bounded length, control characters stripped — because Arkova does
+      // not control what an issuer names their institution.
       return JSON.stringify({
-        ...data,
+        verified: data.verified === true,
         // The API's `verified` field is the authoritative contract. Status is
         // evidence, not a second validity predicate: SUBMITTED/PENDING have
         // not reached confirmed verification, and revoked/unknown states fail
         // closed even if a future status vocabulary changes.
         valid: data.verified === true,
+        public_id: data.public_id,
+        status: data.status,
+        issuer: sanitizeFreeText(data.issuer),
+        credential_type: data.credential_type,
+        anchored_at: data.anchored_at,
+        network_receipt_id: data.network_receipt_id,
+        proof_availability: data.proof_availability,
       });
     } catch (err) {
       return JSON.stringify({ valid: false, error: err instanceof Error ? err.message : 'Unknown error' });
