@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { ANCHOR_CREDENTIAL_TYPES } from '../lib/credential-evidence.js';
 import { BULK_FINGERPRINT_SOURCE, handleAnchorSubmit } from '../api/v1/anchor-submit.js';
 import { linkBulkRecipient } from '../api/bulk-recipient.js';
+import { RecipientPepperUnavailableError } from '../lib/recipient-identity.js';
 import { db } from '../utils/db.js';
+import { logger } from '../utils/logger.js';
+import { captureRecipientPepperUnavailableAlert } from '../utils/sentry.js';
 
 const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
 const PrivateTagsSchema = z.object({
@@ -102,20 +105,38 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
     return;
   }
   const body = parsed.data;
+  const orgId = req.apiKey.orgId?.trim() || null;
+  // B1 (BLOCKING, #3034 review): a DENIED answer used to reject the whole
+  // request 403. That is a regression against `main`, where the recipient pass
+  // was separate, non-fatal, and simply skipped when there was no org — so a
+  // personal-scope user importing a spreadsheet with any column containing
+  // "mail" (csvParser auto-maps it to email) got ZERO anchors and a generic
+  // "Failed to process batch". The anchor is the durable fact, so a caller who
+  // may not provision recipients still gets every anchor; only the link is
+  // skipped, and those rows say so per-row.
+  //
+  // `unavailable` is deliberately NOT degraded the same way: it means we could
+  // not READ the authority, it is transient, and it is decided before any anchor
+  // exists — so a retryable 503 loses no durable state, whereas guessing would
+  // either leak provisioning to an unauthorized caller or mark rows with a
+  // failure that may not be true.
+  let recipientAuthority: 'allowed' | 'denied' = 'allowed';
   if (body.rows.some((row) => row.recipient_email)) {
-    const authority = await authorizeRecipientProvisioning(req, req.apiKey.orgId?.trim() || null);
-    if (authority !== 'allowed') {
-      res.status(authority === 'unavailable' ? 503 : 403).json({
-        error: authority === 'unavailable' ? 'recipient_authorization_unavailable' : 'recipient_provisioning_forbidden',
-      });
+    const authority = await authorizeRecipientProvisioning(req, orgId);
+    if (authority === 'unavailable') {
+      res.status(503).json({ error: 'recipient_authorization_unavailable' });
       return;
     }
+    recipientAuthority = authority;
   }
   const results: Array<Record<string, unknown>> = [];
   let created = 0;
   let skipped = 0;
   let failed = 0;
   let recipientLinkFailed = 0;
+  // Counted, not alerted per row: a missing pepper is one config outage shared
+  // by every row in the request (S7).
+  let pepperUnavailableRows = 0;
 
   for (const row of body.rows) {
     try {
@@ -144,21 +165,42 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
         // below re-attempts ONLY the link.
         let recipientFailure: string | null = null;
         if (row.recipient_email && publicId) {
-          try {
-            await linkBulkRecipient({
-              anchorPublicId: publicId,
-              actorUserId: req.apiKey.userId,
-              orgId: req.apiKey.orgId?.trim() || null,
-              email: row.recipient_email,
-              fullName: row.recipient_name,
-              deliverActivationEmail: true,
-            });
-          } catch (error) {
-            // Bounded, non-PII: a thrown message is only echoed when it is
-            // already a machine-readable code.
-            recipientFailure = error instanceof Error && /^[a-zA-Z0-9_.-]{1,80}$/.test(error.message)
-              ? error.message
-              : 'recipient_link_failed';
+          if (recipientAuthority === 'denied') {
+            recipientFailure = 'recipient_provisioning_forbidden';
+            // Warn, not error: the caller is simply not authorized to provision
+            // a recipient. Bounded context only — never the email or the name.
+            logger.warn(
+              { reason: recipientFailure, publicId, orgId },
+              'Bulk import anchored a row but skipped a recipient link the caller may not provision',
+            );
+          } else {
+            try {
+              await linkBulkRecipient({
+                anchorPublicId: publicId,
+                actorUserId: req.apiKey.userId,
+                orgId,
+                email: row.recipient_email,
+                fullName: row.recipient_name,
+                deliverActivationEmail: true,
+              });
+            } catch (error) {
+              if (error instanceof RecipientPepperUnavailableError) {
+                // Distinguishable in the logs AND in the response: this is a
+                // deployment config outage, not a defect in the caller's row.
+                recipientFailure = 'recipient_pepper_unavailable';
+                pepperUnavailableRows += 1;
+              } else {
+                // Bounded, non-PII: a thrown message is only echoed when it is
+                // already a machine-readable code.
+                recipientFailure = error instanceof Error && /^[a-zA-Z0-9_.-]{1,80}$/.test(error.message)
+                  ? error.message
+                  : 'recipient_link_failed';
+              }
+              logger.error(
+                { reason: recipientFailure, publicId, orgId },
+                'Bulk import anchored a row but the recipient link failed',
+              );
+            }
           }
         }
         if (isSkipped) skipped += 1; else created += 1;
@@ -180,6 +222,15 @@ export async function handleSelfServiceBulk(req: Request, res: Response): Promis
       failed += 1;
       results.push({ fingerprint: row.fingerprint.toLowerCase(), status: 'failed', reason: 'submission_failed' });
     }
+  }
+
+  // Once per request, not once per row: every affected row shares one outage.
+  if (pepperUnavailableRows > 0) {
+    captureRecipientPepperUnavailableAlert({
+      operation: 'anchor-self-service-bulk.linkBulkRecipient',
+      orgId,
+      affectedRows: pepperUnavailableRows,
+    });
   }
 
   // A recipient-link failure is a partial outcome even though every anchor

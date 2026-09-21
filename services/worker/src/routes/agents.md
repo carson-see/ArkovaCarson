@@ -382,3 +382,35 @@ already correct: the canonical submit dedupes on fingerprint, answers
 `idempotent: true` without creating or charging, and only the link is
 re-attempted. `handleAnchorImport` shares this handler, so `POST /anchor/import`
 gets the same behaviour.
+
+## 2026-09-21 — Bulk import never fails the whole batch over a recipient (PR #3034)
+
+B1, BLOCKING regression against `main`. A caller without recipient-provisioning
+authority (personal scope / `orgId` null, or a plain org member) had the ENTIRE
+request rejected `403 recipient_provisioning_forbidden` as soon as any row
+carried a `recipient_email`. On `main` the recipient pass was separate,
+non-fatal, and skipped outright when there was no org — so the new behaviour
+meant a personal-scope user importing a spreadsheet with any column containing
+"mail" (`csvParser` auto-maps it to email) got zero anchors and a generic
+"Failed to process batch".
+
+Now: every row's anchor is still submitted, the link is simply not attempted,
+and those rows report `created_recipient_failed` / `skipped_recipient_failed`
+with `reason: 'recipient_provisioning_forbidden'`, counted in
+`recipient_link_failed`, response 207. Rows without a recipient stay plain
+`created` / `skipped`. `created + skipped + failed == total` still holds.
+
+`unavailable` (the authority lookup itself errored) is deliberately NOT degraded
+the same way and still answers `503 recipient_authorization_unavailable` before
+any row runs: it is transient, it is decided before any anchor exists, so a
+retryable 503 loses no durable state — whereas guessing would either leak
+provisioning to an unauthorized caller or mark rows with a failure that may not
+be true.
+
+S7 logging: every skipped or failed recipient link now logs. `logger.warn` for
+the forbidden case, `logger.error` for a thrown one, carrying ONLY the bounded
+reason code, `publicId` and `orgId` — never the recipient email, the recipient
+name, or the raw thrown message (§1.4/§1.6A). A `RecipientPepperUnavailableError`
+gets its own reason code `recipient_pepper_unavailable` and raises
+`captureRecipientPepperUnavailableAlert` ONCE per request with the affected-row
+count, not once per row.

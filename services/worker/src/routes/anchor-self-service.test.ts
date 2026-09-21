@@ -6,7 +6,11 @@ const state = vi.hoisted(() => ({
   profileOrg: null as string | null,
   membership: true,
   membershipRole: 'owner',
+  authorityUnavailable: false,
   linkRecipient: vi.fn(),
+  loggerWarn: vi.fn(),
+  loggerError: vi.fn(),
+  capturePepperAlert: vi.fn(),
   captured: null as null | { orgId: string | null; body: Record<string, unknown>; method: string; url: string },
   bulkBodies: [] as Array<Record<string, unknown>>,
 }));
@@ -34,11 +38,16 @@ vi.mock('../api/v1/anchor-submit.js', () => ({
   },
 }));
 vi.mock('../api/bulk-recipient.js', () => ({ linkBulkRecipient: state.linkRecipient }));
-vi.mock('../utils/logger.js', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('../utils/logger.js', () => ({ logger: { warn: state.loggerWarn, error: state.loggerError } }));
+vi.mock('../utils/sentry.js', () => ({
+  captureRecipientPepperUnavailableAlert: state.capturePepperAlert,
+}));
 vi.mock('../utils/db.js', () => ({ db: { from: vi.fn((table: string) => ({
   select: vi.fn(() => ({
     eq: vi.fn(() => ({
-      eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: state.membership ? { id: 'membership', role: state.membershipRole } : null, error: null })) })),
+      eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => (state.authorityUnavailable
+        ? { data: null, error: { message: 'membership lookup unavailable' } }
+        : { data: state.membership ? { id: 'membership', role: state.membershipRole } : null, error: null })) })),
       maybeSingle: vi.fn(async () => ({ data: table === 'profiles' ? { org_id: state.profileOrg, is_platform_admin: false } : null, error: null })),
     })),
   })),
@@ -46,19 +55,30 @@ vi.mock('../utils/db.js', () => ({ db: { from: vi.fn((table: string) => ({
 
 import { anchorSelfServiceRouter } from './anchor-self-service.js';
 import { handleAnchorImport } from './anchor-self-service-bulk.js';
+import { RecipientPepperUnavailableError } from '../lib/recipient-identity.js';
 
-function app() {
+// The /bulk route carries a 10-request-per-minute per-user limiter. Every app()
+// gets its own caller so that adding a test never silently turns an assertion
+// into a 429 for the test that happens to run eleventh.
+let callerSeq = 0;
+function nextCallerId(): string {
+  callerSeq += 1;
+  return `11111111-1111-4111-8111-${callerSeq.toString(16).padStart(12, '0')}`;
+}
+
+function app(userId: string = nextCallerId()) {
   const instance = express();
   instance.use(express.json());
-  instance.use((req, _res, next) => { req.userId = '11111111-1111-4111-8111-111111111111'; next(); });
+  instance.use((req, _res, next) => { req.userId = userId; next(); });
   instance.use(anchorSelfServiceRouter);
   return instance;
 }
 
 describe('anchor self-service context bridge', () => {
   beforeEach(() => {
-    state.profileOrg = null; state.membership = true; state.membershipRole = 'owner';
+    state.profileOrg = null; state.membership = true; state.membershipRole = 'owner'; state.authorityUnavailable = false;
     state.captured = null; state.bulkBodies = []; state.linkRecipient.mockReset();
+    state.loggerWarn.mockReset(); state.loggerError.mockReset(); state.capturePepperAlert.mockReset();
   });
 
   it('passes personal scope as null and preserves validated UI metadata/tags', async () => {
@@ -271,7 +291,12 @@ describe('anchor self-service context bridge', () => {
     expect(state.bulkBodies).toEqual([]);
   });
 
-  it('rejects recipient provisioning before any anchor/auth work for a non-admin member', async () => {
+  // B1 (BLOCKING regression against main): a caller without recipient-provisioning
+  // authority used to have the WHOLE request rejected 403, so a personal-scope user
+  // importing a spreadsheet with any column containing "mail" got zero anchors and a
+  // generic transport error. The anchor is the durable fact: every row is still
+  // submitted, only the link is skipped, and those rows carry their own reason.
+  it('anchors every row for a plain member and reports only the recipient link as forbidden', async () => {
     state.profileOrg = '22222222-2222-4222-8222-222222222222';
     state.membershipRole = 'member';
     const response = await request(app()).post('/bulk').send({
@@ -282,10 +307,133 @@ describe('anchor self-service context bridge', () => {
         recipient_email: 'recipient@example.test',
       }],
     });
-    expect(response.status).toBe(403);
-    expect(response.body.error).toBe('recipient_provisioning_forbidden');
-    expect(state.bulkBodies).toEqual([]);
+    expect(response.status).toBe(207);
+    expect(response.body.results[0]).toEqual({
+      fingerprint: 'a'.repeat(64),
+      status: 'created_recipient_failed',
+      public_id: 'ARK-aaaa',
+      reason: 'recipient_provisioning_forbidden',
+    });
+    expect(response.body.created).toBe(1);
+    expect(response.body.failed).toBe(0);
+    expect(response.body.recipient_link_failed).toBe(1);
+    expect(response.body.created + response.body.skipped + response.body.failed).toBe(response.body.total);
+    // The anchor was submitted; the link was never attempted.
+    expect(state.bulkBodies).toHaveLength(1);
     expect(state.linkRecipient).not.toHaveBeenCalled();
+  });
+
+  it('anchors personal-scope rows that carry a recipient instead of failing the batch', async () => {
+    const response = await request(app()).post('/bulk').send({
+      org_id: null,
+      action: 'queue',
+      rows: [
+        { fingerprint: 'a'.repeat(64), filename: 'with-recipient.pdf', fingerprint_provided: true, recipient_email: 'recipient@example.test' },
+        { fingerprint: 'b'.repeat(64), filename: 'plain.pdf', fingerprint_provided: true },
+      ],
+    });
+    expect(response.status).toBe(207);
+    expect(response.body.results[0]).toMatchObject({ status: 'created_recipient_failed', reason: 'recipient_provisioning_forbidden' });
+    // A row WITHOUT a recipient stays a plain created/skipped row.
+    expect(response.body.results[1]).toEqual({ fingerprint: 'b'.repeat(64), status: 'skipped', public_id: 'ARK-bbbb' });
+    expect(response.body.created).toBe(1);
+    expect(response.body.skipped).toBe(1);
+    expect(response.body.failed).toBe(0);
+    expect(response.body.recipient_link_failed).toBe(1);
+    expect(state.bulkBodies).toHaveLength(2);
+    expect(state.linkRecipient).not.toHaveBeenCalled();
+  });
+
+  it('logs the forbidden recipient link at warn level with no recipient PII', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'member';
+    await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'a'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test', recipient_name: 'Reese Recipient',
+      }],
+    });
+    expect(state.loggerWarn).toHaveBeenCalledTimes(1);
+    const [context] = state.loggerWarn.mock.calls[0] as [Record<string, unknown>, string];
+    expect(context).toEqual({
+      reason: 'recipient_provisioning_forbidden',
+      publicId: 'ARK-aaaa',
+      orgId: state.profileOrg,
+    });
+    expect(JSON.stringify(state.loggerWarn.mock.calls)).not.toContain('recipient@example.test');
+    expect(JSON.stringify(state.loggerWarn.mock.calls)).not.toContain('Reese Recipient');
+  });
+
+  it('logs a thrown recipient-link failure at error level with only the bounded reason', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'owner';
+    state.linkRecipient.mockRejectedValueOnce(new Error('recipient bob@example.test could not be linked'));
+    await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'a'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test',
+      }],
+    });
+    expect(state.loggerError).toHaveBeenCalledTimes(1);
+    const [context] = state.loggerError.mock.calls[0] as [Record<string, unknown>, string];
+    expect(context).toEqual({
+      reason: 'recipient_link_failed',
+      publicId: 'ARK-aaaa',
+      orgId: state.profileOrg,
+    });
+    // Neither the raw thrown message nor the recipient address may reach the log.
+    expect(JSON.stringify(state.loggerError.mock.calls)).not.toContain('bob@example.test');
+    expect(JSON.stringify(state.loggerError.mock.calls)).not.toContain('could not be linked');
+  });
+
+  // S7: a missing RECIPIENT_IDENTIFIER_PEPPER is a config outage, not a row defect.
+  // It must be distinguishable in the logs and page ONCE per request, not once per row.
+  it('raises the pepper-unavailable alert once per request no matter how many rows fail', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.membershipRole = 'owner';
+    state.linkRecipient.mockRejectedValue(new RecipientPepperUnavailableError());
+    const response = await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [
+        { fingerprint: 'a'.repeat(64), filename: 'one.pdf', fingerprint_provided: true, recipient_email: 'one@example.test' },
+        { fingerprint: 'c'.repeat(64), filename: 'two.pdf', fingerprint_provided: true, recipient_email: 'two@example.test' },
+      ],
+    });
+    expect(response.body.recipient_link_failed).toBe(2);
+    expect(response.body.results.map((row: { reason?: string }) => row.reason))
+      .toEqual(['recipient_pepper_unavailable', 'recipient_pepper_unavailable']);
+    expect(state.capturePepperAlert).toHaveBeenCalledTimes(1);
+    expect(state.capturePepperAlert).toHaveBeenCalledWith({
+      operation: 'anchor-self-service-bulk.linkBulkRecipient',
+      orgId: state.profileOrg,
+      affectedRows: 2,
+    });
+    // Every row still logs its own bounded line.
+    expect(state.loggerError).toHaveBeenCalledTimes(2);
+  });
+
+  it('still rejects the whole request when recipient authority cannot be read', async () => {
+    state.profileOrg = '22222222-2222-4222-8222-222222222222';
+    state.authorityUnavailable = true;
+    const response = await request(app()).post('/bulk').send({
+      org_id: state.profileOrg,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'a'.repeat(64), filename: 'recipient.pdf', fingerprint_provided: true,
+        recipient_email: 'recipient@example.test',
+      }],
+    });
+    // Unknown authority is transient and pre-work: nothing was created, so a
+    // retryable 503 loses no durable state. Only a DENIED answer degrades to a
+    // per-row outcome.
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('recipient_authorization_unavailable');
+    expect(state.bulkBodies).toEqual([]);
   });
 
   it('derives the API-key import tenant and rejects a caller-chosen mismatch', async () => {
