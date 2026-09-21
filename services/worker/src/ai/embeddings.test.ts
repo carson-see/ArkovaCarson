@@ -266,6 +266,8 @@ describe('embeddings', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('credit');
+      // B1: genuine exhaustion is the ONE case that may become a 402.
+      expect(result.code).toBe('insufficient_credits');
     });
 
     it('returns failure on provider error', async () => {
@@ -281,6 +283,40 @@ describe('embeddings', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Provider down');
+      expect(result.code).toBe('embedding_failed');
+    });
+
+    // B1: a provider failure whose TEXT happens to contain the word "credit"
+    // must still be an `embedding_failed`. The route used to sniff the message
+    // for that substring, so this input answered 402 "insufficient_credits".
+    it('does not classify a provider error as a credit failure because of its wording', async () => {
+      vi.mocked(mockProvider.generateEmbedding).mockRejectedValue(
+        new Error('credential credit scoring model timed out'),
+      );
+
+      const result = await generateAndStoreEmbedding(mockProvider, {
+        anchorId: 'anchor-123',
+        orgId: 'org-123',
+        metadata: { credentialType: 'DEGREE' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('embedding_failed');
+    });
+
+    it('reports a storage failure as database_error, not a credit failure', async () => {
+      mockDb.credentialEmbeddingUpsert.mockResolvedValueOnce({
+        error: { message: 'insufficient credit on the storage node' },
+      });
+
+      const result = await generateAndStoreEmbedding(mockProvider, {
+        anchorId: 'anchor-123',
+        orgId: 'org-123',
+        metadata: { credentialType: 'DEGREE' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('database_error');
     });
 
     it('rejects invalid embedding rows before storing them', async () => {
@@ -325,6 +361,27 @@ describe('embeddings', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('credit');
+      // B1: the debit RPC being unavailable (55P03, outage) is OUR failure and
+      // retryable — it must never be reported as customer credit exhaustion.
+      expect(result.code).toBe('credit_debit_unavailable');
+      expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
+        'anchor-123',
+      ]);
+      // and nothing stored survives the failure.
+      expect(mockDb.credentialEmbeddingDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('classifies a throwing debit as credit_debit_unavailable and keeps no row', async () => {
+      vi.mocked(deductAICredits).mockRejectedValueOnce(new Error('ECONNRESET'));
+
+      const result = await generateAndStoreEmbedding(mockProvider, {
+        anchorId: 'anchor-123',
+        orgId: 'org-123',
+        metadata: { credentialType: 'DEGREE' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('credit_debit_unavailable');
       expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
         'anchor-123',
       ]);
@@ -346,6 +403,9 @@ describe('embeddings', () => {
       expect(result.error).toContain('Failed to delete new credential embeddings during rollback');
       expect(result.error).toContain('anchor-123');
       expect(result.error).toContain('delete denied');
+      // A rollback that itself failed leaves an UNCHARGED row behind. That is
+      // still an infrastructure failure of the credit path, never a 402.
+      expect(result.code).toBe('credit_debit_unavailable');
     });
   });
 
@@ -444,9 +504,9 @@ describe('embeddings', () => {
       expect(results.succeeded).toBe(0);
       expect(results.failed).toBe(3);
       expect(results.errors).toEqual([
-        { anchorId: 'a1', error: 'Insufficient AI credits for embedding batch' },
-        { anchorId: 'a2', error: 'Insufficient AI credits for embedding batch' },
-        { anchorId: 'a3', error: 'Insufficient AI credits for embedding batch' },
+        { anchorId: 'a1', error: 'Insufficient AI credits for embedding batch', code: 'insufficient_credits' },
+        { anchorId: 'a2', error: 'Insufficient AI credits for embedding batch', code: 'insufficient_credits' },
+        { anchorId: 'a3', error: 'Insufficient AI credits for embedding batch', code: 'insufficient_credits' },
       ]);
       expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
       expect(batchProvider.generateEmbedding).not.toHaveBeenCalled();
@@ -467,9 +527,11 @@ describe('embeddings', () => {
         succeeded: 0,
         failed: 2,
       });
+      // A REJECTED pre-check is the credit system being unreachable, not the
+      // org being out of credit: it must not reach the caller as a 402.
       expect(results.errors).toEqual([
-        { anchorId: 'a1', error: 'credit service unavailable' },
-        { anchorId: 'a2', error: 'credit service unavailable' },
+        { anchorId: 'a1', error: 'credit service unavailable', code: 'credit_check_unavailable' },
+        { anchorId: 'a2', error: 'credit service unavailable', code: 'credit_check_unavailable' },
       ]);
       expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
       expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
@@ -491,9 +553,9 @@ describe('embeddings', () => {
         failed: 3,
       });
       expect(results.errors).toEqual([
-        { anchorId: 'a1', error: 'Duplicate anchorId in batch' },
-        { anchorId: 'a1', error: 'Duplicate anchorId in batch' },
-        { anchorId: 'a2', error: 'Duplicate anchorId in batch' },
+        { anchorId: 'a1', error: 'Duplicate anchorId in batch', code: 'duplicate_anchor_id' },
+        { anchorId: 'a1', error: 'Duplicate anchorId in batch', code: 'duplicate_anchor_id' },
+        { anchorId: 'a2', error: 'Duplicate anchorId in batch', code: 'duplicate_anchor_id' },
       ]);
       expect(checkAICredits).not.toHaveBeenCalled();
       expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
@@ -524,9 +586,9 @@ describe('embeddings', () => {
         failed: 3,
       });
       expect(results.errors).toEqual([
-        { anchorId: 'a1', error: expect.stringContaining('Invalid credential embedding row') },
-        { anchorId: 'a2', error: expect.stringContaining('Invalid credential embedding row') },
-        { anchorId: 'a3', error: expect.stringContaining('Invalid credential embedding row') },
+        { anchorId: 'a1', error: expect.stringContaining('Invalid credential embedding row'), code: 'embedding_failed' },
+        { anchorId: 'a2', error: expect.stringContaining('Invalid credential embedding row'), code: 'embedding_failed' },
+        { anchorId: 'a3', error: expect.stringContaining('Invalid credential embedding row'), code: 'embedding_failed' },
       ]);
       expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
       expect(deductAICredits).not.toHaveBeenCalled();
@@ -548,9 +610,9 @@ describe('embeddings', () => {
         failed: 3,
       });
       expect(results.errors).toEqual([
-        { anchorId: 'a1', error: 'Credit ledger unavailable' },
-        { anchorId: 'a2', error: 'Credit ledger unavailable' },
-        { anchorId: 'a3', error: 'Credit ledger unavailable' },
+        { anchorId: 'a1', error: 'Credit ledger unavailable', code: 'credit_debit_unavailable' },
+        { anchorId: 'a2', error: 'Credit ledger unavailable', code: 'credit_debit_unavailable' },
+        { anchorId: 'a3', error: 'Credit ledger unavailable', code: 'credit_debit_unavailable' },
       ]);
       expect(mockDb.credentialEmbeddingUpsert).toHaveBeenCalledTimes(1);
       expect(mockDb.credentialEmbeddingDelete).toHaveBeenCalledTimes(1);
@@ -575,6 +637,7 @@ describe('embeddings', () => {
 
       expect(results).toMatchObject({ total: 3, succeeded: 0, failed: 3 });
       expect(results.errors.every((e) => e.error.includes('credit'))).toBe(true);
+      expect(results.errors.every((e) => e.code === 'credit_debit_unavailable')).toBe(true);
       expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
         'a1',
         'a2',
@@ -654,18 +717,21 @@ describe('embeddings', () => {
           error: expect.stringContaining(
             'Failed to restore previous credential embeddings during rollback',
           ),
+          code: 'credit_debit_unavailable',
         },
         {
           anchorId: 'a2',
           error: expect.stringContaining(
             'Failed to restore previous credential embeddings during rollback',
           ),
+          code: 'credit_debit_unavailable',
         },
         {
           anchorId: 'a3',
           error: expect.stringContaining(
             'Failed to restore previous credential embeddings during rollback',
           ),
+          code: 'credit_debit_unavailable',
         },
       ]);
       expect(results.errors[0]?.error).toContain('a1');

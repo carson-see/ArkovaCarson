@@ -52,11 +52,54 @@ export interface EmbeddingInput {
   userId?: string;
 }
 
+/**
+ * Machine-readable reason an embedding failed (B1, SCRUM-4939 follow-up).
+ *
+ * WHY A CODE AND NOT THE MESSAGE. `api/v1/ai-embed.ts` used to pick the HTTP
+ * status by asking whether the failure MESSAGE contained the substring
+ * "credit":
+ *
+ *     const status = result.error?.includes('credit') ? 402 : 500;
+ *
+ * Every credit failure in this module says "credit" — including the 55P03 lock
+ * timeout `deduct_ai_credits` raises under contention (migration 0483) and a
+ * plain RPC outage. Both answered `402 insufficient_credits`, i.e. told a
+ * customer who HAS credits to go buy more, for a failure that is ours and
+ * retryable. Meanwhile any provider error whose text happened to contain
+ * "credential" — most of them, on this surface — matched the same substring.
+ *
+ * The distinction the caller actually needs is "the customer is out of credit"
+ * (402, the customer acts) versus "the credit system did not answer" (503, we
+ * act), and that is a property of the failure, not of its wording.
+ */
+export type EmbeddingFailureCode =
+  /** The org's metered balance is genuinely exhausted. The customer must act. */
+  | 'insufficient_credits'
+  /** `check_ai_credits` did not answer (outage, connection loss). Retryable. */
+  | 'credit_check_unavailable'
+  /**
+   * `deduct_ai_credits` did not answer, or answered falsy for a reason that is
+   * not exhaustion — 55P03 lock timeout, dead connection, RPC missing. NOTHING
+   * was charged and nothing stored is kept. Retryable, and ours.
+   */
+  | 'credit_debit_unavailable'
+  /** Persisting the embedding row failed. */
+  | 'database_error'
+  /** The same anchor appeared twice in one batch. */
+  | 'duplicate_anchor_id'
+  /** The provider call or row validation failed. */
+  | 'embedding_failed';
+
 /** Result of a generate-and-store operation */
-export interface EmbeddingStoreResult {
-  success: boolean;
-  model?: string;
-  error?: string;
+export type EmbeddingStoreResult =
+  | { success: true; model: string; code?: undefined; error?: undefined }
+  | { success: false; code: EmbeddingFailureCode; error: string; model?: undefined };
+
+/** One failed row in a batch re-embedding operation */
+export interface BatchReEmbedError {
+  anchorId: string;
+  error: string;
+  code: EmbeddingFailureCode;
 }
 
 /** Result of a batch re-embedding operation */
@@ -64,7 +107,44 @@ export interface BatchReEmbedResult {
   total: number;
   succeeded: number;
   failed: number;
-  errors: Array<{ anchorId: string; error: string }>;
+  errors: BatchReEmbedError[];
+}
+
+/**
+ * Thrown when the AI-credit DEBIT could not be confirmed — the 55P03 lock
+ * timeout, a dead connection, or `deductAICredits` answering falsy for any
+ * reason other than exhaustion (which this module rules out before the debit
+ * by returning early on a null balance).
+ *
+ * It exists so the classification survives the `catch` that runs the embedding
+ * rollback: without a typed error the only thing left at the catch site is the
+ * message, which is exactly the signal B1 removed from the route.
+ */
+export class CreditDebitUnavailableError extends Error {
+  readonly code = 'credit_debit_unavailable' as const;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'CreditDebitUnavailableError';
+  }
+}
+
+/**
+ * Thrown when the AI-credit PRE-CHECK did not answer. Distinct from exhaustion:
+ * a rejected `checkAICredits` says nothing about the balance.
+ */
+export class CreditCheckUnavailableError extends Error {
+  readonly code = 'credit_check_unavailable' as const;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'CreditCheckUnavailableError';
+  }
+}
+
+/** Classify a thrown value for the result's `code`. */
+function embeddingFailureCode(err: unknown): EmbeddingFailureCode {
+  if (err instanceof CreditDebitUnavailableError) return 'credit_debit_unavailable';
+  if (err instanceof CreditCheckUnavailableError) return 'credit_check_unavailable';
+  return 'embedding_failed';
 }
 
 interface PreparedEmbeddingItem {
@@ -253,10 +333,21 @@ export async function generateAndStoreEmbedding(
 ): Promise<EmbeddingStoreResult> {
   const { anchorId, orgId, metadata, userId } = input;
 
-  // Check credits
+  // Check credits.
+  //
+  // NOTE, stated rather than silently assumed: `checkAICredits` returns null
+  // BOTH for "no balance row" and for its own RPC failure, so this branch
+  // cannot today tell exhaustion from an unreachable check. It is classified
+  // as exhaustion because that is the behaviour this path has always had and
+  // narrowing it means changing `checkAICredits`'s contract for every caller.
+  // The debit below — the failure B1 is about — IS distinguished.
   const credits = await checkAICredits(orgId, userId);
   if (!credits?.hasCredits) {
-    return { success: false, error: 'Insufficient AI credits for embedding generation' };
+    return {
+      success: false,
+      code: 'insufficient_credits',
+      error: 'Insufficient AI credits for embedding generation',
+    };
   }
 
   const text = buildEmbeddingText(metadata);
@@ -287,7 +378,11 @@ export async function generateAndStoreEmbedding(
 
     if (dbError) {
       logger.error({ error: dbError, anchorId }, 'Failed to store embedding');
-      return { success: false, error: `Database error: ${dbError.message}` };
+      return {
+        success: false,
+        code: 'database_error',
+        error: `Database error: ${dbError.message}`,
+      };
     }
 
     // Deduct credit.
@@ -302,14 +397,31 @@ export async function generateAndStoreEmbedding(
     // No unmetered/beta ambiguity applies: this function already returned above
     // when `checkAICredits` came back null, so the org has a finite metered
     // balance here and a falsy debit can only mean "not charged".
+    //
+    // B1: the throw is TYPED. Everything that leaves this block is a
+    // `CreditDebitUnavailableError` — including a rollback that itself failed,
+    // which is a worse version of the same infrastructure failure — so the
+    // outer catch can classify it without reading the message.
     try {
       const debited = await deductAICredits(orgId, userId, 1);
       if (!debited) {
-        throw new Error('AI credit debit failed — refusing to keep an uncharged embedding');
+        throw new CreditDebitUnavailableError(
+          'AI credit debit failed — refusing to keep an uncharged embedding',
+        );
       }
     } catch (creditError) {
-      await rollbackStoredCredentialEmbeddings([anchorId], rollbackRows);
-      throw creditError;
+      try {
+        await rollbackStoredCredentialEmbeddings([anchorId], rollbackRows);
+      } catch (rollbackError) {
+        throw new CreditDebitUnavailableError(databaseErrorMessage(rollbackError), {
+          cause: rollbackError,
+        });
+      }
+      throw creditError instanceof CreditDebitUnavailableError
+        ? creditError
+        : new CreditDebitUnavailableError(databaseErrorMessage(creditError), {
+          cause: creditError,
+        });
     }
 
     // Log usage (non-blocking)
@@ -341,7 +453,7 @@ export async function generateAndStoreEmbedding(
       durationMs,
     }).catch(() => {});
 
-    return { success: false, error: errorMessage };
+    return { success: false, code: embeddingFailureCode(err), error: errorMessage };
   }
 }
 
@@ -396,7 +508,8 @@ export async function batchReEmbed(
       result.failed++;
       result.errors.push({
         anchorId: item.anchorId,
-        error: storeResult.error ?? 'Unknown error',
+        error: storeResult.error,
+        code: storeResult.code,
       });
     }
   }
@@ -430,6 +543,7 @@ async function batchReEmbedNative(
     result.errors = items.map((item) => ({
       anchorId: item.anchorId,
       error: 'Duplicate anchorId in batch',
+      code: 'duplicate_anchor_id',
     }));
     return result;
   }
@@ -438,19 +552,26 @@ async function batchReEmbedNative(
   try {
     credits = await checkAICredits(orgId, userId);
   } catch (err) {
+    // B1: a REJECTED pre-check says nothing about the balance — the credit
+    // system did not answer. That is ours and retryable (503), never a 402.
     const errorMessage = err instanceof Error ? err.message : String(err);
     result.failed = items.length;
     result.errors = items.map((item) => ({
       anchorId: item.anchorId,
       error: errorMessage || 'Insufficient AI credits for embedding batch',
+      code: 'credit_check_unavailable',
     }));
     return result;
   }
   if (!credits?.hasCredits || credits.remaining < items.length) {
+    // See the note in `generateAndStoreEmbedding`: a null balance is not
+    // distinguished from exhaustion here, and narrowing that means changing
+    // `checkAICredits`'s contract for every caller.
     result.failed = items.length;
     result.errors = items.map((item) => ({
       anchorId: item.anchorId,
       error: 'Insufficient AI credits for embedding batch',
+      code: 'insufficient_credits',
     }));
     return result;
   }
@@ -497,6 +618,7 @@ async function batchReEmbedNative(
       result.errors = items.map((item) => ({
         anchorId: item.anchorId,
         error: `Database error: ${dbError.message}`,
+        code: 'database_error',
       }));
       logger.error({ error: dbError, count: items.length }, 'Failed to store batch embeddings');
       return result;
@@ -507,17 +629,33 @@ async function batchReEmbedNative(
     // and keeping `items.length` stored embeddings that were never charged for
     // is a hollow success. The batch balance was already verified finite and
     // sufficient before the provider call.
+    //
+    // B1: typed, exactly as the single-item path — everything that leaves this
+    // block is a `CreditDebitUnavailableError`, so the outer catch classifies
+    // it without reading the message.
     try {
       const debited = await deductAICredits(orgId, userId, items.length);
       if (!debited) {
-        throw new Error('AI credit debit failed — refusing to keep uncharged embeddings');
+        throw new CreditDebitUnavailableError(
+          'AI credit debit failed — refusing to keep uncharged embeddings',
+        );
       }
     } catch (creditError) {
-      await rollbackStoredCredentialEmbeddings(
-        items.map((item) => item.anchorId),
-        rollbackRows,
-      );
-      throw creditError;
+      try {
+        await rollbackStoredCredentialEmbeddings(
+          items.map((item) => item.anchorId),
+          rollbackRows,
+        );
+      } catch (rollbackError) {
+        throw new CreditDebitUnavailableError(databaseErrorMessage(rollbackError), {
+          cause: rollbackError,
+        });
+      }
+      throw creditError instanceof CreditDebitUnavailableError
+        ? creditError
+        : new CreditDebitUnavailableError(databaseErrorMessage(creditError), {
+          cause: creditError,
+        });
     }
 
     logAIUsageEvent({
@@ -548,10 +686,12 @@ async function batchReEmbedNative(
       durationMs,
     }).catch(() => {});
 
+    const code = embeddingFailureCode(err);
     result.failed = items.length;
     result.errors = items.map((item) => ({
       anchorId: item.anchorId,
       error: errorMessage,
+      code,
     }));
     return result;
   }
