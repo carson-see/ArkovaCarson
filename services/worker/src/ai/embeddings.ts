@@ -290,9 +290,23 @@ export async function generateAndStoreEmbedding(
       return { success: false, error: `Database error: ${dbError.message}` };
     }
 
-    // Deduct credit
+    // Deduct credit.
+    //
+    // `deductAICredits` never throws — it returns `false` for every failure,
+    // including a 55P03 lock timeout from `deduct_ai_credits`'s
+    // `SELECT … FOR UPDATE` (migration 0483). A falsy return therefore has to
+    // be converted into a throw here or it sails past the rollback below and
+    // leaves a STORED embedding that was never charged for: a hollow success,
+    // the same defect class ai-extract.ts closed in SCRUM-3502.
+    //
+    // No unmetered/beta ambiguity applies: this function already returned above
+    // when `checkAICredits` came back null, so the org has a finite metered
+    // balance here and a falsy debit can only mean "not charged".
     try {
-      await deductAICredits(orgId, userId, 1);
+      const debited = await deductAICredits(orgId, userId, 1);
+      if (!debited) {
+        throw new Error('AI credit debit failed — refusing to keep an uncharged embedding');
+      }
     } catch (creditError) {
       await rollbackStoredCredentialEmbeddings([anchorId], rollbackRows);
       throw creditError;
@@ -488,8 +502,16 @@ async function batchReEmbedNative(
       return result;
     }
 
+    // Fail CLOSED on a falsy debit exactly as the single-item path above does:
+    // `deductAICredits` returns `false` (never throws) on a 55P03 lock timeout,
+    // and keeping `items.length` stored embeddings that were never charged for
+    // is a hollow success. The batch balance was already verified finite and
+    // sufficient before the provider call.
     try {
-      await deductAICredits(orgId, userId, items.length);
+      const debited = await deductAICredits(orgId, userId, items.length);
+      if (!debited) {
+        throw new Error('AI credit debit failed — refusing to keep uncharged embeddings');
+      }
     } catch (creditError) {
       await rollbackStoredCredentialEmbeddings(
         items.map((item) => item.anchorId),

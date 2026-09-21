@@ -301,6 +301,35 @@ describe('embeddings', () => {
       expect(deductAICredits).not.toHaveBeenCalled();
     });
 
+    // SCRUM-4939 follow-up (migration 0483). `deductAICredits` NEVER throws —
+    // it catches internally and returns `false` for every failure, including a
+    // 55P03 lock timeout from `deduct_ai_credits`'s `SELECT … FOR UPDATE`. The
+    // rollback path above is reached only by a rejected promise, so a falsy
+    // return sailed straight past it: the embedding row stayed stored, the
+    // caller got `{ success: true }`, and NO credit was debited. That is a
+    // hollow success and a revenue leak on the same defect class ai-extract.ts
+    // already closed (SCRUM-3502).
+    //
+    // There is no unmetered/beta ambiguity to preserve here: this function
+    // already returns early when `checkAICredits` is null, so by the time the
+    // debit runs the org is known to have a finite, metered balance and a
+    // falsy debit can only mean "not charged".
+    it('fails CLOSED and rolls back when the debit returns falsy (55P03 lock timeout)', async () => {
+      vi.mocked(deductAICredits).mockResolvedValueOnce(false);
+
+      const result = await generateAndStoreEmbedding(mockProvider, {
+        anchorId: 'anchor-123',
+        orgId: 'org-123',
+        metadata: { credentialType: 'DEGREE' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('credit');
+      expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
+        'anchor-123',
+      ]);
+    });
+
     it('returns rollback delete failures when credit deduction fails after storing a new row', async () => {
       vi.mocked(deductAICredits).mockRejectedValueOnce(new Error('Credit ledger unavailable'));
       mockDb.credentialEmbeddingDeleteFilter.mockResolvedValueOnce({
@@ -525,6 +554,27 @@ describe('embeddings', () => {
       ]);
       expect(mockDb.credentialEmbeddingUpsert).toHaveBeenCalledTimes(1);
       expect(mockDb.credentialEmbeddingDelete).toHaveBeenCalledTimes(1);
+      expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
+        'a1',
+        'a2',
+        'a3',
+      ]);
+    });
+
+    // Same fail-closed rule as the single-item path: a falsy batch debit is a
+    // failed debit, not a silently-free batch of `items.length` embeddings.
+    it('fails CLOSED and rolls back native batch rows when the debit returns falsy', async () => {
+      const batchProvider = createBatchMockProvider();
+      vi.mocked(deductAICredits).mockResolvedValueOnce(false);
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({ total: 3, succeeded: 0, failed: 3 });
+      expect(results.errors.every((e) => e.error.includes('credit'))).toBe(true);
       expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
         'a1',
         'a2',

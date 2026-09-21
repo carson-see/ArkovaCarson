@@ -176,6 +176,49 @@ describe('AI Cost Tracker', () => {
         p_amount: 5,
       });
     });
+
+    // Migration 0483: `deduct_ai_credits` gains `SET lock_timeout='5s'`, so a
+    // contended `SELECT … FOR UPDATE` now aborts with SQLSTATE 55P03
+    // (lock_not_available) instead of blocking to `statement_timeout`. That is
+    // an infrastructure failure, NOT "the org is out of credits": no debit was
+    // recorded, so the only safe answer is a falsy return that every caller
+    // treats as "do not perform the paid work".
+    it('fails CLOSED on a 55P03 lock_not_available error from the debit RPC', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: null,
+        error: {
+          code: '55P03',
+          message: 'canceling statement due to lock timeout',
+          details: null,
+          hint: null,
+        },
+      });
+
+      const result = await deductAICredits('org-123', 'user-123', 1);
+
+      expect(result).toBe(false);
+    });
+
+    // The SQLSTATE has to reach the operator: 55P03 means "a stuck holder is
+    // sitting on the org's credit row", which is a different page than
+    // "connection refused". Flattening every error into a bare message makes
+    // the two indistinguishable in the log stream.
+    it('logs the SQLSTATE so a lock timeout is greppable', async () => {
+      (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: null,
+        error: {
+          code: '55P03',
+          message: 'canceling statement due to lock timeout',
+        },
+      });
+
+      await deductAICredits('org-123', 'user-123', 1);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ code: '55P03', orgId: 'org-123', userId: 'user-123' }),
+        expect.stringContaining('Failed to deduct AI credits'),
+      );
+    });
   });
 
   describe('logAIUsageEvent', () => {

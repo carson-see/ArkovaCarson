@@ -85,6 +85,19 @@ export async function checkAICredits(
 /**
  * Deduct AI credits after a successful operation.
  * Returns true if deduction succeeded, false if insufficient credits.
+ *
+ * FALSE MEANS "NOT CHARGED" — never "charged, probably".
+ * Migration 0483 gives `deduct_ai_credits` a function-level
+ * `SET lock_timeout='5s'`, matching the `ensure_ai_credits_period` sibling 0467
+ * already hardened. Its `SELECT … FOR UPDATE` on the org's credit row therefore
+ * aborts with SQLSTATE `55P03` (`lock_not_available`) behind a stuck holder
+ * instead of blocking until `statement_timeout`. Either way the transaction
+ * rolls back and NO debit is recorded, so this returns `false` and every caller
+ * must treat that as "do not perform (or do not keep) the paid work".
+ *
+ * The SQLSTATE is logged because `55P03` ("someone is sitting on this org's
+ * credit row") and a generic connection failure need different operator
+ * responses and were previously indistinguishable in the log stream.
  */
 export async function deductAICredits(
   orgId?: string,
@@ -99,13 +112,25 @@ export async function deductAICredits(
     });
 
     if (error) {
-      logger.error({ error }, 'Failed to deduct AI credits');
+      logger.error(
+        {
+          error,
+          code: (error as { code?: string }).code,
+          orgId,
+          userId,
+          amount,
+        },
+        'Failed to deduct AI credits',
+      );
       return false;
     }
 
     return data === true;
   } catch (err) {
-    logger.error({ error: err }, 'Failed to deduct AI credits');
+    logger.error(
+      { error: err, code: (err as { code?: string })?.code, orgId, userId, amount },
+      'Failed to deduct AI credits',
+    );
     return false;
   }
 }

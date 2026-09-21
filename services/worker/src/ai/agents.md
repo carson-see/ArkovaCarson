@@ -176,3 +176,26 @@ rejects overlapping org/user periods, and makes check/debit choose the oldest
 matching row deterministically. When both owner arguments are supplied, the
 established contract remains an OR across org and user; callers should normally
 send exactly one. The RPCs remain executable only by `service_role`.
+
+# Credit debits fail CLOSED — 2026-09-21 (SCRUM-4939 follow-ups, migration 0483)
+
+`deductAICredits()` **never throws**. Every failure — insufficient credits, a
+dead connection, or the SQLSTATE `55P03` lock timeout that migration 0483's
+`SET lock_timeout='5s'` now produces on a contended
+`SELECT … FOR UPDATE` — comes back as `false`. A falsy return therefore means
+exactly one thing: **nothing was charged.**
+
+- **DO** treat a falsy debit as "do not perform, or do not keep, the paid work."
+  `embeddings.ts` converts it into a throw so the existing
+  `rollbackStoredCredentialEmbeddings` path runs; previously the falsy return
+  sailed past that `catch` (which only fires on a rejected promise) and left a
+  STORED embedding nobody was billed for — a hollow success, the defect class
+  `api/v1/ai-extract.ts` closed in SCRUM-3502.
+- **DO NOT** `await deductAICredits(...)` and discard the result on any path
+  that has already rendered, stored or returned paid AI output.
+- The log line now carries the SQLSTATE (`code`), so `55P03` ("a stuck holder is
+  sitting on this org's credit row") is distinguishable from a generic DB error.
+- Known regression, reported not fixed: 0467's `p_amount <= 0 → RETURN false`
+  guard means every REFUND call (`deductAICredits(org, user, -n)` in
+  `api/v1/ai-extract.ts`, `api/v1/ai-extract-batch.ts`, `jobs/ai-credit-reconcile.ts`)
+  returns false and refunds nothing. See migration 0483's header.
