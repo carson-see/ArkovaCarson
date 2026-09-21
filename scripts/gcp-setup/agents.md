@@ -1,3 +1,18 @@
+## 2026-09-21 — `recover-broadcasts` gains an explicit retry policy (Actions-budget hygiene, PR #3015 follow-up)
+
+`DEFAULT` (no retry flags, imported-from-prod behavior-neutral) → `30s,120s,2`. The live job
+(`gcloud scheduler jobs describe recover-broadcasts --location us-central1 --project arkova1`,
+checked 2026-09-21) has backoff fields set — `minBackoffDuration=5s`, `maxBackoffDuration=3600s`,
+`maxDoublings=5` — but NO `retryCount`/`maxRetryAttempts`, which defaults to 0 (no retry) per the
+Cloud Scheduler API. Those backoff settings are inert today. That contradicts the route's own
+comment in `services/worker/src/routes/cron.ts` ("Cloud Scheduler retries non-2xx responses") —
+prod currently does not retry a 503/500 here. `recoverStuckBroadcasts()`
+(`services/worker/src/jobs/broadcast-recovery.ts`) claims work through a bounded SQL RPC under row
+locking, the same claim-then-act shape `drain-connector-artifacts` / `connector-health-check`
+already use with `30s,120s,2` on a comparable `*/15` cadence — matched here. This commit only
+changes what the script WOULD apply on its next run; the live `gcloud scheduler jobs update` is a
+separate operator step (exact command in the PR body), not run by this change.
+
 ## 2026-09-12 — SCRUM-5023: `api-key-expiry-notice` added to `JOBS`
 
 Daily at `0 13 * * *` (09:00 America/Detroit) so a partner reads the warning during a working day.
