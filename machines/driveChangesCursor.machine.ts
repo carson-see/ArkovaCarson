@@ -32,6 +32,10 @@ const problemObservable = variable("problemObservable");
 const lostLeaseWhileWalking = variable("lostLeaseWhileWalking");
 // Fix-round item 3 mutation-test ratchet (see module doc comment).
 const pushDroppedWhileLocked = variable("pushDroppedWhileLocked");
+// Round-2 fix: gates the ONLY action that can ever set
+// pushDroppedWhileLocked (see beginRunSkippedLockedRegressionDropsPush and
+// the module doc comment's "ROUND-2 FIX" paragraph).
+const pushDropRegressionEnabled = variable("pushDropRegressionEnabled");
 // Fix-round item 4A CAS sub-model (advancePageToken's compare-and-swap).
 const persistedGen = variable("persistedGen");
 const startedFromGen = variable("startedFromGen");
@@ -132,6 +136,35 @@ const everReachedG2 = variable("everReachedG2");
  * CAS'd `advancePageToken`) is what closes it — see `noConcurrentWalkers`
  * and `cursorNeverRewinds` below, and the mutation-test results recorded in
  * `machines/agents.md`.
+ *
+ * ROUND-2 FIX (independent second-round verification on head `bc6c84c80`):
+ * `pendingPushNeverDroppedWhileLocked` was VACUOUS at that head —
+ * `pushDroppedWhileLocked` was declared and read by the invariant, but no
+ * action in the model's actual action set ever assigned it `true` (it
+ * appeared in `Init` and in every OTHER action's implicit `UNCHANGED` set
+ * only). The verifier performed exactly the mutation this file's own prior
+ * comment prescribed (`beginRunSkippedLocked`'s `pendingPush` update,
+ * `lit(true)` → `lit(false)`) and got a clean `proofPassed: true` — no
+ * counterexample — directly contradicting this file's and the PR body's
+ * prior claim of a 6-step RED trace. That claim was false; there is no
+ * historical head where the prescribed one-line mutation alone produced a
+ * violation, because `pushDroppedWhileLocked` was never wired to anything.
+ *
+ * THE FIX: `pushDropRegressionEnabled` is a new per-integration boolean,
+ * `Init`-false, and — like the "fixed" design's own guarantee — never
+ * assigned by any action reachable from that `Init` value. The ONLY action
+ * that can ever set `pushDroppedWhileLocked` is
+ * `beginRunSkippedLockedRegressionDropsPush`, and its guard additionally
+ * requires `pushDropRegressionEnabled[i]`. In the SHIPPED model this makes
+ * the regression action permanently unreachable (genuinely, not by
+ * omission — `check` explores it and finds no path to enable it), so
+ * `pendingPushNeverDroppedWhileLocked` now holds for a REAL reason: the
+ * code path that would violate it is present in the model and provably
+ * unreachable, not merely absent from the model's vocabulary. The mutation
+ * test is now: flip `pushDropRegressionEnabled`'s `Init` value from
+ * `lit(false)` to `lit(true)` (representing "the pre-item-3 regression is
+ * reintroduced") and confirm `check` goes RED with a real counterexample —
+ * see `machines/agents.md` for the actual recorded trace.
  */
 export const driveChangesCursorMachine = defineMachine({
   version: 2,
@@ -171,11 +204,23 @@ export const driveChangesCursorMachine = defineMachine({
     // holder taking over (beginRunWhileAlreadyWalking). `noConcurrentWalkers`
     // reads this.
     lostLeaseWhileWalking: mapVar("Integrations", boolType(), lit(false)),
-    // Fix-round item 3 mutation-test ratchet: never set by the SHIPPED
-    // model (beginRunSkippedLocked preserves pendingPush); a mutant that
-    // reintroduces the pre-fix "silently drop the push" behavior sets it,
-    // which `pendingPushNeverDroppedWhileLocked` catches.
+    // Fix-round item 3 mutation-test ratchet, made genuinely reachable in
+    // round 2 — see the module doc comment's "ROUND-2 FIX" paragraph. Only
+    // `beginRunSkippedLockedRegressionDropsPush` can ever set this true,
+    // and that action is itself gated by `pushDropRegressionEnabled`
+    // (Init-false, never assigned in the shipped model), so this stays
+    // false throughout the reachable state space of the FIXED design —
+    // genuinely, because the regression path is modeled and unreachable,
+    // not because nothing models it.
     pushDroppedWhileLocked: mapVar("Integrations", boolType(), lit(false)),
+    // Round-2 fix: the gate for `beginRunSkippedLockedRegressionDropsPush`.
+    // Init-false and never written by any action in the shipped model —
+    // the mutation test for `pendingPushNeverDroppedWhileLocked` is to flip
+    // THIS variable's `Init` value to `lit(true)`, which is the honest,
+    // single-point way to represent "the pre-item-3 regression is back" in
+    // a DSL with no model constants (every value here is state, so a
+    // permanently-inert toggle is how a constant is expressed).
+    pushDropRegressionEnabled: mapVar("Integrations", boolType(), lit(false)),
     // Fix-round item 4A CAS sub-model — see the module doc comment's
     // "DELIBERATELY STANDALONE" paragraph. Three symbolic generations of
     // the persisted page token; G0 is the initial value.
@@ -242,14 +287,33 @@ export const driveChangesCursorMachine = defineMachine({
     // `beginRun`) so its update list can express the REAL fix precisely —
     // `pendingPush` is deliberately left `lit(true)` (unconsumed, matching
     // `markLeaseDirty`'s real unconditional write) rather than reset to
-    // false. `pendingPushNeverDroppedWhileLocked` mutation-tests this exact
-    // choice: temporarily changing the update to `lit(false)` (the pre-item-3
-    // bug — the locked webhook silently forgot the push) is the mutant that
-    // must fail it.
+    // false.
     beginRunSkippedLocked: {
       params: { i: "Integrations" },
       guard: and(index(pendingPush, param("i")), index(lockHeld, param("i"))),
       updates: [setMap("pendingPush", param("i"), lit(true))],
+    },
+    // Round-2 fix: the EXPLICIT alternate to `beginRunSkippedLocked` — same
+    // guard shape, PLUS `pushDropRegressionEnabled[i]`, which is Init-false
+    // and never assigned true anywhere in the shipped model. This makes the
+    // action permanently unreachable in the design `check` verifies (a real,
+    // provable unreachability, not an absence from the model's vocabulary),
+    // while still giving `pendingPushNeverDroppedWhileLocked` a genuine
+    // witness to rule out: flip `pushDropRegressionEnabled`'s `Init` value
+    // to `lit(true)` to mutation-test it. See the module doc comment's
+    // "ROUND-2 FIX" paragraph for why this replaced the earlier (vacuous)
+    // approach of just editing `beginRunSkippedLocked`'s own update value.
+    beginRunSkippedLockedRegressionDropsPush: {
+      params: { i: "Integrations" },
+      guard: and(
+        index(pendingPush, param("i")),
+        index(lockHeld, param("i")),
+        index(pushDropRegressionEnabled, param("i")),
+      ),
+      updates: [
+        setMap("pendingPush", param("i"), lit(false)),
+        setMap("pushDroppedWhileLocked", param("i"), lit(true)),
+      ],
     },
     // Fix-round item 4A (verifier finding on head 7ddf6294b): heartbeat
     // renewal fails / the TTL lapses despite the walk still being alive —
@@ -633,10 +697,12 @@ export const driveChangesCursorMachine = defineMachine({
     // own deadlock-freedom guarantee (a live `pendingPush=true` always
     // leaves `beginRun` reachable once the lock frees), this is the
     // strongest claim provable without temporal operators.
-    // MUTATION-TESTED: changing `beginRunSkippedLocked`'s update to
-    // `lit(false)` (the pre-item-3 bug — the locked webhook silently forgot
-    // the push) sets `pushDroppedWhileLocked` and fails this — see
-    // machines/agents.md.
+    // MUTATION-TESTED (round 2 — see the module doc comment's "ROUND-2 FIX"
+    // paragraph; the round-1 claim here was FALSE and has been replaced):
+    // flipping `pushDropRegressionEnabled`'s `Init` value to `lit(true)`
+    // makes `beginRunSkippedLockedRegressionDropsPush` reachable, which
+    // sets `pushDroppedWhileLocked` and fails this invariant — see
+    // machines/agents.md for the real recorded counterexample trace.
     pendingPushNeverDroppedWhileLocked: {
       description:
         "pushDroppedWhileLocked is never true — the shipped design never discards a push signal that arrived while the lease was held; the pre-item-3 bug (silently dropping it) is the mutation this invariant exists to catch",
