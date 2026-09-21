@@ -1,5 +1,9 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-19 — inbound webhook DLQ resolution audit
+
+Migration 0469 adds bounded `resolved_note` and `resolved_by` columns to `webhook_dlq`. The platform-admin resolve endpoint writes both atomically with `resolved_at` only for unresolved rows, so retries cannot overwrite the first operator's audit record. Notes remain absent from logs and list responses because they may contain partner-identifying context.
+
 ## UAT-22 selected-org invitation list (2026-09-14)
 
 `handleAdminListInvitations` independently requires platform-admin authority and validates the selected UUID before service-role reads. It returns at most 100 unaccepted invitations newest first using explicit public columns and a separate response whitelist; the accept token and private row fields never leave this endpoint. No schema or RLS change.
@@ -82,6 +86,41 @@ does not bypass it. Lines beginning `//` or `*` are skipped so a scope named in 
 read as enforcement. Reachability is `docs.routeParity.test.ts`, `phiScopeMount.test.ts` and
 `api/v1/webhooks-scope.test.ts`, each for its own surface.
 
+
+## 2026-09-13 — `rules-crud.ts`: D4 (`action_type` on PATCH) + connector adopt-vs-create race guard
+
+**D4 (Connectors page, SPEC-CONNECTORS §1.5).** `UpdateOrgRuleInput` gained an optional
+`action_type` (same 7-value enum as `CreateOrgRuleInput`), paired with a Zod `superRefine`: present
+`action_type` WITHOUT `action_config` in the same PATCH is a 400 `invalid_config` (NOT the generic
+`invalid_request` a plain schema-shape failure gets — `parseUpdateRuleRequest` inspects the specific
+Zod issue and remaps the code). Reason for the pairing: `action_config` left over from the OLD
+action would otherwise validate as a syntactically-fine-but-semantically-mismatched pair (an
+`INSTANT_SECURE` row keeping a `NOTIFY` config, say). `validatePatchAgainstCurrent` merges
+`patch.action_type ?? current.action_type` against `patch.action_config ?? current.action_config`
+and re-runs `validateRuleConfigs` on the MERGED shape before writing. `buildRuleUpdate` added
+`action_type` to its column allowlist — PM-6 (SPEC-CONNECTORS §7): without that one line, a
+`action_type` patch would silently no-op (200, "Saved", rule unchanged), because the update column
+list was a fixed allowlist. `trigger_type` stays absent from the schema on purpose — connector rules
+never change trigger type, and test 26 pins that an unknown `trigger_type` key in the body is
+stripped by Zod, never applied.
+
+**`ORG_RULE_UPDATED` audit detail** for an `action_type` patch is `{from: <old action_type>, to:
+<new action_type>}` — NOT the generic `{patch}` dump every other PATCH gets. `currentActionType`
+comes from the SAME row read `validatePatchAgainstCurrent` already did (no extra query).
+
+**Adopt-vs-create race guard (CTO pre-mortem, 2026-09-13).** The Connectors page's
+`useConnectorRule` hook reads the org's enabled-rule count for a trigger_type at page load and
+decides create-vs-adopt client-side (D5) — but `docusign-rule-seed.ts` seeds a rule asynchronously
+on every DocuSign connect, on its own trigger, so a seed can land in the gap between that read and
+the page's Save click. `handleCreateRule` re-checks SERVER-SIDE, immediately before the INSERT: when
+the incoming `action_config.tag` matches `connector-<provider>` (`isConnectorManagedActionConfig` —
+the Connectors page's own marker, §1.4), it SELECTs for an existing ENABLED rule of the same
+`trigger_type` and, if one exists, refuses with `409 rule_exists` + `existing_rule_id` instead of
+inserting a second one. Deliberately scoped to connector-tagged creates ONLY — a RulesPage/
+RuleBuilderPage admin building a second, differently-filtered rule on the same `trigger_type` on
+purpose is legitimate existing use of this endpoint and must not be blocked by a check that exists
+to protect one UI's adopt-vs-create invariant. The frontend hook treats `409 rule_exists` as "adopt
+the winner" (a follow-up PATCH to `existing_rule_id`), not a raw error.
 ## 2026-08-30 — `connector-health.ts`: the `adobe_sign` kind is DERIVED, never asserted
 
 PR #2519 corrected `adobe_sign` from a hardcoded `kind: 'live'` to `'gated'`: the connector had no
@@ -392,6 +431,8 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `audit-event.ts` | Audit event creation and query |
 | `admin-stats.ts` / `admin-lists.ts` / `admin-pipeline-stats.ts` | Admin dashboard data endpoints |
 | `admin-org-members.ts` | Platform-admin org roster + user-search + add-member (service_role, RLS-bypass; backs the org profile UI when an admin views a non-member org) |
+
+- UAT-17 adds `handleOrgAdminAddExistingMember`: an AAL2-authenticated exact-email action backed by the service-only atomic `add_existing_org_member` RPC. The RPC establishes exact-org admin authority before email lookup and owns membership, conditional profile backfill, and audit in one transaction; errors remain bounded and never log the supplied email.
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |
 | `rules-crud.ts` / `rules-draft.ts` | Rules engine CRUD and draft management |
 | `queue-resolution.ts` | Review queue resolution endpoint |
@@ -568,6 +609,10 @@ organizations.
 
 The helper uses a direct PENDING comparison and has no test-only export. Behavior tests still cover measured, unmeasured, pending and absent-status results. Removed the set-mirroring assertion because it did not read SQL and could not detect SQL drift. The actual get_public_anchor CASE was separately inspected during review; no automatic SQL-equivalence claim is made.
 
+## 2026-09-19 — queue authorization and lookup failures
+
+`GET /api/queue/collision/:externalFileId` returns filenames and fingerprints, so organization membership alone is insufficient: it now requires the canonical organization-admin authority check before reading anchors. Both its profile/org lookup and its authority lookup distinguish operational errors from negative authorization and fail with a generic 500 rather than masking the fault as a 403. `POST /api/queue/run` now makes the same distinction for its caller-profile lookup; a failed read cannot be interpreted as a missing organization.
+
 ## 2026-09-12 SCRUM-5024 — `admin-provisioning.ts`: optional `referral_code`
 
 `CreateOrganizationSchema` gained an OPTIONAL `referral_code`, validated against
@@ -596,6 +641,30 @@ success, **error** on every non-applied branch, including `rpc_failed` and
   23505 on that insert is now treated as success (the membership exists). Any other insert error
   still throws and triggers the new-account rollback.
 
+## 2026-09-13 — `rules-crud.ts`: adopt-vs-create race guard, second gap (PR #2912 CTO review)
+
+`handleCreateRule`'s race check (documented above) only covers the INSERT. The Connectors page's
+create flow is actually **two** worker calls — `POST /api/rules` (SEC-02 forces `enabled=false` on
+every create) then `PATCH /api/rules/:id {enabled:true}` to activate it — and `docusign-rule-seed.ts`
+can land in the gap BETWEEN those two calls exactly as easily as in the gap the create-time check
+narrows. Nothing guarded that second gap: `validatePatchAgainstCurrent` doesn't even read the
+current row for a bare `{enabled:true}` patch (no `trigger_config`/`action_config` in the body), so
+a plain enable-toggle had zero connector awareness — a seed landing in that window produced two
+enabled rules on the same `trigger_type` (the exact double-fire PM-5 exists to prevent), silently.
+
+Fix: `checkConnectorEnableRace` runs whenever a PATCH sets `enabled: true`. It reads the current row;
+if it's already enabled (no-op patch) or not connector-tagged (`action_config.tag` doesn't match
+`connector-<provider>` — a RulesPage/RuleBuilderPage admin's plain toggle), it's a no-op. Otherwise it
+re-checks for another enabled rule of the same `trigger_type` and refuses with the same `409
+rule_exists` + `existing_rule_id` shape the create-time guard uses. `useConnectorRule.ts`'s `save()`
+handles this 409 on the enable step the same way it already handled the create-time 409 — PATCHes the
+winning rule instead of surfacing an error, leaving its own just-created (still-disabled, harmless)
+rule behind rather than a duplicate enabled rule.
+
+Same disclosed limit as the create-time guard: check-then-update, not a DB-level unique constraint —
+narrows the window, does not close it to zero. A true fix needs a partial unique index on
+`(org_id, trigger_type) WHERE enabled` (or similar), which is a migration and out of scope for a
+worker-only PR.
 ## 2026-09-14 — PR #2937 multi-account Drive health review
 
 Drive OAuth permits multiple active account IDs in an organization; connect does not retire older accounts and renewal processes each active row. The provider health card must evaluate every active Google row and retain any failure, using renewal, cursor, fetch-job and processing precedence, then connection timestamp and stable row ID for a deterministic explanation. Revoked accounts cannot hide active health; only an all-revoked set is disconnected. Expiry, renewal timestamp and sanitized account label come from that same explanation row. Order reversal and mixed healthy/failed/revoked regression cases exercise the API output. The separate disconnect multi-account cleanup mismatch is logged for follow-up and is outside this repair.

@@ -134,10 +134,13 @@ describe('SCRUM-4514: GET/POST /api/admin/webhook-dlq* authz envelope', () => {
     mockFrom.mockImplementation(() => ({
       update: () => ({
         in: () => ({
-          is: () => ({ select: () => ({ data: [{ id: rowId }], error: null }) }),
+          is: () => ({ error: null }),
         }),
       }),
-      select: () => ({ in: () => ({ not: () => ({ data: [], error: null }) }) }),
+      select: () => ({ in: () => ({
+        eq: () => ({ data: [{ id: rowId }], error: null }),
+        not: () => ({ data: [{ id: rowId }], error: null }),
+      }) }),
     }));
     const app = buildApp();
     const res = await request(app)

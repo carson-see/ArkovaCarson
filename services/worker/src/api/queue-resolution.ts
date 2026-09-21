@@ -24,6 +24,7 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { recordOrgQueueRunResult } from '../jobs/org-queue-scheduler.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
+import type { CallerProfile } from './_org-auth.js';
 import { getCallerProfile, getCallerProfileResult } from './_org-auth.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
@@ -451,7 +452,7 @@ async function exactOrgAdminResult(
 export async function authorizeManualRun(
   userId: string,
   targetOrgId: string,
-  preloadedProfile: Awaited<ReturnType<typeof getCallerProfile>>,
+  preloadedProfile: CallerProfile | null,
 ): Promise<RunAuthOutcome> {
   const direct = await exactOrgAdminResult(userId, targetOrgId, preloadedProfile);
   if (direct.value) return { ok: true, orgId: targetOrgId, relationship: 'self' };
@@ -583,7 +584,13 @@ export async function handleRunOrgAnchorQueue(
     return;
   }
 
-  const profile = await getCallerProfile(userId);
+  const { value: profile, error: profileError } = await getCallerProfileResult(userId);
+  if (profileError) {
+    res.status(500).json({
+      error: { code: 'lookup_failed', message: 'Unable to verify caller organization' },
+    });
+    return;
+  }
   const callerOrgId = profile?.org_id ?? null;
   if (!callerOrgId && parsed.data.org_id === undefined) {
     res.status(403).json({

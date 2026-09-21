@@ -78,7 +78,7 @@
     },
     {
       "number": 2964,
-      "head_sha": "130b460458f6556726979cf9dc62e125590daae8",
+      "head_sha": "6b2fb15c71128377b90bff11a04fc985bad4eb04",
       "prior_reviewed_source": "e435ed175641a16442b8eecd0c56c1929f930909",
       "existing_evidence": [
         "/Volumes/Extreme/Arkova/worktrees/cto-uat-union-20260914/artifacts/uat17-email/uat17-union-20260914-1910/summary.json",
@@ -86,7 +86,8 @@
         "ROOT-HANDOFF: 27 completed UAT17 cycles",
         "September 19 central review: refreshed prior reviewed source 8c1561f6fff5080d8ebc7cf1b6cc28f88ea491d6 to 9fb3c5760815ff9460bf67402bed17113eb7166e by merging main 129262e86fb6edca56ec5de7779469af969f43da; no content conflicts or new feature runtime. Root verified merge resolution and preserved runtime/migrations. Targeted UI/worker suites and both TypeScript checks passed. Existing observation is preserved; no new soak asserted.",
         "Final reviewed head 37759e1c6ba97b9f8317acd86f269ad78849a333 adds only the verified production table snapshot to the preceding clean main merge. Live production pg_class confirmed organization_referrals and referral_codes with RLS and FORCE RLS enabled; Policy Lints table parity is 121/121. No runtime or SQL changes.",
-        "September 19 final current-main refresh: 130b460458f6556726979cf9dc62e125590daae8 cleanly merges reviewed head 37759e1c6ba97b9f8317acd86f269ad78849a333 with main 1aee5afd0dbbd2a88bf8e76769038a65d4198ecf. Root verified merge parents, no content conflict, and no runtime delta beyond the preserved feature plus merged main; 72 focused auth/signup/callback tests and root TypeScript passed. Existing observations are preserved; no new soak asserted."
+        "September 19 final current-main refresh: 130b460458f6556726979cf9dc62e125590daae8 cleanly merges reviewed head 37759e1c6ba97b9f8317acd86f269ad78849a333 with main 1aee5afd0dbbd2a88bf8e76769038a65d4198ecf. Root verified merge parents, no content conflict, and no runtime delta beyond the preserved feature plus merged main; 72 focused auth/signup/callback tests and root TypeScript passed. Existing observations are preserved; no new soak asserted.",
+        "September 20 docs-only conflict repair: 6b2fb15c71128377b90bff11a04fc985bad4eb04 is one commit on top of reviewed head 130b460458f6556726979cf9dc62e125590daae8 and changes ONLY supabase/migrations/agents.md (git diff --name-only 130b46045..6b2fb15c7 -> that single file; requiredTierFor = T0). It re-anchors this PR's own 0459 note to EOF so GitHub's plain-text merge no longer collides with main's SCRUM-5120 block; the moved paragraph is byte-identical. No runtime, migration SQL, test or workflow file changed; main was NOT merged into the branch. CTO verified independently: single merge base, conflict-free text-driver merge against main 67786c10c, check-doc-pointers OK."
       ],
       "residual_risk": "Interrupted observation lacked full duration and closing cycle; current-union auth trigger/signup/resend/expiry tests required."
     },

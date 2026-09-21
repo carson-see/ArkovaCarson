@@ -20,7 +20,7 @@ import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleOpsSloStats } from '../api/admin-ops-slo.js';
 import { handleAdminOrganizationDetail, handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
-import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
+import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember, handleOrgAdminAddExistingMember } from '../api/admin-org-members.js';
 import { handleAdminCreateInvitation, handleAdminListInvitations } from '../api/admin-invitations.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit, handleCreateOrganization, handleCreateUserAccount } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
@@ -198,6 +198,20 @@ adminRouter.post('/admin/organizations/:id/members', async (req, res) => {
     await handleAdminAddOrgMember(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Admin add org member request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Authenticated org admins (and platform admins) add an existing account by
+// exact email. `verifyAuthToken` requires AAL2; the atomic RPC rechecks exact
+// organization authority before looking up the email.
+adminRouter.post('/organization-members/:id/existing', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleOrgAdminAddExistingMember(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Organization add-existing-member request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

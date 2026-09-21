@@ -37,7 +37,6 @@ import { runProofCoverageCheck } from '../jobs/proof-coverage-monitor.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { runPlatformHealthDigest } from '../jobs/platform-health-digest-cron.js';
 import { COMPUTEID_RECHECK_CRON, runComputeIdPassportRecheck } from '../jobs/computeid-passport-recheck.js';
-import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { runWebhookDlqReport } from '../jobs/webhook-dlq-report.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
@@ -83,7 +82,8 @@ import { fetchMohSgProviders } from '../jobs/singaporeHealthFetcher.js';
 import { fetchCmsPhysicians, fetchStateMedicalBoards } from '../jobs/cmsPhysicianFetcher.js';
 import { fetchBrazilComplianceData, fetchSingaporeComplianceData, fetchMexicoComplianceData } from '../jobs/intlComplianceFetcher.js';
 import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
-import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { detectReorgs, monitorStuckTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { runLeasedRebroadcastSweep, runLeasedRevocationSweep } from '../jobs/leased-chain-jobs.js';
 import { runRegulatoryChangeScan } from '../jobs/regulatory-change-scan.js';
 import { runCalibrationRefit } from '../jobs/calibration-refit.js';
 import { captureProofCoverageAlert, withCronMonitoring } from '../utils/sentry.js';
@@ -240,7 +240,10 @@ function getRegisteredJobPaths(): Set<string> {
  * and `/lock-wait` reach the same handler and must therefore share one bucket.
  */
 function normalizeJobPath(path: string): string {
-  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  let trimmed = path;
+  while (trimmed.length > 1 && trimmed.endsWith('/')) {
+    trimmed = trimmed.slice(0, -1);
+  }
   return trimmed.toLowerCase();
 }
 
@@ -838,7 +841,7 @@ cronRouter.post('/process-revocations', async (_req, res) => {
     const result = await withCronMonitoring(
       'process-revocations',
       '*/5 * * * *',
-      () => processRevokedAnchors(),
+      () => runLeasedRevocationSweep(),
     )();
     res.json(result);
   } catch (error) {
@@ -1494,6 +1497,10 @@ cronRouter.post('/recover-broadcasts', async (_req, res) => {
         { recovered: result.recovered, passes: result.passes },
         'Stuck-broadcast recovery finished INCOMPLETE — stuck anchors may remain',
       );
+      // Cloud Scheduler retries non-2xx responses. Returning 200 here records
+      // an incomplete recovery as success while stuck anchors may remain.
+      res.status(503).json(result);
+      return;
     }
     res.json(result);
   } catch (error) {
@@ -1540,7 +1547,7 @@ cronRouter.post('/monitor-stuck-txs', async (_req, res) => {
 
 cronRouter.post('/rebroadcast-txs', async (_req, res) => {
   try {
-    const result = await rebroadcastDroppedTransactions();
+    const result = await runLeasedRebroadcastSweep();
     // SCRUM-3836: a run that could not query its candidates must not answer 200.
     if (!result.completed) {
       res.status(503).json({ error: 'TX rebroadcast could not run', ...result });

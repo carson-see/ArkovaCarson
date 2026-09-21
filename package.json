@@ -26,6 +26,7 @@
     "test:watch": "vitest",
     "test:rls": "vitest run --config vitest.config.rls.ts",
     "test:e2e": "playwright test",
+    "test:e2e:people-layout": "playwright test --config=e2e/uat22-people-layout.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:load": "vitest run tests/load",
     "analyze": "ANALYZE=true vite build && echo 'Bundle report: dist/bundle-stats.html'",

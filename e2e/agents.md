@@ -19,6 +19,10 @@ Canonical submission fixtures intercept the real worker routes, including `/api/
 
 The opt-in `uat22-platform-invite.spec.ts` distinguishes mocked GET list responses from POST create responses and checks that the sent invite appears after refresh at 1280px and 375px. This is browser transport/rendering coverage with real fixture auth, not live worker/DB proof. The real mounted-router counterpart is `services/worker/src/api/admin-invitations.local.test.ts`; both remain explicit local runs with fixture prerequisites. No skip was removed.
 
+## SCRUM-5253 — People actions stay visible on mobile
+
+`uat22-people-layout.spec.ts` drives the real organization page and CSS at 320, 375, and 1280 pixels while stubbing only its HTTP boundaries. It asserts clipping geometry, hit testing, horizontal overflow, and dialog interaction. The root suite ignores it because it owns a separate Vite server and synthetic auth; `npm run test:e2e:people-layout` invokes its standalone config, and the E2E CI job runs that command whenever app-affecting files change.
+
 _Last updated: 2026-09-13 (`ner-dev-load.spec.ts` added)._
 
 ## 2026-09-13 — `ner-dev-load.spec.ts` / `ner-dev-load.config.ts` (new)
@@ -113,6 +117,28 @@ writes `metadata` through `serviceClient`, and that is load-bearing rather than 
 migration 0423's trigger strips `connector_source` from any write by a non-`service_role` caller.
 A fixture written as the user would produce a record with no marker, hence no chips — and the spec
 would pass while testing nothing. Same reason the DocuSign block above uses the service client.
+
+## 2026-09-13 — `connectors.spec.ts` added; `route-screenshot-baseline.spec.ts` gained a `connectors` entry
+
+Google Drive itself is mocked at the network boundary
+(`page.route('**/api/v1/integrations/google_drive/folders**', ...)`) — the real worker process is
+never asked to decrypt a KMS-encrypted token or call the real Google API, so the test needs no real
+Drive grant. `/api/rules` is deliberately NOT mocked: it hits the real worker + test database, so
+"Save, reload, selection and action persist" is a genuine persistence check. The test seeds a
+connected `org_integrations` row directly via `getServiceClient()` (fake `encrypted_tokens` —
+never decrypted, because the folders call is intercepted before it reaches the worker) and cleans
+up both `org_integrations` and `organization_rules` rows for the seed org-admin's org in
+`afterEach`, so re-runs start clean.
+
+The route-guard case uses a SEPARATE `base.describe` block with
+`base.use({ storageState: { cookies: [], origins: [] } })` to get a genuinely logged-out context —
+every default `page` fixture in this file is already authenticated via project `storageState`
+(see the top of `fixtures/auth.ts`), so asserting an unauthenticated redirect needs to opt OUT of
+that, not just navigate with the default `page`.
+
+`route-screenshot-baseline.spec.ts` gained one `connectors` entry, inserted next to the existing
+`rules` / `rule-builder` entries — which stay (SPEC-CONNECTORS PM-9: `/organization/rules` remains
+routed; deleting its baseline would hide a regression in a page that is still live).
 
 ## 2026-09-08 — every failed E2E job used to discard its own evidence
 
@@ -627,3 +653,8 @@ use Chromium's real decoder/canvas path and assert scoped PNG upload plus pointe
 payloads, malformed-image rejection, and privacy controls. Auth, RPC, Storage,
 and signed-media boundaries remain mocked; screenshots do not prove hosted
 Storage signing, expiry, or Auth policy behavior.
+
+## 2026-09-14 — SCRUM-5145 email confirmation browser regressions
+
+`uat17-email-confirmation.spec.ts` drives the actual SignUpForm, useAuth, EmailConfirmation and AuthCallbackPage through the development-only fixture at1280/375. Auth signup/resend HTTP responses are simulated; the tests assert one signup, dedicated password-free resend, truthful outcomes, idle-time cooldown reset, long-address containment and actionable expired links. They use empty storageState and do not need seeded sessions. Run locally with `npx playwright test --config=e2e/uat17-email-confirmation.config.ts`; the dedicated config owns port5197 and uses placeholder local Auth configuration. The spec also runs in the ordinary CI Chromium project. Screenshots are Playwright attachments. This proves browser behavior, not real SMTP, server expiry, organization association or MFA; the isolated hosted driver and actual browser UAT cover those release gates.
+UAT-17's standalone email fixture also renders the production add-existing-member dialog and checks native click/Enter actionability and viewport fit at 1280px and 375px; its unauthenticated failure is a browser-control/layout assertion, not worker authorization proof.

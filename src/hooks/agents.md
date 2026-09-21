@@ -260,3 +260,7 @@ reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag
 ## 2026-09-19 — `useOrgProfileFolders`
 
 This additive wrapper is deliberately route-org scoped and never consults profile/active-org state. Its query key includes caller, explicit org, resolved authorization, and manager authority; reads stay disabled and cached rows stay hidden until route authorization resolves. Mutations require the caller-visible manager gate and capture the explicit org. Worker authorization remains authoritative. `descendantFolderIds` is cycle-safe.
+
+## 2026-09-14 — SCRUM-5145 signup resend API
+
+Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.

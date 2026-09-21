@@ -54,6 +54,10 @@ jobs:
     outputs:
       run_full: ${{ steps.decision.outputs.run_full }}
       run_focused: ${{ steps.decision.outputs.run_focused }}
+      baseline_sha: ${{ steps.main_push.outputs.baseline_sha }}
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Checkout protected-main history for tier admission
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -77,8 +81,8 @@ jobs:
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         id: main_push
         env:
-          PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: node_modules/.bin/tsx scripts/ci/main-push-admission.ts
 
       - name: Admit protected, ready, and speculative runs
@@ -115,7 +119,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Run changed-surface and CI policy validation
         env:
-          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_BEFORE: ${{ needs.admission.outputs.baseline_sha }}
           PUSH_AFTER: ${{ github.sha }}
         run: node_modules/.bin/tsx scripts/ci/run-main-t0-validation.ts
 
@@ -351,14 +355,17 @@ jobs:
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9
         #   Client-side only, user-supplied files. Tracked for replacement post-launch.
-        run: npm audit --audit-level=critical --omit=dev
+        # Audit the committed dependency graph instead of the platform-specific
+        # node_modules tree. Optional native packages can be extraneous on one
+        # runner and make npm's retiring quick-audit endpoint reject the tree.
+        run: npm audit --package-lock-only --audit-level=critical --omit=dev
 
       - name: Run npm audit (worker production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - snarkjs -> bfj -> jsonpath -> underscore <=1.13.7: GHSA-qpx9-hpmf-5gmw
         #   DoS vuln, not exploitable server-side. Tracked for replacement.
         working-directory: services/worker
-        run: npm ci --ignore-scripts && npm audit --audit-level=critical --omit=dev
+        run: npm ci --ignore-scripts && npm audit --package-lock-only --audit-level=critical --omit=dev
 
   # Third-party notices freshness (see scripts/ci/check-third-party-notices-fresh.ts).
   #
@@ -1133,9 +1140,8 @@ jobs:
       # worker suite never ran. Net effect: a PR could look CI-covered while
       # the entire worker suite silently never executed.
       #
-      # Fix: give every step from here on `if: always()` so each
-      # independently-meaningful check always attempts to run regardless of
-      # what failed earlier in the job, PLUS an explicit "Aggregate test
+      # Fix: give every independent validation below an explicit condition so
+      # it still runs after an earlier FAILURE, plus an explicit "Aggregate test
       # suite results" gate at the end that fails the job if ANY of them
       # reported failure/cancelled. The job already fails automatically the
       # moment any non-continue-on-error step fails (GitHub's default job
@@ -1145,7 +1151,9 @@ jobs:
       # propagation) — not the sole mechanism. This intentionally stays a
       # single job (not split into parallel jobs) to avoid touching
       # .mergify.yml's `check-success = Tests` conditions (5 occurrences)
-      # while 29 PRs are in flight against this file.
+      # while 29 PRs are in flight against this file. `!cancelled()` preserves
+      # that after-failure coverage but stops costly suites when GitHub cancels
+      # an obsolete concurrency run. The final cheap aggregate remains `always()`.
       - name: Run tests with coverage
         id: root-coverage
         run: npm run test:coverage
@@ -1161,7 +1169,7 @@ jobs:
       # the tier detector's T0 CI-tooling surface.
       - name: Run SDK tests (sdks/)
         id: sdk-tests
-        if: always()
+        if: ${{ !cancelled() }}
         run: node_modules/.bin/vitest run --root sdks
 
       - name: Run RLS tests
@@ -1169,7 +1177,7 @@ jobs:
         # get_flag + chain/legal_hold protections; test assertions updated for
         # 0174 (SECURED not ACTIVE) and 0180 (unified error message).
         id: rls-tests
-        if: always() && steps.supabase-keys.outcome == 'success' && steps.db-reset.outcome == 'success'
+        if: ${{ !cancelled() && steps.supabase-keys.outcome == 'success' && steps.db-reset.outcome == 'success' }}
         run: npm run test:rls
         env:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
@@ -1183,7 +1191,7 @@ jobs:
 
       - name: Install worker dependencies
         id: worker-deps
-        if: always()
+        if: ${{ !cancelled() }}
         working-directory: services/worker
         run: |
           for attempt in 1 2 3; do
@@ -1207,7 +1215,7 @@ jobs:
       # ~30s circom compile + plonk setup; cache miss rebuilds from source.
       - name: Cache zk circuit artifacts
         id: cache-zk-artifacts
-        if: always() && steps.worker-deps.outcome == 'success'
+        if: ${{ !cancelled() && steps.worker-deps.outcome == 'success' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: services/worker/circuits/artifacts
@@ -1230,7 +1238,7 @@ jobs:
 
       - name: Install circom (cache miss only)
         id: install-circom
-        if: always() && steps.worker-deps.outcome == 'success' && steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.worker-deps.outcome == 'success' && steps.cache-zk-artifacts.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
           CIRCOM_VERSION=v2.1.9
@@ -1246,7 +1254,7 @@ jobs:
 
       - name: Build zk circuit artifacts (cache miss only)
         id: build-zk-circuit
-        if: always() && steps.worker-deps.outcome == 'success' && steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.worker-deps.outcome == 'success' && steps.cache-zk-artifacts.outputs.cache-hit != 'true' }}
         working-directory: services/worker
         run: npm run build:circuit
 
@@ -1256,7 +1264,7 @@ jobs:
         # zk-proof integration tests would error at module load (which is
         # also fine — but earlier failure = clearer signal).
         id: verify-zk-artifacts
-        if: always() && steps.worker-deps.outcome == 'success'
+        if: ${{ !cancelled() && steps.worker-deps.outcome == 'success' }}
         run: |
           ls -lh services/worker/circuits/artifacts/extraction-proof_js/extraction-proof.wasm
           ls -lh services/worker/circuits/artifacts/extraction-proof_final.zkey
@@ -1264,7 +1272,7 @@ jobs:
 
       - name: Run UAT22 local invitation integration
         id: uat22-local-integration
-        if: always() && steps.worker-deps.outcome == 'success' && steps.db-reset.outcome == 'success'
+        if: ${{ !cancelled() && steps.worker-deps.outcome == 'success' && steps.db-reset.outcome == 'success' }}
         working-directory: services/worker
         run: node_modules/.bin/vitest run --config vitest.config.uat22-local.ts
         env:
@@ -1281,7 +1289,7 @@ jobs:
 
       - name: Run worker tests with coverage
         id: worker-coverage
-        if: always() && steps.worker-deps.outcome == 'success'
+        if: ${{ !cancelled() && steps.worker-deps.outcome == 'success' }}
         working-directory: services/worker
         run: npm run test:coverage
 
@@ -1303,7 +1311,7 @@ jobs:
       # that runs, goes red, and blocks no one.
       - name: Install edge dependencies
         id: edge-deps
-        if: always()
+        if: ${{ !cancelled() }}
         working-directory: services/edge
         run: |
           for attempt in 1 2 3; do
@@ -1324,7 +1332,7 @@ jobs:
 
       - name: Run edge worker tests
         id: edge-tests
-        if: always() && steps.edge-deps.outcome == 'success'
+        if: ${{ !cancelled() && steps.edge-deps.outcome == 'success' }}
         working-directory: services/edge
         run: npm test
 
@@ -1332,7 +1340,7 @@ jobs:
       # SCRUM-5203 reproduced green queue checks with broken npm ci and tsc.
       - name: Validate Zapier clean installation and build
         id: zapier-validation
-        if: always()
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         working-directory: integrations/zapier
         run: |
@@ -1931,6 +1939,20 @@ jobs:
           E2E_SEED_PASSWORD: Arkova2026!
           E2E_WORKER_URL: http://127.0.0.1:3001
 
+      - name: Run People mobile layout regression
+        if: steps.e2e-changed.outputs.changed == 'true'
+        run: npm run test:e2e:people-layout
+        timeout-minutes: 5
+
+      - name: Upload People mobile layout evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.e2e-changed.outputs.changed == 'true'
+        with:
+          name: uat22-people-layout-evidence
+          path: output/playwright/uat22-people-layout/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: E2E skipped (no app-affecting changes)
         if: steps.e2e-changed.outputs.changed != 'true'
         run: echo "No src/worker/e2e/supabase/config changes detected — Playwright suite skipped; reporting green."
@@ -2027,25 +2049,35 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Python SDK with dev extras
-        run: >-
-          python -m pip install --only-binary=:all: --upgrade "pip==26.2.1" && python -m pip install --only-binary=:all: -e ".[dev]"
+      - name: Setup locked Python package manager
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.3"
+          enable-cache: true
+          cache-dependency-glob: packages/arkova-py/uv.lock
+
+      - name: Install locked Python SDK dependencies
+        run: uv sync --locked --all-extras --python 3.12 --no-install-project --no-build
+
+      - name: Build and install first-party Python SDK wheel
+        run: |
+          rm -rf dist
+          uv run --locked --no-sync --no-build python -m build --wheel --no-isolation
+          wheels=(dist/*.whl)
+          [[ ${#wheels[@]} -eq 1 && -f ${wheels[0]} ]]
+          wheel_hash=$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)
+          printf '%s --hash=sha256:%s\n' "${wheels[0]}" "$wheel_hash" > "$RUNNER_TEMP/arkova-wheel-requirements.txt"
+          uv pip install --python .venv/bin/python --no-deps --no-build --require-hashes --requirement "$RUNNER_TEMP/arkova-wheel-requirements.txt"
 
       - name: Run Python SDK tests
-        run: pytest
+        env:
+          ARKOVA_TEST_INSTALLED_WHEEL: "1"
+        run: uv run --locked --no-sync --no-build pytest
 
-      # ruff is pinned to an EXACT version in pyproject.toml — see the comment on
-      # the pin there. This is the same command the publish gate runs.
-      #
-      # NOTE on the pip bootstrap above: this job pins `pip==26.2.1` while
-      # publish-python-sdk.yml still bootstraps an unpinned pip. That is a
-      # deliberate asymmetry, not drift — pinning the publish file's line would
-      # re-classify it as NEW code and hand SonarCloud a fresh S8544 on a line
-      # that has been there untouched for months, without changing what it
-      # installs. The parity that matters and is test-enforced is the
-      # python-version plus the pytest/ruff commands, not the bootstrap.
+      # Ruff and every other dev dependency come from uv.lock. This is the same
+      # locked command the publish gate runs.
       - name: Lint Python SDK (publish-gate parity)
-        run: ruff check src tests
+        run: uv run --locked --no-sync --no-build ruff check src tests
 
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:
@@ -2431,6 +2463,11 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
+        with:
+          # The live base can advance after GitHub synthesized refs/pull/N/merge.
+          # Full history lets ciContext resolve the real fork point instead of
+          # falling back to a misleading live-base..stale-merge two-dot diff.
+          fetch-depth: 0
 
       - name: Setup Node.js
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"

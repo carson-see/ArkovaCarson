@@ -13,6 +13,14 @@ Deletions and renames deliberately fail closed to the full matrix. Focused
 pushes retain the independent secret scan, root build/typecheck/copy lint, and
 worker-local typecheck/build when worker tests change.
 
+The `before` boundary is the newest successful, reachable `main` push run for
+this repository and this workflow, resolved through the Actions API with
+`actions: read`. It is deliberately not `github.event.before`: GitHub may
+replace a pending protected-main run even when in-progress cancellation is
+disabled. Diffing from the last successful run carries any canceled runtime
+push into its successor's classification. Missing, malformed, fork-owned,
+wrong-workflow, or non-ancestor run data selects the full matrix.
+
 ## 2026-09-19 — current base gate contracts
 
 The staging workflow contract executes the live-state resolver with stale-base fixtures and pins the conditional merge against the authoritative base. Both evidence workflows pass the authenticated current base SHA to their checker. Keep the PR body and source head bound to the live PR record and the founder exception bound to the protected base snapshot.
