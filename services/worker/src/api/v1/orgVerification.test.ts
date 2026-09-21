@@ -80,12 +80,24 @@ function mockQuery(result: { data?: unknown; error?: unknown }) {
   chain.select = vi.fn().mockReturnValue(chain);
   chain.eq = vi.fn().mockReturnValue(chain);
   chain.neq = vi.fn().mockReturnValue(chain);
+  chain.not = vi.fn().mockReturnValue(chain);
   chain.update = vi.fn().mockReturnValue(chain);
   chain.insert = vi.fn().mockReturnValue(chain);
   chain.single = vi.fn().mockImplementation(terminal);
   chain.maybeSingle = vi.fn().mockImplementation(terminal);
   return chain;
 }
+
+/**
+ * A pending token for `example.com`, in the stored `code:token:binding` shape
+ * (SCRUM-5285). The binding is `sha256('example.com')` truncated to 16 hex
+ * chars — hardcoded on purpose rather than recomputed, so a change to how the
+ * producer derives it turns these fixtures red instead of silently following
+ * along. That the producer and the consumer actually agree is proven
+ * separately, by the verify-domain → confirm-domain round trip in
+ * "SCRUM-5285 — a verification code proves ONE domain".
+ */
+const EXAMPLE_COM_TOKEN = '123456:abcdef:a379a6f6eeafb9a5';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -329,7 +341,7 @@ describe('POST /confirm-domain', () => {
           return mockQuery({
             data: opts.orgData ?? {
               domain: 'example.com',
-              domain_verification_token: '123456:abcdef',
+              domain_verification_token: EXAMPLE_COM_TOKEN,
               domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
               ein_tax_id: null,
               domain_verified: false,
@@ -367,7 +379,7 @@ describe('POST /confirm-domain', () => {
     setupMocks({
       orgData: {
         domain: 'example.com',
-        domain_verification_token: '123456:abcdef',
+        domain_verification_token: EXAMPLE_COM_TOKEN,
         domain_verification_token_expires_at: null,
         ein_tax_id: null,
         domain_verified: true,
@@ -397,7 +409,7 @@ describe('POST /confirm-domain', () => {
     setupMocks({
       orgData: {
         domain: 'example.com',
-        domain_verification_token: '123456:abcdef',
+        domain_verification_token: EXAMPLE_COM_TOKEN,
         domain_verification_token_expires_at: new Date(Date.now() - 3600_000).toISOString(),
         ein_tax_id: null,
         domain_verified: false,
@@ -428,7 +440,7 @@ describe('POST /confirm-domain', () => {
     setupMocks({
       orgData: {
         domain: 'example.com',
-        domain_verification_token: '123456:abcdef',
+        domain_verification_token: EXAMPLE_COM_TOKEN,
         domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
         ein_tax_id: '12-3456789',
         domain_verified: false,
@@ -645,7 +657,7 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
   it('confirm-domain full verification (EIN present) grants VERIFIED without any kyb_* column', async () => {
     const updates = captureOrgUpdates({
       domain: 'example.com',
-      domain_verification_token: '123456:abcdef',
+      domain_verification_token: EXAMPLE_COM_TOKEN,
       domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
       ein_tax_id: '12-3456789',
       domain_verified: false,
@@ -669,7 +681,7 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
   it('confirm-domain partial verification (no EIN) writes no kyb_* column', async () => {
     const updates = captureOrgUpdates({
       domain: 'example.com',
-      domain_verification_token: '123456:abcdef',
+      domain_verification_token: EXAMPLE_COM_TOKEN,
       domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
       ein_tax_id: null,
       domain_verified: false,
@@ -866,7 +878,7 @@ describe('SCRUM-5285 — domain verification compare-and-swap', () => {
 
   type Chain = ReturnType<typeof mockQuery>;
 
-  const FRESH_TOKEN = '123456:abcdef';
+  const FRESH_TOKEN = EXAMPLE_COM_TOKEN;
 
   /**
    * Keeps the organizations SELECT chain and the organizations UPDATE chain
@@ -1005,6 +1017,25 @@ describe('SCRUM-5285 — domain verification compare-and-swap', () => {
       expect(predicates).toContainEqual(['domain', 'example.com']);
     });
 
+    it('refuses to plant a token on a row that is already verified', async () => {
+      // A verify-domain request that read `domain_verified = false` can have a
+      // confirm-domain land underneath it before its own UPDATE fires. Without
+      // this predicate the stale write plants a fresh token on a just-verified
+      // org. NULL-safe on purpose: `domain_verified` is nullable, so
+      // `.eq(…, false)` would lock a NULL row out of verification entirely.
+      const { writeChain } = setupCas({
+        orgData: { domain: 'example.com', domain_verified: false },
+      });
+      const res = await request(app).post('/org/verify-domain').send({});
+
+      expect(res.status).toBe(200);
+      expect((writeChain.not as ReturnType<typeof vi.fn>).mock.calls).toContainEqual([
+        'domain_verified',
+        'is',
+        true,
+      ]);
+    });
+
     it('returns 409 verification_superseded and issues no code when the domain moved', async () => {
       const { auditInserts } = setupCas({
         orgData: { domain: 'example.com', domain_verified: false },
@@ -1018,5 +1049,125 @@ describe('SCRUM-5285 — domain verification compare-and-swap', () => {
       expect(mockSendEmail).not.toHaveBeenCalled();
       expect(auditInserts).toEqual([]);
     });
+  });
+});
+
+// ─── SCRUM-5285 (residual): the token must bind the domain it was issued for ───
+
+/**
+ * Found while building `machines/orgDomainVerification.machine.ts`, whose
+ * invariant `verifiedImpliesVerifiedForTheDomainProven` went RED against the
+ * compare-and-swap alone.
+ *
+ * The CAS closes the SELECT→UPDATE window INSIDE `confirm-domain`. It does not
+ * close the window between the two REQUESTS: issue a code for `example.com`
+ * (mailed to `admin@example.com`), PATCH the domain to `attacker.example`, then
+ * confirm. `confirm-domain` reads domain `attacker.example` and token T, the
+ * CAS predicate still matches that very row, and `attacker.example` comes out
+ * verified on the strength of a code only `admin@example.com` ever saw.
+ *
+ * Nothing on the row records which domain the pending token was issued FOR —
+ * and adding a column is a migration. So the binding is carried inside the
+ * token itself (`code:token:binding`), and `confirm-domain` refuses when it
+ * does not match the domain it is about to grant. A pre-existing two-segment
+ * token carries no binding and is refused too: fail closed, restart the flow.
+ */
+describe('SCRUM-5285 — a verification code proves ONE domain', () => {
+  const app = createApp('user-123');
+
+  /** Runs verify-domain for `domain` and returns the token it persisted. */
+  async function issueTokenFor(domain: string): Promise<{ token: string; code: string }> {
+    let persisted: string | undefined;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        const read = mockQuery({ data: { domain, domain_verified: false }, error: null });
+        const write = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+        (read.update as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            persisted = payload.domain_verification_token as string;
+            return write;
+          },
+        );
+        return read;
+      }
+      return mockQuery({ data: null });
+    });
+
+    const res = await request(app).post('/org/verify-domain').send({});
+    expect(res.status).toBe(200);
+    expect(persisted).toBeDefined();
+    return { token: persisted as string, code: res.body.devCode as string };
+  }
+
+  /** Runs confirm-domain against an org row carrying `domain` and `token`. */
+  async function confirmAgainst(domain: string | null, token: string | null, code: string) {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        const read = mockQuery({
+          data: {
+            domain,
+            domain_verification_token: token,
+            domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+            ein_tax_id: null,
+            domain_verified: false,
+          },
+          error: null,
+        });
+        const write = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+        (read.update as ReturnType<typeof vi.fn>).mockReturnValue(write);
+        return read;
+      }
+      return mockQuery({ data: null });
+    });
+    return request(app).post('/org/confirm-domain').send({ code });
+  }
+
+  it('persists a token that carries a binding beyond the code and the secret', async () => {
+    const { token } = await issueTokenFor('example.com');
+    expect(token.split(':')).toHaveLength(3);
+  });
+
+  it('issues DIFFERENT bindings for different domains', async () => {
+    const a = await issueTokenFor('example.com');
+    const b = await issueTokenFor('attacker.example');
+    expect(a.token.split(':')[2]).not.toBe(b.token.split(':')[2]);
+  });
+
+  it('confirms when the domain still matches the one the code was mailed to', async () => {
+    const { token, code } = await issueTokenFor('example.com');
+    const res = await confirmAgainst('example.com', token, code);
+    expect(res.status).toBe(200);
+    expect(res.body.domainVerified).toBe(true);
+  });
+
+  it('refuses a code issued for a DIFFERENT domain, even with the CAS satisfied', async () => {
+    // The whole row is internally consistent here — the CAS predicate matches.
+    // Only the binding knows this code was mailed to admin@example.com.
+    const { token, code } = await issueTokenFor('example.com');
+    const res = await confirmAgainst('attacker.example', token, code);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('verification_superseded');
+    expect(res.body.domainVerified).toBeUndefined();
+  });
+
+  it('fails closed on a legacy token that carries no binding at all', async () => {
+    const res = await confirmAgainst('example.com', '123456:deadbeef', '123456');
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('verification_superseded');
+  });
+
+  it('still answers "Invalid verification code" for a wrong code, binding or not', async () => {
+    // The binding check must not become an oracle that shadows the code check.
+    const { token } = await issueTokenFor('example.com');
+    const res = await confirmAgainst('attacker.example', token, '999999');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid');
   });
 });

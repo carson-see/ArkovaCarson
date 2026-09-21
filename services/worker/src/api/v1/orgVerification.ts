@@ -99,6 +99,32 @@ function affectedRowCount(rows: unknown): number {
 }
 
 /**
+ * SCRUM-5285 (residual, found by `machines/orgDomainVerification.machine.ts`).
+ *
+ * The compare-and-swap above closes the SELECT→UPDATE window INSIDE each
+ * handler. It does not close the window between the two REQUESTS: issue a code
+ * for `example.com` (mailed to `admin@example.com`), PATCH the domain to
+ * `attacker.example`, then confirm. `confirm-domain` reads the new domain and
+ * the old token, the CAS predicate still matches that very row, and
+ * `attacker.example` comes out verified on a code only `admin@example.com`
+ * ever saw. The machine's `verifiedImpliesVerifiedForTheDomainProven` is RED
+ * against the CAS alone and GREEN with this binding.
+ *
+ * Nothing on the row records which domain the pending token was issued FOR,
+ * and adding a column is a migration. So the binding travels inside the token:
+ * `code:token:binding`. `confirm-domain` recomputes it from the domain it is
+ * about to grant and refuses on any mismatch.
+ *
+ * A pre-existing TWO-segment token carries no binding and is refused as well:
+ * fail closed, restart the flow. Tokens live 24h, so the cost is bounded.
+ * Comparison is over the stored bytes, so a case or whitespace edit to
+ * `organizations.domain` also invalidates the pending code — deliberate.
+ */
+function domainBinding(domain: string): string {
+  return crypto.createHash('sha256').update(domain).digest('hex').slice(0, 16);
+}
+
+/**
  * Auth gate for the three self-serve verification writers: resolve the
  * caller's org from their OWN profiles row (never a client-supplied org id),
  * then require ORG_ADMIN via the shared _org-auth.ts precedence
@@ -261,11 +287,17 @@ orgVerificationRouter.post('/verify-domain', async (req: Request, res: Response)
     const { data: tokenRows, error: updateError } = await db
       .from('organizations')
       .update({
-        domain_verification_token: `${code}:${token}`,
+        domain_verification_token: `${code}:${token}:${domainBinding(org.domain)}`,
         domain_verification_token_expires_at: expiresAt,
       })
       .eq('id', orgId)
       .eq('domain', org.domain)
+      // …and on the grant not having landed underneath this request. A
+      // confirm-domain that commits between the SELECT above and this UPDATE
+      // would otherwise get a fresh token planted on a just-verified row.
+      // `.not(…, 'is', true)` rather than `.eq(…, false)`: `domain_verified`
+      // is nullable, and a NULL row must still be able to start verification.
+      .not('domain_verified', 'is', true)
       .select('id');
 
     if (updateError) {
@@ -386,10 +418,23 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
       return;
     }
 
-    // Verify code (stored as "code:token")
-    const storedCode = org.domain_verification_token.split(':')[0];
+    // Verify code (stored as "code:token:binding")
+    const tokenParts: string[] = org.domain_verification_token.split(':');
+    const storedCode = tokenParts[0];
     if (storedCode !== code.trim()) {
       res.status(400).json({ error: 'Invalid verification code' });
+      return;
+    }
+
+    // The code is correct — but correct FOR WHICH DOMAIN? Checked after the
+    // code so this never becomes an oracle that answers before the code does.
+    const storedBinding = tokenParts[2];
+    if (!storedBinding || storedBinding !== domainBinding(org.domain)) {
+      logger.warn({ orgId }, 'Domain verification code was issued for a different domain');
+      res.status(409).json({
+        error: 'This verification code was issued for a different organization domain. Start domain verification again.',
+        code: VERIFICATION_SUPERSEDED,
+      });
       return;
     }
 
