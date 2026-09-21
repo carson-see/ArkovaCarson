@@ -27,6 +27,16 @@ const ledgerHasEntry = variable("ledgerHasEntry");
 const jobEnqueued = variable("jobEnqueued");
 const cursorAdvancedThisWalk = variable("cursorAdvancedThisWalk");
 const problemObservable = variable("problemObservable");
+// Fix-round item 4A/B (independent TLA + simplify pass on head 7ddf6294b —
+// verifier's real counterexample, see module doc comment).
+const lostLeaseWhileWalking = variable("lostLeaseWhileWalking");
+// Fix-round item 3 mutation-test ratchet (see module doc comment).
+const pushDroppedWhileLocked = variable("pushDroppedWhileLocked");
+// Fix-round item 4A CAS sub-model (advancePageToken's compare-and-swap).
+const persistedGen = variable("persistedGen");
+const startedFromGen = variable("startedFromGen");
+const secondWalkerStartedFromGen = variable("secondWalkerStartedFromGen");
+const everReachedG2 = variable("everReachedG2");
 
 /**
  * Drive changes-feed cursor lifecycle — SCRUM-2903/3661/5094/2330 (orchestrator
@@ -49,6 +59,20 @@ const problemObservable = variable("problemObservable");
  * flight" for free by re-firing that action between the other actions below.
  * This mirrors `docusignInboundDedup.machine.ts`'s treatment of "one shared
  * mutable row, many independently-schedulable actors."
+ *
+ * CODE ↔ MODEL MAP (fix-round update — `pendingPush` now corresponds to a
+ * REAL persisted marker, not a modeling fiction):
+ *
+ *   | Model variable/action              | Real code (drive-changes-runner.ts unless noted) |
+ *   |-------------------------------------|----------------------------------------------------|
+ *   | `pendingPush`                       | `job_queue.attempts` on the SAME lease row (the dirty/rerun-requested marker, fix-round item 3) — `markLeaseDirty`/`checkAndClearLeaseDirty` |
+ *   | `beginRunSkippedLocked`             | the `{skipped:'locked'}` branch — now calls `markLeaseDirty` instead of dropping the push |
+ *   | `lockHeld`                          | the `withRunLease` per-integration lease (`job_queue` row, `driveChangesRunLeaseSpec`) |
+ *   | `leaseTtlExpiresWhileWalking`       | heartbeat renewal failing / TTL lapsing despite an active walk (`RunLeaseContext` doc comment, jobs/run-lease.ts) |
+ *   | `beginRunWhileAlreadyWalking`       | a fresh `withRunLease` acquire winning the now-free lock while the OLD holder is still logically mid-walk |
+ *   | `leaseCheckCatchesLoss`             | `processDriveChanges`'s per-page `deps.stillHoldsLease()` check (`stillHoldsRunLease`, jobs/run-lease.ts) |
+ *   | `persistedGen`/`startedFromGen`     | `org_integrations.last_page_token` / the `expected_page_token` `advancePageToken`'s CAS captured at run start |
+ *   | `runDriveReconciliationSweep`       | NOT separately modeled here — it is bounded, best-effort, and outside this machine's per-integration scope; see PR body |
  *
  * WHAT THIS DOES NOT PROVE (read before citing this machine as covering more
  * than it does):
@@ -86,6 +110,28 @@ const problemObservable = variable("problemObservable");
  *     fix PR body for the citations (developers.google.com WebFetch, since the
  *     google-developer-knowledge MCP returned an invalid-API-key error this
  *     session). This machine does not model Drive's own internals.
+ *   - `persistedGen`/`startedFromGen`/`secondWalkerStartedFromGen`/
+ *     `everReachedG2` are a DELIBERATELY STANDALONE 3-generation (G0→G1→G2)
+ *     sub-model of `advancePageToken`'s compare-and-swap, decoupled from the
+ *     main `cursorState` lifecycle — the two walkers' commit actions
+ *     (`walkerABegins`/`walkerBBegins`/`commitG0toG1ForA`/`commitG0toG1ForB`/
+ *     `commitG1toG2ForB`) do NOT require `lockHeld`, because the CAS is a
+ *     SEPARATE, DB-level defense-in-depth layer that must hold even if the
+ *     lease layer had a bug — that is the whole point of defense-in-depth,
+ *     and coupling the two sub-models would only prove the CAS works GIVEN
+ *     the lease already works, which is a weaker and less honest claim.
+ *
+ * FIX-ROUND FINDING (independent TLA pass on head 7ddf6294b): the SHIPPED
+ * lease design at that head — `acquireRunLease`/`releaseRunLease` with a
+ * flat, un-renewed TTL — was PROVEN UNSAFE by this exact machine once
+ * extended with `leaseTtlExpiresWhileWalking` + `beginRunWhileAlreadyWalking`
+ * (7-step counterexample: bootstrapCursor → pushArrives → beginRun →
+ * leaseTtlExpiresWhileWalking → pushArrives → beginRunWhileAlreadyWalking →
+ * a commit action firing without re-checking lock ownership). The fix
+ * (`withRunLease` heartbeat + `stillHoldsRunLease` per-page re-check +
+ * CAS'd `advancePageToken`) is what closes it — see `noConcurrentWalkers`
+ * and `cursorNeverRewinds` below, and the mutation-test results recorded in
+ * `machines/agents.md`.
  */
 export const driveChangesCursorMachine = defineMachine({
   version: 2,
@@ -119,6 +165,30 @@ export const driveChangesCursorMachine = defineMachine({
     // operator can see it (Sentry via reportDriveProcessingFailure and/or
     // connector-health.ts) — invariant (5)'s subject.
     problemObservable: mapVar("Integrations", boolType(), lit(false)),
+    // Fix-round item 4A: set true the instant a walk's lease is lost while
+    // it is still (as far as its own local state knows) WALKING; cleared
+    // only by a clean recovery (leaseCheckCatchesLoss) or a legitimate new
+    // holder taking over (beginRunWhileAlreadyWalking). `noConcurrentWalkers`
+    // reads this.
+    lostLeaseWhileWalking: mapVar("Integrations", boolType(), lit(false)),
+    // Fix-round item 3 mutation-test ratchet: never set by the SHIPPED
+    // model (beginRunSkippedLocked preserves pendingPush); a mutant that
+    // reintroduces the pre-fix "silently drop the push" behavior sets it,
+    // which `pendingPushNeverDroppedWhileLocked` catches.
+    pushDroppedWhileLocked: mapVar("Integrations", boolType(), lit(false)),
+    // Fix-round item 4A CAS sub-model — see the module doc comment's
+    // "DELIBERATELY STANDALONE" paragraph. Three symbolic generations of
+    // the persisted page token; G0 is the initial value.
+    persistedGen: mapVar("Integrations", enumType("G0", "G1", "G2"), lit("G0")),
+    // Captured by walkerABegins = persistedGen at that instant (mirrors
+    // `expected_page_token` in the real `advancePageToken` call).
+    startedFromGen: mapVar("Integrations", enumType("G0", "G1", "G2"), lit("G0")),
+    // The SAME capture for a second, independently-schedulable walker.
+    secondWalkerStartedFromGen: mapVar("Integrations", enumType("G0", "G1", "G2"), lit("G0")),
+    // One-way ratchet: true forever once G2 has ever been the persisted
+    // value. `cursorNeverRewinds` checks that persistedGen can never
+    // un-reach G2 once this is true.
+    everReachedG2: mapVar("Integrations", boolType(), lit(false)),
   },
   actions: {
     // OAuth-callback-time bootstrap (api/v1/integrations/drive-oauth.ts).
@@ -167,13 +237,84 @@ export const driveChangesCursorMachine = defineMachine({
         setMap("cursorAdvancedThisWalk", param("i"), lit(false)),
       ],
     },
+    // Fix-round item 3: a push arrives while ANOTHER run already holds the
+    // lease. Named explicitly (rather than left as a silently-disabled
+    // `beginRun`) so its update list can express the REAL fix precisely —
+    // `pendingPush` is deliberately left `lit(true)` (unconsumed, matching
+    // `markLeaseDirty`'s real unconditional write) rather than reset to
+    // false. `pendingPushNeverDroppedWhileLocked` mutation-tests this exact
+    // choice: temporarily changing the update to `lit(false)` (the pre-item-3
+    // bug — the locked webhook silently forgot the push) is the mutant that
+    // must fail it.
+    beginRunSkippedLocked: {
+      params: { i: "Integrations" },
+      guard: and(index(pendingPush, param("i")), index(lockHeld, param("i"))),
+      updates: [setMap("pendingPush", param("i"), lit(true))],
+    },
+    // Fix-round item 4A (verifier finding on head 7ddf6294b): heartbeat
+    // renewal fails / the TTL lapses despite the walk still being alive —
+    // see `RunLeaseContext`'s doc comment in jobs/run-lease.ts. A real,
+    // reachable event (a persistently-failing renewal, not a hypothetical).
+    leaseTtlExpiresWhileWalking: {
+      params: { i: "Integrations" },
+      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(lockHeld, param("i"))),
+      updates: [
+        setMap("lockHeld", param("i"), lit(false)),
+        setMap("lostLeaseWhileWalking", param("i"), lit(true)),
+      ],
+    },
+    // Fix-round item 4A: `processDriveChanges`'s per-page `stillHoldsLease()`
+    // check, called before every page including the first. The ONLY
+    // transition available to a walker once `lockHeld` drops while it is
+    // still (as far as ITS OWN state knows) WALKING — every page-
+    // continuation/commit action above now also requires `lockHeld`, so
+    // this is structurally the sole way forward from that state. Aborts
+    // cleanly: no advance, no further Drive call.
+    leaseCheckCatchesLoss: {
+      params: { i: "Integrations" },
+      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), not(index(lockHeld, param("i")))),
+      updates: [
+        setMap("cursorState", param("i"), lit("BOOTSTRAPPED")),
+        setMap("walkProgress", param("i"), lit("NONE")),
+        setMap("lostLeaseWhileWalking", param("i"), lit(false)),
+      ],
+    },
+    // Fix-round item 4A: a FRESH acquire wins the now-free lock while the
+    // OLD holder is still (locally) WALKING — a legitimate new holder
+    // taking over after the old lease genuinely lapsed (exactly what a TTL
+    // lease is FOR), racing against `leaseCheckCatchesLoss` above. Resets
+    // `lostLeaseWhileWalking` — the NEW holder's own session is not tainted
+    // by the PREVIOUS holder's staleness; it is protected by its own
+    // `lockHeld`-gated actions and its own CAS (see the standalone
+    // generation sub-model below).
+    beginRunWhileAlreadyWalking: {
+      params: { i: "Integrations" },
+      guard: and(
+        index(pendingPush, param("i")),
+        not(index(lockHeld, param("i"))),
+        eq(index(cursorState, param("i")), lit("WALKING")),
+      ),
+      updates: [
+        setMap("lockHeld", param("i"), lit(true)),
+        setMap("pendingPush", param("i"), lit(false)),
+        setMap("lostLeaseWhileWalking", param("i"), lit(false)),
+      ],
+    },
     // drive_revision_ledger insert succeeds (reserve-then-confirm ordering).
     // Guard `not ledgerHasEntry` is the mutual-exclusion mechanism backing
     // invariant (2) — the SAME real-world UNIQUE(integration, file,
     // revision) constraint that makes a concurrent duplicate's insert 23505.
     reserveLedgerEntry: {
       params: { i: "Integrations" },
-      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), not(index(ledgerHasEntry, param("i")))),
+      // Fix-round item 4A: `lockHeld` added to every page-continuation/
+      // commit-class guard below — a stale walker (lockHeld=false) can take
+      // NO further action except `leaseCheckCatchesLoss`, matching
+      // `processDriveChanges`'s per-page `stillHoldsLease()` re-check.
+      guard: and(
+        eq(index(cursorState, param("i")), lit("WALKING")),
+        index(lockHeld, param("i")),
+        not(index(ledgerHasEntry, param("i"))),
+      ),
       updates: [setMap("ledgerHasEntry", param("i"), lit(true))],
     },
     // "revision already in ledger" — named explicitly per the task's required
@@ -183,7 +324,11 @@ export const driveChangesCursorMachine = defineMachine({
     // moves on without enqueuing again.
     changeAlreadyInLedger: {
       params: { i: "Integrations" },
-      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(ledgerHasEntry, param("i"))),
+      guard: and(
+        eq(index(cursorState, param("i")), lit("WALKING")),
+        index(lockHeld, param("i")),
+        index(ledgerHasEntry, param("i")),
+      ),
       updates: [setMap("ledgerHasEntry", param("i"), index(ledgerHasEntry, param("i")))],
     },
     // enqueueRuleEvent + enqueueFileChangedJob both succeed.
@@ -191,6 +336,7 @@ export const driveChangesCursorMachine = defineMachine({
       params: { i: "Integrations" },
       guard: and(
         eq(index(cursorState, param("i")), lit("WALKING")),
+        index(lockHeld, param("i")),
         index(ledgerHasEntry, param("i")),
         not(index(jobEnqueued, param("i"))),
       ),
@@ -203,6 +349,7 @@ export const driveChangesCursorMachine = defineMachine({
       params: { i: "Integrations" },
       guard: and(
         eq(index(cursorState, param("i")), lit("WALKING")),
+        index(lockHeld, param("i")),
         index(ledgerHasEntry, param("i")),
         not(index(jobEnqueued, param("i"))),
       ),
@@ -213,7 +360,11 @@ export const driveChangesCursorMachine = defineMachine({
     // integration reservation slot for the next one.
     newRevisionAppears: {
       params: { i: "Integrations" },
-      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(jobEnqueued, param("i"))),
+      guard: and(
+        eq(index(cursorState, param("i")), lit("WALKING")),
+        index(lockHeld, param("i")),
+        index(jobEnqueued, param("i")),
+      ),
       updates: [
         setMap("ledgerHasEntry", param("i"), lit(false)),
         setMap("jobEnqueued", param("i"), lit(false)),
@@ -223,7 +374,7 @@ export const driveChangesCursorMachine = defineMachine({
     // changes.list returns nextPageToken — more pages remain, still WALKING.
     pageSucceedsWithMore: {
       params: { i: "Integrations" },
-      guard: eq(index(cursorState, param("i")), lit("WALKING")),
+      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(lockHeld, param("i"))),
       updates: [setMap("walkProgress", param("i"), lit("PARTIAL"))],
     },
     // A page fails (429/5xx/4xx-not-410) — drive-changes-processor.ts
@@ -232,7 +383,7 @@ export const driveChangesCursorMachine = defineMachine({
     // retry replays from the SAME committed token, never a skipped one.
     pageFailsMidWalk: {
       params: { i: "Integrations" },
-      guard: eq(index(cursorState, param("i")), lit("WALKING")),
+      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(lockHeld, param("i"))),
       updates: [
         setMap("cursorState", param("i"), lit("FAILED_PAGE")),
         setMap("lockHeld", param("i"), lit(false)),
@@ -245,7 +396,11 @@ export const driveChangesCursorMachine = defineMachine({
     // progress or looping unboundedly inside one webhook request.
     pageCapReached: {
       params: { i: "Integrations" },
-      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), eq(index(walkProgress, param("i")), lit("PARTIAL"))),
+      guard: and(
+        eq(index(cursorState, param("i")), lit("WALKING")),
+        index(lockHeld, param("i")),
+        eq(index(walkProgress, param("i")), lit("PARTIAL")),
+      ),
       updates: [
         setMap("walkProgress", param("i"), lit("AT_CAP")),
         setMap("cursorAdvancedThisWalk", param("i"), lit(true)),
@@ -257,7 +412,11 @@ export const driveChangesCursorMachine = defineMachine({
     // Final page: no nextPageToken — advance to newStartPageToken.
     pageSucceedsFinal: {
       params: { i: "Integrations" },
-      guard: eq(index(cursorState, param("i")), lit("WALKING")),
+      // Fix-round item 4A: `lockHeld` here is THE guard the verifier's
+      // counterexample exploits when absent — see the module doc comment's
+      // "FIX-ROUND FINDING" paragraph and the mutation-test record in
+      // machines/agents.md.
+      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(lockHeld, param("i"))),
       updates: [
         setMap("cursorAdvancedThisWalk", param("i"), lit(true)),
         setMap("cursorState", param("i"), lit("ADVANCED")),
@@ -271,7 +430,7 @@ export const driveChangesCursorMachine = defineMachine({
     // released so re-bootstrap can proceed on the NEXT push/run.
     tokenExpiresMidWalk: {
       params: { i: "Integrations" },
-      guard: eq(index(cursorState, param("i")), lit("WALKING")),
+      guard: and(eq(index(cursorState, param("i")), lit("WALKING")), index(lockHeld, param("i"))),
       updates: [
         setMap("cursorState", param("i"), lit("TOKEN_EXPIRED")),
         setMap("lockHeld", param("i"), lit(false)),
@@ -290,6 +449,62 @@ export const driveChangesCursorMachine = defineMachine({
         setMap("cursorState", param("i"), lit("BOOTSTRAPPED")),
         setMap("cursorAdvancedThisWalk", param("i"), lit(true)),
         setMap("problemObservable", param("i"), lit(false)),
+      ],
+    },
+
+    // ── CAS sub-model (fix-round item 4A part 2) ──────────────────────────
+    // Standalone, decoupled from cursorState/lockHeld on purpose — see the
+    // module doc comment. Directly models `DriveProcessorDb.advancePageToken`'s
+    // compare-and-swap: `WHERE last_page_token = expected_page_token`.
+    walkerABegins: {
+      params: { i: "Integrations" },
+      guard: lit(true),
+      updates: [setMap("startedFromGen", param("i"), index(persistedGen, param("i")))],
+    },
+    walkerBBegins: {
+      params: { i: "Integrations" },
+      guard: lit(true),
+      updates: [setMap("secondWalkerStartedFromGen", param("i"), index(persistedGen, param("i")))],
+    },
+    // Walker A's commit attempt from G0. The CAS conjunct
+    // (`persistedGen[i] = 'G0'`) is THE line the mutation test removes to
+    // demonstrate a real rewind — see machines/agents.md for the recorded
+    // counterexample and restored-GREEN result.
+    commitG0toG1ForA: {
+      params: { i: "Integrations" },
+      guard: and(
+        eq(index(startedFromGen, param("i")), lit("G0")),
+        eq(index(persistedGen, param("i")), lit("G0")),
+      ),
+      updates: [setMap("persistedGen", param("i"), lit("G1"))],
+    },
+    // Walker B's first hop (G0 -> G1) — B tracks its OWN advancing position,
+    // the same way the real code's local `pageToken` variable walks forward
+    // page by page while `expected_page_token` stays pinned to the run's
+    // ORIGINAL starting value.
+    commitG0toG1ForB: {
+      params: { i: "Integrations" },
+      guard: and(
+        eq(index(secondWalkerStartedFromGen, param("i")), lit("G0")),
+        eq(index(persistedGen, param("i")), lit("G0")),
+      ),
+      updates: [
+        setMap("persistedGen", param("i"), lit("G1")),
+        setMap("secondWalkerStartedFromGen", param("i"), lit("G1")),
+      ],
+    },
+    // Walker B's second hop (G1 -> G2) — this is the commit whose result a
+    // stale walker A (still holding `startedFromGen = G0`) would REWIND if
+    // `commitG0toG1ForA` were allowed to fire without its own CAS conjunct.
+    commitG1toG2ForB: {
+      params: { i: "Integrations" },
+      guard: and(
+        eq(index(secondWalkerStartedFromGen, param("i")), lit("G1")),
+        eq(index(persistedGen, param("i")), lit("G1")),
+      ),
+      updates: [
+        setMap("persistedGen", param("i"), lit("G2")),
+        setMap("everReachedG2", param("i"), lit(true)),
       ],
     },
   },
@@ -371,6 +586,62 @@ export const driveChangesCursorMachine = defineMachine({
         ),
       ),
     },
+    // (6, fix-round item 4A) A walker that lost its lease mid-walk can
+    // NEVER reach ADVANCED (a full, successful drain) while still carrying
+    // that staleness — it must pass through `leaseCheckCatchesLoss` (clean
+    // abort, clears the flag) first, or be superseded by a legitimate new
+    // holder (`beginRunWhileAlreadyWalking`, which ALSO clears the flag for
+    // its own fresh session). MUTATION-TESTED: removing `lockHeld` from
+    // `pageSucceedsFinal`'s guard (the pre-fix shape) lets a stale walker
+    // reach ADVANCED while `lostLeaseWhileWalking` is still true — see
+    // machines/agents.md for the recorded counterexample.
+    noConcurrentWalkers: {
+      description:
+        "lostLeaseWhileWalking implies the integration never simultaneously reads cursorState=ADVANCED — a walker that lost its lease mid-flight cannot silently complete as if it still held it",
+      formula: forall(
+        "Integrations",
+        "i",
+        or(
+          not(index(lostLeaseWhileWalking, param("i"))),
+          not(eq(index(cursorState, param("i")), lit("ADVANCED"))),
+        ),
+      ),
+    },
+    // (7, fix-round item 4A part 2) The persisted cursor (CAS sub-model)
+    // never rewinds: once G2 has ever been reached, it stays G2 — a stale
+    // walker's out-of-order commit (targeting an EARLIER generation) can
+    // never overwrite a later one. Directly models `advancePageToken`'s
+    // `WHERE last_page_token = expected_page_token` compare-and-swap.
+    cursorNeverRewinds: {
+      description:
+        "everReachedG2 implies persistedGen still equals G2 — the persisted page-token generation is monotonic; a stale/out-of-order commit can never rewind it once a later generation has been reached",
+      formula: forall(
+        "Integrations",
+        "i",
+        or(
+          not(index(everReachedG2, param("i"))),
+          eq(index(persistedGen, param("i")), lit("G2")),
+        ),
+      ),
+    },
+    // (8, fix-round item 3) Closest SOUND abstraction of "a push that
+    // arrives while the lease is held is eventually processed" — see the
+    // module doc comment for why true liveness is outside this DSL. This
+    // is the SAFETY half: the push is never DROPPED while locked (the
+    // shipped `beginRunSkippedLocked` preserves `pendingPush`, matching
+    // `markLeaseDirty`'s real unconditional write). Combined with `check`'s
+    // own deadlock-freedom guarantee (a live `pendingPush=true` always
+    // leaves `beginRun` reachable once the lock frees), this is the
+    // strongest claim provable without temporal operators.
+    // MUTATION-TESTED: changing `beginRunSkippedLocked`'s update to
+    // `lit(false)` (the pre-item-3 bug — the locked webhook silently forgot
+    // the push) sets `pushDroppedWhileLocked` and fails this — see
+    // machines/agents.md.
+    pendingPushNeverDroppedWhileLocked: {
+      description:
+        "pushDroppedWhileLocked is never true — the shipped design never discards a push signal that arrived while the lease was held; the pre-item-3 bug (silently dropping it) is the mutation this invariant exists to catch",
+      formula: forall("Integrations", "i", not(index(pushDroppedWhileLocked, param("i")))),
+    },
   },
   proof: {
     defaultTier: "pr",
@@ -378,12 +649,15 @@ export const driveChangesCursorMachine = defineMachine({
       pr: {
         domains: { Integrations: ids({ prefix: "i", size: 1 }) },
         graphEquivalence: false,
-        budgets: { maxEstimatedStates: 100_000 },
+        // Fix-round item 4A/B raised the raw variable product from 1,152 to
+        // 248,832 (lockHeld-gating + lease-race + CAS sub-model variables);
+        // budget raised proportionally.
+        budgets: { maxEstimatedStates: 2_000_000 },
       },
       nightly: {
         domains: { Integrations: ids({ prefix: "i", size: 2 }) },
         graphEquivalence: false,
-        budgets: { maxEstimatedStates: 10_000_000 },
+        budgets: { maxEstimatedStates: 500_000_000_000 },
       },
     },
   },
