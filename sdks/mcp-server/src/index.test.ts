@@ -37,6 +37,20 @@ describe('Tool Definitions', () => {
     ]);
   });
 
+  // S6 (#3034 review): same disclosure as the hosted edge tool. An agent is the
+  // caller most likely to paste a spreadsheet straight in, so the description
+  // must say that a row can carry a recipient and can email that third party.
+  it('discloses the recipient fields and the third-party activation email', () => {
+    const description = TOOL_DEFINITIONS.find(t => t.name === 'arkova_import_rows')!.description;
+    expect(description).toContain('recipient_email');
+    expect(description).toContain('recipient_name');
+    expect(description).toMatch(/third party/i);
+    expect(description).toMatch(/activation email/i);
+    expect(description).toMatch(/already anchored/i);
+    expect(description).toMatch(/reason code/i);
+    expect(description).not.toMatch(/no invitation was sent/i);
+  });
+
   it('manages folders through the authenticated REST surface', async () => {
     mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ folders: [] }), { status: 200 }));
     const result = await handleToolCall('arkova_manage_folders', { action: 'list', owner_scope: 'ORG', org_id: 'aaaaaaaa-0000-4000-8000-000000000001' });

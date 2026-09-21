@@ -99,7 +99,7 @@ A healthy server replies with its `serverInfo` and all 10 tool definitions. The 
 | `arkova_batch_verify` | Verify up to 20 public IDs at once; results returned inline |
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |
 | `arkova_manage_folders` | List and manage nested folders, connector destinations, and bulk record moves |
-| `arkova_import_rows` | Import 1-100 already-fingerprinted spreadsheet rows through the queue or instant path; never accepts file bytes |
+| `arkova_import_rows` | Import 1-100 already-fingerprinted spreadsheet rows through the queue or instant path; never accepts file bytes. A row may carry `recipient_email`/`recipient_name`, which assigns the record to that third party and can cause an activation email to be sent to that address |
 
 ### Renamed / removed in this version (v3.0.0, breaking)
 

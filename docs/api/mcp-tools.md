@@ -60,7 +60,7 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 16 | **`arkova_manage_folders`** | **List and manage nested personal or organization record folders** | **SCRUM-5142** |
 | 17 | **`arkova_get_submission_status`** | **Read caller-scoped durable queue/instant state; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-12** |
 | 18 | `arkova_anchor_document` | Submit a client-computed fingerprint; hosted edge registration is conditional on `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus `write:anchors` or `anchor:write` | UAT-12 |
-| 19 | **`arkova_import_rows`** | **Import up to 100 client-computed spreadsheet rows in one call (`queue` or `instant`); hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-23 / SCRUM-5265** |
+| 19 | **`arkova_import_rows`** | **Import up to 100 client-computed spreadsheet rows in one call (`queue` or `instant`); a row may carry `recipient_email`/`recipient_name`, which assigns the record to that third party and can cause an activation email to be sent to that address; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-23 / SCRUM-5265** |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `arkova`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 

@@ -360,3 +360,19 @@ description is byte-identical in `public/.well-known/mcp/server-card.json`
 (manifest parity asserts exact equality). The response is passed through
 untouched, and the malformed-response guard still checks only the four original
 counters, so the additive counter needs no change there.
+
+## 2026-09-21 — arkova_import_rows discloses the recipient side effect (PR #3034)
+
+S6: the description now states plainly that a row may carry `recipient_email` /
+`recipient_name`, that this assigns the record to that third party, and that it
+can cause an activation email to be sent to that address. An agent is the caller
+most likely to paste a spreadsheet straight in, so the side effect belongs in the
+tool description, not only in the REST docs.
+
+S3: it no longer implies the recipient was not linked. `anchor_recipients`
+commits BEFORE the activation email, so the description points at the row's
+reason code for whether the recipient was linked and whether the invitation was
+sent. The text is byte-identical in `public/.well-known/mcp/server-card.json`
+(mcp-manifest-parity asserts exact equality) and mirrored in the npm stdio
+server; `check-mcp-claim-parity.ts` and `mcp-manifest-parity.test.ts` both stay
+green.

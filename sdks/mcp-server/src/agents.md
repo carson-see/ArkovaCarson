@@ -37,3 +37,12 @@ Same recipient-link sentence as the hosted edge tool. The tool NAME is
 `arkova_import_rows` on both servers — do not let this one drift the way
 `arkova_batch_verify`/`arkova_verify_batch` and
 `arkova_submit_anchor`/`arkova_anchor_document` already have.
+
+## 2026-09-21 — stdio import description carries the same disclosure (PR #3034)
+
+Mirrors the hosted edge text: a row may carry `recipient_email` /
+`recipient_name`, which assigns the record to that third party and can cause an
+activation email to be sent to that address, and the row's reason code — not its
+status — says whether the recipient was linked and whether the invitation was
+sent. Wording differs only where it already did (`document bytes`, the trailing
+API_ONLY_NOTE); the recipient sentences are identical on both servers.

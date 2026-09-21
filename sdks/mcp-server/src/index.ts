@@ -166,7 +166,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'arkova_import_rows',
-    description: 'Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant submission path. Never accepts document bytes. A row reported created_recipient_failed or skipped_recipient_failed is already anchored: do not re-import it. ' + API_ONLY_NOTE,
+    description: 'Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant submission path. Never accepts document bytes. A row may carry recipient_email and recipient_name, which assigns the record to that third party and can cause an activation email to be sent to that address. A row reported created_recipient_failed or skipped_recipient_failed is already anchored: do not re-import it. Its reason code says whether the recipient was linked and whether the invitation was sent. ' + API_ONLY_NOTE,
     inputSchema: {
       type: 'object',
       properties: {

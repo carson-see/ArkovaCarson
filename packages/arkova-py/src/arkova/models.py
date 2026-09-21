@@ -612,8 +612,9 @@ class AnchorImportRow:
 class AnchorImportResultRow(ArkovaModel):
     fingerprint: str
     #: ``created_recipient_failed`` / ``skipped_recipient_failed`` mean the
-    #: anchor committed and only the recipient link failed. The record exists
-    #: -- do not re-submit the row.
+    #: anchor committed and the recipient did not resolve. The record exists
+    #: -- do not re-submit the row. The status does NOT say whether the
+    #: recipient was linked; read ``reason`` for that.
     status: Literal[
         "created",
         "skipped",
@@ -623,6 +624,29 @@ class AnchorImportResultRow(ArkovaModel):
     ]
     public_id: str | None = None
     instant_status: str | None = None
+    #: Bounded machine-readable code for a ``failed`` or ``*_recipient_failed``
+    #: row. For a ``*_recipient_failed`` row this code, not the status, says
+    #: what happened -- the ``anchor_recipients`` link commits BEFORE the
+    #: activation email is sent, so "recipient failed" does not imply
+    #: "recipient not linked":
+    #:
+    #: * ``recipient_provisioning_forbidden`` /
+    #:   ``recipient_authorization_unavailable`` -- the caller may not assign
+    #:   recipients (personal scope, or a plain org member). Nothing linked,
+    #:   nothing sent.
+    #: * ``recipient_email_invalid``, ``recipient_pepper_unavailable``,
+    #:   ``recipient_anchor_unavailable``,
+    #:   ``recipient_profile_lookup_failed``,
+    #:   ``recipient_profile_create_failed``, ``recipient_link_failed``,
+    #:   ``recipient_link_conflict`` -- thrown at or before the link insert:
+    #:   the recipient was NOT linked and no invitation was sent.
+    #: * ``recipient_activation_email_failed`` -- the recipient WAS linked;
+    #:   only the invitation email was rejected.
+    #: * ``recipient_activation_delivery_pending``,
+    #:   ``recipient_activation_claim_failed`` -- the recipient WAS linked and
+    #:   whether the invitation went out is unknown.
+    #:
+    #: Treat any other code as unknown: assert nothing about the recipient.
     reason: str | None = None
 
 
@@ -631,9 +655,11 @@ class AnchorImportResponse(ArkovaModel):
     created: int
     skipped: int
     failed: int
-    #: Rows whose anchor committed but whose recipient link failed. Additive:
-    #: already counted in ``created``/``skipped`` and never in ``failed``, so
-    #: ``created + skipped + failed`` still equals ``total``. Older workers omit
-    #: it, which reads as zero.
+    #: Rows whose anchor committed but whose recipient did not resolve.
+    #: Additive: already counted in ``created``/``skipped`` and never in
+    #: ``failed``, so ``created + skipped + failed`` still equals ``total``.
+    #: Counts rows whose recipient was never linked AND rows that were linked
+    #: but whose invitation did not go out -- see each row's ``reason``.
+    #: Older workers omit it, which reads as zero.
     recipient_link_failed: int = 0
     results: list[AnchorImportResultRow]

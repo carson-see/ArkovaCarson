@@ -88,3 +88,10 @@ UAT-23 adds `arkova_import_rows` to the documented conditional write surface; ke
 `mcp-manifest-parity` asserts each manifest description equals its
 `TOOL_DEFINITIONS` description exactly, so this file and
 `services/edge/src/mcp-tools.ts` change together or CI goes red.
+
+## 2026-09-21 — server-card carries the recipient disclosure (PR #3034)
+
+The `arkova_import_rows` description gained the S6 recipient/third-party-email
+disclosure and the S3 reason-code pointer. Copied byte-identically from
+`services/edge/src/mcp-tools.ts` — `mcp-manifest-parity` asserts exact equality,
+so the two files change together or CI goes red.

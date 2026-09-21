@@ -212,7 +212,7 @@ const ANCHOR_IMPORT_PROPERTIES = {
         credential_type: { type: 'string', enum: [...ANCHOR_CREDENTIAL_TYPES] },
         metadata: { type: 'object', additionalProperties: true, description: 'PII-stripped extraction/source metadata. Reserved private keys and underscore-prefixed keys are dropped; invalid public evidence claims are rejected per row.' },
         fingerprint_provided: { type: 'boolean', description: 'True only when the imported fingerprint was computed from document bytes; false remains unclassified.' },
-        recipient_email: { type: 'string', format: 'email', maxLength: 254, description: 'Optional recipient assignment. Requires owner/admin authority for the selected organization.' },
+        recipient_email: { type: 'string', format: 'email', maxLength: 254, description: 'Optional recipient assignment. Assigns the record to that third party and can cause an activation email to be sent to that address. Requires owner/admin authority for the selected organization; without it the row is still anchored and reports recipient_provisioning_forbidden.' },
         recipient_name: { type: 'string', minLength: 1, maxLength: 255 },
       },
     },
@@ -230,14 +230,14 @@ const ANCHOR_IMPORT_RESPONSE = {
     // `skipped`, so `created + skipped + failed` still equals `total`.
     recipient_link_failed: {
       type: 'integer', minimum: 0,
-      description: 'Rows whose anchor committed but whose recipient link failed. Already included in created/skipped; never in failed.',
+      description: 'Rows whose anchor committed but whose recipient did not resolve. Already included in created/skipped; never in failed. Counts rows whose recipient was never linked AND rows that were linked but whose invitation did not go out - see each row reason.',
     },
     results: { type: 'array', maxItems: 100, items: { type: 'object', required: ['fingerprint', 'status'], properties: {
       fingerprint: { type: 'string', pattern: '^[a-f0-9]{64}$' },
       status: {
         type: 'string',
         enum: ['created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed'],
-        description: 'The *_recipient_failed values mean the anchor exists and must not be re-submitted; only the recipient link failed.',
+        description: 'The *_recipient_failed values mean the anchor exists and must not be re-submitted; the recipient did not resolve. The status does not say whether the recipient was linked - the reason code does. The anchor_recipients link commits before the activation email is sent, so recipient_activation_* reasons mean the recipient WAS linked and only the invitation did not go out (or its delivery is unknown), while reasons thrown at or before the link insert mean it was not linked. recipient_provisioning_forbidden means the caller may not assign recipients at all.',
       },
       public_id: { type: 'string' },
       reason: { type: 'string', description: 'Bounded machine-readable failure code' },
@@ -1156,7 +1156,7 @@ export const openApiSpec: Record<string, any> = {
     '/anchor/import': {
       post: {
         summary: 'Import up to 100 document fingerprints',
-        description: 'API-key transport for canonical queue or instant submission. Every row uses the same idempotency, quota, credit, tag, metadata, and recipient-linking rules as single submit. The organization is derived from the authenticated key; caller-supplied cross-tenant org_id is rejected. Recipient assignment requires owner/admin authority.',
+        description: 'API-key transport for canonical queue or instant submission. Every row uses the same idempotency, quota, credit, tag, metadata, and recipient-linking rules as single submit. The organization is derived from the authenticated key; caller-supplied cross-tenant org_id is rejected. Recipient assignment requires owner/admin authority: without it every row is still anchored and the recipient-bearing rows report recipient_provisioning_forbidden, rather than the request being rejected.',
         operationId: 'importAnchors',
         tags: ['Anchoring'],
         'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
@@ -1178,7 +1178,7 @@ export const openApiSpec: Record<string, any> = {
     '/anchor-self-service/bulk': {
       post: {
         summary: 'Import up to 100 document fingerprints from the dashboard',
-        description: 'JWT bridge for the same canonical import orchestration. The selected personal or organization scope is re-derived from the authenticated caller. Imports containing recipients require owner/admin authority for that organization before any anchor or profile is created.',
+        description: 'JWT bridge for the same canonical import orchestration. The selected personal or organization scope is re-derived from the authenticated caller. Recipient assignment requires owner/admin authority for that organization; a caller without it still gets every anchor, and only the recipient-bearing rows report recipient_provisioning_forbidden.',
         operationId: 'importAnchorsSelfService',
         tags: ['Anchoring'],
         security: [{ SupabaseJWT: [] }],

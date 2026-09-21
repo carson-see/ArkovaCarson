@@ -52,6 +52,28 @@ beforeEach(() => {
 });
 
 describe('handleImportRows', () => {
+  // S6 (#3034 review): an agent reading this description is the caller most
+  // likely to paste a spreadsheet straight in. It must say plainly that a row
+  // can carry a recipient and that doing so can email a third party.
+  it('discloses that a row may carry a recipient and may email that third party', () => {
+    const description = TOOL_DEFINITIONS.find((tool) => tool.name === 'arkova_import_rows')!.description;
+    expect(description).toContain('recipient_email');
+    expect(description).toContain('recipient_name');
+    expect(description).toMatch(/third party/i);
+    expect(description).toMatch(/activation email/i);
+  });
+
+  // S3: the description must not repeat the old "not linked, so no invitation
+  // was sent" claim. The reason code, not the status, carries that detail.
+  it('points at the reason code rather than asserting the recipient was not linked', () => {
+    const description = TOOL_DEFINITIONS.find((tool) => tool.name === 'arkova_import_rows')!.description;
+    expect(description).toContain('created_recipient_failed');
+    expect(description).toContain('skipped_recipient_failed');
+    expect(description).toMatch(/already anchored/i);
+    expect(description).toMatch(/reason code/i);
+    expect(description).not.toMatch(/no invitation was sent/i);
+  });
+
   it.each([
     [{ rows: [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true, raw_document: 'secret' }], action: 'queue' }],
     [{ rows: Array.from({ length: 101 }, () => ({ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprint_provided: true })), action: 'queue' }],
