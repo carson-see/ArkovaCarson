@@ -22,6 +22,7 @@ import {
   DriveApiError,
   DRIVE_FOLDER_LISTING_SCOPES,
   driveGrantExcessScopes,
+  isInvalidPageTokenError,
 } from './drive.js';
 import { assertValidFieldsMask } from './__test-helpers__/fields-mask.js';
 
@@ -700,6 +701,156 @@ describe('listChanges (SCRUM-2903 fields-mask regression)', () => {
     expect(err).toBeInstanceOf(DriveApiError);
     expect((err as DriveApiError).status).toBe(400);
     expect((err as DriveApiError).detail).toContain('Invalid field selection');
+    // Round-2 fix (item 1): this is the PR's own stated self-consistency
+    // guard ("this incident's own bug shape must never be recovered from
+    // as an expired-token 400") — round 1 asserted `.detail` but never
+    // actually asserted `.pageTokenInvalid` is falsy, so nothing pinned the
+    // one guarantee the narrative claimed. A bare fields-mask 400 must
+    // never be classified as an expired pageToken.
+    expect((err as DriveApiError).pageTokenInvalid).toBeUndefined();
+  });
+});
+
+// Round-2 fix (item 1): independent second-round verification found ZERO
+// direct test coverage of `isInvalidPageTokenError` itself — every existing
+// test exercises it only indirectly through `listChanges`'s `pageTokenInvalid`
+// flag, or (in drive-changes-processor.test.ts) bypasses it entirely by
+// constructing a `DriveApiError` by hand with the flag pre-set. Mutating the
+// function to `return true` unconditionally left the ENTIRE relevant suite
+// (143 tests across 4 files) green — this block closes that gap with direct,
+// realistic-Google-error-shape unit tests.
+describe('isInvalidPageTokenError (round-2 fix item 1 — direct coverage)', () => {
+  it('matches the documented invalidPageToken shape: 400 + errors[].reason "invalidPageToken", location "pageToken"', () => {
+    expect(
+      isInvalidPageTokenError({
+        error: {
+          code: 400,
+          message: 'Invalid Value',
+          errors: [{ reason: 'invalidPageToken', location: 'pageToken', locationType: 'parameter', message: 'Invalid Value' }],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('matches a reason of "invalid" combined with location "pageToken" (broader shape the PR narrative explicitly allows)', () => {
+    expect(
+      isInvalidPageTokenError({
+        error: {
+          code: 400,
+          message: 'Invalid Value',
+          errors: [{ reason: 'invalid', location: 'pageToken', locationType: 'parameter' }],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('matches a top-level message containing "invalidPageToken" with no errors[] array at all', () => {
+    expect(isInvalidPageTokenError({ error: { code: 400, message: 'invalidPageToken: token has expired' } })).toBe(true);
+  });
+
+  it('does NOT match this incident\'s OWN bug shape: bare 400, reason "invalidParameter", location "fields"', () => {
+    // The exact real-world shape of the fields-mask defect this PR fixed —
+    // the self-consistency guard the whole recovery-narrowness design
+    // exists for. If this ever flips to true, a recurrence of THIS incident
+    // would silently re-bootstrap and lose the changes window instead of
+    // failing loud.
+    expect(
+      isInvalidPageTokenError({
+        error: {
+          code: 400,
+          message: 'Invalid field selection newStartPageTokennextPageTokenchanges(...)',
+          errors: [{ reason: 'invalidParameter', location: 'fields', locationType: 'parameter', message: 'Invalid field selection' }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT match a 400 whose message merely CONTAINS the word "invalid" for an unrelated reason', () => {
+    expect(
+      isInvalidPageTokenError({
+        error: { code: 400, message: 'Invalid Credentials', errors: [{ reason: 'authError', message: 'Invalid Credentials' }] },
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT match reason "invalid" when location is something OTHER than pageToken', () => {
+    expect(
+      isInvalidPageTokenError({
+        error: { code: 400, errors: [{ reason: 'invalid', location: 'includeItemsFromAllDrives', locationType: 'parameter' }] },
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT match a 403 body (permission denied, unrelated to page tokens)', () => {
+    expect(
+      isInvalidPageTokenError({
+        error: { code: 403, message: 'The user does not have sufficient permissions', errors: [{ reason: 'insufficientFilePermissions' }] },
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT match a 500 body (transient server error)', () => {
+    expect(isInvalidPageTokenError({ error: { code: 500, message: 'Internal error encountered.' } })).toBe(false);
+  });
+
+  it('does NOT match and does NOT throw on a malformed/empty body', () => {
+    expect(isInvalidPageTokenError({})).toBe(false);
+    expect(isInvalidPageTokenError(null)).toBe(false);
+    expect(isInvalidPageTokenError(undefined)).toBe(false);
+    expect(isInvalidPageTokenError('not an object')).toBe(false);
+    expect(isInvalidPageTokenError({ error: null })).toBe(false);
+    expect(isInvalidPageTokenError({ error: {} })).toBe(false);
+    expect(isInvalidPageTokenError({ error: { errors: 'not-an-array' } })).toBe(false);
+  });
+
+  it('is case-insensitive on reason/message/location (Google is not guaranteed to send one exact casing)', () => {
+    expect(
+      isInvalidPageTokenError({
+        error: { errors: [{ reason: 'InvalidPageToken', location: 'PageToken' }] },
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('listChanges — real 400 propagates loud, no silent re-bootstrap (round-2 fix item 1)', () => {
+  it('a bare 400 (this incident\'s own shape) sets pageTokenInvalid to undefined on the thrown DriveApiError, end to end through listChanges', async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 400,
+            message: 'Invalid field selection newStartPageTokennextPageTokenchanges(...)',
+            errors: [{ reason: 'invalidParameter', location: 'fields', locationType: 'parameter' }],
+          },
+        }),
+        { status: 400 },
+      );
+    const err = await listChanges({
+      accessToken: 'at',
+      pageToken: 'tok',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(400);
+    expect((err as DriveApiError).pageTokenInvalid).toBeUndefined();
+  });
+
+  it('a 400 that DOES name an invalid pageToken sets pageTokenInvalid true, end to end through listChanges', async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          error: { code: 400, errors: [{ reason: 'invalidPageToken', location: 'pageToken', locationType: 'parameter' }] },
+        }),
+        { status: 400 },
+      );
+    const err = await listChanges({
+      accessToken: 'at',
+      pageToken: 'stale-tok',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(400);
+    expect((err as DriveApiError).pageTokenInvalid).toBe(true);
   });
 });
 
