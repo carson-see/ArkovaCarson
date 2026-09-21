@@ -1,5 +1,6 @@
 # agents.md — components/connectors
 
+_Last updated: 2026-09-21 (`DriveConnectorCard.tsx`: unconnected-state prompt moved to `copy.ts`'s `DRIVE_CONNECT_PROMPT`, wording corrected for the drive.readonly cutover — SCRUM-5287/SCRUM-2903/SCRUM-2330)_
 _Last updated: 2026-09-14 (status row deduplicated against `components/integrations/ConnectorCardStatusRow.tsx`)_
 
 ## 2026-09-14 — `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` now use the shared status row

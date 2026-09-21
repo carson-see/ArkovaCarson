@@ -1,7 +1,21 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-21 (`drive-changes-runner.ts`'s `loadDriveAccessToken` now selects the OAuth client generation for a refresh via `isDriveLegacyGrant` — SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)._
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-21 — `loadDriveAccessToken` selects OAuth client generation for refresh (SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)
+
+See `oauth/agents.md`'s 2026-09-21 entry for the full scope-cutover story (why `DRIVE_DEFAULT_SCOPES`
+moved from `drive.file` to `drive.readonly`, and why a second OAuth client exists). This file's piece:
+`loadDriveAccessToken` — the ONE real production choke point for Drive token refresh (the
+`drive-subscription-renewal` cron also routes through it via `jobs/drive-subscription-renewal-deps.ts`)
+— now passes `clientGeneration: isDriveLegacyGrant(tokens.scope) ? 'legacy' : 'current'` to
+`refreshAccessToken`. `tokens.scope` is the CACHED scope on the decrypted token blob (set at
+connect/last-refresh time), not re-derived from Drive mid-refresh — cheap, already in hand, and
+exactly what a pre-cutover connection's grant looks like. Getting this backwards sends an old-client
+refresh token to the new client's token endpoint, which Google rejects with `invalid_grant`; there is
+no migration path for a refresh token itself (it is bound to the client that issued it).
 
 ## 2026-09-21 — 410/404 cursor re-bootstrap + per-integration single-flight lease (SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)
 

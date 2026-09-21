@@ -210,7 +210,7 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
           <p className="mt-1 max-w-md text-xs text-muted-foreground">
             {connected
               ? 'Connected.'
-              : 'Authorize Arkova with least-privilege Drive access.'}
+              : CONNECTIONS_LABELS.DRIVE_CONNECT_PROMPT}
           </p>
           {connected && subscriptionDate && (
             <p className="mt-1 text-xs text-muted-foreground">

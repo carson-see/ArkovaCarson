@@ -1,5 +1,23 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-21 — `connector-health.ts` gains `reconnect_required_scope_change` (SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)
+
+New `HealthReason`, added alongside the `oauth/drive.ts` cutover from `drive.file` to `drive.readonly`
+(full story in `integrations/oauth/agents.md`'s 2026-09-21 entry). An EXISTING `org_integrations` row
+whose stored `scope` is (a subset of) the pre-cutover requested set — `DRIVE_LEGACY_REQUESTED_SCOPES`
+in `oauth/drive.ts`: `drive.file` + `drive.metadata.readonly` + `drive.activity.readonly` +
+`userinfo.email` — is NOT the `grant_exceeds_requested` security finding (that guard's "requested"
+bound is now the union of the old and new sets); it is a legitimate historical grant that needs
+re-consent, classified via the new `isDriveLegacyGrant()` export. It is, however, the ROOT CAUSE of
+most `file_access_not_granted` symptoms a legacy-grant org will see (`drive.file` only covers files
+the app created or the user picked through Google's real Picker), so `classify()` checks it BEFORE
+`file_access_not_granted` and `DRIVE_HEALTH_PRIORITY` ranks it above that reason (4, between
+`changes_gap`=5 and `file_access_not_granted`=3) — the admin view should name the actual, fixable
+cause. `DriveHealthSignals.legacyGrant` is populated at both call sites (single-account view and the
+multi-account candidate comparison in the `google_drive` provider-card branch). Tests:
+`connector-health.test.ts`'s `describe('reconnect_required_scope_change signal (SCRUM-5287
+follow-up)')`.
+
 ## 2026-09-21 — `connector-health.ts` gains `changes_list_never_succeeded` (fields-mask incident follow-up, SCRUM-2903/3661/5094/2330)
 
 New `HealthReason`. The existing P0-2 `cursor_stale` signal is blind to a
