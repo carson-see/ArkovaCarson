@@ -44,21 +44,112 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const GIT_BIN = process.platform === 'win32' ? 'git.exe' : 'git';
 
 /**
- * Matches any Cloud Run revision hostname, not only the current project/
- * revision ID. Captures every dot-separated label chain before `.run.app`
- * (e.g. `arkova-worker-270018525501.us-central1.run.app`, and the newer
- * `<hash>-<region>.a.run.app` format), not just the single label
- * immediately before it — an earlier version of this pattern only matched
- * one label and silently truncated multi-label hosts to e.g. `a.run.app`.
+ * 2026-09-21 audit finding (independent self-review, SCRUM-3888): the prior
+ * implementation of this matcher was a single regex,
+ * `/(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+run\.app/gi`. It is catastrophically
+ * backtracking — the inner `(?:[a-z0-9-]*[a-z0-9])?` is ambiguous with the
+ * outer `+` repetition (many ways to partition a long run of label
+ * characters when no terminating `.run.app` is ever found), which is the
+ * textbook nested-quantifier ReDoS shape. Measured against a 200KB line of
+ * plain `"a".repeat(200_000)` (no dots, no match possible), it took ~30s to
+ * fail — confirmed exponential-shaped, not merely slow. A naive
+ * single-quantifier rewrite (`/[a-z0-9.-]+\.run\.app/gi` with backtracking
+ * search-and-retry at every start position) was ALSO measured and is
+ * quadratic on the same input (~25-40s), not linear, for the same reason:
+ * a backtracking engine retries the greedy class match against every
+ * possible start offset when no terminator is found.
+ *
+ * `findRunAppHostLiterals` below replaces regex backtracking entirely with
+ * two linear passes: (1) `computeHostRunStarts` walks the text once,
+ * recording — for every index — the start of the contiguous run of
+ * hostname-safe characters (`[a-z0-9.-]`) ending there; (2) a literal
+ * (non-regex) `indexOf('run.app')` scan finds candidate positions in
+ * amortized O(n) total (each scan resumes where the last one stopped, so
+ * character ranges are never re-scanned), and for each candidate the full
+ * matched host is an O(1) lookup into the precomputed run-start table
+ * instead of a fresh backward walk. Total work is O(n) regardless of input
+ * shape — no backtracking, so no adversarial input can make it slow.
+ *
+ * A candidate is only counted as a real host match — not a bare "run.app"
+ * literal appearing in prose, a regex pattern's own source text, or a
+ * broken partial URL — when the character immediately before it is `.` AND
+ * the character before THAT is alphanumeric (i.e. a genuine label ends
+ * right there). This mirrors the old regex's requirement of "at least one
+ * `[a-z0-9]...[a-z0-9].` label" before the literal, which matters in
+ * practice: this repo's own docs and code use the bare phrase "run.app"
+ * (with no preceding host label) dozens of times — "the bare run.app
+ * host", "registered against run.app", a load-test's own regex source
+ * `/^https:\/\/[^\s]+\.run\.app\/?$/i`, etc. Dropping that requirement
+ * would turn every one of those into a new, wrong "violation" the moment
+ * this guard ran against the real repo.
  */
-export const RUN_APP_HOST_RE = /(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+run\.app/gi;
+function isHostChar(code: number): boolean {
+  return (
+    (code >= 97 && code <= 122) || // a-z
+    (code >= 48 && code <= 57) || // 0-9
+    code === 46 || // .
+    code === 45 // -
+  );
+}
+
+function isAlnumChar(code: number): boolean {
+  return (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+}
+
+/**
+ * One linear pass: `starts[i]` is the index where the contiguous run of
+ * hostname-safe characters ending at (and including) index `i` began. A
+ * non-host character resets the run to start at the next index.
+ */
+function computeHostRunStarts(lower: string): Uint32Array {
+  const n = lower.length;
+  const starts = new Uint32Array(n);
+  let currentStart = -1;
+  for (let i = 0; i < n; i++) {
+    if (isHostChar(lower.charCodeAt(i))) {
+      if (currentStart === -1) currentStart = i;
+    } else {
+      currentStart = -1;
+    }
+    starts[i] = currentStart === -1 ? i : currentStart;
+  }
+  return starts;
+}
+
+/**
+ * Finds every `*.run.app` hostname literal in `text` in O(n) time — see the
+ * ReDoS note above for why this is not a regex. Returns the exact matched
+ * substrings (original casing preserved), including the full dot-separated
+ * label chain (e.g. `arkova-worker-270018525501.us-central1.run.app`, or
+ * the newer `<hash>-<region>.a.run.app` format), not truncated to a single
+ * label.
+ */
+export function findRunAppHostLiterals(text: string): string[] {
+  const lower = text.toLowerCase();
+  const runStart = computeHostRunStarts(lower);
+  const results: string[] = [];
+  const needle = 'run.app';
+  let searchFrom = 0;
+  while (true) {
+    const idx = lower.indexOf(needle, searchFrom);
+    if (idx === -1) break;
+    // A real host requires a label ending in an alnum char immediately
+    // followed by the `.` right before this "run.app" — not a bare literal.
+    if (idx >= 2 && lower.charCodeAt(idx - 1) === 46 /* . */ && isAlnumChar(lower.charCodeAt(idx - 2))) {
+      const start = runStart[idx - 1];
+      results.push(text.slice(start, idx + needle.length));
+    }
+    searchFrom = idx + 1;
+  }
+  return results;
+}
 
 /**
  * Extensions worth scanning as text. Deliberately excludes binaries/images/
@@ -168,7 +259,7 @@ export const RUN_APP_ALLOWLIST: AllowlistEntry[] = [
   // ── This guard's own file + colocated test ─────────────────────────────
   {
     path: 'scripts/ci/check-run-app-host-literal.ts',
-    reason: 'This file — every allowlisted path and RUN_APP_HOST_RE itself necessarily name the pattern.',
+    reason: 'This file — every allowlisted path and the literal `run.app` needle itself necessarily name the pattern.',
   },
   {
     path: 'scripts/ci/check-run-app-host-literal.test.ts',
@@ -355,11 +446,11 @@ function isAllowlisted(file: string): boolean {
 /**
  * Candidate files: `git grep`'s own (highly optimized, non-regex-in-Node)
  * search across every tracked file for a plain `.run.app` substring —
- * about 15x faster in practice than reading and regex-testing every
- * tracked file in Node (1.5s vs 22s over this repo's tree). `-I` skips
- * binary files, matching {@link TEXT_EXTENSIONS}' intent without needing
- * git to know about them individually. This is a coarse pre-filter, not
- * the real match: {@link RUN_APP_HOST_RE} still runs in Node over each
+ * about 15x faster in practice than reading and testing every tracked file
+ * in Node (1.5s vs 22s over this repo's tree). `-I` skips binary files,
+ * matching {@link TEXT_EXTENSIONS}' intent without needing git to know
+ * about them individually. This is a coarse pre-filter, not the real
+ * match: {@link findRunAppHostLiterals} still runs in Node over each
  * candidate to extract the exact hostname(s) for the report, and a file
  * that merely contains the literal text ".run.app" without a valid host
  * label before it (unlikely, but not this function's job to assume) would
@@ -392,14 +483,36 @@ export function findRunAppViolations(root: string = ROOT): RunAppViolation[] {
     if (!TEXT_EXTENSIONS.has(extname(file))) continue;
     if (isAllowlisted(file)) continue;
 
-    let text: string;
+    const fullPath = `${root}/${file}`;
+    // 2026-09-21 audit finding (b), file walking: `git grep`'s own search
+    // above never dereferences a tracked symlink (it greps the symlink
+    // blob's literal target-path text, not the target file's content), but
+    // `fs.readFileSync` below DOES follow symlinks by default. Without this
+    // check, a tracked symlink whose target-path text happened to contain
+    // ".run.app" (passing the git-grep prefilter) and pointed outside the
+    // repo (e.g. `../../../../etc/passwd`) would have its EXTERNAL target
+    // read into `text` here — a symlink-escape read of arbitrary filesystem
+    // content during CI. `lstatSync` (unlike `statSync`) inspects the link
+    // itself rather than following it, so this skips any symlink — and any
+    // other non-regular-file dirent (fifo, socket, etc.) — before ever
+    // calling `readFileSync`. Every path here already came only from `git
+    // grep`'s own tracked-file output, never from user input or another
+    // file's content, so there is no separate path-traversal concern in how
+    // `fullPath` itself is built.
     try {
-      text = readFileSync(`${root}/${file}`, 'utf8');
+      if (!lstatSync(fullPath).isFile()) continue;
     } catch {
-      continue; // deleted-but-staged, symlink to nowhere, etc. — not this guard's problem
+      continue; // race: deleted between git grep and here — not this guard's problem
     }
 
-    const matches = [...text.matchAll(RUN_APP_HOST_RE)].map((m) => m[0]);
+    let text: string;
+    try {
+      text = readFileSync(fullPath, 'utf8');
+    } catch {
+      continue; // deleted-but-staged, permission error, etc. — not this guard's problem
+    }
+
+    const matches = findRunAppHostLiterals(text);
     if (matches.length > 0) {
       violations.push({ file, matches: [...new Set(matches)] });
     }
