@@ -1,6 +1,96 @@
 # machines/agents.md
 
-## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race
+## 2026-09-21 — `aiCreditsPeriodProvision.machine.ts` REWRITTEN (SCRUM-4939 follow-ups, migration 0483)
+
+**The old version was a verified model of deleted code.** It checked the
+application-level `select → insert → RE-READ → delete-the-row-I-just-inserted`
+compensation PR #2837 put in `cost-tracker.ts`. PR #2999 (migration 0467)
+removed that code entirely and replaced it with a DB-native design, so
+`deleteOwn`, `deleteOwnFails` and `firstInserter` modelled nothing that runs.
+That is worse than having no machine: the certificate stayed green while the
+protocol it described ceased to exist. The 2026-09-12 note below describes that
+superseded model and is kept for history only — its "owed follow-up" (a unique
+`(org_id, period_start)` index) was answered by 0467's exclusion constraint.
+
+**What is modelled now** is the protocol the database actually runs:
+`ensure_ai_credits_period` takes `pg_advisory_xact_lock('ai_credits:org:'||org)`
+under a 5 s `lock_timeout`, returns early when a covering row exists, otherwise
+inserts, with the `ai_credits_org_period_no_overlap` gist exclusion constraint
+as the backstop; `deduct_ai_credits` serializes on
+`SELECT … ORDER BY created_at,id LIMIT 1 FOR UPDATE` under the same 5 s budget
+(the budget is what migration 0483 adds).
+
+The `IF EXISTS` check and the `INSERT` are **separate actions**
+(`checkFoundNone` → `insertPeriod`), because they are separate statements. An
+earlier draft collapsed them into one atomic step; the model then passed every
+mutation, because atomicity — not the advisory lock — was doing the work. If
+you touch this machine, keep those two steps apart.
+
+One invariant per mechanism, each mutation-tested against the real checker
+(mutation applied → run → exactly the named invariant fails → revert):
+
+| Invariant | Mechanism it pins | Mutation that breaks it |
+|---|---|---|
+| `atMostOnePeriodRow` | the exclusion constraint | let the losing INSERT land instead of being rejected → violated |
+| `exclusionConstraintNeverFires` | the advisory lock | drop the mutex from `acquireProvisionLock` → violated (two racers both pass the EXISTS check; the loser eats a 23P01 that would abort provisioning and 503 the org's first extraction) |
+| `noDebitWithoutPeriod` | the row lock's precondition | drop the "a period row exists" guard from `acquireRowLock` → violated |
+| `creditMutationSerializedByRowLock` | `FOR UPDATE`, shared by debit and refund | make `debitLockTimeout` acquire the lock instead of timing out → violated; drop the lock guard from `acquireRefundLock` → violated |
+| `lockTimeoutNeverDebits` | fail-CLOSED on 55P03 | make `debitLockTimeout` record a charge → violated |
+| `refundNeverExceedsDebits` | refund is reachable only from DEBITED | let `acquireRefundLock` fire from PROVISIONED → violated; let `commitRefund` clear `debited` → violated |
+| `lockTimeoutNeverRefunds` | fail-CLOSED on a refund 55P03 | make `refundLockTimeout` record the refund → violated |
+| `usedNeverNegative` | aggregate floor (`GREATEST(used - amount, 0)`) | **derived** — implied by `refundNeverExceedsDebits`, so it cannot fail alone. Weaken that invariant to a tautology AND let a refund fire without a debit → violated. Kept as a ratchet: the aggregate is what a customer's balance sees. |
+
+**The refund stage (2026-09-21, migration 0484).** `commitDebit` now lands in
+`DEBITED` rather than `DONE`; from there a racer either `succeedAfterDebit`
+(the charge stands) or refunds, taking the SAME row lock with the SAME
+predicate the debit used. Refund is reachable ONLY from `DEBITED`, mirroring
+the `if (deductedCredit)` / `if (didDebit)` guard at every call site — a refund
+for work that was never charged is a credit grant. `refundLockTimeout` models
+the 55P03 abort: nothing is returned and the charge stands, which is why the
+worker logs at error and enqueues `ai_credits.reconcile_refund`.
+
+NOT modelled, and said out loud rather than omitted: a DOUBLE refund. It is
+reachable in production — a refund that commits and whose response is lost is
+re-applied by the reconciler, and there is no idempotency key — but it is
+bounded by the SQL `GREATEST(...,0)` floor rather than by this protocol, and
+modelling it needs arithmetic the DSL does not have.
+
+`constraintRejected` was folded from a per-racer boolean into a terminal phase
+(`CONSTRAINT_REJECTED`) when the refund stage landed: with the extra variable
+the two-racer estimate was 230 400, over the 100 000 graph-equivalence budget
+cap, and the phase encoding brings it to 69 696 while expressing the same
+thing.
+
+Certificate (tier `pr`, 2 racers, run 2026-09-21): `proofPassed: true`; graph
+equivalence true (181/181 states, 260/260 edges); 8 invariants; deadlock check
+off (an all-terminal world — DONE / FAILED_CLOSED / CONSTRAINT_REJECTED /
+REFUND_FAILED — is the correct end of a race, same resolution as
+`agentPassport` / `partnerProvisioning` / `drainRunAccounting`).
+Tier `nightly`, 3 racers: `proofPassed: true`, 5611 generated / 2800 distinct.
+
+**Gotcha found while doing this — `checks.graphEquivalence` is inert.**
+tla-precheck 0.1.7 reads graph equivalence from `tier.graphEquivalence`
+(`dist/core/validate.js:386`, `dist/core/proof.js:327/387`); only
+`checks.deadlock` is consulted from `checks`. Every machine in this directory
+writes `checks: { graphEquivalence: … }`, which the tool ignores — so graph
+equivalence is effectively ON everywhere regardless, and the 100 000-state
+equivalence budget cap applies to every tier. That cap is why this machine's
+`nightly` tier declares `graphEquivalence: false` at TIER level: without it the
+three-racer tier is rejected outright (`equivalence-budget-cap-exceeded`) on an
+estimate of 2 809 856, which is a product-of-domains upper bound rather than the
+679 reachable states TLC actually finds. Other machines are small enough that
+nobody has hit this; it is not fixed repo-wide here.
+
+Not modelled: credit arithmetic (the DSL has no arithmetic — a debit and a
+refund are booleans per racer, and the `GREATEST` floor is expressed as
+"refunds never outnumber debits").
+
+CI picks the machine up automatically (`scripts/verify-machines.sh` globs
+`machines/*.machine.ts`; the `tla-verify` job runs `npm run verify:machines`).
+No workflow edit is needed for this rewrite — the file name is unchanged and no
+workflow names machines individually.
+
+## 2026-09-12 — `aiCreditsPeriodProvision.machine.ts` (SCRUM-4939 / PR #2837): the `ai_credits` provisioning race — SUPERSEDED, see the 2026-09-21 entry above
 
 New machine for `ensureAICreditsPeriod` in `services/worker/src/ai/cost-tracker.ts`. `public.ai_credits` has no unique constraint on `(org_id, period_start)` — PK on `id` only, three non-unique indexes — so provisioning cannot be an upsert and is a select-then-insert with a genuine TOCTOU window. Adding the constraint is DDL on a table read by every extraction: its own migration, its own lock-timeout review (CLAUDE.md §1.2), a T3 PR. The window is closed in application code instead, and this machine is what checks that protocol: insert → re-read → the racer whose row is not the keeper (lowest `(created_at, id)`) deletes **only the row it itself inserted**, by id.
 
@@ -443,3 +533,25 @@ a runtime adapter. Actual migration 0460 lock waiting, credit amounts, authority
 audit attribution and transactional rollback are exercised independently by
 `scripts/verify-suborg-offboard.py`; integer conservation, other credit sources
 and live staging qualification are not established by the boolean TLA model.
+
+## 2026-09-21 — `aiCreditsPeriodProvision`: cross-period independence was not structural for refunds (SCRUM-4939)
+
+The machine's docstring claimed cross-org AND cross-period independence were
+both "structural … and not modeled". The cross-ORG half is true (the advisory
+key is `'ai_credits:org:'||org_id` and every statement is scoped by `org_id`).
+The cross-PERIOD half was true of the debit and **false of the refund**: 0484's
+`refund_ai_credits` evaluated its period window at the instant it refunded, so a
+reconciled refund crossing a month boundary decremented the NEW period. Calling
+that structural is what kept it out of the model AND out of review.
+
+Migration 0485 scopes the refund by `coalesce(p_debited_at, now())`, so debit
+and refund act on one row again — which is the premise the single-period domain,
+and therefore `refundNeverExceedsDebits` / `usedNeverNegative`, rest on. The
+docstring now states each claim separately and names the residual (a caller
+supplying a WRONG `p_debited_at` — a worker type-level property of
+`AICreditDebit`, not of this protocol).
+
+**Rule this leaves behind:** a "not modelled because it is structural" note must
+name the mechanism that makes it structural, per claim. Two claims sharing one
+justification is how a false one travels on a true one's credibility. No
+invariant or action changed, so the mutation kills are unaffected.

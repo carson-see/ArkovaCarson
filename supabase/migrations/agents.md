@@ -1646,6 +1646,205 @@ for the final C3 source review and fresh qualification.
 | `0470` | `0470_uat17_verified_domain_and_atomic_member_add.sql` | SCRUM-5145 | no — local draft follow-up | Restricts confirmed-signup auto-association to one exact verified domain and adds a service-only, exact-org-authorized atomic existing-member RPC. Disable signup/member intake before rollback; the older body is unsafe with intake enabled. |
 
 - `0468_allocate_monthly_credits_singleton.sql` — preserves the integer RPC contract while taking transaction advisory lock `(8675309,3)` before the monthly credit scan. A concurrent caller returns `0`; the winner row-locks eligible credits, advances `cycle_end`, and writes the existing expiry/allocation ledger rows once. Sequential re-entry returns `0` because no row remains eligible.
+
+## Recent migrations (PR #TBD — SCRUM-4939 follow-ups)
+
+### `0483` and `0484` reserved
+
+Prefixes `0483` and `0484` are RESERVED by this PR. Inventory re-taken
+2026-09-21 after `git fetch origin`: `origin/main` tops out at `0480`; a sweep
+of every remote branch (`git ls-tree` over `git branch -r`) shows `0482` as the
+highest prefix anywhere, held by
+`fix/scrum-5280-org-domain-verification-guard`; `0483` is this PR's first file.
+This block is deliberately placed directly after the 0467/0468 notes rather
+than at EOF or on the shared anchor, so it cannot collide with that PR's own
+block (CLAUDE.md §6).
+
+Two prefixes rather than one because a migration file is immutable once
+written: 0483 was already committed when the refund fix was scoped in, and
+`.claude/hooks/check-constitution-on-edit.sh` correctly refuses to edit any
+existing `supabase/migrations/*.sql`. The split is also useful on its own — the
+refund function can be rolled back without giving up 0483's lock_timeout
+hardening.
+
+### `0483_scrum4939_credit_rpc_followups.sql`
+
+Compensating migration for `0467` and `0468`, both already applied on prod and
+therefore immutable. Three corrections, no signature/return/logic change:
+
+1. **The `NOTIFY` 0467 omitted.** 0467 introduced a NEW RPC,
+   `ensure_ai_credits_period(uuid,integer,timestamptz)`, with no
+   `NOTIFY pgrst, 'reload schema';`. Until PostgREST's schema cache refreshes,
+   that RPC answers 404/PGRST202, `ensureAICreditsPeriod()` fails soft, no
+   period is provisioned and the org's first extraction hard-fails — the bug
+   #2999 was written to fix. 0483 issues the NOTIFY; harmless if the cache
+   already caught up.
+2. **`deduct_ai_credits` gains `SET lock_timeout='5s'`.** 0467 set it on
+   `ensure_ai_credits_period` but not on the debit, whose `SELECT … FOR UPDATE`
+   therefore blocked to `statement_timeout` behind a stuck holder. Body,
+   signature and return shape are 0467's verbatim. Proven natively in
+   `scripts/scrum4939/native-pg-credit-rpc-followups.sh`: contended debit
+   SQLSTATE `57014` after 12 s before 0483, `55P03` after 5 s after it, with
+   `used_this_month` unchanged in both cases (fails CLOSED).
+3. **`allocate_monthly_credits()` grants re-asserted** (REVOKE from
+   PUBLIC/anon/authenticated, GRANT to service_role) — idempotent defense in
+   depth for the corrected 0468 rollback below.
+
+**CORRECTED ROLLBACK PROCEDURE FOR 0468 — do not follow 0468's own comment.**
+0468 says to restore `allocate_monthly_credits()` "from the baseline
+definition". A literal reading reopens the hole 0377 closed: the baseline
+(`00000000000000_baseline_at_main_HEAD.sql` lines 13507-13509) GRANTs ALL on
+that function to `anon` and `authenticated`, which 0377 revoked, describing it
+as "Zero-arg, zero-auth … Anon-callable = anyone can trigger a platform-wide
+credit reallocation on demand." The baseline BODY (lines 752-800) is
+nevertheless the correct pre-0468 body — no migration between the baseline and
+0468 redefines the function; 0377 only revokes. So the true pre-0468 state is
+**baseline body + post-0377 grants**. A 0468 rollback is therefore: restore the
+baseline body verbatim, then IMMEDIATELY re-issue
+`REVOKE ALL ON FUNCTION public.allocate_monthly_credits() FROM PUBLIC, anon, authenticated;`
+and `GRANT EXECUTE … TO service_role;` and `NOTIFY pgrst, 'reload schema';`.
+The REVOKE is not optional: `CREATE OR REPLACE` re-triggers Supabase's
+`ALTER DEFAULT PRIVILEGES`, which re-grants anon/authenticated **directly**, and
+the rollback also removes 0468's `auth.role()` guard — after it, that GRANT line
+is the only thing keeping the RPC off the public internet. The full runnable
+text is in 0483's header.
+
+**0483's header is superseded on one point.** It carries a "NOT changed here,
+deliberately, and reported instead of widened into" note about the refund
+regression, written before the CTO scoped the fix into this PR. That note is
+stale: 0484 below fixes it, in the same PR and the same T3 window. The note
+could not be edited out — a migration file is immutable once written and the
+edit hook enforces it — so this block is the correction of record.
+
+### `0484_scrum4939_refund_ai_credits.sql` — the AI-credit refund regression from 0467
+
+0467 added `IF p_amount IS NULL OR p_amount <= 0 THEN RETURN false` to
+`deduct_ai_credits`. That guard is correct — a negative debit is an unbounded
+credit grant — but three live call sites were issuing refunds through exactly
+that door (`api/v1/ai-extract.ts:338`, `api/v1/ai-extract-batch.ts:391`,
+`jobs/ai-credit-reconcile.ts:138`), and `services/worker/src/api/v1/agents.md`
+documents the intent: "each failed/timed-out row refunds its own single
+credit". From 0467 reaching prod on 2026-09-19 until this PR, every refund
+returned false and refunded nothing — failed and timed-out extractions stayed
+charged, and the reconciler that exists to catch exactly that overcharge
+reconciled nothing and dead-lettered every job it claimed.
+
+0484 adds `public.refund_ai_credits(uuid,uuid,integer)`. `deduct_ai_credits`
+stays closed to non-positive amounts. The new function is SECURITY DEFINER,
+`search_path=public`, `lock_timeout=5s`, service_role-only by GRANT **and** by
+an in-body `coalesce(public.get_caller_role() = 'service_role', false)` check
+(0466's idiom — a bare `<> 'service_role'` falls through on NULL claims and
+fails OPEN, which is what 0466 compensated for in 0456 and what 0468's
+`auth.role() != 'service_role'` still carries). It rejects `p_amount` <= 0,
+> 1000 and the both-ids-NULL case; it locks the SAME active period row as the
+debit with the same predicate and `ORDER BY created_at,id LIMIT 1 FOR UPDATE`
+(0467 lines 36-41), which 0467's exclusion constraint makes unambiguous; and it
+sets `used_this_month = GREATEST(used_this_month - p_amount, 0)` so a refund
+can never mint credit beyond what the period consumed.
+
+**Double refund is possible today and is bounded, not prevented.** There is no
+idempotency key on this operation — the reconcile payload carries a fingerprint
+but the job legitimately retries — so a refund that COMMITS and whose response
+is lost is re-applied. The `GREATEST` floor caps that at this period's
+`used_this_month`: it can over-return within a month, never produce a net
+credit grant. No key was invented, because the callers do not carry one.
+
+**Rolling 0484 back also requires reverting the worker callers** — dropping the
+function alone leaves `refundAICredits()` failing with PGRST202/42883 on every
+call and no refund applied. The rollback block says so; what you roll back TO
+is the 0467 behaviour in which refunds silently do nothing.
+
+Native proof extends the same harness: RED (no `refund_ai_credits`; the old
+`deduct(-1)` path returns false and moves nothing) then GREEN (exact decrement,
+floor at 0 twice over, bounds refused, absent-claims RAISE with nothing moved,
+55P03 in ~5 s with nothing moved, and eight interleaved sessions conserving
+`used_this_month` = debits - refunds >= 0).
+
+Tier T3 (migration). No hosted or prod application asserted by this PR; the only
+execution to date is the local scratch-database run of
+`scripts/scrum4939/native-pg-credit-rpc-followups.sh`.
+
+### `0485` reserved — successor to the `0483`/`0484` reservation above
+
+Prefix `0485` is ALSO reserved by this PR, for the same immutability reason the
+0483/0484 split records: independent review found two defects in 0484's function
+after 0484 was committed, and an existing `supabase/migrations/*.sql` cannot be
+edited. Inventory re-taken 2026-09-21 after `git fetch origin`: `origin/main`
+still tops out at `0480`, and a sweep of all 98 remote branches (`git ls-tree`
+over `git branch -r`) shows no `0485` anywhere. Appended directly after the 0484
+note, inside this PR's own block, so it cannot collide with another PR's block
+(CLAUDE.md §6).
+
+### `0485_scrum4939_refund_ai_credits_period_and_amount.sql`
+
+Replaces 0484's `public.refund_ai_credits(uuid,uuid,integer) -> boolean` with
+`public.refund_ai_credits(uuid,uuid,integer,timestamptz) -> integer`. DROP then
+CREATE, not CREATE OR REPLACE: the return type changes, and keeping the
+3-argument form alongside would be an overload differing only by a defaulted
+trailing parameter (CLAUDE.md §6). Grants are therefore re-issued AFTER the
+create — the DROP takes the old ACL with it, and a fresh CREATE re-triggers
+Supabase's `ALTER DEFAULT PRIVILEGES`, which grants anon/authenticated EXECUTE
+directly.
+
+Two findings, both in 0484:
+
+1. **The return value could not distinguish a refund from a no-op.** 0484
+   returned `true` whenever a covering row was UPDATEd, including when
+   `GREATEST(used_this_month - p_amount, 0)` clamped the decrement to nothing
+   because the period had already been fully refunded by an earlier retry. The
+   reconciler logged "AI credit refund reconciled" and completed a job that
+   moved zero credit. 0485 returns the number of credits ACTUALLY returned:
+   `1..p_amount` refunded, `0` clamped (nothing moved), `NULL` nothing attempted
+   (no covering period row, or invalid arguments — which 0484 also answered
+   `false` for, conflating all three).
+2. **A refund after month rollover hit the wrong period.** 0484 selected the row
+   with `period_start <= now() AND period_end > now()` — the period the REFUND
+   lands in, not the one the DEBIT was taken from. Since
+   `ai_credits.reconcile_refund` retries with exponential backoff, a debit taken
+   near a month boundary was refunded against the NEW period: the old one stayed
+   overcharged forever and the new one was credited for consumption it never
+   had. 0485 scopes the window by `coalesce(p_debited_at, now())`, and the
+   worker captures `debited_at` at debit time and carries it through all three
+   refund sites and the job payload. `p_debited_at` defaults to NULL, which
+   reproduces 0484's behaviour exactly — required, because jobs enqueued before
+   this shipped carry no `debitedAt`.
+
+Everything else is unchanged from 0484 and re-asserted by the harness:
+service_role-only twice (GRANT plus the `coalesce(get_caller_role() =
+'service_role', false)` in-body guard that fails CLOSED on absent claims), the
+1000 cap, the same row predicate and `ORDER BY created_at,id LIMIT 1 FOR UPDATE`
+as `deduct_ai_credits`, the floor that still bounds a double refund, and
+`SET lock_timeout='5s'`.
+
+**Deploy-window hazard, stated rather than discovered.** PostgREST resolves a
+3-named-argument call to the new function (the 4th is defaulted), so a worker
+revision predating 0485 keeps working — but it reads the result as
+`data === true`, and an integer is never `true`: a refund COMMITS while the old
+worker logs it failed and enqueues a reconciliation. Apply the migration and
+deploy the worker together; if they must be ordered, worker FIRST is the safe
+order, because the new `refundAICredits()` handles both shapes (a boolean `true`
+from 0484 is read as "refunded, amount unknown"). The ROLLBACK block restores
+0484's function verbatim and says the same thing in reverse.
+
+Native proof extends the same harness: RED (0484 answers `true` for a
+fully-clamped refund; 0484 refunds a last-month debit against THIS month's row,
+leaving the expired period at 7 and taking the current one 3 -> 2), then GREEN
+(signature and ACL, over-refund returns 2 of 5 requested, clamped refund returns
+0, invalid args and no-covering-row return NULL, `p_debited_at` in the expired
+period takes that row 7 -> 6 while the current row stays at 3, omitting
+`p_debited_at` behaves exactly as 0484 did, 55P03 in ~5 s with nothing moved,
+and interleaved debits/refunds conserving by the sum of returned amounts).
+
+The harness also stopped leaking scratch databases: its `dropdb` now uses
+`--force` (PG13+) with a `pg_terminate_backend` fallback, and the lock-contention
+probe terminates the holder BACKEND rather than only its psql client — the
+client kill left the backend inside `pg_sleep(20)` still holding the row, so
+whatever ran next against that org failed with a spurious 55P03.
+
+Tier T3 (migration). No hosted or prod application asserted by this PR; the only
+execution to date is the local scratch-database run of
+`scripts/scrum4939/native-pg-credit-rpc-followups.sh`.
+
 ## 2026-09-19 — Referral RPC empty-claims guard (0466)
 
 Migration 0466 compensates for 0456's nullable `v_is_service` predicate in both
@@ -1713,3 +1912,10 @@ here from the shared anchor after the `(PR #2825)` section, where `main`'s
 ignores this repo's `.gitattributes` `agents.md merge=union` driver — reported
 the PR CONFLICTING. A later author claiming a higher PR number orders after
 this block.
+
+## 0483–0485 apply order — correction of record for 0485's header (2026-09-21, PR #3053)
+
+- **Database first, all three in one motion (0483 → 0484 → 0485), then merge → worker deploy.** Never apply 0484 without 0485.
+- DB-first is safe because the deployed worker (`7a98c3d2f`) has zero calls to `refund_ai_credits`; it still attempts refunds as `deduct_ai_credits(…, -1)`, which 0467 refuses. 0483's changes to functions it does call are behaviour-compatible (5 s `lock_timeout` → a contended debit fails fast with `55P03`).
+- 0485's header says "worker first is the safe order". That answers a worker built against 0484's boolean result alone; no such revision was ever deployed, and migrate-before-merge (the drift gate) makes worker-first unavailable anyway. The file is immutable, so this block is the correction.
+- Not expedited ahead of its soak: unlike 0482 it closes no live exploit.
