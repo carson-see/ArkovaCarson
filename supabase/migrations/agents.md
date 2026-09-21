@@ -1657,6 +1657,32 @@ service-role paths remain unchanged.
 
 0481 is additive and unapplied locally: private bucket, public-ID-bound object paths, active AAL2 owner/admin writes, current-pointer public reads, and v2 whitelisted public-profile RPCs. The native fixture is minimal PostgreSQL evidence, not hosted Storage/Auth proof.
 All four 0481 SECURITY DEFINER helpers explicitly revoke PUBLIC/anon/authenticated before narrow grants. Public personal signing and the v2 DTO both require public, active, non-deleted profiles; legacy base RPC behavior is not an authorization substitute.
+
+## 2026-09-21 — 0481 correction: APPLIED ON PROD, and never replay it
+
+Supersedes the "unapplied locally" status in the 2026-09-19 block above. `0481`
+was applied to PRODUCTION `vzwyaatejekddvltxyye` on 2026-09-20, ahead of the
+code that uses it (PR #3033 is what lands the `.sql`). Numeric ledger row
+`0481` is present; verified via `list_migrations` plus post-apply checks
+(bucket private, 3 storage policies, 4 CHECK constraints, RLS + FORCE intact,
+`/health` healthy). **Do not apply it again**, and do not edit the file: it is
+byte-identical to what prod carries (sha256 `fd361840ac3f…`).
+
+**Never replay 0481 onto a schema that already has it.** Its four
+`ADD CONSTRAINT` statements are not idempotent — the second apply fails on
+`constraint … already exists` and, because the whole migration is one
+transaction, aborts every statement in it. A compensating migration is the only
+way to change anything 0481 established. This also applies to rebuilding a
+staging rig from the migration set against a database that was already
+replayed.
+
+Deliberately unresolved, tracked as follow-ups rather than fixed here (editing
+`0481` is not an option): the four CHECK regexes interpolate `public_id`
+unescaped (prod has zero non-conforming `public_id` values today), and the
+column order added to both `database.types.ts` copies is hand-placed rather
+than generator order — no database is reachable from the branch to regenerate,
+so it is left as is.
+
 | `0477` | `0477_uat19_queue_resolve_authorization.sql` | SCRUM-5268 / UAT-19 | PRE-PUBLICATION | Replaces only the service-role four-argument `resolve_anchor_queue_by_public_id` body. Tenant and collision scope come from the selected public anchor; authorization is exact `org_members` owner/admin, platform admin, or exact owner/admin of one APPROVED direct parent (no profile-role fallback or recursive ancestry). A tenant+collision advisory transaction lock precedes deterministic row locks, so different-winner races cannot deadlock; the durable receipt is rechecked under lock. ACL/signature stay service-role-only/unchanged. Native proof: `scripts/uat19/native-pg-queue-resolution.sh`. |
 
 ## 2026-09-19 — UAT-24 global-personal folder privacy (0480)

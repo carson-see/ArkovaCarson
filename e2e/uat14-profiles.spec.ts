@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test';
 import path from 'node:path';
 
+/**
+ * Screenshots land in Playwright's own output directory by default, so a local
+ * run leaves the working tree clean. Set `UAT14_EVIDENCE_DIR` to capture into
+ * the tracked evidence folder when refreshing UAT evidence deliberately
+ * (PR #3033 review, pass 4).
+ */
+const SHOT_DIR = process.env.UAT14_EVIDENCE_DIR ?? 'test-results/uat14-screenshots';
+
+function shot(name: string) {
+  return path.join(SHOT_DIR, name);
+}
+
 const hookModule = `
 const member={public_id:'person-public',display_name:'Ada Lovelace',avatar_url:null,avatar_storage_path:'users/u/avatar/a.png',banner_storage_path:'users/u/banner/b.png',bio:'Building trustworthy records for everyone.',social_links:{website:'ada.example',twitter:'@ada'},created_at:'2026-01-01',organizations:[{org_id:'33333333-3333-4333-8333-333333333333',public_id:'org-public',display_name:'Analytical Society',domain:'analytical.example',logo_url:null,verification_status:'VERIFIED',role:'admin'}]};
 const org={org_id:'33333333-3333-4333-8333-333333333333',public_id:'org-public',display_name:'Analytical Society',domain:'analytical.example',description:'Public organization profile with independently controlled brand media.',org_type:'nonprofit',website_url:'https://analytical.example',linkedin_url:'https://linkedin.com/company/analytical',twitter_url:'@analytical',logo_url:null,logo_storage_path:'organizations/o/logo/a.png',banner_storage_path:'organizations/o/banner/b.png',location:'Detroit, MI',founded_date:'2020-01-01',industry_tag:'nonprofit',verification_status:'VERIFIED',created_at:'2026-01-01',total_credentials:12,secured_credentials:11,credential_breakdown:[],public_members:[],sub_organizations:[]};
@@ -68,12 +80,12 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   await expect(page.getByRole('heading', { name: 'Ada Lovelace' })).toBeVisible();
   await expect(page.getByLabel('Profile QR code')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-  await page.screenshot({ path: path.join('docs/staging/uat14-completion-20260919/screenshots', `member-${viewport.width}.png`), fullPage: true });
+  await page.screenshot({ path: shot(`member-${viewport.width}.png`), fullPage: true });
   await page.goto('/e2e/fixtures/uat14-profiles.html?view=org');
   await expect(page.getByRole('heading', { name: 'Analytical Society' })).toBeVisible();
   await expect(page.getByLabel('Organization profile QR code')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-  await page.screenshot({ path: path.join('docs/staging/uat14-completion-20260919/screenshots', `organization-${viewport.width}.png`), fullPage: true });
+  await page.screenshot({ path: shot(`organization-${viewport.width}.png`), fullPage: true });
 });
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 }]) test(`${viewport.width}px editors sanitize and commit profile media`, async ({ page }) => {
@@ -102,7 +114,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   await expect(page.locator('#profile-banner')).toHaveValue('');
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-  await page.screenshot({ path: path.join('docs/staging/uat14-completion-20260919/screenshots', `settings-editor-${viewport.width}.png`), fullPage: true });
+  await page.screenshot({ path: shot(`settings-editor-${viewport.width}.png`), fullPage: true });
   await page.getByRole('switch').click();
   await expect.poll(() => profileWrites.some(write => write.is_public_profile === false)).toBe(true);
 });
@@ -127,5 +139,5 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   expect(uploads[1]).toMatch(new RegExp(`^organizations/${PUBLIC_ORG}/banner/.+\\.png$`));
   await expect(page.getByAltText('Current organization banner')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-  await page.screenshot({ path: path.join('docs/staging/uat14-completion-20260919/screenshots', `organization-editor-${viewport.width}.png`), fullPage: true });
+  await page.screenshot({ path: shot(`organization-editor-${viewport.width}.png`), fullPage: true });
 });

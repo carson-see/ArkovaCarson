@@ -79,3 +79,15 @@ Regenerated `data/thirdPartyNotices.generated.json` with the installed xmldom 0.
 
 Profile media uses private `profile-media` objects addressed by opaque public profile/org IDs. Decode and re-encode uploads before storage; unique object write precedes pointer commit, and old-object cleanup follows only a successful commit. Public personal reads must require the current pointer plus `is_public_profile`; never render raw storage paths as URLs.
 Signed media URLs refresh before their 30-second lease expires and fail back only to HTTPS or same-origin relative legacy URLs. Signing and cleanup failures must be caught: a cleanup failure never masks the primary pointer-commit error, and a broken rendered image is removed rather than retried indefinitely.
+## 2026-09-21 — UAT-14 review fixes (PR #3033)
+
+Organization brand media is deliberately SPLIT: the logo is dual-written to the
+private `profile-media` object AND the public `org-logos` bucket, with
+`logo_url` committed beside `logo_storage_path` in one row update, because
+OpenGraph/schema.org consumers are out-of-band crawlers that cannot exchange an
+opaque path for a 30-second signed URL and organizations have no visibility
+toggle. USER media stays private; only the org logo has a public copy. Anything
+that reads or writes brand media must keep those two pointers together.
+Uploads require an AAL2 session (`can_write_profile_media`); the UI disables
+its inputs and says so rather than surfacing a Storage/PostgREST rejection —
+no raw error string ever reaches user-visible copy.

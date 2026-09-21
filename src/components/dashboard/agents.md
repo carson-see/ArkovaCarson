@@ -24,3 +24,9 @@ Main dashboard widgets: stats, profile card, credit usage, empty states, and bat
 ## Do / Don't Rules
 - DO: Use `useCredits()` hook for credit data, not direct Supabase queries
 - DO: Gate AI features behind `ENABLE_AI_EXTRACTION` flag
+## 2026-09-21 — ProfileCard avatar source (PR #3033 review)
+
+The avatar resolves `avatar_storage_path` through `useProfileMediaUrl` with
+`avatar_url` as the legacy fallback; UAT-14 uploads write only the storage
+path. The hook call sits ABOVE the loading early-return (hook order). A denied
+signature degrades to initials, with no retry storm.

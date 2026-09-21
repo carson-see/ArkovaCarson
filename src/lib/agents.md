@@ -906,3 +906,14 @@ UAT-17 add-existing-member labels live in `copy.ts`; the dialog describes the ex
 `WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and
 attestation-active events; the registration-drift gate binds this map to the
 worker registry.
+## 2026-09-21 — Profile media library (PR #3033 review)
+
+`profileMedia.ts` throws `ProfileMediaError` for every failure it raises
+deliberately; those messages ARE `PROFILE_MEDIA_LABELS` copy and may be shown.
+Anything else escaping an upload is a Storage/PostgREST rejection and must be
+mapped to the generic failure label, never rendered. `replaceProfileMedia`
+takes an optional `publicMirror`: the mirror upload is part of the same unit
+(its failure removes the private object and fails the upload), a failed commit
+removes BOTH new objects, and old-object cleanup is best-effort AFTER the
+commit and confined to the caller's owner prefix. Every accepted input is
+re-encoded to PNG — there is no per-format extension.

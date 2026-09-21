@@ -264,3 +264,12 @@ This additive wrapper is deliberately route-org scoped and never consults profil
 ## 2026-09-14 — SCRUM-5145 signup resend API
 
 Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.
+## 2026-09-21 — useProfileMediaUpload (PR #3033 review)
+
+One hook owns both media upload surfaces (SettingsPage, OrgProfilePage). It
+always resets the file input, including on an early return; it emits exactly
+one success toast (row-update callers pass `{ silentSuccess: true }` to
+`updateOrganization` so the generic "Organization updated" does not double up);
+and it exposes ONE `busy` flag so every input on a surface disables on the same
+condition. `canUpload` carries the AAL2 gate. Do not reintroduce a per-page
+copy of this flow.
