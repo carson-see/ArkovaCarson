@@ -49,6 +49,7 @@ import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 import { ProfileMediaImage, useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
+import { publicMirrorPathFromUrl, type PublicMirror } from '@/lib/profileMedia';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
@@ -82,6 +83,41 @@ export function retainFailedMoveIds(
 const TAB_TRIGGER_CLASS =
   'rounded-none border-b-2 border-transparent data-[state=active]:border-primary ' +
   'data-[state=active]:bg-transparent px-3 md:px-4 py-3 text-sm font-medium whitespace-nowrap';
+
+/**
+ * D1 — organization brand media stays PUBLICLY addressable.
+ *
+ * Organizations have no visibility toggle, and OpenGraph / schema.org consumers
+ * are out-of-band crawlers that cannot exchange an opaque path for a 30 s
+ * signed URL. So a logo upload writes BOTH the private CAS object (in-app
+ * rendering, ownership-checked) and a public `org-logos` object, and commits
+ * `logo_url` next to `logo_storage_path` in ONE update — the two can never
+ * disagree. The banner has no crawler surface and is private only.
+ */
+export const ORG_PUBLIC_LOGO_BUCKET = 'org-logos';
+
+export function orgBrandUpdates(kind: ProfileMediaKind, path: string, publicUrl?: string) {
+  return kind === 'logo'
+    ? { logo_storage_path: path, ...(publicUrl ? { logo_url: publicUrl } : {}) }
+    : { banner_storage_path: path };
+}
+
+export function orgBrandPublicMirror(
+  kind: ProfileMediaKind,
+  orgId: string | null | undefined,
+  currentLogoUrl: string | null | undefined,
+): PublicMirror | undefined {
+  // The org-logos policies (migration 0108) match (storage.foldername(name))[1]
+  // against org_members.org_id::text, so the prefix is the internal org id —
+  // the same id this page's own URL already carries.
+  if (kind !== 'logo' || !orgId) return undefined;
+  const ownerPrefix = `${orgId}/`;
+  return {
+    bucket: ORG_PUBLIC_LOGO_BUCKET,
+    ownerPrefix,
+    previousPath: publicMirrorPathFromUrl(currentLogoUrl, ORG_PUBLIC_LOGO_BUCKET, ownerPrefix) ?? null,
+  };
+}
 
 export function OrgProfilePage() {
   const { orgId } = useParams<{ orgId: string }>();
@@ -372,9 +408,13 @@ function OrgProfilePageInner() {
     ownerId: orgId ?? null,
     externallyBusy: orgUpdating,
     previousPathFor: (kind) => organization?.[brandField(kind)] ?? null,
-    commit: useCallback((kind: ProfileMediaKind, path: string, previousPath: string | null) => {
+    publicMirrorFor: useCallback(
+      (kind: ProfileMediaKind) => orgBrandPublicMirror(kind, orgId, (organization as Record<string, unknown> | null)?.logo_url as string | null),
+      [orgId, organization],
+    ),
+    commit: useCallback((kind: ProfileMediaKind, path: string, previousPath: string | null, publicUrl?: string) => {
       const field = kind === 'logo' ? 'logo_storage_path' as const : 'banner_storage_path' as const;
-      return updateOrganization({ [field]: path }, { field, expected: previousPath }, { silentSuccess: true });
+      return updateOrganization(orgBrandUpdates(kind, path, publicUrl), { field, expected: previousPath }, { silentSuccess: true });
     }, [updateOrganization]),
     successMessage: (kind) => kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED,
   });

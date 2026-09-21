@@ -114,4 +114,21 @@ describe('useProfileMediaUpload', () => {
     await act(async () => { release('organizations/pub_acme/logo/x.png'); await pending; });
     expect(toastSuccess).not.toHaveBeenCalled();
   });
+
+  // D1: the org logo goes to the private CAS object AND a public mirror, and
+  // the resulting public URL reaches the commit so it can be written alongside
+  // the storage path in one row update.
+  it('forwards the public mirror and hands its URL to the commit', async () => {
+    const commit = vi.fn().mockResolvedValue(true);
+    const mirror = { bucket: 'org-logos', ownerPrefix: 'org-1/', previousPath: null };
+    replaceProfileMedia.mockImplementationOnce(async (opts: { commit: (p: string, u?: string) => Promise<boolean> }) => {
+      await opts.commit('organizations/pub_acme/logo/x.png', 'https://cdn.example/public/org-1/logo-x.png');
+      return 'organizations/pub_acme/logo/x.png';
+    });
+    const { result } = setup({ commit, publicMirrorFor: (kind: string) => kind === 'logo' ? mirror : undefined });
+    const { event } = fileInputEvent(png());
+    await act(async () => { await result.current.onInputChange('logo')(event); });
+    expect(replaceProfileMedia).toHaveBeenCalledWith(expect.objectContaining({ publicMirror: mirror }));
+    expect(commit).toHaveBeenCalledWith('logo', 'organizations/pub_acme/logo/x.png', null, 'https://cdn.example/public/org-1/logo-x.png');
+  });
 });

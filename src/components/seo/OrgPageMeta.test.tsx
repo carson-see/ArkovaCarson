@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { OrgPageMeta } from './OrgPageMeta';
+import { orgBrandUpdates } from '@/pages/OrgProfilePage';
 
 const PROFILE = {
   display_name: 'Demo Issuer Co.',
@@ -101,5 +102,17 @@ describe('<OrgPageMeta />', () => {
   it('emits og:image:alt when a logo is set (a11y + AI-search context)', () => {
     render(<OrgPageMeta profile={PROFILE} pageUrl={PAGE_URL} />);
     expect(getMeta('og:image:alt')).toBe('Demo Issuer Co. logo');
+  });
+
+  // D1 regression guard. UAT-14 moved brand media to a PRIVATE bucket; a 30 s
+  // signed URL is worthless to an out-of-band crawler, so an org logo uploaded
+  // through the new path must still leave a stable public URL on the row.
+  it('emits og:image for an org whose logo came through the UAT-14 upload path', () => {
+    const PUBLIC_URL = 'https://x.supabase.co/storage/v1/object/public/org-logos/10000000-1000-4000-8000-000000000001/logo-abc.png';
+    const uploaded = { ...PROFILE, logo_url: null, ...orgBrandUpdates('logo', 'organizations/pub_demo/logo/abc.png', PUBLIC_URL) };
+    render(<OrgPageMeta profile={uploaded} pageUrl={PAGE_URL} />);
+    expect(getMeta('og:image')).toBe(PUBLIC_URL);
+    expect(getNamedMeta('twitter:image')).toBe(PUBLIC_URL);
+    expect(getNamedMeta('twitter:card')).toBe('summary_large_image');
   });
 });

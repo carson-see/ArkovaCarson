@@ -3,9 +3,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const upload = vi.hoisted(() => vi.fn());
 const remove = vi.hoisted(() => vi.fn());
-vi.mock('./supabase', () => ({ supabase: { storage: { from: () => ({ upload, remove }) } } }));
+const publicUpload = vi.hoisted(() => vi.fn());
+const publicRemove = vi.hoisted(() => vi.fn());
+vi.mock('./supabase', () => ({
+  supabase: {
+    storage: {
+      from: (bucket: string) => bucket === 'profile-media'
+        ? { upload, remove }
+        : {
+            upload: publicUpload,
+            remove: publicRemove,
+            getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.example/storage/v1/object/public/${bucket}/${path}` } }),
+          },
+    },
+  },
+}));
 
-import { replaceProfileMedia, validateProfileImage } from './profileMedia';
+import { publicMirrorObjectPath, publicMirrorPathFromUrl, replaceProfileMedia, validateProfileImage } from './profileMedia';
 
 const close = vi.fn();
 vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width: 100, height: 100, close }));
@@ -19,7 +33,12 @@ function file(bytes: number[], type: string, name = 'image.bin') {
 }
 
 describe('validateProfileImage', () => {
-  beforeEach(() => { upload.mockReset().mockResolvedValue({ error: null }); remove.mockReset().mockResolvedValue({ error: null }); });
+  beforeEach(() => {
+    upload.mockReset().mockResolvedValue({ error: null });
+    remove.mockReset().mockResolvedValue({ error: null });
+    publicUpload.mockReset().mockResolvedValue({ error: null });
+    publicRemove.mockReset().mockResolvedValue({ error: null });
+  });
   it.each([
     file([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'image/png', 'a.png'),
     file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg'),
@@ -136,5 +155,113 @@ describe('validateProfileImage', () => {
     const loserPath = uploadedPaths.find(path => path !== winner?.value);
     expect(remove).toHaveBeenCalledWith([loserPath]);
     expect(remove).not.toHaveBeenCalledWith([winner?.value]);
+  });
+});
+
+// ── D1: organization logo public mirror ──────────────────────────────────────
+// Organizations have no visibility toggle, and a 30 s signed URL cannot serve
+// an out-of-band crawler, so the org logo stays PUBLICLY addressable: every
+// successful upload writes the private CAS object AND a public `org-logos`
+// object, and commits `logo_url` + `logo_storage_path` in ONE update.
+describe('organization logo public mirror', () => {
+  const ORG_ID = '22222222-2222-4222-8222-222222222222';
+  const PUBLIC_ID = 'pub_acme';
+  const jpeg = () => file([0xff, 0xd8, 0xff, 0xe0], 'image/jpeg', 'a.jpg');
+
+  beforeEach(() => {
+    upload.mockReset().mockResolvedValue({ error: null });
+    remove.mockReset().mockResolvedValue({ error: null });
+    publicUpload.mockReset().mockResolvedValue({ error: null });
+    publicRemove.mockReset().mockResolvedValue({ error: null });
+  });
+
+  function mirror(previousPublicPath: string | null = null) {
+    return { bucket: 'org-logos' as const, ownerPrefix: `${ORG_ID}/`, previousPath: previousPublicPath };
+  }
+
+  it('derives the public object path from the org UUID folder the org-logos policy checks', () => {
+    const path = publicMirrorObjectPath(ORG_ID, 'logo', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    expect(path).toBe(`${ORG_ID}/logo-cccccccc-cccc-4ccc-8ccc-cccccccccccc.png`);
+  });
+
+  it('uploads both objects and commits the public URL together with the storage path', async () => {
+    const commit = vi.fn().mockResolvedValue(true);
+    const path = await replaceProfileMedia({
+      file: jpeg(), scope: 'organizations', scopeId: PUBLIC_ID, kind: 'logo', commit,
+      publicMirror: mirror(),
+    });
+    const publicPath = publicUpload.mock.calls[0][0] as string;
+    expect(publicPath.startsWith(`${ORG_ID}/logo-`)).toBe(true);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledWith(path, `https://cdn.example/storage/v1/object/public/org-logos/${publicPath}`);
+  });
+
+  it('removes the private object and fails the whole upload when the public copy fails', async () => {
+    publicUpload.mockResolvedValueOnce({ error: new Error('public upload denied') });
+    const commit = vi.fn();
+    await expect(replaceProfileMedia({
+      file: jpeg(), scope: 'organizations', scopeId: PUBLIC_ID, kind: 'logo', commit,
+      publicMirror: mirror(),
+    })).rejects.toThrow(/public upload denied/);
+    expect(commit).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith([upload.mock.calls[0][0]]);
+  });
+
+  it('removes BOTH new objects when the commit fails', async () => {
+    const commit = vi.fn().mockResolvedValue(false);
+    await expect(replaceProfileMedia({
+      file: jpeg(), scope: 'organizations', scopeId: PUBLIC_ID, kind: 'logo', commit,
+      publicMirror: mirror(),
+    })).rejects.toThrow(/metadata/i);
+    expect(remove).toHaveBeenCalledWith([upload.mock.calls[0][0]]);
+    expect(publicRemove).toHaveBeenCalledWith([publicUpload.mock.calls[0][0]]);
+  });
+
+  it('deletes the previous public object only after the commit, and only inside the org prefix', async () => {
+    const previousPublic = `${ORG_ID}/logo-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png`;
+    const commit = vi.fn().mockResolvedValue(true);
+    await replaceProfileMedia({
+      file: jpeg(), scope: 'organizations', scopeId: PUBLIC_ID, kind: 'logo', commit,
+      publicMirror: mirror(previousPublic),
+    });
+    expect(commit.mock.invocationCallOrder[0]).toBeLessThan(publicRemove.mock.invocationCallOrder[0]);
+    expect(publicRemove).toHaveBeenCalledWith([previousPublic]);
+  });
+
+  it('never deletes a public object outside the org prefix', async () => {
+    const commit = vi.fn().mockResolvedValue(true);
+    await replaceProfileMedia({
+      file: jpeg(), scope: 'organizations', scopeId: PUBLIC_ID, kind: 'logo', commit,
+      publicMirror: mirror('33333333-3333-4333-8333-333333333333/logo-x.png'),
+    });
+    expect(publicRemove).not.toHaveBeenCalled();
+  });
+
+  it('keeps the committed pointer and warns when old public cleanup fails', async () => {
+    const previousPublic = `${ORG_ID}/logo-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png`;
+    publicRemove.mockResolvedValueOnce({ error: new Error('cleanup denied') });
+    const warning = vi.fn();
+    const commit = vi.fn().mockResolvedValue(true);
+    await expect(replaceProfileMedia({
+      file: jpeg(), scope: 'organizations', scopeId: PUBLIC_ID, kind: 'logo', commit,
+      publicMirror: mirror(previousPublic), onCleanupWarning: warning,
+    })).resolves.toMatch(/\.png$/);
+    expect(warning).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('publicMirrorPathFromUrl', () => {
+  const ORG_ID = '22222222-2222-4222-8222-222222222222';
+  it.each([
+    // Current mechanism, and main's pre-UAT-14 fixed-name objects.
+    [`https://x.supabase.co/storage/v1/object/public/org-logos/${ORG_ID}/logo-abc.png`, `${ORG_ID}/logo-abc.png`],
+    [`https://x.supabase.co/storage/v1/object/public/org-logos/${ORG_ID}/logo.png`, `${ORG_ID}/logo.png`],
+    // Never hand back a path this caller does not own, or one from elsewhere.
+    ['https://x.supabase.co/storage/v1/object/public/org-logos/99999999-9999-4999-8999-999999999999/logo.png', undefined],
+    ['https://cdn.example/logos/other.png', undefined],
+    [null, undefined],
+    ['', undefined],
+  ])('derives an owned mirror path from %s', (input, expected) => {
+    expect(publicMirrorPathFromUrl(input, 'org-logos', `${ORG_ID}/`)).toBe(expected);
   });
 });
