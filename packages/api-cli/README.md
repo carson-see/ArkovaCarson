@@ -1,8 +1,14 @@
 # Arkova API CLI
 
-`arkova` is the JSON command-line client for the Arkova API. It is tracked by
-[SCRUM-5180](https://arkova.atlassian.net/browse/SCRUM-5180). The independent
+`arkova` is the JSON command-line client for the Arkova API. The independent
 `arkova-verify` command remains separate and makes no Arkova API calls.
+
+After the package is published, install it with Node.js 20.14 or newer:
+
+```sh
+npm install --global arkova-api-cli@0.1.0
+arkova --help
+```
 
 Build and run locally:
 
@@ -30,3 +36,10 @@ arkova folder list --scope ORG --org-id 00000000-0000-0000-0000-000000000000
 arkova folder create --name Cases --scope USER
 arkova folder move --record-id ARK-2026-001 --folder-id 00000000-0000-0000-0000-000000000000
 ```
+
+The binary exposes both the `queue` and `instant` anchor actions, plus status,
+private-tag, and folder (list/create/update/reparent/delete/connector/bulk-move)
+commands — all backed by the canonical API routes documented in
+`packages/api-cli/agents.md` (UAT-12 status parity, UAT-24 folder parity).
+Confirm capability flags for your account in the live Arkova API documentation
+before automating a specific action.

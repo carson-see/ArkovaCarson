@@ -29,6 +29,17 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   suffix rather than pattern-matching Arkova's own service name, since Cloud
   Run hostnames carry no ownership signal a narrower match could trust. See
   `test/independent-endpoint.test.ts`.
+  **2026-09-21 review (#3035):** confirmed NOT a gap — `ARKOVA_HOST_RE`'s
+  `(^|\.)arkova\.(io|ai|com|app|dev)$` suffix anchor already refused
+  `api.arkova.ai`, `edge.arkova.ai`, `app.arkova.ai`, and
+  `search.arkova.ai` before this review (it is a suffix match, not a fixed
+  subdomain list). Added explicit regression tests for those exact
+  hostnames anyway, since `packages/sdk`'s `DEFAULT_BASE_URL` and
+  `packages/embed`'s `DEFAULT_API_BASE` moved to `api.arkova.ai` in this
+  same recovery and the stale comment here (and in the test file) still
+  cited the OLD raw Cloud Run default — corrected, and the `*.run.app`
+  refusal itself is untouched (still live and necessary independent of
+  what any SDK currently defaults to).
 - **Signature ≠ recompute — but a requested check that FAILS fails closed
   (S3-B).** The optional Ed25519 check (`src/lib/signature.ts`) proves only
   that Arkova issued the package; a PASSING signature must never substitute
