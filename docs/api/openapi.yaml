@@ -26,7 +26,7 @@ info:
     name: Proprietary
 
 servers:
-  - url: https://arkova-worker-270018525501.us-central1.run.app/api/v1
+  - url: https://api.arkova.ai/api/v1
     description: Production
   - url: http://localhost:3001/api/v1
     description: Local development
@@ -44,7 +44,7 @@ paths:
         Verification API v2 unified search endpoint. Uses an opaque cursor for pagination and returns typed results.
       tags: [Search]
       servers:
-        - url: https://arkova-worker-270018525501.us-central1.run.app/api/v2
+        - url: https://api.arkova.ai/api/v2
           description: Production v2
         - url: http://localhost:3001/api/v2
           description: Local development v2
@@ -752,7 +752,7 @@ paths:
                 fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                 status: "PENDING"
                 created_at: "2026-03-28T12:00:00Z"
-                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ARK-ARKOVA-VER-00042"
+                verify_url: "https://api.arkova.ai/api/v1/attestations/ARK-ARKOVA-VER-00042"
                 evidence_count: 1
         "400":
           description: Validation error
@@ -916,7 +916,7 @@ paths:
                   public_id: "ARK-2026-DEG-001"
                   credential_type: "DIPLOMA"
                   verification_status: "VERIFIED"
-                  verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-DEG-001"
+                  verify_url: "https://api.arkova.ai/api/v1/verify/ARK-2026-DEG-001"
                 attestor_credentials:
                   - public_id: "ARK-2026-DEG-001"
                     credential_type: "DIPLOMA"
@@ -930,13 +930,13 @@ paths:
                       block_height: 890123
                       timestamp: "2026-03-28T12:15:00Z"
                       explorer_url: "https://mempool.space/tx/abc123def456..."
-                    record_uri: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-DEG-001"
+                    record_uri: "https://api.arkova.ai/api/v1/verify/ARK-2026-DEG-001"
                 issued_at: "2026-03-28T12:00:00Z"
                 expires_at: "2027-06-15T00:00:00Z"
                 revoked_at: null
                 revocation_reason: null
                 created_at: "2026-03-28T12:00:00Z"
-                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ARK-ARKOVA-VER-00042"
+                verify_url: "https://api.arkova.ai/api/v1/attestations/ARK-ARKOVA-VER-00042"
         "404":
           description: Attestation not found
           content:

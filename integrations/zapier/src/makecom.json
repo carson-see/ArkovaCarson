@@ -4,7 +4,7 @@
   "label": "Arkova — Credential Verification",
   "description": "Anchor documents to Bitcoin, verify credentials, and receive real-time webhook events via Arkova.",
   "version": "1.0.0",
-  "baseUrl": "https://arkova-worker-270018525501.us-central1.run.app",
+  "baseUrl": "https://api.arkova.ai",
   "authentication": {
     "type": "apiKey",
     "apiKey": {

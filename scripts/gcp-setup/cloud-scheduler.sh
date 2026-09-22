@@ -272,7 +272,27 @@ JOBS=(
   "process-anchors|*/30 * * * *|/jobs/process-anchors|DEFAULT"
   "process-revocations|*/5 * * * *|/jobs/process-revocations|DEFAULT"
   "reconcile-credit-conservation|0 9 * * *|/jobs/reconcile-credit-conservation|DEFAULT"
-  "recover-broadcasts|*/15 * * * *|/jobs/recover-broadcasts|DEFAULT"
+  # Actions-budget hygiene (2026-09-21, PR #3015 follow-up): this was
+  # imported from live prod as DEFAULT (no retry flags — script re-runs
+  # leave whatever is live untouched), but the live job's retryConfig has
+  # backoff fields set (minBackoffDuration=5s, maxBackoffDuration=3600s,
+  # maxDoublings=5) with NO retryCount/maxRetryAttempts — the Cloud
+  # Scheduler API default for an omitted retryCount is 0 (no retry), so
+  # those backoff settings are inert today (verified via `gcloud scheduler
+  # jobs describe recover-broadcasts --location us-central1 --project
+  # arkova1`, 2026-09-21 — see the PR body for the full JSON). That
+  # directly contradicts the route's own comment in
+  # services/worker/src/routes/cron.ts ("Cloud Scheduler retries non-2xx
+  # responses") — prod currently does NOT retry a 503/500 here. The
+  # handler is retry-safe: recoverStuckBroadcasts() claims work through a
+  # bounded SQL RPC under row locking (services/worker/src/jobs/
+  # broadcast-recovery.ts), the same claim-then-act shape as
+  # drain-connector-artifacts / connector-health-check above, both of
+  # which already use 30s,120s,2 on a comparable */15 cadence. Matching
+  # that here. NOTE: this only updates what the script WOULD apply — the
+  # live gcloud update is a separate operator step (see the PR body for
+  # the exact command); this script edit alone does not change prod.
+  "recover-broadcasts|*/15 * * * *|/jobs/recover-broadcasts|30s,120s,2"
   "refresh-stats|*/5 * * * *|/jobs/refresh-stats|DEFAULT"
   "refresh-treasury-cache|*/10 * * * *|/jobs/refresh-treasury-cache|DEFAULT"
   "rule-action-dispatcher|*/2 * * * *|/jobs/rule-action-dispatcher|DEFAULT"
