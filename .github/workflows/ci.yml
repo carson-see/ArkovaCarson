@@ -2418,9 +2418,13 @@ jobs:
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           GH_TOKEN: ${{ github.token }}
+          # ARK-SEC-012 (Actions-budget hygiene sweep, 2026-09-21): assign to
+          # an env var rather than interpolating the expression directly into
+          # the run: script — same fix as the workflow-level BASE_REF_SHA env
+          # binding above and staging-evidence.yml's live_pr step.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          PR_NUMBER="${{ github.event.pull_request.number }}"
           if [[ -z "${PR_NUMBER}" ]]; then
             echo "::error::No pull_request.number in event context; cannot resolve live PR state."
             exit 1

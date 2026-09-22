@@ -4,6 +4,12 @@ Shared utilities used across all Arkova integrations (Bullhorn, Clio, Zapier).
 
 ## Files
 - **`constants.ts`** — `ARKOVA_DEFAULT_URL`: default Arkova API base URL for all integrations.
+  **2026-09-21 (SCRUM-3888):** value moved from the raw Cloud Run revision host to the public API
+  gateway `https://api.arkova.ai` — the raw host has no Cloudflare origin guard in front of it, and
+  SCRUM-3888 enforces that guard and will 403 direct requests to it. Same-day sibling fixes:
+  `integrations/zapier/src/constants.ts` (own copy, zapier is a standalone package with its own
+  lockfile — cannot depend on this dependency-free tree the way clio/bullhorn do), `packages/sdk`,
+  `packages/embed`.
 - **`fingerprint.ts`** — `computeFingerprint(data)`: SHA-256 fingerprint via Web Crypto API. Identical algorithm to `arkova`. Works in browsers and Node.js 16+.
 - **`constant-time.ts`** — `constantTimeEqual(a, b)`: byte-wise equality with no early exit on content, for authenticating inbound webhooks. Used by Bullhorn (`x-arkova-webhook-secret`) and Clio (HMAC-SHA256 body signature). Length is compared first and leaks, exactly as Node's `timingSafeEqual` does; content timing does not. Tested in `constant-time.test.ts`.
 
