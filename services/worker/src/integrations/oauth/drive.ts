@@ -677,11 +677,44 @@ type DriveOAuthClientGeneration = 'current' | 'legacy';
  * `isDriveLegacyGrant(tokens.scope)`) and are surfaced as
  * `reconnect_required_scope_change` until the org re-consents under the new
  * client, which mints a fresh refresh token bound to it.
+ *
+ * `clientIdHint` (independent review, LOW finding — start/callback client
+ * pinning): when provided, OVERRIDES `generation` entirely and resolves by
+ * MATCHING the hint against the configured pairs — see `exchangeCode`'s doc
+ * comment for why a caller would pass this.
  */
 function requireClient(
   env: NodeJS.ProcessEnv,
   generation: DriveOAuthClientGeneration = 'current',
+  clientIdHint?: string,
 ): { clientId: string; clientSecret: string } {
+  if (clientIdHint) {
+    if (env.GOOGLE_DRIVE_OAUTH_CLIENT_ID && clientIdHint === env.GOOGLE_DRIVE_OAUTH_CLIENT_ID) {
+      const clientSecret = env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+      if (!clientSecret) {
+        throw new DriveConfigError('GOOGLE_DRIVE_OAUTH_CLIENT_SECRET not set — required alongside GOOGLE_DRIVE_OAUTH_CLIENT_ID.');
+      }
+      return { clientId: clientIdHint, clientSecret };
+    }
+    if (env.GOOGLE_OAUTH_CLIENT_ID && clientIdHint === env.GOOGLE_OAUTH_CLIENT_ID) {
+      const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
+      if (!clientSecret) {
+        throw new DriveConfigError('GOOGLE_OAUTH_CLIENT_SECRET not set — required alongside GOOGLE_OAUTH_CLIENT_ID.');
+      }
+      return { clientId: clientIdHint, clientSecret };
+    }
+    // The hint (captured at /oauth/start, before Google consent) matches
+    // NEITHER pair configured right now — a genuine client rotation
+    // happened mid-flow, not just "the new pair got configured." Fail
+    // loud and specific rather than silently falling through to whichever
+    // client `generation` would otherwise resolve — that would send the
+    // authorization code to a DIFFERENT client than the one that issued
+    // it, which Google rejects anyway, just with a less diagnosable error.
+    throw new DriveConfigError(
+      `Drive OAuth client configuration changed between /start and /callback (expected client_id `
+      + `${clientIdHint}, but neither the configured legacy nor new pair matches) — the consent flow must be retried.`,
+    );
+  }
   if (generation === 'legacy') {
     const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
     const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -738,6 +771,24 @@ export function resolveDriveClientGeneration(
 }
 
 /**
+ * Independent review 2026-09-22 (LOW finding — start/callback client
+ * pinning): `buildAuthorizationUrl` resolves `requireClient('current')`
+ * internally to build the consent URL. `drive-oauth.ts`'s `/oauth/start`
+ * handler calls THIS separately, right after, to capture the SAME resolved
+ * `client_id` and embed it in the signed `state` payload — deterministic
+ * given the same `env` and no I/O between the two calls within one request,
+ * so this is guaranteed to match what just went into the URL. `/oauth/
+ * callback` then passes it back as `exchangeCode`'s `clientIdHint`, so a
+ * config flip inside the 10-minute state TTL (e.g. an operator provisions
+ * `GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET` mid-flow) cannot cause the code
+ * exchange to be attempted against a DIFFERENT client than the one that
+ * issued the authorization code.
+ */
+export function resolveDriveOAuthClientId(env: NodeJS.ProcessEnv): string {
+  return requireClient(env, 'current').clientId;
+}
+
+/**
  * Build the consent URL that Arkova redirects to. The admin approves the
  * scopes in Google's UI and is redirected back to `redirectUri` with a
  * `code` parameter that the callback handler exchanges for tokens.
@@ -780,15 +831,25 @@ export function buildAuthorizationUrl(args: {
  * rather than by guessing from the scope string, which client actually
  * issued this row's refresh token. `clientId` is public (it rides in the
  * authorize URL) — persisting it is not a secret exposure.
+ *
+ * `clientIdHint` (independent review, LOW finding — start/callback client
+ * pinning): pass the `client_id` captured at `/oauth/start` time
+ * (`resolveDriveOAuthClientId`, via the signed `state` payload) so this
+ * exchange uses the SAME client that built the authorize URL and therefore
+ * issued `args.code`, even if config changed in between. Omitted, this
+ * falls back to re-resolving `'current'` live from `env` — the ONLY
+ * behavior before this fix, kept as the default for callers (dead-code
+ * `googleDrive.ts`) that have no state payload to carry a hint in.
  */
 export async function exchangeCode(args: {
   code: string;
   redirectUri: string;
+  clientIdHint?: string;
   deps?: DriveClientDeps;
 }): Promise<z.infer<typeof OAuthTokenResponse> & { clientId: string }> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const { clientId, clientSecret } = requireClient(env);
+  const { clientId, clientSecret } = requireClient(env, 'current', args.clientIdHint);
 
   const body = new URLSearchParams({
     code: args.code,

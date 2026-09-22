@@ -895,6 +895,178 @@ describe('Drive OAuth router', () => {
     });
   });
 
+  // Independent review 2026-09-22 (LOW finding): state now pins the
+  // client_id resolved at /oauth/start, so a config flip inside the
+  // 10-minute state TTL cannot make /oauth/callback resolve a DIFFERENT
+  // client than the one that actually issued the authorization code.
+  describe('OAuth client pinning across start -> callback (independent review LOW finding)', () => {
+    function buildAppWithEnv(
+      db: { from: ReturnType<typeof vi.fn> },
+      fetchImpl: ReturnType<typeof vi.fn>,
+      env: Record<string, string>,
+    ) {
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        (req as unknown as { userId: string }).userId = TEST_USER_ID;
+        next();
+      });
+      app.use('/api/v1/integrations', createDriveOAuthRouter({
+        db,
+        env,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        stateSecret: 'test-state-secret',
+        frontendUrl: 'http://localhost:5173',
+        now: () => new Date('2026-04-24T12:00:00.000Z'),
+        kms: {
+          async encrypt() { return Buffer.from('encrypted-token-payload'); },
+          async decrypt() { return Buffer.from('{}'); },
+        },
+      }));
+      return app;
+    }
+
+    it('a state signed while ONLY the legacy pair is configured still exchanges against the legacy client after the NEW pair is provisioned mid-flight', async () => {
+      const captured: Record<string, unknown[]> = {};
+      const capture = (method: string, value: unknown) => {
+        captured[method] = [...(captured[method] ?? []), value];
+      };
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+          if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+          if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+          return mockQuery({ data: null, error: null }, capture);
+        }),
+      };
+      let exchangeClientId: string | null = null;
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') {
+          exchangeClientId = new URLSearchParams(String(init?.body ?? '')).get('client_id');
+          return new Response(JSON.stringify({
+            access_token: 'access-token-secret',
+            expires_in: 3600,
+            refresh_token: 'refresh-token-secret',
+            scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email',
+            token_type: 'Bearer',
+          }), { status: 200 });
+        }
+        if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
+          return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
+        }
+        if (url.includes('/changes/startPageToken')) {
+          return new Response(JSON.stringify({ startPageToken: 'page-token' }), { status: 200 });
+        }
+        if (url.includes('/changes/watch')) {
+          return new Response(JSON.stringify({ resourceId: 'drive-resource-1', expiration: String(Date.now() + 1000) }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      });
+
+      const kmsConfig = { GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k' };
+      const startEnv = { GOOGLE_OAUTH_CLIENT_ID: 'legacy-client', GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret', ...kmsConfig };
+      const startApp = buildAppWithEnv(db, fetchImpl, startEnv);
+      const start = await request(startApp)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+      const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+      expect(new URL(start.body.authorizationUrl).searchParams.get('client_id')).toBe('legacy-client');
+
+      // Simulate an operator provisioning the NEW client pair WHILE the
+      // consent screen is open — a callback app pointed at the flipped env.
+      const callbackEnv = {
+        ...startEnv,
+        GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-client',
+        GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+      };
+      const callbackApp = buildAppWithEnv(db, fetchImpl, callbackEnv);
+      const callback = await request(callbackApp)
+        .get('/api/v1/integrations/google_drive/oauth/callback')
+        .set('host', 'worker.test')
+        .query({ code: 'google-code', state });
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive=connected');
+      // Without the pin, 'current' would now resolve to 'new-client' —
+      // which never issued this authorization code, and Google would
+      // reject the exchange. The pin makes it use 'legacy-client' instead.
+      expect(exchangeClientId).toBe('legacy-client');
+    });
+
+    it('a state with NO oauthClientId (pre-fix in-flight state) degrades gracefully to live re-resolution', async () => {
+      // Directly craft a state payload missing oauthClientId, matching what
+      // a pre-fix /oauth/start would have signed. Requires no import beyond
+      // what's already in this file — constructed inline via the same
+      // sign/verify shape drive-oauth.ts uses (HMAC over base64url JSON).
+      const { createHmac } = await import('node:crypto');
+      const stateSecret = 'test-state-secret';
+      const payload = {
+        orgId: TEST_ORG_ID,
+        userId: TEST_USER_ID,
+        nonce: 'nonce-legacy-state',
+        returnTo: 'http://localhost:5173/organizations/org-1?tab=settings',
+        iat: new Date('2026-04-24T12:00:00.000Z').getTime(),
+        // oauthClientId deliberately OMITTED
+      };
+      const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+      const signature = createHmac('sha256', stateSecret).update(encoded).digest('base64url');
+      const state = `${encoded}.${signature}`;
+
+      const captured: Record<string, unknown[]> = {};
+      const capture = (method: string, value: unknown) => {
+        captured[method] = [...(captured[method] ?? []), value];
+      };
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+          if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+          if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+          return mockQuery({ data: null, error: null }, capture);
+        }),
+      };
+      let exchangeClientId: string | null = null;
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') {
+          exchangeClientId = new URLSearchParams(String(init?.body ?? '')).get('client_id');
+          return new Response(JSON.stringify({
+            access_token: 'access-token-secret',
+            expires_in: 3600,
+            refresh_token: 'refresh-token-secret',
+            scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email',
+            token_type: 'Bearer',
+          }), { status: 200 });
+        }
+        if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
+          return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
+        }
+        if (url.includes('/changes/startPageToken')) {
+          return new Response(JSON.stringify({ startPageToken: 'page-token' }), { status: 200 });
+        }
+        if (url.includes('/changes/watch')) {
+          return new Response(JSON.stringify({ resourceId: 'drive-resource-1', expiration: String(Date.now() + 1000) }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      });
+
+      const app = buildAppWithEnv(db, fetchImpl, {
+        GOOGLE_OAUTH_CLIENT_ID: 'legacy-client',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      });
+      const callback = await request(app)
+        .get('/api/v1/integrations/google_drive/oauth/callback')
+        .set('host', 'worker.test')
+        .query({ code: 'google-code', state });
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive=connected');
+      expect(exchangeClientId).toBe('legacy-client');
+    });
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // DRIVE-01 (SCRUM-2366): verified-only connect gate WIRED into start+callback.
   // Before the fix the eligibility resolver had zero production importers and

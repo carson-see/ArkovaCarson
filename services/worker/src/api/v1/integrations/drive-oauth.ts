@@ -31,6 +31,7 @@ import {
   exchangeCode,
   stopDriveChannel,
   driveGrantExcessScopes,
+  resolveDriveOAuthClientId,
   // revokeOAuthToken intentionally NOT imported — see SCRUM-1237 / AUDIT-0424-12
   type DriveClientDeps,
 } from '../../../integrations/oauth/drive.js';
@@ -72,6 +73,20 @@ interface StatePayload {
   nonce: string;
   returnTo: string;
   iat: number;
+  /**
+   * Independent review 2026-09-22 (LOW finding — start/callback client
+   * pinning): the `client_id` `buildAuthorizationUrl` actually used to build
+   * THIS consent URL (captured via `resolveDriveOAuthClientId`, deterministic
+   * given the same env). Passed back to `exchangeCode` as `clientIdHint` at
+   * `/oauth/callback` so a config change inside the 10-minute state TTL
+   * (e.g. an operator provisions `GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET`
+   * mid-flow) cannot make the callback re-resolve `'current'` to a
+   * DIFFERENT client than the one Google actually issued the code to.
+   * Optional so a state signed by a pre-fix deploy (in-flight across a
+   * redeploy, within the 10-minute TTL) degrades gracefully to the old
+   * re-resolve-live behavior instead of failing closed.
+   */
+  oauthClientId?: string;
 }
 
 const Provider = 'google_drive' as const;
@@ -334,12 +349,20 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
     try {
       const returnTo = sanitizeReturnTo(parsed.data.return_to, orgId, deps);
       const redirectUri = buildRedirectUri(req);
+      // Independent review 2026-09-22 (LOW finding): capture the client_id
+      // that WILL be used to build the authorize URL below, and pin it into
+      // the signed state so /oauth/callback uses the SAME client even if
+      // config changes inside the 10-minute state TTL. Deterministic given
+      // the same env and no I/O in between — this is not a second live
+      // resolution racing the one inside buildAuthorizationUrl.
+      const oauthClientId = resolveDriveOAuthClientId(deps.env ?? process.env);
       const state = signState({
         orgId,
         userId,
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
+        oauthClientId,
       }, stateSecret);
       const authorizationUrl = buildAuthorizationUrl({
         redirectUri,
@@ -423,9 +446,14 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
 
     try {
       const driveDeps: DriveClientDeps = { env: deps.env, fetchImpl: deps.fetchImpl };
+      // Independent review 2026-09-22 (LOW finding): pin the exchange to
+      // the SAME client /oauth/start used to build the authorize URL —
+      // payload.oauthClientId is absent only for a state signed before this
+      // fix (graceful degrade to the old re-resolve-live behavior).
       const tokens = await exchangeCode({
         code,
         redirectUri: buildRedirectUri(req),
+        clientIdHint: payload.oauthClientId,
         deps: driveDeps,
       });
 

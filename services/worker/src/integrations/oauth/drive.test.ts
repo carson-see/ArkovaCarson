@@ -26,6 +26,7 @@ import {
   driveExistingGrantExcessScopes,
   isDriveLegacyGrant,
   resolveDriveClientGeneration,
+  resolveDriveOAuthClientId,
   isInvalidPageTokenError,
 } from './drive.js';
 import { assertValidFieldsMask } from './__test-helpers__/fields-mask.js';
@@ -407,6 +408,94 @@ describe('exchangeCode', () => {
     expect(res.clientId).toBe('legacy-id');
   });
 
+  // Independent review 2026-09-22 (LOW finding — start/callback client
+  // pinning): `clientIdHint` overrides live re-resolution entirely.
+  describe('clientIdHint (start/callback client pinning)', () => {
+    it('uses the hinted client even when the OTHER pair would otherwise resolve as "current"', async () => {
+      let sentBody = '';
+      const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+        sentBody = String(init?.body ?? '');
+        return new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 });
+      };
+      await exchangeCode({
+        code: 'code',
+        redirectUri: 'https://arkova.ai/cb',
+        // The hint names the LEGACY client, even though both pairs are
+        // configured (which would make live 'current' resolution pick the
+        // NEW pair) — simulating a config flip between /start and /callback.
+        clientIdHint: 'legacy-id',
+        deps: {
+          env: {
+            GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+            GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+            GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+            GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+          },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      });
+      expect(new URLSearchParams(sentBody).get('client_id')).toBe('legacy-id');
+    });
+
+    it('uses the hinted NEW client when it matches the new pair', async () => {
+      let sentBody = '';
+      const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+        sentBody = String(init?.body ?? '');
+        return new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 });
+      };
+      await exchangeCode({
+        code: 'code',
+        redirectUri: 'https://arkova.ai/cb',
+        clientIdHint: 'new-id',
+        deps: {
+          env: {
+            GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+            GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+            GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+            GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+          },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      });
+      expect(new URLSearchParams(sentBody).get('client_id')).toBe('new-id');
+    });
+
+    it('throws a specific DriveConfigError when the hint matches NEITHER configured pair (a genuine rotation, not just a new-pair provisioning)', async () => {
+      await expect(
+        exchangeCode({
+          code: 'code',
+          redirectUri: 'https://arkova.ai/cb',
+          clientIdHint: 'some-rotated-away-id',
+          deps: {
+            env: { GOOGLE_OAUTH_CLIENT_ID: 'legacy-id', GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret' },
+          },
+        }),
+      ).rejects.toThrow(/configuration changed between \/start and \/callback/);
+    });
+
+    it('omitted (undefined) falls back to live "current" re-resolution — the pre-fix behavior', async () => {
+      let sentBody = '';
+      const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+        sentBody = String(init?.body ?? '');
+        return new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 });
+      };
+      await exchangeCode({
+        code: 'code',
+        redirectUri: 'https://arkova.ai/cb',
+        deps: {
+          env: {
+            GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+            GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+            GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+            GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+          },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      });
+      expect(new URLSearchParams(sentBody).get('client_id')).toBe('new-id');
+    });
+  });
+
   it('throws DriveApiError on non-2xx', async () => {
     const fetchImpl = async () =>
       new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
@@ -587,6 +676,31 @@ describe('resolveDriveClientGeneration', () => {
 
   it('returns "legacy" when only the legacy pair is configured and clientId matches it', () => {
     expect(resolveDriveClientGeneration('legacy-id', { GOOGLE_OAUTH_CLIENT_ID: 'legacy-id' })).toBe('legacy');
+  });
+});
+
+// Independent review 2026-09-22 (LOW finding — start/callback client
+// pinning): captures whichever client_id `buildAuthorizationUrl` would use
+// right now, so drive-oauth.ts's /oauth/start can embed it in signed state.
+describe('resolveDriveOAuthClientId', () => {
+  it('returns the NEW pair id when both pairs are configured', () => {
+    expect(resolveDriveOAuthClientId({
+      GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+      GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+      GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id',
+      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-secret',
+    })).toBe('new-id');
+  });
+
+  it('returns the legacy pair id when only it is configured', () => {
+    expect(resolveDriveOAuthClientId({
+      GOOGLE_OAUTH_CLIENT_ID: 'legacy-id',
+      GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret',
+    })).toBe('legacy-id');
+  });
+
+  it('throws DriveConfigError when neither pair is configured', () => {
+    expect(() => resolveDriveOAuthClientId({})).toThrow(DriveConfigError);
   });
 });
 
