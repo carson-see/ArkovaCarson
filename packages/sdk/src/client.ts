@@ -65,7 +65,7 @@ function isAnchorInstantStatus(value: unknown): value is AnchorInstantStatus {
   return typeof value === 'string' && ANCHOR_INSTANT_STATUSES.has(value as AnchorInstantStatus);
 }
 
-const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
+const DEFAULT_BASE_URL = 'https://api.arkova.ai';
 
 /**
  * Maximum public IDs per `verifyBatch()` call. Mirrors the worker's
