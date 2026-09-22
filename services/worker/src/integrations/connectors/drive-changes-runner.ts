@@ -827,7 +827,33 @@ export async function runDriveChanges(
         db,
         deps: { logger: deps.logger, resolveFolderPath, stillHoldsLease },
       });
-      result = secondResult;
+      // Merge, do NOT replace. `result = secondResult` threw away pass 1's
+      // work — and it did so in exactly the case this bounded second pass
+      // exists to serve, so a run under-reported itself precisely when a
+      // push landed mid-run. Counters are summed because they describe the
+      // WHOLE run; `newPageToken` and the pass-2 flags come from the later
+      // pass via the spread, because the cursor must never rewind.
+      //
+      // `cursorReset`, `leaseLost` and `cursorAdvanceLost` are declared
+      // `?: true` and each documents a thing that HAPPENED during a pass —
+      // "recovered from a 410/404", "detected it no longer holds the lease",
+      // "the CAS reported advanced: false". They are history, not
+      // current-state predicates, so a pass-1 occurrence must survive a
+      // pass-2 that did not repeat it. OR them; never let the spread erase
+      // one.
+      result = {
+        ...secondResult,
+        changesProcessed: result.changesProcessed + secondResult.changesProcessed,
+        queued: result.queued + secondResult.queued,
+        parentMismatch: result.parentMismatch + secondResult.parentMismatch,
+        duplicates: result.duplicates + secondResult.duplicates,
+        pagesProcessed: result.pagesProcessed + secondResult.pagesProcessed,
+        ...(result.cursorReset || secondResult.cursorReset ? { cursorReset: true as const } : {}),
+        ...(result.leaseLost || secondResult.leaseLost ? { leaseLost: true as const } : {}),
+        ...(result.cursorAdvanceLost || secondResult.cursorAdvanceLost
+          ? { cursorAdvanceLost: true as const }
+          : {}),
+      };
     }
 
     return result;
