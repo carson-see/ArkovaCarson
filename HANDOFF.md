@@ -14,6 +14,39 @@
 
 ## Now
 
+### 2026-09-22T14:55Z — CTO execution session (Claude Opus 5): `E2E Tests` has been broken on `main` since 2026-09-19; #3072 fixes it and MUST merge before #3054/#3059
+
+**Read this block first.** It supersedes the 12:40Z block where they differ, and it changes the merge order from a list into a sequence.
+
+### The broken gate
+
+`e2e/connectors.spec.ts` landed 2026-09-19 (`ebf5c2f16`, #2912) with a pre-flight that **cannot be satisfied**. `adminRouter.use(rateLimiters.checkout)` applies a **10 req/min per-IP** limiter to every admin route; the spec waits for `remaining >= 16` from a bucket whose ceiling is 10. It has **never passed while actually running**.
+
+Measured on a live rig, not inferred: 13 sequential `GET /api/rules` returned `200` with `x-ratelimit-remaining` counting 8 → 0, then `429`. Never observed above 9.
+
+Deleting the gate would not rescue it — `ConnectorsPage` mounts two `useConnectorRule` cards, so one run issues ~8-12 admin requests against 10/min, and four specs (`connectors`, `billing`, `treasury-observability`, `uat19-org-profile`) contend for the same `::1` bucket under parallel workers.
+
+**It survived unnoticed** because the change-detector skips `.md`/`docs/`/`memory/`/`machines/`/`services/edge/` diffs, #3054 happened to skip E2E at 12:26Z, and #3035 was admin-merged over a red E2E. Main's own CI shows `dd0985375` → failure, `171b335aa` → skipped. **Two earlier diagnoses of this were wrong** (a capacity-quota story, and "it passed earlier today"); both are recorded as dead in the ticket so nobody re-derives them.
+
+### The fix and its ORDERING CONSTRAINT
+
+**PR #3072** (`fix/e2e-admin-ratelimit-bypass`, T2) scopes a bypass of that limiter to **adminRouter's mount point only** — billing checkout, credit purchase, account deletion and the anchor routes keep their limiter, and `/api/v1` is untouched so `e2e/verify-ratelimit-contract.spec.ts` still proves §1.10. Fails closed twice: `adminRateLimitBypassActive()` requires `nodeEnv !== 'production'`, and `config.ts` throws at boot if the flag is set in production. **No production limit changes.** New env var documented in `docs/reference/ENV.md`.
+
+**#3072 MUST MERGE FIRST, ALONE.** Verified against `origin/main`'s `.mergify.yml`: `queue_conditions` do NOT include `E2E Tests`, but `merge_conditions` DO, and they are evaluated on the **speculative candidate** at `batch_size: 1`. The candidate for #3054 is `main + #3054`; if #3072 is not already on `main` that candidate lacks the fix, its E2E fails, and #3054 is **dequeued** — one wasted speculative matrix per attempt. Once #3072 is on `main`, the other two pick it up with **no head move**. `main` has **no `required_status_checks`** configured (`enforce_admins: false`), so GitHub itself will not block on a red PR-level E2E — the ordering constraint alone is sufficient.
+
+Merge sequence: **1) #3072 alone → wait for `main`. 2) #3054 and #3059.**
+
+### Soaks
+
+Train G is **staged and idle, clock NOT started** — candidate rebuilt three times as heads moved; it will be rebuilt once more on all three final heads. Per-cycle probes: identity, Drive pack, D pack, lease, error identity, and a **negative control** asserting the `checkout` limiter still enforces with #3072's flag OFF (the rig stays flag-off so it stays representative of prod; CI proves the positive path). Trains A and B unaffected — A's T3 floor is tonight 21:43:19Z, B's is 2026-09-23T12:03Z.
+
+### Also today
+
+- **#3035 MERGED** (`b2df81d9a`). Its red `E2E Tests` was this same defect, not its own code.
+- **Registry drift, scoped precisely:** published `arkova-mcp-server@3.1.0` carries `overrides` as caret ranges while `main` has exact pins — it was published from a pre-pin head, so that artifact is not reproducible from `main` and violates the DEP-15 policy our own required check enforces. Diffed both published tarballs against `main`: **`arkova@3.1.0` is clean**; only `arkova-mcp-server`'s `package.json` differs, by exactly two lines. Remedy is to supersede with **3.1.1 from `main` via Trusted Publishing**, not to republish or deprecate. `dist/` was not rebuilt and byte-compared — stated as an inference, not a check.
+- The `arkova-ci-publish` npm token has been **deleted**.
+- **Six instances of one failure shape** — a green signal compatible with the mechanism being absent — are recorded with detection methods in `memory/feedback_assertion_that_cannot_fail_is_not_evidence.md`. Two were in this session's own work, one in its own monitor.
+
 ### 2026-09-22T12:40Z — CTO execution session (Claude Opus 5): TRAIN C AND TRAIN D EVIDENCE ARE VOID; TRAIN B RESTARTED AT 12:03Z; main's zapier lockfile was breaking `Tests` on every PR
 
 **Read this block first.** It supersedes the 2026-09-21T22:30Z `### Soaks` table below, which is wrong in three ways that will cost you a window if you act on it.
@@ -3042,4 +3075,5 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 _Last refreshed: 2026-09-19 by CTO completion session — claims verified against gcloud/MCP/CI output (historical runtime entries retain their own dated evidence; this refresh records local candidate checks and tracking readbacks only, not new runtime state)._
 _Last refreshed: 2026-09-20 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
 _Last refreshed: 2026-09-21 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-22 by Claude Opus 5 (CTO execution session) — claims verified against gcloud/MCP/CI output._
 _Last refreshed: 2026-09-22 by Claude Opus 5 (CTO execution session) — claims verified against gcloud/MCP/CI output._
