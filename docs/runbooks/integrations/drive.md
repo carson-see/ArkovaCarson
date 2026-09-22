@@ -76,11 +76,28 @@ verification window:
 
 `requireClient()` in `services/worker/src/integrations/oauth/drive.ts`
 resolves which pair a given call uses; see its doc comment for the full
-rationale. A row's stored `scope` (or the decrypted token's cached `scope`
-for the refresh path) determines whether it is classified as
-pre-cutover ("legacy" — always refreshed against the original client,
-surfaced as `reconnect_required_scope_change` until it re-consents) or
-current.
+rationale.
+
+**Refresh-client resolution (2026-09-22 fix-round, independent review
+CRITICAL finding).** Each `org_integrations` row records which client
+actually issued its refresh token — `account_label.oauth_client_id`,
+written once at connect time from `exchangeCode`'s response — and
+`loadDriveAccessToken` refreshes against THAT client authoritatively,
+never by guessing. The scope-string heuristic (`isDriveLegacyGrant`) is a
+fallback ONLY for a row connected before this field existed, or whose
+stored id no longer matches either configured pair (a client rotation);
+every fallback is logged. Defense in depth: a refresh that fails with an
+OAuth client-mismatch error under the resolved client retries ONCE
+against the other configured pair, self-healing the stored id on success;
+if both fail, the connection surfaces as `oauth_client_mismatch` on
+`/api/v1/org-integrations` (distinct from the generic `subscription_expiry`
+that same failure would otherwise read as) rather than silently going
+stale. **No manual backfill is needed when provisioning the new pair** —
+existing rows self-heal on their next refresh.
+
+A row holding the pre-cutover scope set independently surfaces as
+`reconnect_required_scope_change` until it re-consents (that signal is
+about the GRANT, not the refresh client — see the cutover note above).
 
 ## KMS key for token encryption
 

@@ -642,8 +642,20 @@ GOOGLE_OAUTH_CLIENT_SECRET=
 # any environment); when either is unset the worker falls back to
 # GOOGLE_OAUTH_CLIENT_ID/SECRET unconditionally. See requireClient() in
 # services/worker/src/integrations/oauth/drive.ts for the full selection
-# logic (new consent + not-yet-legacy refresh prefer this pair when set;
-# refreshing a pre-cutover row always uses the legacy pair regardless).
+# logic.
+#
+# NO MANUAL BACKFILL NEEDED when provisioning this pair (2026-09-22
+# fix-round, independent review CRITICAL finding). Each org_integrations
+# row records which client actually issued its refresh token
+# (account_label.oauth_client_id, written at connect time) and refreshes
+# against THAT client authoritatively — never a live guess from the
+# current config. A row connected before this field existed (or whose
+# stored id no longer matches either configured pair) falls back to a
+# scope-string heuristic on its next refresh and self-heals the stored id
+# on success; if a refresh fails specifically because it was sent to the
+# wrong client, the worker retries once against the other configured pair
+# and self-heals on that success too. Do NOT hand-edit account_label to
+# "fix" this — see drive-changes-runner.ts's loadDriveAccessToken.
 GOOGLE_DRIVE_OAUTH_CLIENT_ID=
 GOOGLE_DRIVE_OAUTH_CLIENT_SECRET=
 
