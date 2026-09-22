@@ -344,14 +344,60 @@ export class DriveApiError extends Error {
    * `isInvalidPageTokenError`.
    */
   pageTokenInvalid?: true;
-  constructor(msg: string, status: number, detail?: string, pageTokenInvalid?: true) {
+  /**
+   * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+   * OAuth2 `error` code from a TOKEN-ENDPOINT error response (e.g.
+   * `invalid_grant`, `unauthorized_client`, `invalid_client`) — the
+   * standard field Google's `oauth2.googleapis.com/token` returns on a 4xx.
+   * Only ever set by `refreshAccessToken`'s non-ok branch, from the SAME
+   * already-read, already-bounded JSON that populates `detail` — this is
+   * not a second body read and does not reopen any §1.6A concern (the
+   * token endpoint never returns document bytes). Lets
+   * `drive-changes-runner.ts`'s `loadDriveAccessToken` distinguish "this
+   * refresh token was sent to the wrong OAuth client" (retryable with the
+   * other client generation) from every other refresh failure (network,
+   * revoked grant, rate limit, …).
+   */
+  oauthError?: string;
+  constructor(msg: string, status: number, detail?: string, pageTokenInvalid?: true, oauthError?: string) {
     super(msg);
     this.name = 'DriveApiError';
     this.status = status;
     if (detail !== undefined) this.detail = detail;
     if (pageTokenInvalid) this.pageTokenInvalid = true;
+    if (oauthError !== undefined) this.oauthError = oauthError;
   }
 }
+
+/**
+ * SCRUM-5287 follow-up (2026-09-22, CRITICAL finding): OAuth2 token-endpoint
+ * error codes that mean "this refresh token was presented to the WRONG
+ * OAuth client" — https://www.rfc-editor.org/rfc/rfc6749#section-5.2 defines
+ * `invalid_grant` and `invalid_client`; `unauthorized_client` is Google's
+ * own addition for this same family. Distinct from every OTHER token-
+ * endpoint failure (network, revoked grant by the USER, malformed request),
+ * which must NOT trigger the generation-retry in `loadDriveAccessToken` —
+ * retrying an actually-revoked grant against a different client cannot
+ * succeed and would just double the latency of an already-failed refresh.
+ */
+export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_CODES = new Set([
+  'invalid_grant',
+  'unauthorized_client',
+  'invalid_client',
+]);
+
+/**
+ * Shared message prefix for the durable, bounded signal `loadDriveAccessToken`
+ * writes to `org_integrations.last_renewal_error` when a refresh exhausts
+ * every OAuth client it can try (see `drive-changes-runner.ts`). Exported
+ * from this dependency-free module — not `drive-changes-runner.ts`, which
+ * pulls in `jobs/run-lease.ts` and other heavier transitive deps — so
+ * `connector-health.ts` can import just the string constant to recognize
+ * the signal without adding that weight (see that folder's agents.md,
+ * 2026-09-21 entry, for why a `connector-health.ts` → `drive-changes-runner.ts`
+ * import was avoided once before).
+ */
+export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX = 'Drive OAuth client mismatch';
 
 /** One entry of Google's standard `error.errors[]` array (handle-errors guide). */
 interface GoogleApiErrorEntry {
@@ -666,6 +712,32 @@ function requireClient(
 }
 
 /**
+ * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): resolves
+ * which OAuth client GENERATION a known `client_id` corresponds to, by
+ * matching it against the CURRENTLY CONFIGURED pairs — not by guessing from
+ * scope strings. This is the authoritative half of the client-identity fix:
+ * `org_integrations.account_label` now records the `client_id` that actually
+ * issued a row's tokens (`drive-oauth.ts`'s callback — see
+ * `drive-account-label.ts`'s `oauth_client_id` field), and
+ * `drive-changes-runner.ts`'s `loadDriveAccessToken` calls this function to
+ * turn that stored, PUBLIC (non-secret — it rides in the authorize URL)
+ * client_id back into a `DriveOAuthClientGeneration` before refreshing.
+ *
+ * Returns `undefined` when `clientId` matches NEITHER configured pair (a
+ * pair was rotated to a third id after the row connected, or the id was
+ * simply never one of Arkova's two known Drive clients) — callers must have
+ * their own fallback for that case; this function does not guess.
+ */
+export function resolveDriveClientGeneration(
+  clientId: string,
+  env: NodeJS.ProcessEnv,
+): DriveOAuthClientGeneration | undefined {
+  if (env.GOOGLE_DRIVE_OAUTH_CLIENT_ID && clientId === env.GOOGLE_DRIVE_OAUTH_CLIENT_ID) return 'current';
+  if (env.GOOGLE_OAUTH_CLIENT_ID && clientId === env.GOOGLE_OAUTH_CLIENT_ID) return 'legacy';
+  return undefined;
+}
+
+/**
  * Build the consent URL that Arkova redirects to. The admin approves the
  * scopes in Google's UI and is redirected back to `redirectUri` with a
  * `code` parameter that the callback handler exchanges for tokens.
@@ -698,12 +770,22 @@ export function buildAuthorizationUrl(args: {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-/** Exchange an authorization_code for tokens. */
+/**
+ * Exchange an authorization_code for tokens.
+ *
+ * Returns `clientId` alongside Google's own response fields (SCRUM-5287
+ * follow-up, CRITICAL finding) — the caller (`drive-oauth.ts`'s callback)
+ * persists it into `account_label.oauth_client_id` so a LATER refresh
+ * (`drive-changes-runner.ts`'s `loadDriveAccessToken`) knows, authoritatively
+ * rather than by guessing from the scope string, which client actually
+ * issued this row's refresh token. `clientId` is public (it rides in the
+ * authorize URL) — persisting it is not a secret exposure.
+ */
 export async function exchangeCode(args: {
   code: string;
   redirectUri: string;
   deps?: DriveClientDeps;
-}): Promise<z.infer<typeof OAuthTokenResponse>> {
+}): Promise<z.infer<typeof OAuthTokenResponse> & { clientId: string }> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
   const { clientId, clientSecret } = requireClient(env);
@@ -726,7 +808,7 @@ export async function exchangeCode(args: {
     // Non-document path: Google token endpoint returns safe OAuth error JSON.
     throw new DriveApiError('Drive token exchange failed', res.status, boundedErrorDetail(json));
   }
-  return OAuthTokenResponse.parse(json);
+  return { ...OAuthTokenResponse.parse(json), clientId };
 }
 
 /**
@@ -738,12 +820,18 @@ export async function exchangeCode(args: {
  * 2026-09-21 drive.readonly cutover (a row classified by
  * `isDriveLegacyGrant(storedScope)`); sending it to the wrong client fails
  * at Google with `invalid_grant`.
+ *
+ * Returns `clientId` alongside Google's own response fields (SCRUM-5287
+ * follow-up, CRITICAL finding) — the client actually used, so a caller that
+ * resolved `clientGeneration` heuristically (or via a retry) can persist the
+ * now-known-correct id back to `account_label.oauth_client_id` without
+ * re-deriving it. Public, not a secret.
  */
 export async function refreshAccessToken(args: {
   refreshToken: string;
   clientGeneration?: DriveOAuthClientGeneration;
   deps?: DriveClientDeps;
-}): Promise<z.infer<typeof OAuthTokenResponse>> {
+}): Promise<z.infer<typeof OAuthTokenResponse> & { clientId: string }> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
   const { clientId, clientSecret } = requireClient(env, args.clientGeneration ?? 'current');
@@ -762,10 +850,20 @@ export async function refreshAccessToken(args: {
   });
   const json = await readDriveJson(res, 'Drive token refresh');
   if (!res.ok) {
-    // Non-document path: Google token refresh returns safe OAuth error JSON.
-    throw new DriveApiError('Drive token refresh failed', res.status, boundedErrorDetail(json));
+    // Non-document path: Google token refresh returns safe OAuth error JSON,
+    // standard shape `{ error: 'invalid_grant', error_description: '...' }`
+    // per RFC 6749 §5.2 — read the SAME already-parsed json that
+    // boundedErrorDetail below scrubs; not a second/raw body read.
+    const oauthErrorCode = (json as { error?: unknown } | null)?.error;
+    throw new DriveApiError(
+      'Drive token refresh failed',
+      res.status,
+      boundedErrorDetail(json),
+      undefined,
+      typeof oauthErrorCode === 'string' ? oauthErrorCode : undefined,
+    );
   }
-  return OAuthTokenResponse.parse(json);
+  return { ...OAuthTokenResponse.parse(json), clientId };
 }
 
 /**

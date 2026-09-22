@@ -34,8 +34,16 @@ import { dbUuid } from '../../utils/db-row-validation.js';
 import {
   refreshAccessToken,
   isDriveLegacyGrant,
+  resolveDriveClientGeneration,
+  DriveApiError,
+  DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_CODES,
+  DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX,
   type DriveClientDeps,
 } from '../oauth/drive.js';
+import {
+  parseDriveAccountLabel,
+  stringifyDriveAccountLabel,
+} from './drive-account-label.js';
 import {
   decryptTokens,
   encryptTokens,
@@ -254,13 +262,60 @@ function isExpired(tokens: OAuthTokens, now: Date): boolean {
 }
 
 /**
+ * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): resolve
+ * which OAuth client GENERATION to refresh a row's token against.
+ *
+ * AUTHORITATIVE path: `storedClientId` (from `account_label.oauth_client_id`,
+ * written at connect time — see `drive-oauth.ts`'s callback) is matched
+ * against the CURRENTLY CONFIGURED pairs via `resolveDriveClientGeneration`.
+ * A match is definitive — no guessing.
+ *
+ * FALLBACK path (only when `storedClientId` is absent — a pre-cutover row
+ * connected before this field existed — or present but matches neither
+ * configured pair, e.g. after a client rotation): the scope-string
+ * heuristic (`isDriveLegacyGrant`). Every fallback is logged (bounded — only
+ * the integration id, never a token or scope value) so the fallback rate is
+ * visible and shrinks to zero as rows self-heal (see `loadDriveAccessToken`).
+ */
+function resolveDriveRefreshGeneration(args: {
+  storedClientId: string | null;
+  storedScope: string | null | undefined;
+  env: NodeJS.ProcessEnv;
+  integrationId: string;
+  logger?: DriveChangesRunnerDeps['logger'];
+}): { generation: DriveOAuthClientGenerationLike; authoritative: boolean } {
+  if (args.storedClientId) {
+    const matched = resolveDriveClientGeneration(args.storedClientId, args.env);
+    if (matched) return { generation: matched, authoritative: true };
+    args.logger?.warn?.(
+      { integrationId: args.integrationId },
+      'loadDriveAccessToken: stored oauth_client_id matches neither configured Drive OAuth client — falling back to scope-string heuristic',
+    );
+  } else {
+    args.logger?.info?.(
+      { integrationId: args.integrationId },
+      'loadDriveAccessToken: no stored oauth_client_id — falling back to scope-string heuristic',
+    );
+  }
+  return {
+    generation: isDriveLegacyGrant(args.storedScope) ? 'legacy' : 'current',
+    authoritative: false,
+  };
+}
+
+// Local alias — `DriveOAuthClientGeneration` itself is not exported from
+// oauth/drive.ts (module-internal type); the two values are stable and
+// public through `resolveDriveClientGeneration`'s return type.
+type DriveOAuthClientGenerationLike = 'current' | 'legacy';
+
+/**
  * Decrypt → optionally refresh → re-encrypt+persist. Returns the access
  * token usable against the Drive API. The caller does NOT need to know
  * whether a refresh happened.
  */
 export async function loadDriveAccessToken(
   integration: DriveIntegrationRow,
-  deps: Pick<DriveChangesRunnerDeps, 'db' | 'kms' | 'drive' | 'env' | 'now'>,
+  deps: Pick<DriveChangesRunnerDeps, 'db' | 'kms' | 'drive' | 'env' | 'now' | 'logger'>,
 ): Promise<{ accessToken: string; refreshed: boolean }> {
   if (!integration.encrypted_tokens || !integration.token_kms_key_id) {
     throw new DriveRunnerError(
@@ -295,20 +350,94 @@ export async function loadDriveAccessToken(
   // Google has already invalidated. Avoid that by conditioning the
   // UPDATE on `encrypted_tokens = $prevCiphertext`.
   const prevCiphertextHex = `\\x${ciphertext.toString('hex')}`;
+  const env = deps.env ?? process.env;
 
-  const refreshed = await refreshAccessToken({
-    refreshToken: tokens.refresh_token,
-    // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover): a refresh
-    // token is bound to the OAuth client that issued it — see
-    // requireClient's doc comment in oauth/drive.ts. Classify from the
-    // CACHED scope on the decrypted token blob (set at connect/last-refresh
-    // time, never Drive-supplied mid-refresh) — cheap, already in hand, and
-    // is exactly what a pre-cutover connection's grant looks like. Getting
-    // this wrong sends an old-client refresh token to the new client's
-    // token endpoint, which Google rejects with invalid_grant.
-    clientGeneration: isDriveLegacyGrant(tokens.scope) ? 'legacy' : 'current',
-    deps: deps.drive,
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): resolve
+  // which client to refresh against — authoritatively from the stored
+  // client_id when present, else the scope heuristic. One extra, small SELECT
+  // — only on this already-comparatively-rare refresh path (every OTHER
+  // caller of loadDriveAccessToken is unaffected; DriveIntegrationRow itself
+  // is not widened, so no other query needs to change).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- scoped by integration.id
+  const { data: labelRow } = await (deps.db as any)
+    .from('org_integrations')
+    .select('account_label')
+    .eq('id', integration.id)
+    .maybeSingle();
+  const storedLabel = parseDriveAccountLabel((labelRow as { account_label?: string | null } | null)?.account_label ?? null);
+  const { generation: resolvedGeneration, authoritative } = resolveDriveRefreshGeneration({
+    storedClientId: storedLabel?.oauth_client_id ?? null,
+    storedScope: tokens.scope,
+    env,
+    integrationId: integration.id,
+    logger: deps.logger,
   });
+
+  let refreshed: Awaited<ReturnType<typeof refreshAccessToken>>;
+  try {
+    refreshed = await refreshAccessToken({
+      refreshToken: tokens.refresh_token,
+      clientGeneration: resolvedGeneration,
+      deps: deps.drive,
+    });
+  } catch (err) {
+    // Defense-in-depth retry (independent review, CRITICAL finding): a
+    // refresh attempted as 'current' that Google rejects with a
+    // client-mismatch code (invalid_grant/unauthorized_client/invalid_client)
+    // may mean this row's token was actually issued by the OLD (legacy)
+    // client before the new pair existed (R-hybrid/R-broad/R-32/R-null).
+    // Retry ONCE with 'legacy'. NEVER the other direction (legacy ->
+    // current): a token genuinely issued by the new client cannot predate
+    // the new client's own existence, so that misclassification cannot
+    // happen — nothing to retry for.
+    //
+    // SECURITY FRAMING (independent review, accepted as stated): this is
+    // NOT a confidentiality concern. Both OAuth clients are Arkova's own;
+    // the token endpoint is the same trusted Google party regardless of
+    // which client_id is presented. The risk this retry closes is
+    // availability/lockout — a legitimate integration silently failing to
+    // refresh with no actionable cause — not disclosure.
+    const canRetryAsLegacy = resolvedGeneration === 'current'
+      && err instanceof DriveApiError
+      && typeof err.oauthError === 'string'
+      && DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_CODES.has(err.oauthError);
+    if (!canRetryAsLegacy) {
+      throw err;
+    }
+    try {
+      refreshed = await refreshAccessToken({
+        refreshToken: tokens.refresh_token,
+        clientGeneration: 'legacy',
+        deps: deps.drive,
+      });
+      deps.logger?.warn?.(
+        { integrationId: integration.id },
+        'loadDriveAccessToken: refresh under "current" failed with an OAuth client-mismatch error; retry under "legacy" succeeded',
+      );
+    } catch (retryErr) {
+      // Both generations failed. Surface a DISTINCT, durable signal
+      // (§1.6A-safe: no token, no scope, no raw body — a fixed prefix plus
+      // the OAuth error CODE, a short Google-documented string) so an admin
+      // sees the actual cause instead of a generic cursor_stale 6h later.
+      const oauthErrorCode = retryErr instanceof DriveApiError ? retryErr.oauthError : undefined;
+      const mismatchMessage = `${DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX}: refresh failed under both configured OAuth clients`
+        + (oauthErrorCode ? ` (${oauthErrorCode})` : '')
+        + ' — reconnect required';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- scoped by integration.id
+      const { error: signalWriteError } = await (deps.db as any)
+        .from('org_integrations')
+        .update({ last_renewal_error: mismatchMessage, updated_at: now.toISOString() })
+        .eq('id', integration.id);
+      if (signalWriteError) {
+        deps.logger?.warn?.(
+          { integrationId: integration.id, error: signalWriteError },
+          'loadDriveAccessToken: failed to persist the oauth_client_mismatch signal',
+        );
+      }
+      throw new DriveRunnerError('oauth_client_mismatch', mismatchMessage);
+    }
+  }
+
   const merged: OAuthTokens = {
     access_token: refreshed.access_token,
     refresh_token: refreshed.refresh_token ?? tokens.refresh_token,
@@ -324,6 +453,16 @@ export async function loadDriveAccessToken(
     keyName: integration.token_kms_key_id,
     env: deps.env,
   });
+  // SCRUM-5287 follow-up: SELF-HEAL. `refreshed.clientId` is the client that
+  // just, demonstrably, successfully issued a fresh access token for this
+  // row — authoritative by construction. Persist it whenever it is NEW
+  // information (the resolution above was not already authoritative, i.e.
+  // came from the heuristic or a rotation-mismatch fallback) so the NEXT
+  // refresh for this row skips the heuristic entirely, folded into the SAME
+  // CAS write below (no extra round trip).
+  const accountLabelUpdate = !authoritative
+    ? { account_label: stringifyDriveAccountLabel({ ...(storedLabel ?? { email: null, channel_token: null, resource_id: null }), oauth_client_id: refreshed.clientId }) }
+    : {};
   // CAS write — only succeeds if no other concurrent refresh has
   // already mutated `encrypted_tokens` since we read it.
   // CodeRabbit ASSERTIVE on PR #696 (8ea5dc40): distinguish DB error
@@ -338,6 +477,7 @@ export async function loadDriveAccessToken(
       encrypted_tokens: `\\x${reencrypted.ciphertext.toString('hex')}`,
       token_kms_key_id: reencrypted.keyId,
       updated_at: now.toISOString(),
+      ...accountLabelUpdate,
     })
     .eq('id', integration.id)
     .eq('encrypted_tokens', prevCiphertextHex)

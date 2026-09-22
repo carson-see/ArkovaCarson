@@ -48,7 +48,7 @@ import {
   type DriveConnectDenyReason,
   type DriveEligibilityDb,
 } from '../../../integrations/connectors/drive-connect-eligibility.js';
-import { parseDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
+import { parseDriveAccountLabel, stringifyDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -528,12 +528,22 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           last_renewal_error: 'changes.watch registration failed during OAuth callback',
         };
 
-      const accountLabelJson = JSON.stringify({
+      const accountLabelJson = stringifyDriveAccountLabel({
         email: identity.accountLabel,
         // GH #1836: random secret, not the org UUID. Never returned by any
         // API response — see connector-health.ts's sanitizeAccountLabel.
         channel_token: channelToken,
         resource_id: subscription?.resourceId ?? null,
+        // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding):
+        // the client_id that actually issued THIS refresh token — public
+        // (rides in the authorize URL), not a secret. Lets a later refresh
+        // (drive-changes-runner.ts's loadDriveAccessToken) resolve the
+        // correct OAuth client generation authoritatively via
+        // resolveDriveClientGeneration, instead of guessing from the scope
+        // string (the mechanism the independent review's CRITICAL finding
+        // showed can misclassify a row the moment the new client pair is
+        // configured).
+        oauth_client_id: tokens.clientId,
       });
 
       const { data: integration, error: upsertError } = await db

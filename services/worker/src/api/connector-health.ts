@@ -18,7 +18,11 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
-import { driveExistingGrantExcessScopes, isDriveLegacyGrant } from '../integrations/oauth/drive.js';
+import {
+  driveExistingGrantExcessScopes,
+  isDriveLegacyGrant,
+  DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX,
+} from '../integrations/oauth/drive.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
 import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
 import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
@@ -38,6 +42,21 @@ export type HealthReason =
   // over-permissioned live grant is a standing security exposure, not an
   // operational degradation.
   | 'grant_exceeds_requested'
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): a Drive
+  // token refresh failed under BOTH configured OAuth clients with a
+  // client-mismatch code (invalid_grant/unauthorized_client/invalid_client)
+  // — `drive-changes-runner.ts`'s `loadDriveAccessToken` writes a
+  // distinctly-prefixed `last_renewal_error`
+  // (`DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX`) after exhausting its
+  // retry-once-with-the-other-client mitigation. NOT a confidentiality
+  // finding (both clients are Arkova's own) — this is an availability
+  // signal: the integration cannot refresh at all, which would otherwise
+  // surface only as a generic `subscription_expiry` (same underlying
+  // column) or, worse, a delayed, unexplained `cursor_stale` 6h later.
+  // Ranked directly below `grant_exceeds_requested` (a security finding
+  // still outranks it) and above the generic `subscription_expiry` it
+  // would otherwise be misread as — see `classify()`.
+  | 'oauth_client_mismatch'
   | 'subscription_expiry'
   // P0-2 (2026-09-14 hardening audit): a stuck/410 Drive changes cursor —
   // the exact condition that hid the #2903 class of bug. Distinct from
@@ -462,6 +481,20 @@ function excessScopesOrUndefined(storedScope: string | null): string[] | undefin
 }
 
 /**
+ * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): recognizes
+ * `loadDriveAccessToken`'s distinctly-prefixed `last_renewal_error` (see
+ * `DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX`'s doc comment in oauth/drive.ts
+ * for why the constant lives there, not in drive-changes-runner.ts).
+ * Returns the message itself when it matches (already bounded — no token,
+ * no scope value, just a fixed prefix + an OAuth error CODE), `undefined`
+ * otherwise so `driveSignals.oauthClientMismatch` reads as a clean
+ * "is there a finding" check.
+ */
+function oauthClientMismatchOrUndefined(lastRenewalError: string | null): string | undefined {
+  return lastRenewalError?.startsWith(DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX) ? lastRenewalError : undefined;
+}
+
+/**
  * Round-2 fix (item 2): the exact `event_type` string
  * `drive-changes-runner.ts`'s `recordCursorGap` writes — must stay in sync
  * with that literal (no shared constant exists between the two modules
@@ -584,6 +617,16 @@ interface DriveHealthSignals {
    */
   legacyGrant?: boolean;
   /**
+   * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): set to
+   * the bounded `last_renewal_error` STRING when it carries the
+   * `DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX` prefix `loadDriveAccessToken`
+   * writes after exhausting its retry-once mitigation; `undefined`
+   * otherwise. No false-positive guard needed (like `grantExceedsRequested`)
+   * — this is a real, current-as-of-last-attempt failure regardless of
+   * whether any rule is enabled.
+   */
+  oauthClientMismatch?: string;
+  /**
    * Round-2 fix (item 2): set when a `drive_changes_cursor_gap` audit_events
    * row exists for this integration within `DRIVE_CHANGES_GAP_LOOKBACK_MS`.
    * No enabled-rule guard (unlike cursorStale/neverSucceeded) — a gap
@@ -623,6 +666,19 @@ function classify(
       state: 'degraded',
       reason: 'grant_exceeds_requested',
       lastError: `Granted OAuth scope exceeds what this connection requested: ${driveSignals.grantExceedsRequested.join(', ')}`,
+    };
+  }
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): checked
+  // BEFORE the generic subscription_expiry check below — both read
+  // `last_renewal_error`, but a client-mismatch failure is a MORE SPECIFIC,
+  // more actionable diagnosis of that same column than "the subscription
+  // needs renewal." Only computed for google_drive, same scoping as the
+  // check above (driveSignals is undefined for every other connector).
+  if (driveSignals?.oauthClientMismatch) {
+    return {
+      state: 'degraded',
+      reason: 'oauth_client_mismatch',
+      lastError: driveSignals.oauthClientMismatch,
     };
   }
   if (subscription?.status === 'degraded') {
@@ -718,7 +774,14 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  grant_exceeds_requested: 9, subscription_expiry: 8, changes_list_never_succeeded: 7, cursor_stale: 6,
+  grant_exceeds_requested: 10,
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): below the
+  // security finding above, but ABOVE subscription_expiry — both read
+  // last_renewal_error, and a client-mismatch failure is the more specific,
+  // more actionable diagnosis of that same column. See both HealthReason
+  // doc comments.
+  oauth_client_mismatch: 9,
+  subscription_expiry: 8, changes_list_never_succeeded: 7, cursor_stale: 6,
   // Round-2 fix (item 2): changes_gap sits BELOW every currently-broken-
   // connector signal above (a gap is a past, already-recovered-from event)
   // but ABOVE the retryable fetch-failure signals below (lost data outranks
@@ -935,6 +998,7 @@ export async function handleConnectorHealth(
         fileAccessDeniedCount: driveFileAccessDeniedCount,
         grantExceedsRequested: excessScopesOrUndefined(integration.scope),
         legacyGrant: isDriveLegacyGrant(integration.scope),
+        oauthClientMismatch: oauthClientMismatchOrUndefined(integration.last_renewal_error),
         gap: driveGapByIntegrationId.get(integration.id),
       }
       : undefined;
@@ -953,6 +1017,7 @@ export async function handleConnectorHealth(
             fileAccessDeniedCount: driveFileAccessDeniedCount,
             grantExceedsRequested: excessScopesOrUndefined(row.scope),
             legacyGrant: isDriveLegacyGrant(row.scope),
+            oauthClientMismatch: oauthClientMismatchOrUndefined(row.last_renewal_error),
             gap: driveGapByIntegrationId.get(row.id),
           }),
         };

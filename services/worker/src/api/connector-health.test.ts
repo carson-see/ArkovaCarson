@@ -1022,6 +1022,84 @@ describe('connector-health (SCRUM-1146)', () => {
     });
   });
 
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding):
+  // loadDriveAccessToken writes a distinctly-prefixed last_renewal_error
+  // when a refresh fails under BOTH configured OAuth clients — this signal
+  // must be recognized here and outrank the generic subscription_expiry
+  // classification that same column would otherwise produce.
+  describe('oauth_client_mismatch signal (SCRUM-5287 follow-up)', () => {
+    function mismatchDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: 'Drive OAuth client mismatch: refresh failed under both configured OAuth clients (invalid_grant) — reconnect required',
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        scope: 'https://www.googleapis.com/auth/drive.readonly email',
+        ...overrides,
+      };
+    }
+
+    it('a row whose last_renewal_error carries the mismatch prefix reads degraded/oauth_client_mismatch', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [mismatchDriveRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('oauth_client_mismatch');
+      expect(drive?.last_error).toContain('Drive OAuth client mismatch');
+    });
+
+    it('outranks the generic subscription_expiry classification of the same last_renewal_error column', async () => {
+      // Without the prefix-recognition, this row would read
+      // subscription_expiry (deriveDriveWatchHealth: any non-null
+      // last_renewal_error -> status 'degraded').
+      integrationsList.mockResolvedValueOnce({ data: [mismatchDriveRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('subscription_expiry');
+    });
+
+    it('an UNRELATED last_renewal_error (no mismatch prefix) still reads subscription_expiry, not oauth_client_mismatch', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [mismatchDriveRow({ last_renewal_error: 'channels.watch failed: 503' })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('subscription_expiry');
+    });
+
+    it('does NOT outrank grant_exceeds_requested — a genuine over-grant stays the top finding', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [mismatchDriveRow({
+          scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify',
+        })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('grant_exceeds_requested');
+    });
+
+    it('a row with no last_renewal_error is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [mismatchDriveRow({ last_renewal_error: null })], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('oauth_client_mismatch');
+    });
+  });
+
   // Round-2 fix (item 2): the re-bootstrap gap IS durably persisted to
   // audit_events (fix-round item 2), but until this fix nothing in
   // connector-health.ts ever read it back — an admin had no product-visible

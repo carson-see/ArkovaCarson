@@ -25,6 +25,7 @@ import {
   driveGrantExcessScopes,
   driveExistingGrantExcessScopes,
   isDriveLegacyGrant,
+  resolveDriveClientGeneration,
   isInvalidPageTokenError,
 } from './drive.js';
 import { assertValidFieldsMask } from './__test-helpers__/fields-mask.js';
@@ -384,6 +385,28 @@ describe('exchangeCode', () => {
     expect(res.refresh_token).toBe('rt');
   });
 
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+  // client used for THIS exchange is returned alongside Google's fields —
+  // drive-oauth.ts's callback persists it into
+  // account_label.oauth_client_id so a later refresh resolves the correct
+  // OAuth client authoritatively.
+  it('returns the resolved clientId alongside the token response', async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({ access_token: 'at', expires_in: 3600, refresh_token: 'rt' }),
+        { status: 200 },
+      );
+    const res = await exchangeCode({
+      code: 'code',
+      redirectUri: 'https://arkova.ai/cb',
+      deps: {
+        env: { GOOGLE_OAUTH_CLIENT_ID: 'legacy-id', GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret' },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    });
+    expect(res.clientId).toBe('legacy-id');
+  });
+
   it('throws DriveApiError on non-2xx', async () => {
     const fetchImpl = async () =>
       new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
@@ -482,6 +505,88 @@ describe('refreshAccessToken', () => {
         },
       }),
     ).rejects.toBeInstanceOf(DriveConfigError);
+  });
+
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+  // client actually used is returned alongside Google's fields, so a caller
+  // can persist it (self-heal `account_label.oauth_client_id`) without
+  // re-deriving which pair was used.
+  it('returns the resolved clientId alongside the token response', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 });
+    const res = await refreshAccessToken({
+      refreshToken: 'rt',
+      deps: {
+        env: { GOOGLE_OAUTH_CLIENT_ID: 'legacy-id', GOOGLE_OAUTH_CLIENT_SECRET: 'legacy-secret' },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    });
+    expect(res.clientId).toBe('legacy-id');
+  });
+
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+  // OAuth2 `error` code from a token-endpoint 4xx is surfaced on the thrown
+  // DriveApiError — `drive-changes-runner.ts`'s retry-once mitigation reads
+  // this to decide whether a failure is a CLIENT MISMATCH (retryable with
+  // the other generation) vs any other refresh failure.
+  it('populates DriveApiError.oauthError from the token endpoint\'s standard error code on a 400', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'Bad Request' }), { status: 400 });
+    const err = await refreshAccessToken({
+      refreshToken: 'rt',
+      deps: {
+        env: { GOOGLE_OAUTH_CLIENT_ID: 'id', GOOGLE_OAUTH_CLIENT_SECRET: 's' },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).oauthError).toBe('invalid_grant');
+  });
+
+  it('leaves DriveApiError.oauthError undefined when the error body has no `error` field', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ message: 'weird failure' }), { status: 500 });
+    const err = await refreshAccessToken({
+      refreshToken: 'rt',
+      deps: {
+        env: { GOOGLE_OAUTH_CLIENT_ID: 'id', GOOGLE_OAUTH_CLIENT_SECRET: 's' },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).oauthError).toBeUndefined();
+  });
+});
+
+// SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+// authoritative half of the client-identity fix — maps a KNOWN client_id
+// back to a generation by matching it against the CURRENTLY CONFIGURED
+// pairs, never by guessing.
+describe('resolveDriveClientGeneration', () => {
+  it('returns "current" when clientId matches the configured NEW pair', () => {
+    expect(
+      resolveDriveClientGeneration('new-id', { GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id', GOOGLE_OAUTH_CLIENT_ID: 'legacy-id' }),
+    ).toBe('current');
+  });
+
+  it('returns "legacy" when clientId matches the configured LEGACY pair', () => {
+    expect(
+      resolveDriveClientGeneration('legacy-id', { GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id', GOOGLE_OAUTH_CLIENT_ID: 'legacy-id' }),
+    ).toBe('legacy');
+  });
+
+  it('returns undefined when clientId matches NEITHER configured pair (a rotation edge case)', () => {
+    expect(
+      resolveDriveClientGeneration('some-other-id', { GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-id', GOOGLE_OAUTH_CLIENT_ID: 'legacy-id' }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when only the legacy pair is configured and clientId does not match it', () => {
+    expect(resolveDriveClientGeneration('new-id', { GOOGLE_OAUTH_CLIENT_ID: 'legacy-id' })).toBeUndefined();
+  });
+
+  it('returns "legacy" when only the legacy pair is configured and clientId matches it', () => {
+    expect(resolveDriveClientGeneration('legacy-id', { GOOGLE_OAUTH_CLIENT_ID: 'legacy-id' })).toBe('legacy');
   });
 });
 
