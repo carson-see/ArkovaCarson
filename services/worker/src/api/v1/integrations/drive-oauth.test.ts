@@ -346,7 +346,7 @@ describe('Drive OAuth router', () => {
           access_token: 'access-token-secret',
           expires_in: 3600,
           refresh_token: 'refresh-token-secret',
-          scope: 'https://www.googleapis.com/auth/drive.file email',
+          scope: 'https://www.googleapis.com/auth/drive.readonly email',
           token_type: 'Bearer',
         }), { status: 200 });
       }
@@ -546,7 +546,75 @@ describe('Drive OAuth router', () => {
       );
     });
 
-    it('an EXACT-match grant of the LEGACY (pre-cutover) scope set is ALSO accepted — a re-consent through the still-shared client can legitimately return it', async () => {
+    // Independent review 2026-09-22 (HIGH finding, fix-round): this used to
+    // assert ACCEPTANCE — wrong. A fresh callback returning the LEGACY
+    // (pre-cutover) scope set is a superset of what THIS flow requested
+    // (buildAuthorizationUrl always asks for DRIVE_DEFAULT_SCOPES, current
+    // set only) and must be REFUSED, exactly like the SUPERSET test above —
+    // this is precisely the #3054/FULLSOAK 2026-08 hole shape: a still-
+    // shared OLD client whose Google account carries a residual legacy
+    // consent. See driveGrantExcessScopes's doc comment in oauth/drive.ts.
+    it('an EXACT-match grant of the LEGACY (pre-cutover) scope set is REFUSED at callback — it exceeds what THIS flow requested', async () => {
+      const captured: Record<string, unknown[]> = {};
+      const capture = (method: string, value: unknown) => {
+        captured[method] = [...(captured[method] ?? []), value];
+      };
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+          if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+          // If the callback reaches the upsert at all, this test has already
+          // failed its real assertion — captured below regardless.
+          if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+          return mockQuery({ data: null, error: null }, capture);
+        }),
+      };
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') {
+          return new Response(JSON.stringify({
+            access_token: 'access-token-secret',
+            expires_in: 3600,
+            refresh_token: 'refresh-token-secret',
+            // The PRE-cutover requested set, exactly — drive.file,
+            // drive.activity.readonly, drive.metadata.readonly, userinfo.email.
+            scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/userinfo.email',
+            token_type: 'Bearer',
+          }), { status: 200 });
+        }
+        // No further Google call should ever be reached — fail loudly if one is.
+        throw new Error(`unexpected fetch to ${url} — over-grant guard should have refused before this`);
+      });
+
+      const callback = await runCallback(buildApp(db, fetchImpl));
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive_error=grant_exceeds_requested');
+      // Nothing persisted — no org_integrations upsert happened at all.
+      expect(captured.upsert).toBeUndefined();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(recordAuditEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: 'drive_oauth_grant_exceeds_requested',
+          event_category: 'AUTH',
+          org_id: TEST_ORG_ID,
+        }),
+      );
+      const auditCall = recordAuditEventMock.mock.calls.find(
+        (call) => (call[0] as { event_type: string }).event_type === 'drive_oauth_grant_exceeds_requested',
+      )?.[0] as { details: string };
+      const details = JSON.parse(auditCall.details) as { excess_scopes: string[] };
+      expect(details.excess_scopes).toEqual([
+        'https://www.googleapis.com/auth/drive.file',
+        'https://www.googleapis.com/auth/drive.activity.readonly',
+        'https://www.googleapis.com/auth/drive.metadata.readonly',
+      ]);
+    });
+
+    // Fix-round addition: the concrete "reopened hole" shape the independent
+    // review reproduced — an otherwise-exact CURRENT grant carrying ONE
+    // residual legacy scope. Must still be refused.
+    it('a CURRENT grant carrying ONE residual legacy scope (drive.file) is REFUSED at callback', async () => {
       const captured: Record<string, unknown[]> = {};
       const capture = (method: string, value: unknown) => {
         captured[method] = [...(captured[method] ?? []), value];
@@ -566,32 +634,23 @@ describe('Drive OAuth router', () => {
             access_token: 'access-token-secret',
             expires_in: 3600,
             refresh_token: 'refresh-token-secret',
-            // The PRE-cutover requested set, exactly — drive.file,
-            // drive.activity.readonly, drive.metadata.readonly, userinfo.email.
-            scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/userinfo.email',
+            scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file',
             token_type: 'Bearer',
           }), { status: 200 });
         }
-        if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
-          return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
-        }
-        if (url.includes('/changes/startPageToken')) {
-          return new Response(JSON.stringify({ startPageToken: 'page-token' }), { status: 200 });
-        }
-        if (url.includes('/changes/watch')) {
-          return new Response(JSON.stringify({ resourceId: 'drive-resource-1', expiration: String(Date.now() + 1000) }), { status: 200 });
-        }
-        return new Response('{}', { status: 404 });
+        throw new Error(`unexpected fetch to ${url} — over-grant guard should have refused before this`);
       });
 
       const callback = await runCallback(buildApp(db, fetchImpl));
 
       expect(callback.status).toBe(302);
-      expect(callback.headers.location).toContain('drive=connected');
-      expect(captured.upsert?.[0]).toBeDefined();
-      expect(recordAuditEventMock).not.toHaveBeenCalledWith(
-        expect.objectContaining({ event_type: 'drive_oauth_grant_exceeds_requested' }),
-      );
+      expect(callback.headers.location).toContain('drive_error=grant_exceeds_requested');
+      expect(captured.upsert).toBeUndefined();
+      const auditCall = recordAuditEventMock.mock.calls.find(
+        (call) => (call[0] as { event_type: string }).event_type === 'drive_oauth_grant_exceeds_requested',
+      )?.[0] as { details: string };
+      const details = JSON.parse(auditCall.details) as { excess_scopes: string[] };
+      expect(details.excess_scopes).toEqual(['https://www.googleapis.com/auth/drive.file']);
     });
 
     it('a SUPERSET grant (excess scopes, the SCRUM-5287 prod shape) is refused BEFORE anything is persisted, and records an audit event with org id + scope names only — never the token', async () => {
@@ -645,10 +704,15 @@ describe('Drive OAuth router', () => {
       );
       const auditCall = recordAuditEventMock.mock.calls[0][0] as { details: string };
       const details = JSON.parse(auditCall.details) as { excess_scopes: string[] };
+      // Fix-round update: driveGrantExcessScopes (acceptance-time) now
+      // compares against DRIVE_DEFAULT_SCOPES ALONE — drive.file is no
+      // longer implicitly tolerated as "requested", so it is correctly
+      // flagged too, not just the fully-unrelated scopes.
       expect(details.excess_scopes).toEqual([
         'https://www.googleapis.com/auth/drive',
         'https://www.googleapis.com/auth/gmail.modify',
         'https://www.googleapis.com/auth/contacts',
+        'https://www.googleapis.com/auth/drive.file',
       ]);
       // The audit call, serialized whole, must never contain the secret token.
       expect(JSON.stringify(recordAuditEventMock.mock.calls[0])).not.toContain('access-token-secret-must-never-be-logged');
@@ -681,7 +745,7 @@ describe('Drive OAuth router', () => {
           access_token: 'access-token-secret',
           expires_in: 3600,
           refresh_token: 'refresh-token-secret',
-          scope: 'https://www.googleapis.com/auth/drive.file email',
+          scope: 'https://www.googleapis.com/auth/drive.readonly email',
           token_type: 'Bearer',
         }), { status: 200 });
       }

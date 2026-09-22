@@ -149,20 +149,41 @@ const DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES = new Set(['openid']);
  * is already never sent (see `buildAuthorizationUrl`'s doc comment), which
  * stops a NEW consent from inheriting old scopes going forward — this is
  * the other half: verifying the grant Google actually returned doesn't
- * exceed `DRIVE_DEFAULT_SCOPES` ∪ `DRIVE_LEGACY_REQUESTED_SCOPES` before
- * persisting it at all. The legacy set is included in "requested" here
- * (2026-09-21 cutover) because a connect through the shared OLD client —
- * still the only option until the new `arkova-connectors` client's secrets
- * are provisioned — can legitimately still echo that set; that is a grant
- * needing re-consent later, not an over-grant attack (see
- * `isDriveLegacyGrant`, which draws that distinction). Only a grant
- * exceeding BOTH sets (the shared client's unrelated-consent case this
- * guard exists for) is refused here.
+ * exceed what THIS flow requested before persisting it at all.
  *
- * Returns the excess scope NAMES (empty array = grant is within bounds).
- * Never logs/returns anything else from the scope string — scope names are
- * public OAuth constants, not secrets, but the token itself never flows
- * through this function.
+ * TWO DIFFERENT USES NEED TWO DIFFERENT BOUNDS (independent review,
+ * 2026-09-22, fix-round after the drive.readonly cutover — do not
+ * reunify these without re-reading this comment):
+ *
+ *   1. **Acceptance at OAuth callback** (drive-oauth.ts, persist-time): the
+ *      question is "did Google return MORE than THIS authorize request
+ *      asked for?" `buildAuthorizationUrl` always requests
+ *      `DRIVE_DEFAULT_SCOPES` (the CURRENT set) — regardless of which OAuth
+ *      client generation issues the grant during the cutover window — so
+ *      the acceptance bound must be `DRIVE_DEFAULT_SCOPES` ALONE. Using the
+ *      union here REOPENS the exact hole this guard exists to close: a
+ *      brand-new connect through the still-shared OLD client, whose Google
+ *      account carries a residual `drive.file` grant from an unrelated
+ *      prior consent (the FULLSOAK 2026-08 mechanism, cited above), would
+ *      return `drive.readonly + userinfo.email + drive.file` — a superset
+ *      of what was requested, but `drive.file` sits inside
+ *      `DRIVE_LEGACY_REQUESTED_SCOPES`, so a union-based check would let it
+ *      through with no refusal and no audit event. `driveGrantExcessScopes`
+ *      below is this narrow, acceptance-time function.
+ *   2. **Classifying an EXISTING, already-persisted row** (connector-health.ts):
+ *      the question is "does this row need a security-finding banner, or
+ *      just a reconnect prompt?" An existing row legitimately connected
+ *      under the pre-cutover request (`DRIVE_LEGACY_REQUESTED_SCOPES`) is
+ *      history, not an attack — that needs the UNION so it reads
+ *      `reconnect_required_scope_change` (see `isDriveLegacyGrant`), not
+ *      `grant_exceeds_requested`. `driveExistingGrantExcessScopes` below is
+ *      this wider, classification-time function. NEVER use it to decide
+ *      whether to PERSIST a brand-new grant.
+ *
+ * Both return the excess scope NAMES (empty array = grant is within
+ * bounds). Neither logs/returns anything else from the scope string — scope
+ * names are public OAuth constants, not secrets, but the token itself never
+ * flows through either function.
  */
 /**
  * Google's token-exchange response echoes SOME well-known OIDC scopes back
@@ -186,7 +207,32 @@ function normalizeGrantedScopes(grantedScope: string | null | undefined): string
     .map((scope) => DRIVE_GRANT_SCOPE_ALIASES[scope] ?? scope);
 }
 
+/**
+ * ACCEPTANCE-TIME check — use at OAuth callback, before persisting a brand
+ * new grant. Compares against `DRIVE_DEFAULT_SCOPES` (what THIS flow
+ * actually requested) alone, plus the always-allowed OIDC extras. See the
+ * doc comment above for why this must stay narrow — DO NOT widen this to
+ * the union with `DRIVE_LEGACY_REQUESTED_SCOPES`; use
+ * {@link driveExistingGrantExcessScopes} for classifying an existing row
+ * instead.
+ */
 export function driveGrantExcessScopes(grantedScope: string | null | undefined): string[] {
+  const requested = new Set(DRIVE_DEFAULT_SCOPES);
+  return normalizeGrantedScopes(grantedScope)
+    .filter((scope) => !requested.has(scope) && !DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
+}
+
+/**
+ * CLASSIFICATION-TIME check — use ONLY to classify an EXISTING,
+ * already-persisted `org_integrations.scope` (connector-health.ts). Compares
+ * against the UNION of `DRIVE_DEFAULT_SCOPES` and
+ * `DRIVE_LEGACY_REQUESTED_SCOPES`, because a row holding exactly the
+ * pre-cutover set is legitimate history, not an attack — see the doc
+ * comment above {@link driveGrantExcessScopes} for the full rationale and
+ * why the two functions must NOT be unified. NEVER use this to decide
+ * whether to persist a brand-new grant at OAuth callback time.
+ */
+export function driveExistingGrantExcessScopes(grantedScope: string | null | undefined): string[] {
   const requested = new Set([...DRIVE_DEFAULT_SCOPES, ...DRIVE_LEGACY_REQUESTED_SCOPES]);
   return normalizeGrantedScopes(grantedScope)
     .filter((scope) => !requested.has(scope) && !DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
@@ -204,7 +250,7 @@ export function driveGrantExcessScopes(grantedScope: string | null | undefined):
  *
  * A grant that is already a subset of the NEW set returns `false` (nothing
  * to reconnect). A grant that exceeds BOTH sets ALSO returns `false` here —
- * `driveGrantExcessScopes` already flags that as the higher-severity
+ * `driveExistingGrantExcessScopes` already flags that as the higher-severity
  * `grant_exceeds_requested` finding, and the two are mutually exclusive by
  * construction (see connector-health.ts's `classify()` precedence).
  */

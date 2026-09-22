@@ -439,6 +439,13 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       // response even though `include_granted_scopes` is never sent. Refuse
       // BEFORE any further call uses this token, and before anything is
       // persisted — an over-scoped token must never reach Postgres.
+      //
+      // Independent review 2026-09-22: this MUST stay `driveGrantExcessScopes`
+      // (bounded to `DRIVE_DEFAULT_SCOPES` alone), never the wider
+      // `driveExistingGrantExcessScopes` (which also tolerates
+      // `DRIVE_LEGACY_REQUESTED_SCOPES` — correct for classifying an EXISTING
+      // row in connector-health.ts, but would let a fresh over-grant carrying
+      // e.g. `drive.file` through unrefused here, reopening this exact hole).
       const excessScopes = driveGrantExcessScopes(tokens.scope);
       if (excessScopes.length > 0) {
         logger.error(

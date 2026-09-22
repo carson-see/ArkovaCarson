@@ -18,7 +18,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
-import { driveGrantExcessScopes, isDriveLegacyGrant } from '../integrations/oauth/drive.js';
+import { driveExistingGrantExcessScopes, isDriveLegacyGrant } from '../integrations/oauth/drive.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
 import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
 import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
@@ -248,9 +248,11 @@ interface IntegrationRow {
   // string Google actually granted at connect time, persisted verbatim by
   // drive-oauth.ts's callback. Selected for every provider but only ACTED
   // on for google_drive, in classify() — checked against
-  // `driveGrantExcessScopes` so an EXISTING over-scoped row (the callback
-  // guard only protects NEW connections going forward) is still visible in
-  // the admin view.
+  // `driveExistingGrantExcessScopes` (the UNION-bound classifier — an
+  // EXISTING row legitimately carrying the pre-cutover scope set is not an
+  // over-grant; see that function's doc comment) so an EXISTING over-scoped
+  // row (the callback guard only protects NEW connections going forward) is
+  // still visible in the admin view.
   scope: string | null;
 }
 
@@ -445,14 +447,17 @@ export function hasDriveChangesNeverSucceeded(
 }
 
 /**
- * SCRUM-5287 (P1 security, fix-round item 5): `driveGrantExcessScopes`
+ * SCRUM-5287 (P1 security, fix-round item 5): `driveExistingGrantExcessScopes`
  * returns `[]` for "within bounds" — this adapts that to `undefined` so
  * `DriveHealthSignals.grantExceedsRequested` reads as a clean "is there a
  * finding at all" check (`if (driveSignals?.grantExceedsRequested)`)
- * without every caller re-checking `.length > 0`.
+ * without every caller re-checking `.length > 0`. Deliberately uses the
+ * UNION-bound classifier, not the narrower `driveGrantExcessScopes` (that
+ * one is for OAuth-callback acceptance of a BRAND NEW grant, not for
+ * classifying an existing row — see its doc comment in oauth/drive.ts).
  */
 function excessScopesOrUndefined(storedScope: string | null): string[] | undefined {
-  const excess = driveGrantExcessScopes(storedScope);
+  const excess = driveExistingGrantExcessScopes(storedScope);
   return excess.length > 0 ? excess : undefined;
 }
 
@@ -562,11 +567,12 @@ interface DriveHealthSignals {
   fileAccessDeniedCount: number;
   /**
    * SCRUM-5287 (P1 security, fix-round item 5): non-empty array of excess
-   * scope names (`driveGrantExcessScopes(integration.scope)`) when the
-   * stored grant exceeds `DRIVE_DEFAULT_SCOPES`; `undefined` when it does
-   * not. No false-positive guard needed here (unlike cursorStale/
-   * neverSucceeded) — an over-grant is a real finding regardless of
-   * whether any rule is enabled.
+   * scope names (`driveExistingGrantExcessScopes(integration.scope)`) when
+   * the stored grant exceeds `DRIVE_DEFAULT_SCOPES` ∪
+   * `DRIVE_LEGACY_REQUESTED_SCOPES`; `undefined` when it does not. No
+   * false-positive guard needed here (unlike cursorStale/neverSucceeded) —
+   * an over-grant is a real finding regardless of whether any rule is
+   * enabled.
    */
   grantExceedsRequested?: string[];
   /**

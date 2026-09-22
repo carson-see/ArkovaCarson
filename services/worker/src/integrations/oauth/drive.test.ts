@@ -23,6 +23,7 @@ import {
   DriveApiError,
   DRIVE_FOLDER_LISTING_SCOPES,
   driveGrantExcessScopes,
+  driveExistingGrantExcessScopes,
   isDriveLegacyGrant,
   isInvalidPageTokenError,
 } from './drive.js';
@@ -32,36 +33,51 @@ beforeEach(() => {
   // Intentionally blank — each test sets its own env.
 });
 
-// SCRUM-5287 (P1 security, fix-round item 5): prod holds a 32-scope grant
-// (full drive, gmail.modify, contacts) for the one connected org, because
-// the OAuth callback persisted whatever Google returned without checking it
-// against DRIVE_DEFAULT_SCOPES ∪ DRIVE_LEGACY_REQUESTED_SCOPES.
-// driveGrantExcessScopes is the shared detector both the callback
-// (refuse+don't persist) and connector-health.ts (flag an EXISTING
-// over-scoped row) build on. The legacy set is included in "requested" here
-// (2026-09-21 cutover) so an existing/still-being-issued pre-cutover grant
-// is NOT flagged as an over-grant attack — see isDriveLegacyGrant below for
-// the distinction that DOES surface it (as a reconnect need, not a security
-// finding).
-describe('driveGrantExcessScopes', () => {
+// Independent review 2026-09-22 (post-#3069 fix-round, HIGH finding):
+// driveGrantExcessScopes (ACCEPTANCE-TIME, used at the OAuth callback before
+// persisting a BRAND NEW grant) and driveExistingGrantExcessScopes
+// (CLASSIFICATION-TIME, used by connector-health.ts on an ALREADY-PERSISTED
+// row) must use DIFFERENT bounds — a union at the callback reopens the
+// exact #3054/FULLSOAK 2026-08 hole (a fresh connect through the still-
+// shared OLD client, whose Google account carries a residual `drive.file`
+// grant from history, would come back with `drive.readonly + userinfo.email
+// + drive.file` — a real superset of what THIS flow requested — and the
+// union would silently accept it). See both functions' doc comments in
+// drive.ts for the full rationale.
+describe('driveGrantExcessScopes (ACCEPTANCE-TIME — OAuth callback, brand-new grant)', () => {
   it('returns [] for an EXACT match of the CURRENT requested scope set', () => {
     expect(driveGrantExcessScopes(DRIVE_DEFAULT_SCOPES.join(' '))).toEqual([]);
   });
 
-  it('returns [] for an EXACT match of the LEGACY (pre-cutover) requested scope set', () => {
-    expect(driveGrantExcessScopes(DRIVE_LEGACY_REQUESTED_SCOPES.join(' '))).toEqual([]);
-  });
-
-  it('returns [] for a SUBSET of the requested scopes (Google not echoing every granted scope back)', () => {
-    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.file')).toEqual([]);
+  it('returns [] for a SUBSET of the CURRENT requested scopes (Google not echoing every granted scope back)', () => {
+    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.readonly')).toEqual([]);
   });
 
   it('normalizes the `email`/`profile` short aliases Google sometimes echoes instead of the full URI', () => {
-    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.file email')).toEqual([]);
+    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.readonly email')).toEqual([]);
   });
 
   it('allows `openid` without counting it as excess (harmless OIDC bookkeeping, no data access)', () => {
-    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.file openid')).toEqual([]);
+    expect(driveGrantExcessScopes('https://www.googleapis.com/auth/drive.readonly openid')).toEqual([]);
+  });
+
+  // THE FIX: a brand-new grant carrying a residual LEGACY scope (drive.file)
+  // — a superset of what buildAuthorizationUrl actually requested this time
+  // — must be refused, NOT silently tolerated because drive.file happens to
+  // be a member of DRIVE_LEGACY_REQUESTED_SCOPES. This is the exact
+  // real-world shape the independent review's HIGH finding reproduced.
+  it('flags a residual LEGACY scope on an otherwise-exact CURRENT grant — the reopened-hole shape', () => {
+    const excess = driveGrantExcessScopes(
+      'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file',
+    );
+    expect(excess).toEqual(['https://www.googleapis.com/auth/drive.file']);
+  });
+
+  it('flags the EXACT LEGACY (pre-cutover) scope set as excess — a fresh callback returning it is not "requested" by THIS flow', () => {
+    const excess = driveGrantExcessScopes(DRIVE_LEGACY_REQUESTED_SCOPES.join(' '));
+    expect(excess).toEqual(
+      DRIVE_LEGACY_REQUESTED_SCOPES.filter((s) => s !== 'https://www.googleapis.com/auth/userinfo.email'),
+    );
   });
 
   it('flags a SUPERSET grant — the exact prod incident shape', () => {
@@ -72,6 +88,7 @@ describe('driveGrantExcessScopes', () => {
       'https://www.googleapis.com/auth/drive',
       'https://www.googleapis.com/auth/gmail.modify',
       'https://www.googleapis.com/auth/contacts',
+      'https://www.googleapis.com/auth/drive.file',
     ]);
   });
 
@@ -79,6 +96,48 @@ describe('driveGrantExcessScopes', () => {
     expect(driveGrantExcessScopes(null)).toEqual([]);
     expect(driveGrantExcessScopes(undefined)).toEqual([]);
     expect(driveGrantExcessScopes('')).toEqual([]);
+  });
+});
+
+// CLASSIFICATION-TIME — connector-health.ts, an ALREADY-PERSISTED row. This
+// is the one place the union (current ∪ legacy) belongs: a row legitimately
+// connected before the cutover is history, not an attack.
+describe('driveExistingGrantExcessScopes (CLASSIFICATION-TIME — existing row)', () => {
+  it('returns [] for an EXACT match of the CURRENT requested scope set', () => {
+    expect(driveExistingGrantExcessScopes(DRIVE_DEFAULT_SCOPES.join(' '))).toEqual([]);
+  });
+
+  it('returns [] for an EXACT match of the LEGACY (pre-cutover) requested scope set', () => {
+    expect(driveExistingGrantExcessScopes(DRIVE_LEGACY_REQUESTED_SCOPES.join(' '))).toEqual([]);
+  });
+
+  it('returns [] for a SUBSET of either requested set', () => {
+    expect(driveExistingGrantExcessScopes('https://www.googleapis.com/auth/drive.file')).toEqual([]);
+  });
+
+  it('normalizes the `email`/`profile` short aliases Google sometimes echoes instead of the full URI', () => {
+    expect(driveExistingGrantExcessScopes('https://www.googleapis.com/auth/drive.file email')).toEqual([]);
+  });
+
+  it('allows `openid` without counting it as excess (harmless OIDC bookkeeping, no data access)', () => {
+    expect(driveExistingGrantExcessScopes('https://www.googleapis.com/auth/drive.file openid')).toEqual([]);
+  });
+
+  it('flags a SUPERSET grant — the exact prod incident shape (32-scope row)', () => {
+    const excess = driveExistingGrantExcessScopes(
+      'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/drive.file',
+    );
+    expect(excess).toEqual([
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/contacts',
+    ]);
+  });
+
+  it('returns [] for null/undefined/empty (nothing to flag when Google returned no scope string)', () => {
+    expect(driveExistingGrantExcessScopes(null)).toEqual([]);
+    expect(driveExistingGrantExcessScopes(undefined)).toEqual([]);
+    expect(driveExistingGrantExcessScopes('')).toEqual([]);
   });
 });
 
@@ -117,7 +176,7 @@ describe('isDriveLegacyGrant', () => {
     ).toBe(true);
   });
 
-  it('returns false for a SUPERSET grant — driveGrantExcessScopes owns that finding, not this one', () => {
+  it('returns false for a SUPERSET grant — driveExistingGrantExcessScopes owns that finding, not this one', () => {
     expect(
       isDriveLegacyGrant(
         'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive.file',
