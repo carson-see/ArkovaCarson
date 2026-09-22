@@ -19,6 +19,21 @@ things independently — that `requiredTierFor()` itself still classifies the
 fixture shapes the way the fast path assumes (so a future `PATH_RULES` edit
 that changes one is caught here too), and that the CLI wiring (env in, output
 file out, fail-closed on bad input) behaves as the workflow expects.
+## 2026-09-21 — env↔DB fail-open hazard removed from the real tree (PR pending)
+
+`deploy-worker.yml` now sets `ENABLE_SEMANTIC_SEARCH=false` and `ENABLE_AI_FRAUD=false`,
+agreeing with their `switchboard_flags` rows (the DB row is the only gate —
+`aiFeatureGate.ts` fails CLOSED and never consults env for these two; founder
+directive 2026-09-21: AI fraud stays OFF). Consequences for this folder:
+`acknowledgedFailOpenFlags` (expected-prod-config.json) and
+`acknowledgedInertEnvFlags` (flag-inventory.json) are EMPTY; the real-tree tests in
+`check-config-drift.test.ts`, `flagSpof.test.ts` and `flagInventory.test.ts` now
+pin ZERO fail-open flags / ZERO env-db contradictions. The end-to-end proof that
+the gate still blocks the hazard moved to a temp-copy test that flips the real
+yml back to `=true`. DO NOT re-add an acknowledgment to let a `=true` line pass —
+fix the line. Still open (R-7 claims, warnings on every run): `DevelopersPage.tsx`
+prices `POST /ai/search` while semantic search is OFF, and the SOC 2 evidence
+matrix cites fraud detection as a continuous control while it is OFF.
 
 ## 2026-09-19 — protected-main T0 admission
 
