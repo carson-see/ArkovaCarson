@@ -3,6 +3,11 @@
   "_history": [
     {
       "date": "2026-09-21",
+      "author": "CTO review session (Claude Fable 5.1) \u2014 SCRUM-5280 expedited security fix",
+      "note": "ADDED 0482 (0482_scrum5280_org_domain_verification_guard, PR #3036, SCRUM-5280 + SCRUM-5282) immediately ahead of applying it to prod vzwyaatejekddvltxyye via MCP apply_migration. Expedited ahead of its T3 window by the coordinator session under the founder's delegation (2026-09-21): it closes a live, prod-reachable tenant-capture path (an org admin could self-assert organizations.domain_verified \u2014 and, via the writable verification token, have the worker assert it \u2014 then capture every confirmed signup at that email domain through 0470's auto-association), removes the stale profiles.role authorization fallback from add_existing_org_member, and revokes the browser-callable 3-arg resolve_anchor_queue_by_public_id overload. Exact bytes: sha256 b792667c54ec60af02e834352727eec22eb977876ca5457508c373e9cdb6b288 at PR head 32363aabb. Pre-apply: rig rehearsal apply/probe/rollback/re-apply on isolated rig dlfcwhljvkomeouykcwk (preflight clean_mirror 8/8 at 2026-09-21T16:23:27Z), and seven read-only prod preconditions (0 admins who would lose add-member authority, 0 self-asserted verifications, 0 contested domains, 0 pending tokens, trigger not column-scoped). Function bodies only; no trigger DDL, so no AccessExclusiveLock on the hot organizations table; lock_timeout 5s set regardless. Per CLAUDE.md \u00a70 rule 10 the apply and this exemption land in the same motion; the ledger row is reconciled to numeric 0482 in-session and list_migrations re-read. The 24 h T3 window still runs afterwards for merge evidence. REMOVE when #3036 lands the .sql on main."
+    },
+    {
+      "date": "2026-09-21",
       "author": "CTO review session (Claude Fable 5.1) \u2014 post-merge hygiene",
       "note": "REMOVED 0451, 0452, 0454, 0455, 0456, 0457, 0458, 0459, 0461, 0462, 0463, 0464, 0465, 0466, 0467, 0468, 0469, 0470, 0473, 0474, 0475, 0477, 0480: every one of these prefixes now has BOTH a numeric row in the prod ledger AND its source .sql on main (verified by script against origin/main's supabase/migrations listing after PRs #2964, #2966, #2968, #2999, #3004, #3005, #3019 and #3022 merged 2026-09-20/21), so each exemption was stale and only produced ledger-stale-exemption warnings. KEPT 0443: deliberately \u2014 it is what stops the duplicate timestamp-style prod row 20260912143110 for 0443_backfill_anchor_proof_block_height from erroring as ledger-nonnumeric-version + ledger-duplicate-name on every migration-touching PR (see the 2026-09-13 correction entry); it goes only when the operator deletes that row. KEPT 0471 and 0476 (PR #3020, UAT-23) and 0481 (PR #3025, UAT-14): applied on prod, but their .sql is NOT on main \u2014 #3020 was auto-closed unmerged when #2966's branch was deleted, and #3025 was merged into its stack parent 16 seconds after that parent had already merged upward, so neither feature's code reached main. Recovery branches are in preparation; remove each prefix when its .sql lands."
     },
@@ -266,6 +271,7 @@
     "0443",
     "0471",
     "0476",
-    "0481"
+    "0481",
+    "0482"
   ]
 }

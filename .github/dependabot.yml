@@ -1,5 +1,18 @@
 # Dependabot configuration — SCRUM-508
 # Automated dependency update PRs for security and maintenance
+#
+# PR-budget rules (CTO decision 2026-09-21, after the Monday wave opened 13 PRs at
+# once, took the repo to 20 open against the founder's 15-PR ceiling and helped
+# exhaust the GitHub Actions budget the same day):
+#   * The open-pull-requests-limit values below sum to 7. Keep the sum <= 7 so a
+#     full Dependabot wave can never consume more than half the ceiling.
+#   * Every npm entry has TWO groups: minor+patch in one PR, majors in one PR.
+#     An ungrouped major is one PR per package, and worker/root bumps cannot
+#     auto-merge (they need soak evidence), so they sit open for days.
+#   * Schedules are staggered across the week so the required-check matrix and
+#     Mergify's speculative runs are not multiplied by every ecosystem at once.
+#   * These limits do not apply to Dependabot SECURITY updates, which have their
+#     own limit and must keep flowing.
 version: 2
 updates:
   # Root package (frontend + shared)
@@ -8,7 +21,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 2
     labels:
       - "dependencies"
     commit-message:
@@ -22,14 +35,20 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      production-deps-major:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "major"
 
   # Worker service
   - package-ecosystem: "npm"
     directory: "/services/worker"
     schedule:
       interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 10
+      day: "tuesday"
+    open-pull-requests-limit: 2
     labels:
       - "dependencies"
       - "worker"
@@ -43,6 +62,19 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      worker-deps-major:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        # These two must never ride a grouped PR: a stripe major moves the pinned
+        # apiVersion (billing-reviewed, see the ignore block below) and
+        # bitcoinjs-lib is a T3 chain/signing surface that needs its own soak.
+        # Excluded packages still get their own individual PR.
+        exclude-patterns:
+          - "stripe"
+          - "bitcoinjs-lib"
+        update-types:
+          - "major"
     ignore:
       # stripe API-version pin is a manual billing-reviewed upgrade — see CEO
       # decision 2026-06-29 (CONDITIONAL-GO sub-decision A). stripe >=22.3.0
@@ -69,13 +101,21 @@ updates:
     directory: "/services/edge"
     schedule:
       interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 5
+      day: "wednesday"
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "edge"
     commit-message:
       prefix: "chore(deps-edge):"
+    # One PR for everything: the 2026-09-21 wave opened five separate edge PRs
+    # (types, vitest, wrangler, workers-types, zod), each running the full
+    # required-check matrix plus a Mergify speculative run.
+    groups:
+      edge-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
 
   # Zapier integration (SCRUM-4988: Sekura Phase 2 found form-data 4.0.5 here —
   # this directory had no Dependabot coverage at all)
@@ -83,11 +123,10 @@ updates:
     directory: "/integrations/zapier"
     schedule:
       interval: "weekly"
-      day: "monday"
-    # Limit 2, not the 5/10 the other entries carry: the repo runs against a
-    # 12-open-PR ceiling (memory/feedback_pr_queue_ceiling_12.md) and this is
-    # release tooling, not a runtime surface. CTO ruling, 2026-09-12.
-    open-pull-requests-limit: 2
+      day: "thursday"
+    # Release tooling, not a runtime surface (CTO ruling 2026-09-12); limit
+    # lowered 2 -> 1 on 2026-09-21 under the PR-budget rules at the top of this file.
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "zapier"
@@ -98,15 +137,18 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "friday"
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "ci"
