@@ -1891,16 +1891,6 @@ jobs:
       - name: Start worker for E2E tests
         if: steps.e2e-changed.outputs.changed == 'true'
         working-directory: services/worker
-        env:
-          # The Playwright stack cannot fit inside the 10 req/min `checkout`
-          # bucket: every browser shares `::1`, one ConnectorsPage run issues
-          # ~8-12 admin requests, and four specs contend for the same tokens
-          # under parallel workers. Scoped to that one limiter and inert in
-          # production by construction (config.ts throws at boot if it is set
-          # there, and adminRateLimitBypassActive() additionally requires
-          # nodeEnv !== 'production'). The /api/v1 limiter is untouched, so
-          # e2e/verify-ratelimit-contract.spec.ts still proves §1.10.
-          E2E_ADMIN_RATELIMIT_BYPASS: 'true'
         run: |
           node --import tsx src/index.ts > "$RUNNER_TEMP/arkova-worker.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/arkova-worker.pid"
@@ -1919,6 +1909,15 @@ jobs:
           cat "$RUNNER_TEMP/arkova-worker.log"
           exit 1
         env:
+          # The Playwright stack cannot fit inside the 10 req/min `checkout`
+          # bucket: every browser shares `::1`, one ConnectorsPage run issues
+          # ~8-12 admin requests, and four specs contend for the same tokens
+          # under parallel workers. Scoped to adminRouter only, and inert in
+          # production by construction (config.ts throws at boot if set there,
+          # and adminRateLimitBypassActive() requires nodeEnv !== 'production').
+          # The /api/v1 limiter is untouched, so
+          # e2e/verify-ratelimit-contract.spec.ts still proves §1.10.
+          E2E_ADMIN_RATELIMIT_BYPASS: 'true'
           PORT: 3001
           NODE_ENV: test
           LOG_LEVEL: warn
