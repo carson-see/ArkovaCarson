@@ -906,3 +906,7 @@ UAT-17 add-existing-member labels live in `copy.ts`; the dialog describes the ex
 `WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and
 attestation-active events; the registration-drift gate binds this map to the
 worker registry.
+
+## 2026-09-21 — SCRUM-5285 org-verification superseded copy
+
+`ORG_VERIFICATION_LABELS` carries the two 409 `verification_superseded` messages for `components/org/OrgVerification.tsx`. Both must keep telling the user to START AGAIN rather than to retry: the worker's compare-and-swap makes the refusal permanent for that code, so "try again" would be false. API error codes stay literals in the handlers — only user-visible strings live here.

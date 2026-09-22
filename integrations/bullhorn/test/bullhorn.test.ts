@@ -30,6 +30,57 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// ── Default host ─────────────────────────────────────────────────────
+//
+// 2026-09-21 (SCRUM-3888): the raw Cloud Run host has no Cloudflare origin
+// guard in front of it and is slated to be 403'd directly once that guard
+// enforces. Every default base URL in this repo must point at the public
+// gateway host instead. `TEST_CONFIG` above always sets an explicit
+// `arkovaBaseUrl` override, so it never exercises the DEFAULT — this test
+// builds a config with NO override and inspects the actual batch-verify
+// fetch URL (the same call `getVerificationSummary` makes in the
+// mocked-fetch sequence the test just above this one exercises).
+
+describe('default Arkova host (no arkovaBaseUrl override)', () => {
+  it('CandidateVerificationTab defaults to the public API gateway', async () => {
+    const tab = new CandidateVerificationTab({ ...TEST_CONFIG, arkovaBaseUrl: undefined });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          id: 5002,
+          firstName: 'Default',
+          lastName: 'Host',
+          email: 'default@example.com',
+          status: 'Active',
+          customText3: JSON.stringify([{ fileId: 201, publicId: 'ARK-2026-BH-DEFAULT' }]),
+        },
+      }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        EntityFiles: [
+          { id: 201, type: 'Credential', name: 'license.pdf', contentType: 'application/pdf', dateAdded: Date.now() },
+        ],
+      }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [{ verified: true, status: 'ACTIVE' }] }),
+    });
+
+    await tab.getVerificationSummary(5002);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      3,
+      'https://api.arkova.ai/api/v1/verify/batch',
+      expect.any(Object),
+    );
+  });
+});
+
 // ── Connector ────────────────────────────────────────────────────────
 
 describe('BullhornConnector', () => {

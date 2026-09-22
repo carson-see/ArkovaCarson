@@ -56,6 +56,7 @@ you cite `memory/x.md`, the file has to be in this directory.
 | `project_proof_block_height_provenance.md` | CI lint (`proof-block-height-source.ts`) — a published proof's `block_height` must come from `anchors.chain_block_height`, never from `anchor_proofs.block_height` in preference to it (SCRUM-3953: the proof-row column is the BROADCAST-time chain tip and was wrong on 711,027 of 713,949 prod rows, making genuine anchors fail verification with `HEIGHT_MISMATCH`). Pins the coalesce/ternary ORDER at both publication sites, which is what actually regressed. Override `proof-block-height-reviewed`. | ✅ live (R0-7) |
 | `feedback_bounded_body_reads.md` | CI lint (`bounded-body-reads.ts`) — raw `.json()`/`.text()` on a fetch response under `services/worker/src/**`, scoped to lines the PR **adds** (145 pre-existing sites; see the rule's header for why whole-file would be wrong here). Override `unbounded-body-read-reviewed`. The companion `maxRunMs >= ttlMs` half is test-enforced in `jobs/__tests__/run-lease.deadline.test.ts`. | ✅ live (R0-7 / F-D0-5) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
+| `feedback_dependabot_pr_limit_sum.md` | CI lint (`dependabot-pr-limit.ts`) — sums `.github/dependabot.yml`'s `open-pull-requests-limit` across every `updates` entry, fails if > 7 or if any entry omits the field. No override label (founder-decided budget). | ✅ live (2026-09-21) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
 | `project_hollow_200_statement_timeout_swallow.md` | Documentation only (a detector for the `if (error || !data)` shape is plausible but not yet written) | 📖 docs only |
 | `feedback_surrogate_safe_truncation.md` | CI lint (`surrogate-safe-truncate.ts`) — ratchet vs `surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests` | ✅ live (R0-7) |
@@ -72,9 +73,11 @@ you cite `memory/x.md`, the file has to be in this directory.
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
+| `feedback_gates_before_pin.md` | Documentation only (procedure: every required check green on the exact head, locally and hosted, before a soak window pins it; founder directive 2026-09-22 after two voided #3054 windows) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
 | `feedback_no_prs_for_t0.md` | Documentation only (tier is computed by `requiredTierFor()`; no detector can tell a T0 that *should* have skipped the PR from one that legitimately opened it) | 📖 docs only |
+| `feedback_actions_spend_discipline.md` | Documentation only (CLAUDE.md §0 rule 11); Dependabot cap enforced by `.github/dependabot.yml` | Active — limit-sum CI lint intended |
 
 ## Failure-class notes
 
