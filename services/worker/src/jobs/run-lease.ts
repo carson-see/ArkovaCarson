@@ -532,6 +532,72 @@ export async function stillHoldsRunLease(
 }
 
 /**
+ * Dirty / rerun-requested marker (Drive fix-round item 3, relocated here from
+ * drive-changes-runner.ts because it is a lease-row primitive and this module
+ * is the allow-listed owner of lease-row access — scripts/ci/
+ * check-job-queue-parity.ts rule 4). "A push arrives while the lease is held"
+ * must not be dropped silently — before this, `webhooks/drive.ts` finding the
+ * lease locked just returned `{skipped:'locked'}` and NOTHING re-ran for that
+ * push. `job_queue.attempts` is the marker:
+ * completely UNUSED by the lease mechanism itself (`claim_next_job` is
+ * TYPE-scoped away from lease rows — see this module's own doc comment)
+ * and defaults to 0, so it doubles as a boolean hint with NO payload merge
+ * (a merge would risk racing `releaseRunLease`'s payload reset and
+ * resurrecting stale holder info — see the withRunLease body for why
+ * that matters) and NO migration.
+ *
+ * `markRunLeaseDirty` is an UNCONDITIONAL write — no ownership check. Setting
+ * it when nobody currently holds the lease is a harmless no-op (the next
+ * `acquireRunLease` bootstrap-upserts around it, and the flag is read once,
+ * at the end of whichever run next holds the lease, then cleared). Setting
+ * it while a run IS in flight is the entire point: that run reads it back
+ * (`checkAndClearRunLeaseDirty`) after finishing its own pass and, if set,
+ * does exactly ONE more pass before releasing —
+ * bounded, not a retry loop — so a push that arrived mid-run is honored
+ * within THIS request rather than waiting for the periodic reconciliation
+ * sweep to eventually notice.
+ */
+export async function markRunLeaseDirty(
+  client: SupabaseClient,
+  spec: RunLeaseSpec,
+  log: { warn?: (obj: unknown, msg: string) => void } = logger,
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (client as any).from('job_queue').update({ attempts: 1 }).eq('id', spec.leaseId);
+    if (error) {
+      log?.warn?.({ error, leaseId: spec.leaseId }, 'run lease: markRunLeaseDirty write failed — the caller\'s periodic reconciliation is the backstop');
+    }
+  } catch (error) {
+    log?.warn?.({ error, leaseId: spec.leaseId }, 'run lease: markRunLeaseDirty threw — the caller\'s periodic reconciliation is the backstop');
+  }
+}
+
+export async function checkAndClearRunLeaseDirty(client: SupabaseClient, spec: RunLeaseSpec): Promise<boolean> {
+  try {
+    // Plain `.select().eq()` + array indexing, deliberately NOT
+    // `.maybeSingle()` — matches `stillHoldsRunLease`'s own read-back
+    // pattern above (a point lookup by primary key, read as
+    // `rows[0]`).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (client as any)
+      .from('job_queue')
+      .select('attempts')
+      .eq('id', spec.leaseId);
+    if (error) return false;
+    const rows = (data ?? []) as Array<{ attempts?: number }>;
+    const dirty = (rows[0]?.attempts ?? 0) > 0;
+    if (dirty) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (client as any).from('job_queue').update({ attempts: 0 }).eq('id', spec.leaseId);
+    }
+    return dirty;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Releases a run lease, but only if this holder still owns it. A run whose
  * lease expired and was stolen must not clear the new holder's claim.
  */
