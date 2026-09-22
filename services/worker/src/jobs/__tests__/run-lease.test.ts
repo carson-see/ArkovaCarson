@@ -49,6 +49,8 @@ import {
   PUBLIC_RECORD_ANCHOR_RUN_LEASE,
   RUN_LEASE_SPECS,
   acquireRunLease,
+  checkAndClearRunLeaseDirty,
+  markRunLeaseDirty,
   releaseRunLease,
   renewRunLease,
   runLeaseHolder,
@@ -698,5 +700,62 @@ describe('run lease TTL bounds', () => {
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dirty / rerun-requested marker (relocated from drive-changes-runner.ts).
+//
+// `job_queue.attempts` on a LEASE row is unused by the lease mechanism itself
+// (claim_next_job is TYPE-scoped away from lease rows) and defaults to 0, so
+// it doubles as a boolean "a push arrived while the lease was held" hint with
+// no payload merge and no migration. These are lease-row primitives — they
+// belong here, next to the CAS they must never race, and this module is the
+// allow-listed owner of lease-row writes in scripts/ci/check-job-queue-parity.ts
+// (rule 4: `submitJob` is the only enqueue API; a raw `.from('job_queue')`
+// write anywhere else reads as an unregistered producer).
+// ---------------------------------------------------------------------------
+describe('run lease — dirty marker (markRunLeaseDirty / checkAndClearRunLeaseDirty)', () => {
+  it('markRunLeaseDirty sets attempts=1 WITHOUT holding the lease (unconditional hint write)', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+    await acquireRunLease(store.client, SPEC, 'holder-A');
+    // A different request — NOT the holder — marks it dirty.
+    await markRunLeaseDirty(store.client, SPEC);
+    expect(store.current()?.attempts).toBe(1);
+    // The holder was not disturbed: this is a hint, not a steal.
+    expect(store.current()?.payload.holder).toBe('holder-A');
+  });
+
+  it('checkAndClearRunLeaseDirty returns true exactly once, then false (read-and-clear)', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+    await acquireRunLease(store.client, SPEC, 'holder-A');
+    await markRunLeaseDirty(store.client, SPEC);
+    expect(await checkAndClearRunLeaseDirty(store.client, SPEC)).toBe(true);
+    expect(store.current()?.attempts).toBe(0);
+    expect(await checkAndClearRunLeaseDirty(store.client, SPEC)).toBe(false);
+  });
+
+  it('checkAndClearRunLeaseDirty is false on a clean row and leaves it untouched', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+    await acquireRunLease(store.client, SPEC, 'holder-A');
+    const before = store.callCount();
+    expect(await checkAndClearRunLeaseDirty(store.client, SPEC)).toBe(false);
+    // One read, zero writes — a clean row must not be rewritten.
+    expect(store.callCount()).toBe(before + 1);
+  });
+
+  it('both primitives FAIL SOFT on store errors: no throw, dirty reads as false, warn is logged for the write', async () => {
+    const log = { warn: vi.fn() };
+    await expect(
+      markRunLeaseDirty(erroringRunLeaseClient({ failOn: 'update' }), SPEC, log),
+    ).resolves.toBeUndefined();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    await expect(
+      markRunLeaseDirty(erroringRunLeaseClient({ failOn: 'throw' }), SPEC, log),
+    ).resolves.toBeUndefined();
+    expect(log.warn).toHaveBeenCalledTimes(2);
+    await expect(
+      checkAndClearRunLeaseDirty(erroringRunLeaseClient({ failOn: 'throw' }), SPEC),
+    ).resolves.toBe(false);
   });
 });

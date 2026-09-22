@@ -21,6 +21,7 @@ import { WEBHOOK_PATHS } from '../constants/webhook-paths.js';
 import {
   loadDriveAccessToken,
   DriveRunnerError,
+  runDriveReconciliationSweep,
   type DriveIntegrationRow,
 } from '../integrations/connectors/drive-changes-runner.js';
 import {
@@ -262,6 +263,16 @@ export interface DriveSubscriptionRenewalRunResult extends DriveSubscriptionRene
    * all 0 in this case (nothing ran).
    */
   skipped?: boolean;
+  /**
+   * Fix-round item 3, second half (SCRUM-2903/3661/5094/2330): result of
+   * `runDriveReconciliationSweep`, run in the SAME lease-held pass right
+   * after renewal. A webhook proves DELIVERY, not COMPLETENESS — this is
+   * the periodic backstop for a push that was dropped (a locked lease whose
+   * dirty-mark write also failed, an instance recycled mid-request, Drive
+   * itself failing to deliver). `undefined` only if this invocation itself
+   * was `skipped` (the renewal lease was held elsewhere, so nothing ran).
+   */
+  reconciliation?: { scanned: number; ran: number; skipped: number; errored: number };
 }
 
 const EMPTY_RENEWAL_SUMMARY: DriveSubscriptionRenewalSummary = {
@@ -288,12 +299,32 @@ export async function runDriveSubscriptionRenewal(
   const leaseClient = options.db ?? (defaultDb as AnyDb);
   const outcome = await withRunLease(
     { ...DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, client: leaseClient },
-    () => renewDriveSubscriptions({
-      db: makeDriveSubscriptionRenewalDb(options),
-      client: makeDriveSubscriptionRenewalClient(options),
-      alert: alertDriveSubscriptionRenewal,
-      logger,
-    }),
+    async () => {
+      const summary = await renewDriveSubscriptions({
+        db: makeDriveSubscriptionRenewalDb(options),
+        client: makeDriveSubscriptionRenewalClient(options),
+        alert: alertDriveSubscriptionRenewal,
+        logger,
+      });
+      // Fix-round item 3, second half: periodic reconciliation, same
+      // lease-held pass, right after renewal — see
+      // DriveSubscriptionRenewalRunResult.reconciliation's doc comment.
+      // Independent failure isolation: a reconciliation bug must not turn
+      // an otherwise-successful renewal pass into a thrown/lost summary.
+      let reconciliation: DriveSubscriptionRenewalRunResult['reconciliation'];
+      try {
+        reconciliation = await runDriveReconciliationSweep({
+          db: leaseClient,
+          kms: options.kms ?? (await createDefaultKmsClient()),
+          drive: { fetchImpl: options.fetchImpl },
+          env: options.env,
+          logger,
+        });
+      } catch (error) {
+        logger.error({ error }, 'drive reconciliation sweep: threw — renewal summary still returned');
+      }
+      return { ...summary, reconciliation };
+    },
   );
   return outcome.acquired ? outcome.result : { ...EMPTY_RENEWAL_SUMMARY, skipped: true };
 }

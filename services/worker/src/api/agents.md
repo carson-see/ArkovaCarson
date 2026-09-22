@@ -1,5 +1,24 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-21 — `connector-health.ts` gains `changes_list_never_succeeded` (fields-mask incident follow-up, SCRUM-2903/3661/5094/2330)
+
+New `HealthReason`. The existing P0-2 `cursor_stale` signal is blind to a
+cursor that has NEVER advanced (`last_token_advanced_at` null) — by design,
+so a freshly-connected integration isn't false-flagged. But that null is
+ALSO the exact state of an integration whose every `changes.list` call has
+failed since connecting (this incident: HTTP 400 fields-mask bug, 150
+failures/day, zero successes, ever — the dashboard read
+`connected`/`none` the entire time). `hasDriveChangesNeverSucceeded()` uses
+`connected_at` (already read by the health query) as the staleness clock
+when the cursor has never moved; mutually exclusive with `cursorStale` by
+construction (one requires `last_token_advanced_at` null, the other
+requires it non-null). Priority 4 in `DRIVE_HEALTH_PRIORITY` (between
+`subscription_expiry`=5 and `cursor_stale`=3). No new column, no migration —
+see `connectors/agents.md`'s matching entry for why `last_renewal_error`
+specifically was rejected as a reuse target (it's channel-renewal-only
+semantics and clears on renewal success independent of `changes.list`
+health, which would silently hide this exact failure).
+
 ## 2026-09-19 — inbound webhook DLQ resolution audit
 
 Migration 0469 adds bounded `resolved_note` and `resolved_by` columns to `webhook_dlq`. The platform-admin resolve endpoint writes both atomically with `resolved_at` only for unresolved rows, so retries cannot overwrite the first operator's audit record. Notes remain absent from logs and list responses because they may contain partner-identifying context.
