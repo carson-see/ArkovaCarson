@@ -10,6 +10,7 @@ import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
+import { adminRateLimitBypassActive } from '../config.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 import { isAdminRouterPath } from './admin-paths.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
@@ -50,7 +51,26 @@ adminRouter.use((req, _res, next) => {
   next();
 });
 adminRouter.use(corsMiddleware);
-adminRouter.use(rateLimiters.checkout);
+// The 10 req/min `checkout` limiter, with a narrowly-scoped E2E escape.
+//
+// The Playwright stack cannot fit inside this bucket: every browser shares
+// `::1`, one ConnectorsPage run issues ~8-12 admin requests (it mounts two
+// `useConnectorRule` cards), and four specs contend for the same tokens under
+// parallel workers. `e2e/connectors.spec.ts` has been unsatisfiable since
+// 2026-09-19 — it waits for `remaining >= 16` from a ceiling of 10.
+//
+// The bypass is applied HERE rather than on `rateLimiters.checkout` itself so
+// its blast radius is adminRouter alone: billing checkout, credit purchase,
+// account deletion and the anchor routes share that limiter instance and stay
+// fully rate-limited even under E2E. It is also inert in production by
+// construction (`adminRateLimitBypassActive()` requires
+// `nodeEnv !== 'production'`, and config throws at boot if the flag is set
+// there). The `/api/v1` limiter is untouched, so
+// `e2e/verify-ratelimit-contract.spec.ts` still proves §1.10.
+adminRouter.use((req, res, next) => {
+  if (adminRateLimitBypassActive()) { next(); return; }
+  rateLimiters.checkout(req, res, next);
+});
 
 // ─── Treasury Status (feedback_treasury_access: Arkova-internal only) ───
 adminRouter.get('/treasury/status', async (req, res) => {

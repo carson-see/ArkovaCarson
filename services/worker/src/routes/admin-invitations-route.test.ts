@@ -25,7 +25,13 @@ vi.mock('../utils/db.js', () => ({
   getQueryStats: vi.fn(() => ({})),
   getConnectionInfo: vi.fn(() => ({})),
 }));
-vi.mock('../config.js', () => ({ config: { frontendUrl: 'https://app.arkova.test' } }));
+vi.mock('../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.test' },
+  // admin.ts consults this to decide whether to skip the checkout limiter.
+  // It must be present in the mock: a partial config mock makes the import
+  // resolve undefined and every route 500s.
+  adminRateLimitBypassActive: () => false,
+}));
 vi.mock('../api/admin-invitations.js', () => ({
   handleAdminCreateInvitation: mockHandleInvitation,
   handleAdminListInvitations: mockHandleListInvitations,
