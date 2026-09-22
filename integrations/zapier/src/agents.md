@@ -56,3 +56,18 @@ a new Zap. `attestation.revoked` additionally has no reachable producer yet.
 
 `VALID_EVENTS` includes the two registered public-only finality events,
 `anchor.revocation_anchored` and `attestation.active`.
+
+## 2026-09-21 — BASE_URL moved to the public API gateway (SCRUM-3888)
+
+`BASE_URL` (and `src/makecom.json`'s `baseUrl`) moved from the raw Cloud Run
+revision host to `https://api.arkova.ai`. The raw host has no Cloudflare
+origin guard in front of it (CLAUDE.md §1.1); SCRUM-3888 enforces that guard
+and will 403 direct requests to it, so every client default had to move.
+Same fix, same day, across `integrations/shared/src/constants.ts`,
+`integrations/clio/src/{cle-compliance,sidebar-widget}.ts` (now import the
+shared constant instead of redeclaring it — see `integrations/shared/src/agents.md`),
+`integrations/bullhorn/src/candidate-tab.ts` (same), `packages/sdk`, and
+`packages/embed`. A repo-wide regression guard,
+`scripts/ci/check-run-app-host-literal.ts`, now fails CI on any new raw-host
+literal outside its explicit, reasoned allowlist — see that file's own
+agents.md note.

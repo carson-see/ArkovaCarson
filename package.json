@@ -54,7 +54,8 @@
     "staging:janitor": "./scripts/staging/cleanup-orphan-tags.sh",
     "staging:rotate-iam": "./scripts/staging/rotate-deploy-iam.sh",
     "staging:teardown": "./scripts/staging/teardown-and-reset.sh",
-    "ci:workflow-yaml": "tsx scripts/ci/check-workflow-yaml.ts"
+    "ci:workflow-yaml": "tsx scripts/ci/check-workflow-yaml.ts",
+    "ci:run-app-host-literal": "tsx scripts/ci/check-run-app-host-literal.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",

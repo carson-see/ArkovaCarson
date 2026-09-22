@@ -1,5 +1,12 @@
-/** Arkova API base URL */
-export const BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
+/**
+ * Arkova API base URL — the public API gateway, not the raw Cloud Run
+ * revision host. The raw host (arkova-worker-*.run.app) has no Cloudflare
+ * origin guard in front of it; SCRUM-3888 enforces that guard and 403s
+ * direct requests to it going forward, so every client default must point
+ * at api.arkova.ai instead. See packages/sdk/src/client.ts and
+ * packages/embed/src/index.ts for the sibling fixes (2026-09-21).
+ */
+export const BASE_URL = 'https://api.arkova.ai';
 
 /** Default webhook events — anchor lifecycle only; credential.* requires explicit opt-in (SCRUM-1743). */
 export const DEFAULT_EVENTS = ['anchor.secured', 'anchor.revoked'];

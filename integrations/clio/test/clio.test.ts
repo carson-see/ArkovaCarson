@@ -57,6 +57,49 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// ── Default host ─────────────────────────────────────────────────────
+//
+// 2026-09-21 (SCRUM-3888): the raw Cloud Run host has no Cloudflare origin
+// guard in front of it and is slated to be 403'd directly once that guard
+// enforces. Every default base URL in this repo must point at the public
+// gateway host instead. `TEST_CONFIG` above always sets an explicit
+// `arkovaBaseUrl` override, so it never exercises the DEFAULT — these
+// tests build a config with NO override and inspect the actual fetch URL.
+
+const CONFIG_WITHOUT_ARKOVA_BASE_URL_OVERRIDE: ClioConfig = {
+  ...TEST_CONFIG,
+  arkovaBaseUrl: undefined,
+};
+
+describe('default Arkova host (no arkovaBaseUrl override)', () => {
+  it('ClioSidebarWidget defaults to the public API gateway', async () => {
+    const widget = new ClioSidebarWidget(CONFIG_WITHOUT_ARKOVA_BASE_URL_OVERRIDE);
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ verified: true, status: 'ACTIVE' }) });
+
+    await widget.getVerificationStatus('ARK-2026-DEFAULT-HOST');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.arkova.ai/api/v1/verify/ARK-2026-DEFAULT-HOST',
+      expect.any(Object),
+    );
+  });
+
+  it('CleComplianceTab defaults to the public API gateway', async () => {
+    const tab = new CleComplianceTab('ak_test_clio');
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ attorney_name: 'Test Attorney', bar_number: '12345', status: 'ACTIVE' }),
+    });
+
+    await tab.lookupBarStatus('12345', 'CA');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('https://api.arkova.ai/api/v1/cle/verify'),
+      expect.any(Object),
+    );
+  });
+});
+
 // ── Connector ────────────────────────────────────────────────────────
 
 describe('ClioConnector', () => {

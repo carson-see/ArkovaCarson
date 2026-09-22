@@ -4,8 +4,27 @@ on:
   pull_request:
     branches: [main]
     # Defer the four-workspace install/scan matrix for ordinary drafts. The
-    # ready transition creates a fresh run; Mergify speculative drafts still
-    # execute the complete scan before merge.
+    # ready transition creates a fresh run.
+    #
+    # Actions-budget hygiene (2026-09-21): this `pull_request` trigger fires
+    # far more often than the weekly `schedule` below implies — `gh run list`
+    # showed 99 of the last 100 runs were `pull_request`, only 1 `schedule`.
+    # That is largely intentional (the whole point is scanning a PR that
+    # changes a manifest/lockfile) and largely FREE: GitHub Actions has no
+    # actor-based `on:` filter, so a Dependabot-authored PR still creates a
+    # counted workflow run even though the job's own `if:` below skips it
+    # before any runner is provisioned — a skipped job bills zero minutes.
+    # Measured: 18 of the last 40 runs were exactly this (skipped,
+    # zero-cost). The one REAL waste this sweep found and fixed: Mergify
+    # merge-queue speculative PRs previously forced a full re-scan (`&&
+    # startsWith(github.head_ref, 'mergify/')` bypassed the draft check
+    # outright) even though this job is advisory-only (no `.mergify.yml`
+    # `check-success` entry — confirmed via grep) and the original PR already
+    # ran it once. That accounted for 7 of the last 15 non-skipped runs. The
+    # job `if:` below now skips genuine Mergify queue PRs the same
+    # branch-prefix + `mergify[bot]`-author way `staging-evidence.yml` /
+    # `ci.yml` do (SCRUM-3812 hardening — branch name alone is
+    # author-controlled and spoofable).
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - '**/package.json'
@@ -13,6 +32,7 @@ on:
       - '.github/workflows/sonatype-scan.yml'
   schedule:
     - cron: '0 12 * * 1'
+  workflow_dispatch: {}
 
 # Saves Actions minutes — newer commits cancel stale runs.
 concurrency:
@@ -32,12 +52,22 @@ jobs:
     # with "the GitHub Action workflow must specify exactly one of
     # workload_identity_provider or credentials_json". The scheduled cron run
     # (Mondays 12:00 UTC) and human-author PRs still cover license/CVE checks.
+    # This job-level skip bills ZERO runner minutes (no runner is provisioned
+    # for a skipped job) — see the `on.pull_request` comment above for why
+    # the workflow RUN still gets created anyway.
+    #
+    # Actions-budget hygiene (2026-09-21): also skip genuine Mergify
+    # merge-queue speculative PRs — this job is advisory-only (not a
+    # `.mergify.yml` `check-success` gate) and the original PR already ran
+    # it, so re-scanning on every queue candidate was pure waste. Matches
+    # the branch-prefix + `mergify[bot]`-author compound check
+    # `staging-evidence.yml` / `ci.yml` already use (SCRUM-3812: the branch
+    # prefix alone is author-controlled).
     if: >-
       github.actor != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' ||
-       startsWith(github.head_ref, 'mergify/') ||
-       github.event.pull_request.draft != true)
+      !(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     strategy:
       fail-fast: false
       matrix:

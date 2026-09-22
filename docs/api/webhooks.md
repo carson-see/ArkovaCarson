@@ -1,7 +1,7 @@
 # Webhooks — Developer Guide
 
 > **Status:** Stable | **Version:** v1 | **Story:** [INT-09 / SCRUM-645](https://arkova.atlassian.net/browse/SCRUM-645)
-> **Base URL:** `https://arkova-worker-270018525501.us-central1.run.app/api/v1`
+> **Base URL:** `https://api.arkova.ai/api/v1`
 
 Arkova webhooks let your system react to anchor lifecycle events the moment they happen — no polling required. This guide covers everything an API-only customer needs to register, verify, and consume webhooks programmatically. **You never need to log into the Arkova web app.**
 
@@ -221,7 +221,7 @@ Register a new webhook endpoint.
 **Example request:**
 
 ```bash
-curl -X POST https://arkova-worker-270018525501.us-central1.run.app/api/v1/webhooks \
+curl -X POST https://api.arkova.ai/api/v1/webhooks \
   -H "X-API-Key: ak_live_..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -278,7 +278,7 @@ List all webhook endpoints registered to your organization. Paginated.
 
 ```bash
 curl -H "X-API-Key: ak_live_..." \
-  "https://arkova-worker-270018525501.us-central1.run.app/api/v1/webhooks?limit=20&offset=0"
+  "https://api.arkova.ai/api/v1/webhooks?limit=20&offset=0"
 ```
 
 **Response 200:**
@@ -314,7 +314,7 @@ Retrieve a single webhook endpoint by ID.
 
 ```bash
 curl -H "X-API-Key: ak_live_..." \
-  https://arkova-worker-270018525501.us-central1.run.app/api/v1/webhooks/550e8400-e29b-41d4-a716-446655440000
+  https://api.arkova.ai/api/v1/webhooks/550e8400-e29b-41d4-a716-446655440000
 ```
 
 **Response 200:** Same as a single entry from `GET /webhooks`. Returns 404 if not found or owned by a different org.
@@ -687,7 +687,7 @@ await arkova.webhooks.delete(id);
 ```python
 import os, requests
 
-API = "https://arkova-worker-270018525501.us-central1.run.app/api/v1"
+API = "https://api.arkova.ai/api/v1"
 HEADERS = {"X-API-Key": os.environ["ARKOVA_API_KEY"], "Content-Type": "application/json"}
 
 # Register
