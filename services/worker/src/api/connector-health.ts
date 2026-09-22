@@ -558,32 +558,16 @@ interface DriveHealthSignals {
   gap?: DriveGapSignal;
 }
 
-function classify(
-  entry: ConnectorCatalogEntry,
-  integration: IntegrationRow | undefined,
-  subscription: SubscriptionRow | undefined,
-  lastFailedExec: PerVendorFailure | undefined,
-  driveSignals?: DriveHealthSignals,
-): { state: ConnectorState; reason: HealthReason | null; lastError: string | null } {
-  // Demo connector is always connected — its lifecycle is the dispatcher itself.
-  if (entry.kind === 'demo') {
-    return { state: 'connected', reason: null, lastError: null };
-  }
-  // Gated (vendor agreement pending) connectors stay disconnected with a
-  // null reason so the wizard can render a "request access" CTA.
-  if (entry.kind === 'gated' && !integration) {
-    return { state: 'disconnected', reason: null, lastError: null };
-  }
-  if (!integration) {
-    return { state: 'disconnected', reason: null, lastError: null };
-  }
-  if (integration.revoked_at) {
-    return { state: 'disconnected', reason: 'vendor_auth_revoked', lastError: null };
-  }
-  // SCRUM-5287 (P1 security, fix-round item 5): checked BEFORE every other
-  // reason — a security exposure on a live, active grant outranks an
-  // operational degradation. Only computed for google_drive (driveSignals
-  // is undefined for every other connector).
+type ClassifyResult = { state: ConnectorState; reason: HealthReason | null; lastError: string | null };
+
+// SCRUM-5287 (P1 security, fix-round item 5): checked BEFORE every other
+// reason — a security exposure on a live, active grant outranks an
+// operational degradation. Only computed for google_drive (driveSignals
+// is undefined for every other connector). Split out of `classify` (S3776
+// cognitive-complexity extraction, behavior-neutral — same condition, same
+// position in the precedence chain, called immediately before the
+// subscription-expiry check it must outrank).
+function classifyDriveSecurityException(driveSignals: DriveHealthSignals | undefined): ClassifyResult | null {
   if (driveSignals?.grantExceedsRequested) {
     return {
       state: 'degraded',
@@ -591,18 +575,20 @@ function classify(
       lastError: `Granted OAuth scope exceeds what this connection requested: ${driveSignals.grantExceedsRequested.join(', ')}`,
     };
   }
-  if (subscription?.status === 'degraded') {
-    return {
-      state: 'degraded',
-      reason: 'subscription_expiry',
-      lastError: subscription.last_renewal_error ?? null,
-    };
-  }
+  return null;
+}
+
+// The remaining google_drive-only degraded reasons, in their existing
+// precedence order (S3776 extraction — behavior-neutral, same branches in
+// the same order as before, called after the subscription-expiry check
+// they must NOT outrank). See each branch's original inline comment,
+// preserved here, for why this order is load-bearing.
+function classifyDriveOperationalIssue(driveSignals: DriveHealthSignals | undefined): ClassifyResult | null {
   // P0-2 / Task 4: checked AFTER vendor_auth_revoked / subscription_expiry
   // (a broken channel already explains a stalled/never-advancing cursor —
   // that is not new information) but BEFORE the rule-execution-derived
-  // 'processing_failure' below, since all three new signals catch failures
-  // a rule execution never even got dispatched for. `neverSucceeded` is
+  // 'processing_failure', since all three new signals catch failures a
+  // rule execution never even got dispatched for. `neverSucceeded` is
   // checked first: it is the stronger claim ("this has NEVER once worked
   // since connecting", vs. cursorStale's "this worked before and stopped")
   // and the two are mutually exclusive by construction (see
@@ -656,6 +642,42 @@ function classify(
       lastError: `${driveSignals.fetchJobFailureCount} google_drive.file_changed job(s) failed or dead-lettered`,
     };
   }
+  return null;
+}
+
+function classify(
+  entry: ConnectorCatalogEntry,
+  integration: IntegrationRow | undefined,
+  subscription: SubscriptionRow | undefined,
+  lastFailedExec: PerVendorFailure | undefined,
+  driveSignals?: DriveHealthSignals,
+): ClassifyResult {
+  // Demo connector is always connected — its lifecycle is the dispatcher itself.
+  if (entry.kind === 'demo') {
+    return { state: 'connected', reason: null, lastError: null };
+  }
+  // Gated (vendor agreement pending) connectors stay disconnected with a
+  // null reason so the wizard can render a "request access" CTA.
+  if (entry.kind === 'gated' && !integration) {
+    return { state: 'disconnected', reason: null, lastError: null };
+  }
+  if (!integration) {
+    return { state: 'disconnected', reason: null, lastError: null };
+  }
+  if (integration.revoked_at) {
+    return { state: 'disconnected', reason: 'vendor_auth_revoked', lastError: null };
+  }
+  const securityException = classifyDriveSecurityException(driveSignals);
+  if (securityException) return securityException;
+  if (subscription?.status === 'degraded') {
+    return {
+      state: 'degraded',
+      reason: 'subscription_expiry',
+      lastError: subscription.last_renewal_error ?? null,
+    };
+  }
+  const operationalIssue = classifyDriveOperationalIssue(driveSignals);
+  if (operationalIssue) return operationalIssue;
   if (lastFailedExec) {
     return {
       state: 'degraded',
@@ -825,7 +847,17 @@ export async function handleConnectorHealth(
   // `last_error` is the only signal available without a dedicated column;
   // `processDriveFileChangedJob`'s error path already writes `err.message`
   // verbatim into it via the shared job-queue failure handler.
-  const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN = /^Drive file access denied|export size limit/i;
+  //
+  // SonarCloud typescript:S5850 (fixed): `/^Drive file access denied|export
+  // size limit/i` binds as `(^Drive file access denied)|(export size
+  // limit)` — the second alternative carried no `^`, so it matched
+  // "export size limit" ANYWHERE in last_error, counting any unrelated
+  // failure that merely mentioned the phrase mid-string. Both real
+  // messages (`DriveFileAccessError` / `DriveExportSizeLimitError` in
+  // oauth/drive.ts) are fixed, known prefixes, so both alternatives are
+  // now anchored inside a single non-capturing group.
+  const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN =
+    /^(?:Drive file access denied\b|Drive file export exceeds Google's export size limit)/i;
   const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
     (row) => typeof row.last_error === 'string' && DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN.test(row.last_error),
   ).length;
