@@ -18,6 +18,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
+import { driveGrantExcessScopes } from '../integrations/oauth/drive.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
 import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
 import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
@@ -26,6 +27,17 @@ export type ConnectorKind = 'live' | 'demo' | 'gated';
 export type ConnectorState = 'connected' | 'degraded' | 'disconnected';
 export type HealthReason =
   | 'vendor_auth_revoked'
+  // SCRUM-5287 (P1 security, fix-round item 5): the stored `scope` on this
+  // integration EXCEEDS `DRIVE_DEFAULT_SCOPES` — a leaked refresh token for
+  // this connection can reach more than the connector was ever meant to
+  // touch. The OAuth callback now refuses to persist a NEW over-scoped
+  // grant (drive-oauth.ts), but that guard is forward-only; an EXISTING row
+  // connected before it (or before this connector's own scope allowlist was
+  // last narrowed) needs its own visible signal so an admin can see it and
+  // force a re-consent. Ranked ABOVE every other Drive reason — an
+  // over-permissioned live grant is a standing security exposure, not an
+  // operational degradation.
+  | 'grant_exceeds_requested'
   | 'subscription_expiry'
   // P0-2 (2026-09-14 hardening audit): a stuck/410 Drive changes cursor —
   // the exact condition that hid the #2903 class of bug. Distinct from
@@ -33,6 +45,51 @@ export type HealthReason =
   // this fires even when NO rule execution ever ran — the pipeline stalled
   // upstream of that layer entirely.
   | 'cursor_stale'
+  // Task 4 (orchestrator "make this failure loud" review, SCRUM-2903/3661
+  // fields-mask incident follow-up): `cursor_stale` above is BLIND to a
+  // cursor that has NEVER advanced (`last_token_advanced_at` null) — that
+  // null is deliberately non-stale for an integration connected moments ago
+  // (see `isDriveCursorStale`'s doc comment), but it is ALSO the exact,
+  // indistinguishable state of an integration whose EVERY changes.list call
+  // has failed since the day it connected — this incident's own prod shape:
+  // 150 failures/day, zero successes, ever, for months, with the dashboard
+  // reading 'connected'/'none' the entire time. There is no dedicated
+  // "last changes.list error" column to persist a more specific signal
+  // without a migration (verified: `org_integrations` has no such column —
+  // grepped every migration touching that table; `last_renewal_error` is
+  // semantically CHANNEL-RENEWAL-only, already drives `subscription_expiry`,
+  // and is cleared on renewal success even while changes.list keeps
+  // failing — reusing it would silently HIDE this exact failure the moment
+  // a renewal sweep happens to succeed). This reuses the one anchor already
+  // read without a migration — `connected_at` — as the staleness clock when
+  // the cursor has never moved at all.
+  | 'changes_list_never_succeeded'
+  // Fix-round item 6 (SCRUM-2903/3661/5094/2330 scope-reality finding): a
+  // SPECIFIC fetch-job failure reason — the grant does not cover this file
+  // (`drive.file` only allows a file the app created or one selected
+  // through Google's real Picker; Arkova's Connectors-page folder browser
+  // is a custom component, not the Picker, so a newly-connected org will
+  // 403 on ordinary files) or Google's own export size limit. Distinct
+  // from the generic `fetch_job_failures` below so the admin view names
+  // the ACTUAL cause on the very first customer hitting it, not just "some
+  // fetch jobs failed."
+  | 'file_access_not_granted'
+  // Round-2 fix (fix-round item 2, corrected): a 410/404-style cursor
+  // re-bootstrap DISCARDED a real change window — `drive-changes-processor.ts`
+  // persists the gap bounds to `audit_events` (`event_type:
+  // 'drive_changes_cursor_gap'`), and THIS is the read that actually surfaces
+  // it here; before this fix the write existed but nothing ever read it back,
+  // so an operator had no product-visible way to learn a gap occurred. Ranked
+  // ABOVE the retryable fetch-failure signals below (data that is already
+  // gone is worse than a fetch that can simply be retried) but BELOW the
+  // signals for a CURRENTLY-broken connector (grant_exceeds_requested,
+  // subscription_expiry, changes_list_never_succeeded, cursor_stale) — a gap
+  // is, by construction, a PAST event the recovery already completed (the
+  // cursor resumed advancing after a fresh token was minted), so an actively
+  // broken connector right now is still the more urgent thing to surface
+  // first. See `DRIVE_CHANGES_GAP_LOOKBACK_MS` for the bounded lookback
+  // window and `DRIVE_HEALTH_PRIORITY` for the exact ranking.
+  | 'changes_gap'
   // P0-2: the `google_drive.file_changed` job_queue drain has failed/dead
   // rows — the document-fetch half of the pipeline that
   // organization_rule_executions cannot see (rule dispatch and document
@@ -167,6 +224,14 @@ interface IntegrationRow {
   // while the channel is otherwise healthy is exactly the #2903-class
   // stuck-cursor symptom the audit found invisible to this dashboard.
   last_token_advanced_at: string | null;
+  // SCRUM-5287 (P1 security fix-round item 5): the space-delimited scope
+  // string Google actually granted at connect time, persisted verbatim by
+  // drive-oauth.ts's callback. Selected for every provider but only ACTED
+  // on for google_drive, in classify() — checked against
+  // `driveGrantExcessScopes` so an EXISTING over-scoped row (the callback
+  // guard only protects NEW connections going forward) is still visible in
+  // the admin view.
+  scope: string | null;
 }
 
 /**
@@ -337,6 +402,119 @@ export function isDriveCursorStale(
   return now.getTime() - advancedAtMs > thresholdMs;
 }
 
+/**
+ * Task 4 gap fix — see the `changes_list_never_succeeded` doc comment on
+ * `HealthReason`. `isDriveCursorStale` is deliberately blind to a NEVER-
+ * advanced cursor; this covers exactly that case using `connected_at` (a
+ * field already selected by the health query, so no migration is needed) as
+ * the staleness clock instead. Returns false whenever the cursor HAS
+ * advanced at least once — that is `isDriveCursorStale`'s case, not this
+ * one; the two are mutually exclusive by construction.
+ */
+export function hasDriveChangesNeverSucceeded(
+  lastTokenAdvancedAt: string | null,
+  connectedAt: string | null,
+  now: Date = new Date(),
+  thresholdMs: number = DRIVE_CURSOR_STALE_THRESHOLD_MS,
+): boolean {
+  if (lastTokenAdvancedAt) return false;
+  if (!connectedAt) return false;
+  const connectedAtMs = Date.parse(connectedAt);
+  if (!Number.isFinite(connectedAtMs)) return false;
+  return now.getTime() - connectedAtMs > thresholdMs;
+}
+
+/**
+ * SCRUM-5287 (P1 security, fix-round item 5): `driveGrantExcessScopes`
+ * returns `[]` for "within bounds" — this adapts that to `undefined` so
+ * `DriveHealthSignals.grantExceedsRequested` reads as a clean "is there a
+ * finding at all" check (`if (driveSignals?.grantExceedsRequested)`)
+ * without every caller re-checking `.length > 0`.
+ */
+function excessScopesOrUndefined(storedScope: string | null): string[] | undefined {
+  const excess = driveGrantExcessScopes(storedScope);
+  return excess.length > 0 ? excess : undefined;
+}
+
+/**
+ * Round-2 fix (item 2): the exact `event_type` string
+ * `drive-changes-runner.ts`'s `recordCursorGap` writes — must stay in sync
+ * with that literal (no shared constant exists between the two modules
+ * because `connector-health.ts` must not import worker runtime code that
+ * pulls in `db`/`config` init at a different layer; this is a deliberate,
+ * narrow string duplication, guarded by the cross-file test coverage in
+ * both `drive-changes-runner.test.ts` and this file).
+ */
+const DRIVE_CHANGES_GAP_EVENT_TYPE = 'drive_changes_cursor_gap';
+
+/**
+ * Round-2 fix (item 2): how far back to look for a gap event. A gap is a
+ * one-time, already-recovered-from event (the cursor resumed advancing once
+ * the fresh token landed) — unlike `cursor_stale`/`changes_list_never_
+ * succeeded`, which re-evaluate against the CURRENT clock on every request,
+ * a gap that happened 3 weeks ago and was long since superseded by healthy
+ * traffic is stale information, not an active finding. 7 days balances
+ * "long enough that an admin checking in weekly still sees it" against "an
+ * old, cold incident doesn't sit in the dashboard forever."
+ */
+export const DRIVE_CHANGES_GAP_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface DriveGapAuditRow {
+  target_id: string | null;
+  created_at: string;
+  details: string | null;
+}
+
+/** Round-2 fix (item 2): the two bounds a `changes_gap` signal carries. */
+interface DriveGapSignal {
+  gapStart: string | null;
+  gapEnd: string | null;
+}
+
+/**
+ * Round-2 fix (item 2): parses the bounded, PII-free `details` JSON
+ * `recordCursorGap` writes (`{gap_start, gap_end, reason}` — see
+ * `drive-changes-runner.ts`). Deliberately extracts ONLY `gap_start`/
+ * `gap_end` as strings — never spreads or forwards the parsed object, so an
+ * unexpected extra key in a row (this table is append-only; a future
+ * writer could add one) can never reach `lastError` unnoticed. Never
+ * throws: a malformed/foreign-shaped `details` value degrades to "a gap
+ * happened, bounds unknown" rather than losing the signal entirely or
+ * crashing the health endpoint.
+ */
+function parseDriveGapDetails(details: string | null): DriveGapSignal {
+  if (!details) return { gapStart: null, gapEnd: null };
+  try {
+    const parsed: unknown = JSON.parse(details);
+    if (!parsed || typeof parsed !== 'object') return { gapStart: null, gapEnd: null };
+    const record = parsed as Record<string, unknown>;
+    return {
+      gapStart: typeof record.gap_start === 'string' ? record.gap_start : null,
+      gapEnd: typeof record.gap_end === 'string' ? record.gap_end : null,
+    };
+  } catch {
+    return { gapStart: null, gapEnd: null };
+  }
+}
+
+/**
+ * Round-2 fix (item 2): reduces the (already org_id + event_type + window
+ * scoped) audit_events rows to the MOST RECENT gap per integration —
+ * `target_id` is `org_integrations.id`. Rows are expected pre-sorted
+ * `created_at DESC` by the caller's query (matches `lastEventByVendor`'s
+ * existing "first occurrence wins" pattern in this same file), so this is a
+ * single pass, not a sort.
+ */
+function latestDriveGapByIntegrationId(rows: DriveGapAuditRow[]): Map<string, DriveGapSignal> {
+  const out = new Map<string, DriveGapSignal>();
+  for (const row of rows) {
+    if (!row.target_id) continue;
+    if (out.has(row.target_id)) continue;
+    out.set(row.target_id, parseDriveGapDetails(row.details));
+  }
+  return out;
+}
+
 interface DriveHealthSignals {
   /**
    * True only when: the cursor has not advanced past the threshold, AND the
@@ -346,8 +524,38 @@ interface DriveHealthSignals {
    * would be a false positive, not a finding).
    */
   cursorStale: boolean;
+  /**
+   * True only when: the cursor has NEVER advanced (null) past the threshold
+   * since connection, AND the org has at least one enabled Drive rule. Same
+   * false-positive guard as `cursorStale`, for the never-bootstrapped case
+   * `cursorStale` cannot see — see the `changes_list_never_succeeded`
+   * `HealthReason` doc comment.
+   */
+  neverSucceeded: boolean;
   /** Count of failed/dead google_drive.file_changed job_queue rows for this org. */
   fetchJobFailureCount: number;
+  /**
+   * Fix-round item 6: SUBSET of `fetchJobFailureCount` whose `last_error`
+   * matches a `DriveFileAccessError`/`DriveExportSizeLimitError` message —
+   * see `HealthReason`'s `file_access_not_granted` doc comment.
+   */
+  fileAccessDeniedCount: number;
+  /**
+   * SCRUM-5287 (P1 security, fix-round item 5): non-empty array of excess
+   * scope names (`driveGrantExcessScopes(integration.scope)`) when the
+   * stored grant exceeds `DRIVE_DEFAULT_SCOPES`; `undefined` when it does
+   * not. No false-positive guard needed here (unlike cursorStale/
+   * neverSucceeded) — an over-grant is a real finding regardless of
+   * whether any rule is enabled.
+   */
+  grantExceedsRequested?: string[];
+  /**
+   * Round-2 fix (item 2): set when a `drive_changes_cursor_gap` audit_events
+   * row exists for this integration within `DRIVE_CHANGES_GAP_LOOKBACK_MS`.
+   * No enabled-rule guard (unlike cursorStale/neverSucceeded) — a gap
+   * already happened regardless of whether a rule is enabled right now.
+   */
+  gap?: DriveGapSignal;
 }
 
 function classify(
@@ -372,6 +580,17 @@ function classify(
   if (integration.revoked_at) {
     return { state: 'disconnected', reason: 'vendor_auth_revoked', lastError: null };
   }
+  // SCRUM-5287 (P1 security, fix-round item 5): checked BEFORE every other
+  // reason — a security exposure on a live, active grant outranks an
+  // operational degradation. Only computed for google_drive (driveSignals
+  // is undefined for every other connector).
+  if (driveSignals?.grantExceedsRequested) {
+    return {
+      state: 'degraded',
+      reason: 'grant_exceeds_requested',
+      lastError: `Granted OAuth scope exceeds what this connection requested: ${driveSignals.grantExceedsRequested.join(', ')}`,
+    };
+  }
   if (subscription?.status === 'degraded') {
     return {
       state: 'degraded',
@@ -379,17 +598,55 @@ function classify(
       lastError: subscription.last_renewal_error ?? null,
     };
   }
-  // P0-2: checked AFTER vendor_auth_revoked / subscription_expiry (a broken
-  // channel already explains a stalled/never-advancing cursor — that is not
-  // new information) but BEFORE the rule-execution-derived
-  // 'processing_failure' below, since both new signals catch failures a rule
-  // execution never even got dispatched for.
+  // P0-2 / Task 4: checked AFTER vendor_auth_revoked / subscription_expiry
+  // (a broken channel already explains a stalled/never-advancing cursor —
+  // that is not new information) but BEFORE the rule-execution-derived
+  // 'processing_failure' below, since all three new signals catch failures
+  // a rule execution never even got dispatched for. `neverSucceeded` is
+  // checked first: it is the stronger claim ("this has NEVER once worked
+  // since connecting", vs. cursorStale's "this worked before and stopped")
+  // and the two are mutually exclusive by construction (see
+  // hasDriveChangesNeverSucceeded's doc comment).
+  if (driveSignals?.neverSucceeded) {
+    const hours = Math.round(DRIVE_CURSOR_STALE_THRESHOLD_MS / (60 * 60 * 1000));
+    return {
+      state: 'degraded',
+      reason: 'changes_list_never_succeeded',
+      lastError: `Drive changes.list has never succeeded on this connection in over ${hours}h despite an enabled rule — Drive may be rejecting our requests`,
+    };
+  }
   if (driveSignals?.cursorStale) {
     const hours = Math.round(DRIVE_CURSOR_STALE_THRESHOLD_MS / (60 * 60 * 1000));
     return {
       state: 'degraded',
       reason: 'cursor_stale',
       lastError: `Drive changes cursor has not advanced in over ${hours}h despite an enabled rule and a healthy channel`,
+    };
+  }
+  // Round-2 fix (item 2): checked AFTER every CURRENTLY-broken-connector
+  // signal above (a gap is a past, already-recovered-from event — see the
+  // `changes_gap` HealthReason doc comment) but BEFORE the retryable
+  // fetch-failure signals below (data that is already gone outranks a fetch
+  // that can simply be retried).
+  if (driveSignals?.gap) {
+    const { gapStart, gapEnd } = driveSignals.gap;
+    const bounds = gapStart
+      ? `between ${gapStart} and ${gapEnd ?? 'the recovery'}`
+      : 'in a window whose exact bounds were not recorded';
+    return {
+      state: 'degraded',
+      reason: 'changes_gap',
+      lastError: `Drive changes were missed ${bounds} — a cursor re-bootstrap could not recover them (Drive does not allow enumerating a window after the token expires)`,
+    };
+  }
+  // Fix-round item 6: checked BEFORE the generic fetch_job_failures below —
+  // a specific, actionable cause outranks "some fetch jobs failed" once we
+  // actually know why.
+  if (driveSignals && driveSignals.fileAccessDeniedCount > 0) {
+    return {
+      state: 'degraded',
+      reason: 'file_access_not_granted',
+      lastError: `${driveSignals.fileAccessDeniedCount} file(s) could not be fetched — the connected account's grant does not cover them (re-consent required), or exceeded Google's export size limit`,
     };
   }
   if (driveSignals && driveSignals.fetchJobFailureCount > 0) {
@@ -413,7 +670,13 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  subscription_expiry: 4, cursor_stale: 3, fetch_job_failures: 2, processing_failure: 1,
+  grant_exceeds_requested: 8, subscription_expiry: 7, changes_list_never_succeeded: 6, cursor_stale: 5,
+  // Round-2 fix (item 2): changes_gap sits BELOW every currently-broken-
+  // connector signal above (a gap is a past, already-recovered-from event)
+  // but ABOVE the retryable fetch-failure signals below (lost data outranks
+  // a fetch that can simply be retried) — see the HealthReason doc comment.
+  changes_gap: 4,
+  file_access_not_granted: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
 
@@ -456,7 +719,7 @@ export async function handleConnectorHealth(
       scanAllPages<IntegrationRow>((offset, limit) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (db as any).from('org_integrations')
-          .select('id, provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at, last_token_advanced_at')
+          .select('id, provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at, last_token_advanced_at, scope')
           .eq('org_id', orgId)
           .order('created_at', { ascending: true }).order('id', { ascending: true })
           .range(offset, offset + limit - 1).abortSignal(signal), budget),
@@ -476,7 +739,7 @@ export async function handleConnectorHealth(
     return;
   }
 
-  const [subscriptions, recentEvents, recentExecutions, driveFetchFailureRows] = await Promise.all([
+  const [subscriptions, recentEvents, recentExecutions, driveFetchFailureRows, driveGapRows] = await Promise.all([
     safeFetch<SubscriptionRow[]>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any)
@@ -510,14 +773,44 @@ export async function handleConnectorHealth(
     // this org. job_queue has no org_id column — org_id lives on the JSONB
     // payload every enqueuer writes (DriveFileChangedJobPayload), so this
     // filters on the embedded field via PostgREST's `column->>key` syntax.
-    safeFetch<Array<{ status: string }>>(
+    // `last_error` (fix-round item 6) — bounded, PII-scrubbed by
+    // `processNextJob`'s failure path, never document bytes — is read so
+    // `file_access_not_granted` can be distinguished from an ordinary
+    // fetch-job failure below.
+    safeFetch<Array<{ status: string; last_error: string | null }>>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any)
         .from('job_queue')
-        .select('status')
+        .select('status, last_error')
         .eq('type', DRIVE_FILE_CHANGED_JOB_TYPE)
         .eq('payload->>org_id', orgId)
         .in('status', ['failed', 'dead'])
+        .limit(50),
+      [],
+    ),
+    // Round-2 fix (item 2): gap-visibility read. `.eq('org_id', orgId)`
+    // uses `idx_audit_events_org_id` (btree, WHERE org_id IS NOT NULL) —
+    // this is a small, per-org-selective index scan, not a seq scan on the
+    // full audit_events table; `.eq('event_type', ...)` further narrows
+    // within that org-scoped set (also independently indexed via
+    // `idx_audit_events_event_type`). `target_id` is filtered in JS
+    // (`latestDriveGapByIntegrationId`) rather than a DB-side `.in()`,
+    // matching this file's existing `loadFailuresByVendor` pattern of
+    // "fetch a small, already-bounded rowset, correlate in JS" — the org
+    // scoping alone already bounds this to a handful of rows for any real
+    // org, so a second filter dimension buys nothing worth the extra query
+    // complexity. Ordered newest-first + limited so a runaway sequence of
+    // gaps on one integration cannot starve visibility into a DIFFERENT
+    // integration's gap.
+    safeFetch<DriveGapAuditRow[]>(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db as any)
+        .from('audit_events')
+        .select('target_id, created_at, details')
+        .eq('org_id', orgId)
+        .eq('event_type', DRIVE_CHANGES_GAP_EVENT_TYPE)
+        .gte('created_at', new Date(Date.now() - DRIVE_CHANGES_GAP_LOOKBACK_MS).toISOString())
+        .order('created_at', { ascending: false })
         .limit(50),
       [],
     ),
@@ -525,6 +818,21 @@ export async function handleConnectorHealth(
 
   const hasEnabledDriveRules = driveRuleRows.some((row) => driveFolderIds(row.trigger_config).length > 0);
   const driveFetchJobFailureCount = driveFetchFailureRows.length;
+  // Fix-round item 6: a SUBSET of those failures whose recorded reason is
+  // specifically "the grant does not cover this file" (DriveFileAccessError)
+  // or "Google's export size limit" (DriveExportSizeLimitError) — see
+  // oauth/drive.ts's doc comments on both classes. Message-prefix match on
+  // `last_error` is the only signal available without a dedicated column;
+  // `processDriveFileChangedJob`'s error path already writes `err.message`
+  // verbatim into it via the shared job-queue failure handler.
+  const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN = /^Drive file access denied|export size limit/i;
+  const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
+    (row) => typeof row.last_error === 'string' && DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN.test(row.last_error),
+  ).length;
+  // Round-2 fix (item 2): keyed by org_integrations.id — the SAME id every
+  // driveSignals construction below already keys off of (integration.id /
+  // row.id), so this is a plain map lookup per connection, no re-query.
+  const driveGapByIntegrationId = latestDriveGapByIntegrationId(driveGapRows);
 
   const integrationByProvider = new Map<string, IntegrationRow>();
   for (const row of integrations) integrationByProvider.set(row.provider, row);
@@ -567,7 +875,12 @@ export async function handleConnectorHealth(
     const driveSignals: DriveHealthSignals | undefined = entry.id === 'google_drive' && integration
       ? {
         cursorStale: hasEnabledDriveRules && isDriveCursorStale(integration.last_token_advanced_at),
+        neverSucceeded: hasEnabledDriveRules
+          && hasDriveChangesNeverSucceeded(integration.last_token_advanced_at, integration.connected_at),
         fetchJobFailureCount: driveFetchJobFailureCount,
+        fileAccessDeniedCount: driveFileAccessDeniedCount,
+        grantExceedsRequested: excessScopesOrUndefined(integration.scope),
+        gap: driveGapByIntegrationId.get(integration.id),
       }
       : undefined;
     let classification = classify(entry, integration, subscription, lastFailed, driveSignals);
@@ -579,7 +892,12 @@ export async function handleConnectorHealth(
           integration: row, subscription: watch,
           ...classify(entry, row, watch, vendorFailure, {
             cursorStale: hasEnabledDriveRules && isDriveCursorStale(row.last_token_advanced_at, now),
+            neverSucceeded: hasEnabledDriveRules
+              && hasDriveChangesNeverSucceeded(row.last_token_advanced_at, row.connected_at, now),
             fetchJobFailureCount: driveFetchJobFailureCount,
+            fileAccessDeniedCount: driveFileAccessDeniedCount,
+            grantExceedsRequested: excessScopesOrUndefined(row.scope),
+            gap: driveGapByIntegrationId.get(row.id),
           }),
         };
       }).sort(compareDriveHealth);

@@ -52,6 +52,32 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
  *     Arkova org's own google_drive grant already includes
  *     `auth/drive` + `drive.file`, so the picker works for that org today;
  *     every OTHER org's existing connection needs the re-consent above.
+ *
+ *     CORRECTION (2026-09-21, independent review, SCRUM-2903 fields-mask PR
+ *     follow-up — read this before trusting the paragraph above for a NEW
+ *     connection): `drive.file` per-file access is granted ONLY for a file
+ *     the app itself created, OR a file the user explicitly selected through
+ *     Google's REAL Picker UI
+ *     (https://developers.google.com/workspace/drive/picker/guides/overview)
+ *     — NOT merely "a file listed via drive.metadata.readonly." Arkova's
+ *     Connectors-page folder browser (`DriveFolderPicker` /
+ *     `api/v1/integrations/drive-folders.ts`, this scope's actual
+ *     consumer) is a CUSTOM component built on `files.list` over
+ *     `drive.metadata.readonly` — it is not, and does not load, Google's
+ *     Picker widget. Selecting a folder through it does NOT grant
+ *     `drive.file` per-file access to that folder's contents. Practical
+ *     effect: for a newly-connected org whose only grant is this scope set,
+ *     `fetchDriveFileBytes()` (the byte-fetch this scope was believed to
+ *     cover) will 403 (`appNotAuthorizedToFile` / `insufficientFilePermissions`
+ *     / similar) on an ordinary file the folder browser showed as watchable.
+ *     The Arkova org's own grant working today (verified 2026-09-13, cited
+ *     above) is because that grant ALSO includes the broad `auth/drive`
+ *     scope from an earlier, wider consent — not because this scope set is
+ *     sufficient on its own. This PR makes that 403 LOUD and specific (see
+ *     `fetchDriveFileBytes`'s doc comment and `connector-health.ts`'s
+ *     `file_access_not_granted` reason) rather than fixing the scope here —
+ *     the scope decision (real Picker integration vs. widening
+ *     `DRIVE_DEFAULT_SCOPES`) is being made separately.
  *   - userinfo.email: the callback's account-identity lookup
  *     (drive-oauth.ts fetchGoogleIdentity → oauth2/v3/userinfo). Without an
  *     identity scope that endpoint 401s and account_id degrades to a
@@ -67,6 +93,54 @@ export const DRIVE_DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/drive.metadata.readonly',
   'https://www.googleapis.com/auth/userinfo.email',
 ];
+
+/**
+ * Scopes Google may bundle onto an identity-scoped consent WITHOUT it being
+ * an over-grant — `openid` carries no Drive/Gmail/Contacts data access on
+ * its own, it is Google's own OIDC bookkeeping. Every OTHER scope beyond
+ * `DRIVE_DEFAULT_SCOPES` is treated as excess.
+ */
+const DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES = new Set(['openid']);
+
+/**
+ * SCRUM-5287 (P1 security, FULLSOAK 2026-08 register #9 follow-up): the
+ * shared OAuth client this connector uses can carry scopes from an
+ * UNRELATED prior consent — prod holds a 32-scope grant (full `drive`,
+ * `gmail.modify`, `contacts`, …) for the one connected org today, persisted
+ * because the OAuth callback wrote whatever Google returned without
+ * checking it against what was actually requested. `include_granted_scopes`
+ * is already never sent (see `buildAuthorizationUrl`'s doc comment), which
+ * stops a NEW consent from inheriting old scopes going forward — this is
+ * the other half: verifying the grant Google actually returned doesn't
+ * exceed `DRIVE_DEFAULT_SCOPES` before persisting it at all.
+ *
+ * Returns the excess scope NAMES (empty array = grant is within bounds).
+ * Never logs/returns anything else from the scope string — scope names are
+ * public OAuth constants, not secrets, but the token itself never flows
+ * through this function.
+ */
+/**
+ * Google's token-exchange response echoes SOME well-known OIDC scopes back
+ * as short aliases rather than the full URI that was requested (observed:
+ * `email` for `.../auth/userinfo.email`; `profile` for
+ * `.../auth/userinfo.profile`) — this is Google's own response shape, not
+ * an over-grant. Normalize before comparing against `DRIVE_DEFAULT_SCOPES`,
+ * which is always written in full-URI form.
+ */
+const DRIVE_GRANT_SCOPE_ALIASES: Record<string, string> = {
+  email: 'https://www.googleapis.com/auth/userinfo.email',
+  profile: 'https://www.googleapis.com/auth/userinfo.profile',
+};
+
+export function driveGrantExcessScopes(grantedScope: string | null | undefined): string[] {
+  if (!grantedScope) return [];
+  const requested = new Set(DRIVE_DEFAULT_SCOPES);
+  return grantedScope
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((scope) => DRIVE_GRANT_SCOPE_ALIASES[scope] ?? scope)
+    .filter((scope) => !requested.has(scope) && !DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
+}
 
 /**
  * Scopes that make `GET /api/v1/integrations/google_drive/folders` listable.
@@ -124,12 +198,86 @@ export class DriveApiError extends Error {
   detail?: string;
   /** Google's `Retry-After` response header, when present (429/5xx). */
   retryAfter?: string;
-  constructor(msg: string, status: number, detail?: string) {
+  /**
+   * True when this failure is Google's "the pageToken is no longer valid"
+   * signal — 410/404 always, OR a 400 whose parsed error body carries an
+   * explicit `invalidPageToken`-shaped reason/message (see
+   * `isInvalidPageTokenError` below; Google's issue tracker 196413673
+   * documents `changes.list` returning 400 for this condition on some
+   * accounts, not only 410). Computed once, at throw time, by the ONE call
+   * site (`listChanges`) that still has the parsed JSON body in hand — the
+   * processor's 410/404 re-bootstrap recovery reads this flag instead of
+   * re-deriving Google's error shape itself. Deliberately undefined/false
+   * on every OTHER DriveApiError throw site in this file; a bare 400 with no
+   * matching reason (e.g. this incident's own fields-mask defect) must
+   * NEVER read as an invalid-pageToken signal — see the doc comment on
+   * `isInvalidPageTokenError`.
+   */
+  pageTokenInvalid?: true;
+  constructor(msg: string, status: number, detail?: string, pageTokenInvalid?: true) {
     super(msg);
     this.name = 'DriveApiError';
     this.status = status;
     if (detail !== undefined) this.detail = detail;
+    if (pageTokenInvalid) this.pageTokenInvalid = true;
   }
+}
+
+/** One entry of Google's standard `error.errors[]` array (handle-errors guide). */
+interface GoogleApiErrorEntry {
+  reason?: string;
+  message?: string;
+  location?: string;
+  locationType?: string;
+}
+
+/** Google's standard JSON error envelope: `{ error: { code, message, errors: [...] } }`. */
+interface GoogleApiErrorBody {
+  error?: {
+    code?: number;
+    message?: string;
+    errors?: GoogleApiErrorEntry[];
+  };
+}
+
+/**
+ * Does this parsed Google error body signal "the pageToken is invalid /
+ * expired"? Google's own docs
+ * (developers.google.com/drive/api/guides/handle-errors) confirm the
+ * `error.errors[]` shape (`reason`, `message`, `location`,
+ * `locationType`) but do not enumerate a token-specific reason string;
+ * Google's issue tracker 196413673 reports `changes.list` returning
+ * `400 invalidPageToken` for some accounts where the documented behavior
+ * (`developers.google.com/drive/api/guides/manage-changes`) is a 410. This
+ * SEPARATE, narrow detector recognizes that 400 shape — 410/404 are handled
+ * unconditionally by the caller's own status check and never reach this
+ * function.
+ *
+ * DELIBERATELY NARROW: must match either an explicit `invalidPageToken`
+ * reason/message, or a `reason` containing "invalid" WHOSE `location` is
+ * literally `pageToken`. A bare 400 with an unrelated `reason`/`location` —
+ * e.g. this incident's OWN fields-mask bug, whose Google error names the
+ * `fields` parameter, not `pageToken` — must NEVER match here. Matching too
+ * broadly would silently convert a genuine, still-fixable bug into a
+ * cursor-discarding "recovery," which is the exact failure mode this
+ * detector exists to prevent, not reintroduce.
+ */
+export function isInvalidPageTokenError(json: unknown): boolean {
+  if (json === null || typeof json !== 'object') return false;
+  const err = (json as GoogleApiErrorBody).error;
+  if (!err) return false;
+  const topMessage = (err.message ?? '').toLowerCase();
+  if (topMessage.includes('invalidpagetoken')) return true;
+  const entries = Array.isArray(err.errors) ? err.errors : [];
+  return entries.some((entry) => {
+    const reason = (entry?.reason ?? '').toLowerCase();
+    const message = (entry?.message ?? '').toLowerCase();
+    const location = (entry?.location ?? '').toLowerCase();
+    if (reason === 'invalidpagetoken') return true;
+    if (message.includes('invalidpagetoken')) return true;
+    if (reason.includes('invalid') && location === 'pagetoken') return true;
+    return false;
+  });
 }
 
 /**
@@ -205,6 +353,105 @@ export class DriveDocumentTooLargeError extends Error {
     );
     this.name = 'DriveDocumentTooLargeError';
     this.byteLength = byteLength;
+  }
+}
+
+/**
+ * Fix-round item 6: the SCOPE reality — `drive.file` grants per-file access
+ * ONLY for a file the app created, or one selected through Google's REAL
+ * Picker widget (see `DRIVE_DEFAULT_SCOPES`'s doc comment, "CORRECTION"
+ * paragraph). Arkova's Connectors-page folder browser is a custom
+ * `files.list` component over `drive.metadata.readonly`, NOT the Picker —
+ * so for a newly-connected org, an ordinary file in a watched folder will
+ * 403 here. Before this fix that landed as a bare `DriveApiError(403)`,
+ * indistinguishable from any other failure and visible only in
+ * `job_queue.last_error`. This class makes it a DISTINCT, recognizable
+ * outcome the caller can surface loudly (`connector-health.ts`'s
+ * `file_access_not_granted` reason).
+ *
+ * `reason` is ALWAYS one of `KNOWN_DRIVE_FILE_ACCESS_DENIED_REASONS` — a
+ * short, Google-documented code — or the literal `'unknown'`. Never free
+ * text from the error body: §1.6A's "never let anything from this
+ * document-bearing path carry unbounded content into a log/Error" is
+ * upheld even though a REASON CODE (not the body itself) is read to
+ * produce it — see `extractDriveFileErrorReason`'s doc comment for why
+ * that narrow read is safe.
+ */
+export class DriveFileAccessError extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(`Drive file access denied: ${reason}`);
+    this.name = 'DriveFileAccessError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * Fix-round item 6: `files.export` refuses to render a Workspace-native
+ * document above Google's own export size limit (documented reason
+ * `exportSizeLimitExceeded`, typically on a 403). Distinct from
+ * `DriveDocumentTooLargeError` (Arkova's OWN `MAX_DRIVE_DOCUMENT_BYTES`
+ * cap, checked via `content-length` on a SUCCESSFUL response) — this is
+ * Google refusing to even START the export. Both are permanent,
+ * non-retryable dead-letter outcomes for the same underlying reason ("this
+ * artifact will never fit through this pipeline"), so callers should treat
+ * them the same way: fail the ONE artifact, do not retry.
+ */
+export class DriveExportSizeLimitError extends Error {
+  constructor() {
+    super("Drive file export exceeds Google's export size limit");
+    this.name = 'DriveExportSizeLimitError';
+  }
+}
+
+/**
+ * Google-documented `error.errors[].reason` codes this connector
+ * distinguishes as "the grant does not cover this file" (as opposed to a
+ * transient/auth/quota failure, which stays a generic `DriveApiError`).
+ * https://developers.google.com/drive/api/guides/handle-errors and Drive
+ * API v3 error responses observed for `files.get?alt=media` /
+ * `files.export` on a file outside the app's `drive.file` grant.
+ */
+const KNOWN_DRIVE_FILE_ACCESS_DENIED_REASONS = new Set([
+  'appNotAuthorizedToFile',
+  'insufficientFilePermissions',
+  'insufficientPermissions',
+  'forbidden',
+  'cannotDownloadAbusiveFile',
+]);
+
+/**
+ * Bounded, narrow read of a `files.get`/`files.export` non-2xx response —
+ * fix-round item 6. §1.6A's existing discipline for this file ("do NOT
+ * read/attach the body on the document-fetch error path — it can carry
+ * document bytes") is upheld by what this function DOES NOT return: it
+ * extracts ONLY `error.errors[].reason`, a short Google-documented code
+ * (e.g. `appNotAuthorizedToFile`), and discards everything else the moment
+ * it is parsed — no `message`, no other body content ever escapes this
+ * function. A 4xx on these endpoints is Google's own small JSON error
+ * envelope (never partial document content — that only ever rides a 2xx),
+ * but this reads no more of it than the one classification field needs,
+ * bounded by the same `DRIVE_BODY_READ_TIMEOUT_MS` deadline every other
+ * Drive JSON read in this file uses. Returns `null` on ANY failure to
+ * parse/classify (timeout, malformed body, no matching field) — the caller
+ * falls back to the pre-existing generic `DriveApiError(status)` with no
+ * detail, exactly as before this fix-round.
+ */
+async function extractDriveFileErrorReason(res: {
+  json(): Promise<unknown>;
+  body?: { cancel?: (reason?: unknown) => Promise<unknown> } | null;
+}): Promise<string | null> {
+  try {
+    const json = await readJsonBounded(res, 'Drive file bytes fetch (error classification)', DRIVE_BODY_READ_TIMEOUT_MS);
+    const errors = (json as GoogleApiErrorBody | null)?.error?.errors;
+    if (Array.isArray(errors)) {
+      for (const entry of errors) {
+        if (typeof entry?.reason === 'string') return entry.reason;
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -313,6 +560,42 @@ export async function refreshAccessToken(args: {
 }
 
 /**
+ * Fetch a fresh `changes.getStartPageToken` — the cursor to begin (or
+ * RESTART) walking the changes feed from "now" forward. Extracted from
+ * `createChangesWatch` (which calls this as its first step) so the SAME
+ * logic is reusable by the 410/404 "pageToken invalid/expired" recovery path
+ * in `drive-changes-processor.ts` — Google's documented recovery for an
+ * expired page token is exactly this call, never a retry of `changes.list`
+ * with the same stale token.
+ */
+export async function getStartPageToken(args: {
+  accessToken: string;
+  // DRIVE-02 (SCRUM-2367): scope to a shared-drive corpus when watching one.
+  driveId?: string;
+  deps?: DriveClientDeps;
+}): Promise<string> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  // Fix-round item D (simplify): built with URLSearchParams, matching every
+  // other query-string builder in this file — no hand-assembled `?a=b&c=d`
+  // template literal to keep separately correct.
+  const startTokenParams = args.driveId
+    ? new URLSearchParams({ driveId: args.driveId, supportsAllDrives: 'true' })
+    : undefined;
+  const startTokenQuery = startTokenParams ? `?${startTokenParams.toString()}` : '';
+  const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  const startJson = (await readDriveJson(startRes, 'Drive changes.startPageToken')) as {
+    startPageToken?: string;
+  } | null;
+  if (!startRes.ok || !startJson?.startPageToken) {
+    // Non-document path: changes/startPageToken returns small API JSON.
+    throw new DriveApiError('Drive startPageToken failed', startRes.status, boundedErrorDetail(startJson));
+  }
+  return startJson.startPageToken;
+}
+
+/**
  * Register a Drive push-notification channel. Drive will POST file-change
  * events to `address`. Channels expire after 7 days; renew before then via
  * the integration-subscription-renewal cron.
@@ -331,19 +614,11 @@ export async function createChangesWatch(args: {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
   // Drive requires a startPageToken to watch changes. For a shared-drive corpus
   // the token must be scoped to that drive.
-  const startTokenQuery = args.driveId
-    ? `?driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true`
-    : '';
-  const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
-    headers: { Authorization: `Bearer ${args.accessToken}` },
+  const startPageToken = await getStartPageToken({
+    accessToken: args.accessToken,
+    driveId: args.driveId,
+    deps: args.deps,
   });
-  const startJson = (await readDriveJson(startRes, 'Drive changes.startPageToken')) as {
-    startPageToken?: string;
-  } | null;
-  if (!startRes.ok || !startJson?.startPageToken) {
-    // Non-document path: changes/startPageToken returns small API JSON.
-    throw new DriveApiError('Drive startPageToken failed', startRes.status, boundedErrorDetail(startJson));
-  }
 
   const watchBody = {
     id: args.channelId,
@@ -356,7 +631,7 @@ export async function createChangesWatch(args: {
     ? `&driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true&includeItemsFromAllDrives=true`
     : '';
   const res = await fetchImpl(
-    `${DRIVE_API_BASE}/changes/watch?pageToken=${encodeURIComponent(startJson.startPageToken)}${watchQuery}`,
+    `${DRIVE_API_BASE}/changes/watch?pageToken=${encodeURIComponent(startPageToken)}${watchQuery}`,
     {
       method: 'POST',
       headers: {
@@ -380,7 +655,7 @@ export async function createChangesWatch(args: {
     : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   // DRIVE-02: expose the startPageToken so the bootstrap can persist it as the
   // watch's initial_page_token (the durable resume anchor).
-  return { resourceId: json.resourceId, expiration: expirationIso, startPageToken: startJson.startPageToken };
+  return { resourceId: json.resourceId, expiration: expirationIso, startPageToken };
 }
 
 /** Stop an active Drive push-notification channel during renewal/disconnect. */
@@ -593,6 +868,28 @@ export type DriveChangesListResponseT = z.infer<typeof ChangesListResponse>;
  * needs (file id/parents/revision/actor); body bytes never traverse this
  * path per CLAUDE.md §1.6.
  */
+/**
+ * SCRUM-2903 / SCRUM-3661 / SCRUM-5094 / SCRUM-2330 incident fix: this used
+ * to be built as `[ 'newStartPageToken', 'nextPageToken', 'changes(...',
+ * 'file(...', 'lastModifyingUser(...)))' ].join('')` — an EMPTY-STRING join,
+ * so the first two top-level entries and the start of `changes(...)` fused
+ * together with no separating commas
+ * (`newStartPageTokennextPageTokenchanges(...`). Google rejected every call
+ * with HTTP 400 `Invalid field selection newStartPageTokennextP...` — every
+ * Drive change notification failed, silently (200-acked so Drive would not
+ * retry-storm), since the 2026-05-04 commit that introduced it.
+ *
+ * Built as ONE template literal — unambiguous, and its top-level entries are
+ * explicitly comma-separated so there is no join-separator to get wrong a
+ * second time. Structure mirrors `getFileMetadata`'s and `listChildFolders`'
+ * flat `fields` masks: this one is just nested, per
+ * https://developers.google.com/drive/api/guides/fields-parameter.
+ */
+const CHANGES_LIST_FIELDS =
+  'newStartPageToken,nextPageToken,changes(fileId,removed,changeType,time,' +
+  'file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,' +
+  'lastModifyingUser(emailAddress,displayName)))';
+
 export async function listChanges(args: {
   accessToken: string;
   pageToken: string;
@@ -604,13 +901,7 @@ export async function listChanges(args: {
     includeRemoved: 'true',
     supportsAllDrives: 'true',
     includeItemsFromAllDrives: 'true',
-    fields: [
-      'newStartPageToken',
-      'nextPageToken',
-      'changes(fileId,removed,changeType,time,',
-      'file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,',
-      'lastModifyingUser(emailAddress,displayName)))',
-    ].join(''),
+    fields: CHANGES_LIST_FIELDS,
   });
   const url = `${DRIVE_API_BASE}/changes?${params.toString()}`;
   const res = await fetchImpl(url, {
@@ -620,7 +911,22 @@ export async function listChanges(args: {
   if (!res.ok) {
     // Non-document path: changes.list returns a metadata-only feed (fields mask
     // pulls file id/parents/revision/actor — no bytes); bounded+scrubbed detail.
-    throw new DriveApiError('Drive changes.list failed', res.status, boundedErrorDetail(json));
+    //
+    // pageTokenInvalid: 410/404 are Google's unconditional "token no longer
+    // valid" statuses; a 400 additionally qualifies ONLY when the parsed
+    // error body itself names pageToken as invalid (isInvalidPageTokenError)
+    // — never on a bare/generic 400, which must keep failing loud (see that
+    // function's doc comment for why, including this incident's own
+    // fields-mask 400 as the concrete counter-example).
+    const pageTokenInvalid = res.status === 410
+      || res.status === 404
+      || (res.status === 400 && isInvalidPageTokenError(json));
+    throw new DriveApiError(
+      'Drive changes.list failed',
+      res.status,
+      boundedErrorDetail(json),
+      pageTokenInvalid ? true : undefined,
+    );
   }
   return ChangesListResponse.parse(json);
 }
@@ -700,6 +1006,27 @@ export async function fetchDriveFileBytes(args: {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
   if (!res.ok) {
+    // Fix-round item 6: classify a 403 into a specific, LOUD outcome before
+    // falling back to the generic DriveApiError §1.6A discipline below
+    // (status + message only, no detail) — see `extractDriveFileErrorReason`'s
+    // doc comment for why this narrow, reason-code-only read does not
+    // reopen the "an error body here can carry document bytes" concern.
+    if (res.status === 403) {
+      const reason = await extractDriveFileErrorReason(res);
+      if (reason === 'exportSizeLimitExceeded') {
+        throw new DriveExportSizeLimitError();
+      }
+      if (reason && KNOWN_DRIVE_FILE_ACCESS_DENIED_REASONS.has(reason)) {
+        throw new DriveFileAccessError(reason);
+      }
+      // Deliberately NOT a blanket "every 403 is access-denied": Drive also
+      // returns 403 for `rateLimitExceeded` / `userRateLimitExceeded` /
+      // `dailyLimitExceeded` / `quotaExceeded` — genuinely retryable, unlike
+      // a permissions denial. An unrecognized (or unclassifiable — `reason`
+      // is `null` when the body didn't parse or carried no `errors[]`)
+      // reason falls through to the generic, retryable `DriveApiError`
+      // below rather than being mis-labeled as a permanent access denial.
+    }
     // §1.6A: do NOT read/attach the response body on the document-fetch path —
     // an error response here can carry document bytes. Status + message only,
     // and deliberately NO bounded `detail` (see DriveApiError doc comment).

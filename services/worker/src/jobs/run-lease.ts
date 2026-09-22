@@ -493,6 +493,45 @@ export async function renewRunLease(
 }
 
 /**
+ * Read-only, on-demand ownership check (SCRUM-2903/3661 fix-round item 4A) —
+ * see {@link RunLeaseContext}'s doc comment for why a long-running,
+ * multi-commit body needs this in addition to the heartbeat. A plain point
+ * lookup, never a write: does the lease row's stored holder still match
+ * `holder`, AND is its expiry still in the future?
+ *
+ * FAILS CLOSED, same philosophy as `acquireRunLease`: a store error, a
+ * missing row, or an unparseable expiry all return `false` ("does not
+ * verifiably still hold it") — an unverifiable claim is exactly the
+ * concurrent-execution risk this whole module exists to prevent, so it must
+ * never read as "yes, still mine" on ambiguous evidence.
+ */
+export async function stillHoldsRunLease(
+  client: SupabaseClient,
+  spec: RunLeaseSpec,
+  holder: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (client as any)
+      .from('job_queue')
+      .select('payload, scheduled_for')
+      .eq('id', spec.leaseId);
+    if (error) return false;
+    const rows = (data ?? []) as Array<{ payload?: { holder?: string } | null; scheduled_for?: string | null }>;
+    const row = rows[0];
+    if (!row) return false;
+    if (row.payload?.holder !== holder) return false;
+    if (!row.scheduled_for) return false;
+    const expiresAtMs = Date.parse(row.scheduled_for);
+    if (!Number.isFinite(expiresAtMs)) return false;
+    return expiresAtMs > now.getTime();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Releases a run lease, but only if this holder still owns it. A run whose
  * lease expired and was stolen must not clear the new holder's claim.
  */
@@ -675,6 +714,30 @@ export interface WithRunLeaseOptions extends RunLeaseSpec {
 }
 
 /**
+ * Passed to `body` on every `withRunLease` call (SCRUM-2903/3661 fix-round
+ * item 4A). Purely additive — every existing caller's zero-arg `body`
+ * function remains valid (TypeScript allows a callback with fewer declared
+ * parameters than its expected type). Lets a LONG-RUNNING body — one whose
+ * work is itself resumable/abortable mid-flight, unlike the atomic-batch
+ * jobs this module originally served — verify it STILL holds the lease
+ * before committing a step, rather than trusting the heartbeat alone.
+ *
+ * Why the heartbeat is not sufficient by itself: `startRunLeaseHeartbeat`
+ * stops RENEWING on a definitive loss (CAS matched zero rows) but does NOT,
+ * and structurally cannot, reach back into an in-flight `body` to tell it to
+ * stop — it only logs a warning and lets the run continue. For a body that
+ * makes a sequence of externally-visible commits (e.g. Drive's changes-feed
+ * walk, one page at a time), that gap means a run that lost its lease keeps
+ * writing as if it still owned it. `holder` is the exact string `body` can
+ * hand to {@link stillHoldsRunLease} for a live, on-demand ownership check
+ * before each such commit.
+ */
+export interface RunLeaseContext {
+  /** This run's unique holder string (see `runLeaseHolder()`). */
+  holder: string;
+}
+
+/**
  * Runs `body` under the lease, or reports that it could not be claimed.
  *
  * The `{ acquired }` discriminant is deliberate: a skipped run is NOT the same
@@ -691,7 +754,7 @@ export interface WithRunLeaseOptions extends RunLeaseSpec {
  */
 export async function withRunLease<T>(
   options: WithRunLeaseOptions,
-  body: () => Promise<T>,
+  body: (ctx: RunLeaseContext) => Promise<T>,
 ): Promise<RunLeaseOutcome<T>> {
   const { client, ...spec } = options;
 
@@ -717,7 +780,7 @@ export async function withRunLease<T>(
     }
     skipStreaks.delete(spec.leaseId);
     heartbeat = startRunLeaseHeartbeat(client, spec, holder);
-    return { acquired: true, result: await runBodyWithDeadline(spec, holder, body) };
+    return { acquired: true, result: await runBodyWithDeadline(spec, holder, () => body({ holder })) };
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     inFlight.delete(spec.leaseId);
