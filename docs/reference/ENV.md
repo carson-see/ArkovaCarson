@@ -89,6 +89,19 @@ Scope and safety, because this one disables a rate limit:
   the flag is set in production. CLAUDE.md §1.1 records that the in-code
   limiters are the ONLY real limits — there is no Cloudflare rate limiting on
   arkova.ai to catch a mistake here, which is why one guard was not enough.
+- Under E2E it is a **raised ceiling, not an absence**: adminRouter is served
+  by a second limiter (`scope: 'checkout-e2e'`, 1000/min) rather than no
+  limiter at all. Skipping outright would set **no `X-RateLimit-*` headers**,
+  and `e2e/connectors.spec.ts`'s headroom probe throws on absent headers — so
+  a bypass would have swapped one deterministic failure for another.
+
+**Operational gotcha — setting this on a staging rig crashes the worker.**
+Staging rigs run `NODE_ENV=production`, and `config.ts` throws at boot when
+this flag is set in production. Setting it on a rig "to try it out" therefore
+produces a **crash-looping worker, not a bypass**. That is the guard working
+as designed, but it reads as a mysterious deploy failure — check the worker
+log for the `E2E_ADMIN_RATELIMIT_BYPASS is set in production` message before
+diagnosing anything else.
 
 ## Verification API (worker only)
 ```bash
