@@ -9,7 +9,7 @@
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { logger } from '../utils/logger.js';
-import { rateLimiters } from '../utils/rateLimit.js';
+import { rateLimiters, rateLimit } from '../utils/rateLimit.js';
 import { adminRateLimitBypassActive } from '../config.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 import { isAdminRouterPath } from './admin-paths.js';
@@ -51,24 +51,40 @@ adminRouter.use((req, _res, next) => {
   next();
 });
 adminRouter.use(corsMiddleware);
-// The 10 req/min `checkout` limiter, with a narrowly-scoped E2E escape.
+// The 10 req/min `checkout` limiter, with a narrowly-scoped E2E ceiling.
 //
-// The Playwright stack cannot fit inside this bucket: every browser shares
-// `::1`, one ConnectorsPage run issues ~8-12 admin requests (it mounts two
-// `useConnectorRule` cards), and four specs contend for the same tokens under
-// parallel workers. `e2e/connectors.spec.ts` has been unsatisfiable since
-// 2026-09-19 — it waits for `remaining >= 16` from a ceiling of 10.
+// WHY: the Playwright stack cannot fit inside the 10/min bucket. Every E2E
+// browser shares `::1`, one `ConnectorsPage` run issues ~8-12 admin requests
+// (it mounts two `useConnectorRule` cards), and four specs contend for the
+// same tokens under parallel workers. `e2e/connectors.spec.ts` has been
+// unsatisfiable since 2026-09-19 — it waits for `remaining >= 16` from a
+// ceiling of 10.
 //
-// The bypass is applied HERE rather than on `rateLimiters.checkout` itself so
-// its blast radius is adminRouter alone: billing checkout, credit purchase,
-// account deletion and the anchor routes share that limiter instance and stay
-// fully rate-limited even under E2E. It is also inert in production by
-// construction (`adminRateLimitBypassActive()` requires
-// `nodeEnv !== 'production'`, and config throws at boot if the flag is set
-// there). The `/api/v1` limiter is untouched, so
+// WHY A RAISED CEILING AND NOT `skip`: skipping the limiter sets NO
+// `X-RateLimit-*` headers at all ("no headers set, nothing recorded" — see
+// `RateLimitOptions.skip`), and that spec's headroom probe throws
+// "malformed rate-limit headers" when `x-ratelimit-remaining` is absent. A
+// bypass would therefore have swapped one deterministic failure for another.
+// Keeping a real limiter with a high ceiling keeps the headers present, keeps
+// E2E exercising the same middleware prod runs, and means this is a relaxed
+// bound rather than an absent one.
+//
+// SCOPE: applied HERE rather than on `rateLimiters.checkout` itself, so the
+// blast radius is adminRouter alone — billing checkout, credit purchase,
+// account deletion and the anchor routes share that instance and keep their
+// 10/min even under E2E. `/api/v1` is untouched, so
 // `e2e/verify-ratelimit-contract.spec.ts` still proves §1.10.
+//
+// INERT IN PRODUCTION BY CONSTRUCTION: `adminRateLimitBypassActive()` requires
+// `nodeEnv !== 'production'`, and config.ts throws at boot if the flag is set
+// in production.
+const adminE2eCeilingLimiter = rateLimit({
+  windowMs: 60000,
+  maxRequests: 1000,
+  scope: 'checkout-e2e',
+});
 adminRouter.use((req, res, next) => {
-  if (adminRateLimitBypassActive()) { next(); return; }
+  if (adminRateLimitBypassActive()) { adminE2eCeilingLimiter(req, res, next); return; }
   rateLimiters.checkout(req, res, next);
 });
 

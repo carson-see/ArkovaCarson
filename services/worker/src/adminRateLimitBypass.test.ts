@@ -11,6 +11,7 @@
  * dynamic import (same idiom as config.test.ts).
  */
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { readFile } from 'node:fs/promises';
 
 const testEnv = {
   SUPABASE_URL: 'https://test.supabase.co',
@@ -95,5 +96,27 @@ describe('adminRateLimitBypassActive — fails closed', () => {
     });
     restoreLast = restore;
     expect(active()).toBe(false);
+  });
+});
+
+describe('the E2E path keeps a real limiter, not an absent one', () => {
+  it('uses a raised-ceiling limiter so X-RateLimit-* headers are still emitted', async () => {
+    // Regression guard for a fix that did not fix: skipping the limiter sets
+    // NO rate-limit headers, and e2e/connectors.spec.ts's headroom probe
+    // throws "malformed rate-limit headers" when x-ratelimit-remaining is
+    // absent. So the E2E path must be a HIGHER CEILING, never a bypass.
+    const src = await readFile(
+      new URL('./routes/admin.ts', import.meta.url),
+      'utf8',
+    );
+    // The E2E branch must hand off to a limiter, not call next() directly.
+    expect(src).toMatch(/adminRateLimitBypassActive\(\)\)\s*\{\s*adminE2eCeilingLimiter\(req, res, next\);/);
+    expect(src).not.toMatch(/adminRateLimitBypassActive\(\)\)\s*\{\s*next\(\);/);
+    // And that limiter's ceiling must exceed what the suite needs (>= 16),
+    // with a wide margin for four specs sharing one ::1 bucket.
+    const max = Number(/scope: 'checkout-e2e'[\s\S]*?/.test(src)
+      ? (src.match(/maxRequests:\s*(\d+),\s*\n\s*scope: 'checkout-e2e'/) ?? [])[1]
+      : NaN);
+    expect(max).toBeGreaterThanOrEqual(100);
   });
 });
