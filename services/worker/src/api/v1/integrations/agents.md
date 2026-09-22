@@ -1,6 +1,19 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
+_Last updated: 2026-09-21 (`drive-folders.test.ts`: added a `config.js` mock — `drive-changes-runner.js` now transitively imports `jobs/run-lease.ts`)_
 _Last updated: 2026-09-13 (`drive-folders.ts` added — Connectors page folder picker, SPEC-CONNECTORS §2.2)_
+
+## 2026-09-21 — `drive-folders.test.ts`: new `config.js` mock (fields-mask incident follow-up, SCRUM-2903/3661/5094/2330)
+
+No production code in this file changed. `drive-folders.ts` imports
+`loadDriveAccessToken` from `connectors/drive-changes-runner.ts`, which as of
+this date also imports `jobs/run-lease.ts` for a new per-integration
+single-flight lease (see `connectors/agents.md`) — that module reads the
+Zod-validated `config` export at MODULE LOAD time. This suite already
+stubbed `utils/db.js` for the identical reason (its own comment says so);
+`run-lease.ts` is a SEPARATE direct import of `config.js` not covered by
+that stub, so the suite failed with `Invalid worker configuration` until a
+`vi.mock('../../../config.js', ...)` was added alongside it.
 
 ## 2026-09-13 — `drive-folders.ts`: `GET /google_drive/folders`, the Connectors page folder picker
 
