@@ -49,6 +49,41 @@ The three instances:
   operators that the verdict means "retry", which is how a real denial gets
   waved through.
 
+## The same shape in CONFIG and in VIEWS, not just in assertions
+
+Three more mechanisms hit on 2026-09-22 after this rule was written. All six
+instances that day share one property: **a green signal that was compatible
+with the thing underneath being dead.**
+
+4. **A duplicate YAML key silently dropped a flag.** An edit added a second
+   `env:` key to a workflow step that already had one after its `run:`. YAML
+   keeps the last; the new variable vanished. The diff looked correct, a plain
+   `yaml.safe_load` parsed fine, and the flag simply never reached the process.
+   It also produced a workflow **startup failure — a run with `conclusion:
+   failure` and ZERO jobs** — so the entire required matrix never appeared.
+   *Detect it:* load the file with a loader that **raises on duplicate keys**,
+   then read the value back out of the parsed structure. A normal parse is
+   blind to this by design.
+
+5. **A required check that has not been created yet is not a passing check.**
+   `TypeCheck & Lint` → `Tests` → `E2E Tests` is a dependency chain, so the
+   later jobs do not exist as check rows until the earlier ones finish.
+   Reading "no `E2E Tests` row" as "E2E does not apply to this PR" was wrong
+   twice in one day. *Detect it:* judge a matrix by **row count** against a
+   known-good PR (35-45 here), and name the specific checks you require as
+   present-and-passing.
+
+6. **A filtered "outstanding items" view converts absence into success.** A
+   monitor that excludes expected failures and then reports "nothing left"
+   says the same thing whether every check passed or none ran. Two different
+   sessions shipped this bug within an hour of each other, and one of them was
+   the session that had just written this rule.
+
+The generalisation worth carrying: **before trusting green, ask what this
+signal would look like if the mechanism were entirely absent.** If the answer
+is "the same", it is not evidence — whether it is a probe, a gate, a config
+value, a check row, or your own dashboard.
+
 ## Related
 
 - [[feedback_gates_before_pin]] — the other half: run every required check, in
