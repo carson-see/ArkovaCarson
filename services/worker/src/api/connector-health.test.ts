@@ -940,6 +940,41 @@ describe('connector-health (SCRUM-1146)', () => {
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
     });
+
+    // SonarCloud typescript:S5850 (confirmed): the pattern
+    // `/^Drive file access denied|export size limit/i` binds as
+    // `(^Drive file access denied)|(export size limit)` — the SECOND
+    // alternative is unanchored, so it matches "export size limit"
+    // anywhere in last_error, not just Google's own export-size-limit
+    // message. An unrelated failure that merely mentions that phrase
+    // mid-string must NOT be counted as file_access_not_granted.
+    it('an UNRELATED last_error that merely contains "export size limit" mid-string does NOT read file_access_not_granted (S5850)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'failed', last_error: 'Timeout while waiting; upstream said export size limit unknown' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+    });
+
+    // Case-insensitivity is intentional (the pattern carries `/i`) and must
+    // survive the anchoring fix — a lowercase-at-start message still counts.
+    it('a lowercase-at-start "drive file access denied" last_error still reads file_access_not_granted (case-insensitive, S5850)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'dead', last_error: 'drive file access denied: appNotAuthorizedToFile' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('file_access_not_granted');
+    });
   });
 
   // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): an

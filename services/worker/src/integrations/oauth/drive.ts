@@ -369,36 +369,6 @@ export class DriveApiError extends Error {
   }
 }
 
-/**
- * SCRUM-5287 follow-up (2026-09-22, CRITICAL finding): OAuth2 token-endpoint
- * error codes that mean "this refresh token was presented to the WRONG
- * OAuth client" — https://www.rfc-editor.org/rfc/rfc6749#section-5.2 defines
- * `invalid_grant` and `invalid_client`; `unauthorized_client` is Google's
- * own addition for this same family. Distinct from every OTHER token-
- * endpoint failure (network, revoked grant by the USER, malformed request),
- * which must NOT trigger the generation-retry in `loadDriveAccessToken` —
- * retrying an actually-revoked grant against a different client cannot
- * succeed and would just double the latency of an already-failed refresh.
- */
-export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_CODES = new Set([
-  'invalid_grant',
-  'unauthorized_client',
-  'invalid_client',
-]);
-
-/**
- * Shared message prefix for the durable, bounded signal `loadDriveAccessToken`
- * writes to `org_integrations.last_renewal_error` when a refresh exhausts
- * every OAuth client it can try (see `drive-changes-runner.ts`). Exported
- * from this dependency-free module — not `drive-changes-runner.ts`, which
- * pulls in `jobs/run-lease.ts` and other heavier transitive deps — so
- * `connector-health.ts` can import just the string constant to recognize
- * the signal without adding that weight (see that folder's agents.md,
- * 2026-09-21 entry, for why a `connector-health.ts` → `drive-changes-runner.ts`
- * import was avoided once before).
- */
-export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX = 'Drive OAuth client mismatch';
-
 /** One entry of Google's standard `error.errors[]` array (handle-errors guide). */
 interface GoogleApiErrorEntry {
   reason?: string;
@@ -455,6 +425,36 @@ export function isInvalidPageTokenError(json: unknown): boolean {
     return false;
   });
 }
+
+/**
+ * SCRUM-5287 follow-up (2026-09-22, CRITICAL finding): OAuth2 token-endpoint
+ * error codes that mean "this refresh token was presented to the WRONG
+ * OAuth client" — https://www.rfc-editor.org/rfc/rfc6749#section-5.2 defines
+ * `invalid_grant` and `invalid_client`; `unauthorized_client` is Google's
+ * own addition for this same family. Distinct from every OTHER token-
+ * endpoint failure (network, revoked grant by the USER, malformed request),
+ * which must NOT trigger the generation-retry in `loadDriveAccessToken` —
+ * retrying an actually-revoked grant against a different client cannot
+ * succeed and would just double the latency of an already-failed refresh.
+ */
+export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_CODES = new Set([
+  'invalid_grant',
+  'unauthorized_client',
+  'invalid_client',
+]);
+
+/**
+ * Shared message prefix for the durable, bounded signal `loadDriveAccessToken`
+ * writes to `org_integrations.last_renewal_error` when a refresh exhausts
+ * every OAuth client it can try (see `drive-changes-runner.ts`). Exported
+ * from this dependency-free module — not `drive-changes-runner.ts`, which
+ * pulls in `jobs/run-lease.ts` and other heavier transitive deps — so
+ * `connector-health.ts` can import just the string constant to recognize
+ * the signal without adding that weight (see that folder's agents.md,
+ * 2026-09-21 entry, for why a `connector-health.ts` → `drive-changes-runner.ts`
+ * import was avoided once before).
+ */
+export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX = 'Drive OAuth client mismatch';
 
 /**
  * Deadline for every Drive API response-body read (F-D0-5,

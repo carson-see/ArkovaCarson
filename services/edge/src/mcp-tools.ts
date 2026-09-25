@@ -131,6 +131,13 @@ export interface AnchorDocumentInput {
 }
 
 export interface SubmissionStatusInput { public_id: string }
+export interface ImportRowsInput {
+  rows: Array<{ fingerprint: string; filename: string; fingerprint_provided: boolean; file_size?: number; credential_type?: string; metadata?: Record<string, unknown>; recipient_email?: string; recipient_name?: string }>;
+  action: 'queue' | 'instant';
+  description?: string;
+  user_tags?: string[];
+  organization_tags?: string[];
+}
 
 // Standalone edge build: mirror the worker's accepted anchor credential enum.
 // Unknown legacy MCP record types normalize to OTHER instead of making the
@@ -591,6 +598,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       type: 'object',
       properties: { public_id: { type: 'string', description: 'Arkova public identifier returned by submission' } },
       required: ['public_id'],
+    },
+  },
+  {
+    name: 'arkova_import_rows',
+    description: 'Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant path. Never accepts file bytes. Descriptions are public; tags are private. A row may carry recipient_email and recipient_name, which assigns the record to that third party and can cause an activation email to be sent to that address. A row reported created_recipient_failed or skipped_recipient_failed is already anchored: do not re-import it. Its reason code says whether the recipient was linked and whether the invitation was sent.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rows: { type: 'array', description: 'Rows containing fingerprint, filename, and fingerprint_provided', maxItems: 100 },
+        action: { type: 'string', enum: ['queue', 'instant'], description: 'Submission path' },
+        description: { type: 'string', maxLength: 1000, description: 'Shared public description' },
+        user_tags: { type: 'array', maxItems: 10, description: 'Private user tags' },
+        organization_tags: { type: 'array', maxItems: 10, description: 'Private organization tags' },
+      },
+      required: ['rows', 'action'],
     },
   },
   {
@@ -1865,6 +1887,69 @@ export async function handleAnchorDocument(
       return errorResult('Anchor submission timed out');
     }
     return errorResult(safeErrorText(error, 'arkova_anchor_document'));
+  }
+}
+
+const IMPORT_BOUNDED_CODE_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
+const IMPORT_RESULT_STATUSES = new Set(['created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed']);
+const IMPORT_INSTANT_STATUSES = new Set(['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED']);
+
+/**
+ * Allowlisted, bounded projection of an import response (#3034 review).
+ *
+ * The raw body is issuer-/user-influenced: filenames, reason strings and any
+ * field a future worker adds would otherwise flow verbatim into the model's
+ * context. Only the five counters and five per-row fields below survive, each
+ * length-capped; `reason` survives ONLY when it is already a bounded machine
+ * code, `results` is capped at the documented 100-row maximum, and every
+ * unknown key is dropped. Kept byte-for-byte equivalent to the npm stdio
+ * server's `projectImportResponse`.
+ */
+export function projectImportResponse(body: Record<string, unknown>): Record<string, unknown> {
+  const counter = (key: string): number => (Number.isInteger(body[key]) ? body[key] as number : 0);
+  const rows = Array.isArray(body.results) ? body.results.slice(0, 100) : [];
+  return {
+    total: counter('total'),
+    created: counter('created'),
+    skipped: counter('skipped'),
+    failed: counter('failed'),
+    recipient_link_failed: counter('recipient_link_failed'),
+    results: rows.map((entry) => {
+      const row = (entry ?? {}) as Record<string, unknown>;
+      const fingerprint = typeof row.fingerprint === 'string' && /^[a-fA-F0-9]{64}$/.test(row.fingerprint) ? row.fingerprint : '';
+      const status = typeof row.status === 'string' && IMPORT_RESULT_STATUSES.has(row.status) ? row.status : 'unknown';
+      // `unknown`, never `failed`: a caller that reads `failed` re-submits the row,
+      // and a status this client predates may well describe a committed anchor.
+      const publicId = typeof row.public_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(row.public_id) ? row.public_id : undefined;
+      const reason = typeof row.reason === 'string' && IMPORT_BOUNDED_CODE_RE.test(row.reason) ? row.reason : undefined;
+      const instantStatus = typeof row.instant_status === 'string' && IMPORT_INSTANT_STATUSES.has(row.instant_status) ? row.instant_status : undefined;
+      return {
+        fingerprint, status,
+        ...(publicId ? { public_id: publicId } : {}),
+        ...(reason ? { reason } : {}),
+        ...(instantStatus ? { instant_status: instantStatus } : {}),
+      };
+    }),
+  };
+}
+
+export async function handleImportRows(input: ImportRowsInput, config: SupabaseConfig): Promise<ToolResult> {
+  if (!config.workerBaseUrl || !config.callerApiKey) return errorResult('Row import requires API-key authentication and the Arkova API endpoint.');
+  try {
+    const { response, body } = await authenticatedWorkerJson(config, '/api/v1/anchor/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: input.action, rows: input.rows, ...(input.description ? { description: input.description } : {}), ...((input.user_tags?.length || input.organization_tags?.length) ? { private_tags: { user: input.user_tags ?? [], organization: input.organization_tags ?? [] } } : {}) }),
+    });
+    if (!response.ok) {
+      const code = typeof body?.error === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(body.error) ? body.error : `HTTP ${response.status}`;
+      return errorResult(`Row import failed: ${code}`);
+    }
+    if (!body || !Array.isArray(body.results) || !['total', 'created', 'skipped', 'failed'].every((key) => Number.isInteger(body[key]))) {
+      return errorResult('Row import failed: malformed response');
+    }
+    return textResult(projectImportResponse(body));
+  } catch (error) {
+    return errorResult(safeErrorText(error, 'arkova_import_rows'));
   }
 }
 

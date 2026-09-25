@@ -21,6 +21,22 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
+import { ORG_VERIFICATION_LABELS } from '@/lib/copy';
+
+/**
+ * SCRUM-5285 — the worker compare-and-swaps both domain-verification writes
+ * against the domain (and pending code) they were issued for, and answers
+ * 409 `verification_superseded` when the row moved underneath the request.
+ *
+ * That is not a transient failure: the proof no longer binds and resubmitting
+ * the same code can never succeed. Both handlers below therefore reset to the
+ * start of the flow and say so, rather than surfacing it as a generic error.
+ */
+const VERIFICATION_SUPERSEDED = 'verification_superseded';
+
+function isSuperseded(status: number, body: { code?: string }): boolean {
+  return status === 409 && body.code === VERIFICATION_SUPERSEDED;
+}
 
 const isDev = import.meta.env.DEV;
 
@@ -145,8 +161,15 @@ export function OrgVerification({
         headers,
       });
 
-      const data = await response.json() as { error?: string; message?: string; devCode?: string };
+      const data = await response.json() as { error?: string; message?: string; devCode?: string; code?: string };
       if (!response.ok) {
+        if (isSuperseded(response.status, data)) {
+          // No code was issued, so do NOT advance to the code step.
+          setDomainVerificationPending(false);
+          setVerificationCode('');
+          setError(ORG_VERIFICATION_LABELS.DOMAIN_START_SUPERSEDED);
+          return;
+        }
         setError(data.error ?? 'Failed to start domain verification');
         return;
       }
@@ -180,8 +203,17 @@ export function OrgVerification({
         body: JSON.stringify({ code: verificationCode.trim() }),
       });
 
-      const data = await response.json() as { error?: string; verificationStatus?: string; message?: string };
+      const data = await response.json() as { error?: string; verificationStatus?: string; message?: string; code?: string };
       if (!response.ok) {
+        if (isSuperseded(response.status, data)) {
+          // Nothing was granted. Clear the dead code and put the user back at
+          // "Send Verification Email" so the instruction to start again is
+          // actually actionable.
+          setDomainVerificationPending(false);
+          setVerificationCode('');
+          setError(ORG_VERIFICATION_LABELS.DOMAIN_CONFIRM_SUPERSEDED);
+          return;
+        }
         setError(data.error ?? 'Failed to verify domain');
         return;
       }

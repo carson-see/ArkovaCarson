@@ -933,6 +933,48 @@ export function withCronMonitoring<T>(
 // dependency-free (avoids circular imports from `utils/logger.ts` consumers
 // that also import sentry — e.g. the AUDIT-22 bootstrap path).
 
+// ---------------------------------------------------------------------------
+// Recipient-identifier pepper outage (SCRUM-5265 / S7)
+// ---------------------------------------------------------------------------
+//
+// `hashRecipientEmail` fails CLOSED with RecipientPepperUnavailableError when
+// RECIPIENT_IDENTIFIER_PEPPER is unset, because the alternative — a bare
+// sha256(email) — re-opens the offline-enumeration leak (SCRUM-2484). Failing
+// closed is right, but silent: every recipient link in the deployment stops
+// working and the only trace is a per-row reason code in a 207 body nobody
+// reads. This is a CONFIG outage, so it pages once per request (not once per
+// row — a 100-row import shares one root cause) and a fixed fingerprint
+// collapses repeated imports into a single issue.
+//
+// PII (§1.4/§1.6A): callers pass the org UUID and a row COUNT. Never the
+// recipient email, the recipient name, or the document fingerprint.
+export const RECIPIENT_PEPPER_UNAVAILABLE_FINGERPRINT = ['recipient-identifier-pepper-unavailable'] as const;
+
+export interface RecipientPepperUnavailableArgs {
+  /** Call site identifier, e.g. 'anchor-self-service-bulk.linkBulkRecipient'. */
+  operation: string;
+  /** Tenant the request ran under, or null for personal scope. */
+  orgId: string | null;
+  /** How many rows in THIS request lost their recipient link to the outage. */
+  affectedRows: number;
+}
+
+export function captureRecipientPepperUnavailableAlert(args: RecipientPepperUnavailableArgs): void {
+  Sentry.captureMessage(
+    'RECIPIENT_IDENTIFIER_PEPPER is unavailable — recipient linking is failing closed '
+      + `(${args.affectedRows} row(s) in this request)`,
+    {
+      level: 'error',
+      fingerprint: [...RECIPIENT_PEPPER_UNAVAILABLE_FINGERPRINT],
+      extra: {
+        operation: args.operation,
+        org_id: args.orgId,
+        affected_rows: args.affectedRows,
+      },
+    },
+  );
+}
+
 export interface RpcFallbackLogger {
   warn: (obj: Record<string, unknown>, msg: string) => void;
 }

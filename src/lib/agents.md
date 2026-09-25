@@ -905,6 +905,7 @@ Two differences from the DocuSign module, both deliberate:
 Same scope rule as `docusignLinks.ts`: authenticated record-detail page ONLY. The public
 verification page and the anonymous verify API must never import it.
 
+UAT-23 user-facing import and per-row instant-state strings live in `copy.ts`; keep one-credit-per-row and partial-status language truthful.
 
 ## 2026-09-14 — SCRUM-5145 signup email policy
 
@@ -915,3 +916,24 @@ UAT-17 add-existing-member labels live in `copy.ts`; the dialog describes the ex
 `WEBHOOK_EVENT_DESCRIPTIONS` includes the registered revocation-confirmation and
 attestation-active events; the registration-drift gate binds this map to the
 worker registry.
+
+## 2026-09-21 — BULK_IMPORT_LABELS recipient-link copy (PR #3034)
+
+`RECIPIENT_LINK_FAILED` / `RECIPIENT_LINK_FAILED_BODY` describe a row that IS
+secured but whose recipient could not be linked. The body text must keep saying
+"Do not upload these rows again" — the whole point of the status is to stop a
+re-upload of an anchor that already exists. No §1.3 banned terms.
+
+## 2026-09-21 — bulkRecipientOutcome.ts (PR #3034, S3)
+
+`anchor_recipients` commits BEFORE `deliverBulkActivationOnce`, so a
+`*_recipient_failed` row does NOT always mean "not linked". This module maps the
+worker's reason codes to what actually happened — `notPermitted`, `notLinked`,
+`linkedNotSent`, `linkedUnconfirmed`, `unknown` — with every entry pinned to a
+throw site in `services/worker/src/api/bulk-recipient.ts`. An unrecognised or
+absent code is `unknown`, which asserts nothing, so a newer worker's reason
+code can never make the UI claim something we did not measure (§1.5).
+Classification lives here, not in `copy.ts`: the copy layer stays copy.
+## 2026-09-21 — SCRUM-5285 org-verification superseded copy
+
+`ORG_VERIFICATION_LABELS` carries the two 409 `verification_superseded` messages for `components/org/OrgVerification.tsx`. Both must keep telling the user to START AGAIN rather than to retry: the worker's compare-and-swap makes the refusal permanent for that code, so "try again" would be false. API error codes stay literals in the handlers — only user-visible strings live here.

@@ -69,6 +69,8 @@ import { driveFolderIds } from './drive-folder-bindings.js';
 import {
   withRunLease,
   stillHoldsRunLease,
+  markRunLeaseDirty,
+  checkAndClearRunLeaseDirty,
   type RunLeaseSpec,
 } from '../../jobs/run-lease.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
@@ -855,64 +857,10 @@ export function createFolderPathCache(
   };
 }
 
-/**
- * Fix-round item 3 (dirty/rerun-requested marker): "a push arrives while
- * the lease is held" must not be dropped silently — before this, `webhooks/
- * drive.ts` finding the lease locked just returned `{skipped:'locked'}` and
- * NOTHING re-ran for that push. `job_queue.attempts` is the marker:
- * completely UNUSED by the lease mechanism itself (`claim_next_job` is
- * TYPE-scoped away from lease rows — see run-lease.ts's own doc comment)
- * and defaults to 0, so it doubles as a boolean hint with NO payload merge
- * (a merge would risk racing `releaseRunLease`'s payload reset and
- * resurrecting stale holder info — see the withRunLease body below for why
- * that matters) and NO migration.
- *
- * `markLeaseDirty` is an UNCONDITIONAL write — no ownership check. Setting
- * it when nobody currently holds the lease is a harmless no-op (the next
- * `acquireRunLease` bootstrap-upserts around it, and the flag is read once,
- * at the end of whichever run next holds the lease, then cleared). Setting
- * it while a run IS in flight is the entire point: that run reads it back
- * (`checkAndClearLeaseDirty`) after finishing its own pass and, if set,
- * does exactly ONE more `processDriveChanges` pass before releasing —
- * bounded, not a retry loop — so a push that arrived mid-run is honored
- * within THIS request rather than waiting for the periodic reconciliation
- * sweep (below) to eventually notice.
- */
-async function markLeaseDirty(client: SupabaseClient, spec: RunLeaseSpec, log?: DriveChangesRunnerDeps['logger']): Promise<void> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (client as any).from('job_queue').update({ attempts: 1 }).eq('id', spec.leaseId);
-    if (error) {
-      log?.warn?.({ error, leaseId: spec.leaseId }, 'drive runner: markLeaseDirty write failed — periodic reconciliation is the backstop');
-    }
-  } catch (error) {
-    log?.warn?.({ error, leaseId: spec.leaseId }, 'drive runner: markLeaseDirty threw — periodic reconciliation is the backstop');
-  }
-}
-
-async function checkAndClearLeaseDirty(client: SupabaseClient, spec: RunLeaseSpec): Promise<boolean> {
-  try {
-    // Plain `.select().eq()` + array indexing, deliberately NOT
-    // `.maybeSingle()` — matches `compareAndSetLease`'s own read-back
-    // pattern in run-lease.ts (a point lookup by primary key, read as
-    // `rows[0]`).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (client as any)
-      .from('job_queue')
-      .select('attempts')
-      .eq('id', spec.leaseId);
-    if (error) return false;
-    const rows = (data ?? []) as Array<{ attempts?: number }>;
-    const dirty = (rows[0]?.attempts ?? 0) > 0;
-    if (dirty) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (client as any).from('job_queue').update({ attempts: 0 }).eq('id', spec.leaseId);
-    }
-    return dirty;
-  } catch {
-    return false;
-  }
-}
+// Dirty / rerun-requested marker (fix-round item 3) lives in jobs/run-lease.ts
+// as `markRunLeaseDirty` / `checkAndClearRunLeaseDirty` — it is a lease-row
+// primitive, and run-lease.ts is the allow-listed owner of lease-row access
+// (scripts/ci/check-job-queue-parity.ts rule 4). See its doc comment there.
 
 /**
  * Top-level runner. Webhook handler calls this with the resolved
@@ -1010,7 +958,7 @@ export async function runDriveChanges(
     // itself lost the lease/CAS race, the ORIGINAL starting token — a
     // no-op re-run is harmless and cheap; it is not this pass's job to
     // resolve a race it already lost).
-    const dirty = await checkAndClearLeaseDirty(leaseClient, leaseSpec);
+    const dirty = await checkAndClearRunLeaseDirty(leaseClient, leaseSpec);
     if (dirty) {
       const resumeToken = result.newPageToken ?? nonNullLastPageToken;
       deps.logger?.info?.(
@@ -1029,7 +977,33 @@ export async function runDriveChanges(
         db,
         deps: { logger: deps.logger, resolveFolderPath, stillHoldsLease },
       });
-      result = secondResult;
+      // Merge, do NOT replace. `result = secondResult` threw away pass 1's
+      // work — and it did so in exactly the case this bounded second pass
+      // exists to serve, so a run under-reported itself precisely when a
+      // push landed mid-run. Counters are summed because they describe the
+      // WHOLE run; `newPageToken` and the pass-2 flags come from the later
+      // pass via the spread, because the cursor must never rewind.
+      //
+      // `cursorReset`, `leaseLost` and `cursorAdvanceLost` are declared
+      // `?: true` and each documents a thing that HAPPENED during a pass —
+      // "recovered from a 410/404", "detected it no longer holds the lease",
+      // "the CAS reported advanced: false". They are history, not
+      // current-state predicates, so a pass-1 occurrence must survive a
+      // pass-2 that did not repeat it. OR them; never let the spread erase
+      // one.
+      result = {
+        ...secondResult,
+        changesProcessed: result.changesProcessed + secondResult.changesProcessed,
+        queued: result.queued + secondResult.queued,
+        parentMismatch: result.parentMismatch + secondResult.parentMismatch,
+        duplicates: result.duplicates + secondResult.duplicates,
+        pagesProcessed: result.pagesProcessed + secondResult.pagesProcessed,
+        ...(result.cursorReset || secondResult.cursorReset ? { cursorReset: true as const } : {}),
+        ...(result.leaseLost || secondResult.leaseLost ? { leaseLost: true as const } : {}),
+        ...(result.cursorAdvanceLost || secondResult.cursorAdvanceLost
+          ? { cursorAdvanceLost: true as const }
+          : {}),
+      };
     }
 
     return result;
@@ -1037,8 +1011,8 @@ export async function runDriveChanges(
 
   if (!outcome.acquired) {
     // Fix-round item 3: mark the CURRENT holder dirty rather than dropping
-    // this push — see markLeaseDirty's doc comment.
-    await markLeaseDirty(leaseClient, leaseSpec, deps.logger);
+    // this push — see markRunLeaseDirty's doc comment in run-lease.ts.
+    await markRunLeaseDirty(leaseClient, leaseSpec, deps.logger);
     deps.logger?.info?.(
       { integrationId: integration.id, orgId: integration.org_id },
       'drive runner: another run already holds the per-integration lease — marked dirty for one more pass, skipping (single-flight)',

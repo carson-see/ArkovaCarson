@@ -25,6 +25,17 @@ describe('Arkova', () => {
     expect(client).toBeDefined();
   });
 
+  it('routes default requests through the public API hostname', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'healthy' }) });
+
+    await new Arkova().request('/health');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.arkova.ai/health',
+      expect.any(Object),
+    );
+  });
+
   it('creates client with API key', () => {
     const client = new Arkova({ apiKey: 'ak_test_123' });
     expect(client).toBeDefined();
@@ -114,6 +125,72 @@ describe('Arkova', () => {
     await expect(new Arkova({ baseUrl: 'https://user:pass@example.com' }).request('/health'))
       .rejects.toMatchObject({ code: 'invalid_request_path' });
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('anchorImport', () => {
+  it('uses the additive canonical import endpoint without org_id or file bytes', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0,
+      results: [{ fingerprint: 'a'.repeat(64), status: 'created', public_id: 'ARK-1', instant_status: 'QUEUED' }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const client = new Arkova({ apiKey: 'ak_test' });
+    await expect(client.anchorImport([{
+      fingerprint: 'A'.repeat(64), filename: 'row.pdf', fingerprintProvided: true,
+      recipientEmail: 'member@example.test',
+    }], { action: 'instant', description: 'Import', privateTags: { user: ['mine'], organization: [] } })).resolves.toMatchObject({
+      results: [{ publicId: 'ARK-1', instantStatus: 'QUEUED' }],
+    });
+    const init = mockFetch.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+    expect(body).not.toHaveProperty('org_id');
+    expect(body).toMatchObject({ action: 'instant', rows: [{ fingerprint: 'a'.repeat(64), fingerprint_provided: true }] });
+  });
+
+  // SHOULD-FIX from the #3020 review: the anchor exists, so the SDK must carry
+  // the recipient-link statuses through typed rather than call the row failed.
+  it('carries the recipient-link statuses and the additive counter through typed', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      total: 2, created: 1, skipped: 1, failed: 0, recipient_link_failed: 2,
+      results: [
+        { fingerprint: 'a'.repeat(64), status: 'created_recipient_failed', public_id: 'ARK-1', reason: 'recipient_activation_email_failed' },
+        { fingerprint: 'b'.repeat(64), status: 'skipped_recipient_failed', public_id: 'ARK-2', reason: 'recipient_link_failed' },
+      ],
+    }), { status: 207, headers: { 'content-type': 'application/json' } }));
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const result = await client.anchorImport(
+      [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true }],
+      { action: 'queue' },
+    );
+    expect(result.failed).toBe(0);
+    expect(result.recipientLinkFailed).toBe(2);
+    expect(result.results.map((row) => row.status)).toEqual([
+      'created_recipient_failed', 'skipped_recipient_failed',
+    ]);
+    expect(result.results[0]).toMatchObject({ publicId: 'ARK-1', reason: 'recipient_activation_email_failed' });
+    expect(result.created + result.skipped + result.failed).toBe(result.total);
+  });
+
+  // NIT (#3034 review): the worker requires a POSITIVE file_size, so a 0 was
+  // accepted client-side and then rejected server-side for the WHOLE request.
+  // Reject it here, with a message that names the field.
+  it('rejects a zero file_size before any request, naming the field', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    await expect(client.anchorImport(
+      [{ fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true, fileSize: 0 }],
+      { action: 'queue' },
+    )).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('file_size') });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed above 100 rows and never retries a write response', async () => {
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 3, sleep: vi.fn() } });
+    const row = { fingerprint: 'a'.repeat(64), filename: 'row.pdf', fingerprintProvided: true };
+    await expect(client.anchorImport(Array.from({ length: 101 }, () => row), { action: 'queue' })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(mockFetch).not.toHaveBeenCalled();
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } }));
+    await expect(client.anchorImport([row], { action: 'queue' })).rejects.toMatchObject({ statusCode: 503 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1428,6 +1505,7 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'anchor.expired': true,
   'anchor.superseded': true,
   'anchor.batch_secured': true,
+  'anchor.revocation_anchored': true,
   'credential.issued': true,
   'credential.verified': true,
   'credential.status_changed': true,
@@ -1442,7 +1520,6 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   // the payloads skipped schema validation entirely.
   'attestation.created': true,
   'attestation.revoked': true,
-  'anchor.revocation_anchored': true,
   'attestation.active': true,
   'folder.created': true,
   'folder.updated': true,
@@ -1464,6 +1541,7 @@ describe('WebhookEventType', () => {
     expect(Object.keys(WEBHOOK_EVENT_TYPE_PIN).sort()).toEqual(
       [
         'anchor.batch_secured',
+        'anchor.revocation_anchored',
         'anchor.expired',
         'anchor.revoked',
         'anchor.secured',
@@ -1480,7 +1558,6 @@ describe('WebhookEventType', () => {
         'credential.verified',
         'attestation.created',
         'attestation.revoked',
-        'anchor.revocation_anchored',
         'attestation.active',
         'folder.created',
         'folder.updated',

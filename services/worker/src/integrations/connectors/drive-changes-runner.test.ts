@@ -1549,6 +1549,69 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
       );
     });
 
+    it('MERGES both passes: counters are summed and per-pass flags OR-ed, not replaced by pass 2', async () => {
+      const kms = fakeKms();
+      const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');
+      const db = {
+        from: (t: string) => {
+          if (t === 'job_queue') return leaseStore.from(t);
+          return {
+            select: (_c: string) => ({
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+            }),
+          };
+        },
+        rpc: vi.fn(),
+      };
+      const integration: DriveIntegrationRow = {
+        id: INT,
+        org_id: ORG,
+        encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+        token_kms_key_id: KEY,
+        last_page_token: 'pt-1',
+      };
+      // Pass 1 does REAL work and hits a cursor reset, then a push lands
+      // mid-run (marks the lease dirty). Pass 2 does a little more work.
+      // The run's reported totals must describe the WHOLE run: before this
+      // was fixed, `result = secondResult` threw pass 1's numbers away, so a
+      // run under-reported itself in exactly the case the dirty marker
+      // exists to handle.
+      processDriveChangesMock.mockImplementationOnce(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (leaseStore.from('job_queue') as any).update({ attempts: 1 }).eq('id', INT);
+        return {
+          pagesProcessed: 3, queued: 7, parentMismatch: 2, duplicates: 1,
+          changesProcessed: 10, newPageToken: 'pt-2', cursorReset: true as const,
+        };
+      });
+      processDriveChangesMock.mockResolvedValueOnce({
+        pagesProcessed: 1, queued: 4, parentMismatch: 1, duplicates: 3,
+        changesProcessed: 5, newPageToken: 'pt-3',
+      });
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const result = await runDriveChanges(integration, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms,
+        logger: log,
+      });
+      expect(processDriveChangesMock).toHaveBeenCalledTimes(2);
+      // Counters describe the whole run, not just its last pass.
+      expect(result).toMatchObject({
+        pagesProcessed: 4,
+        queued: 11,
+        parentMismatch: 3,
+        duplicates: 4,
+        changesProcessed: 15,
+        // The cursor still comes from the LATER pass — merging must not
+        // rewind it.
+        newPageToken: 'pt-3',
+      });
+      // `cursorReset` is a fact about something that HAPPENED during this
+      // run. Pass 2 did not reset, but pass 1 did, so the run did.
+      expect(result).toMatchObject({ cursorReset: true });
+    });
+
     it('when NOT dirty, runs exactly once — no extra pass, no wasted work', async () => {
       const kms = fakeKms();
       const leaseStore = createRunLeaseStore(driveChangesRunLeaseSpec(INT), 'free');

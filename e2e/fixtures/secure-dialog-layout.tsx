@@ -7,7 +7,7 @@ import '../../src/index.css';
 
 function Fixture() {
   const [open, setOpen] = useState(true);
-  const childContext = ['selected-child', 'child-instant', 'member-zero'].includes(window.__layout.scenario);
+  const childContext = ['org-review', 'selected-child', 'child-instant', 'member-zero'].includes(window.__layout.scenario);
   return (
     <MemoryRouter>
       <SecureDocumentDialog

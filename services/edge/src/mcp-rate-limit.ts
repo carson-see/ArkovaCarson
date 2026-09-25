@@ -27,6 +27,7 @@ export const TOOL_LIMITS_RPM: Record<string, number> = {
   nessie_query: 100,        // Gemini budget protection
   arkova_oracle_batch_verify: 10,  // 25× verify multiplier per call
   arkova_anchor_document: 60,      // write path
+  arkova_import_rows: 10,          // bounded bulk write path
 };
 
 export type RateLimitDecision =

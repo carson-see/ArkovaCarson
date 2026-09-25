@@ -31,27 +31,26 @@
  * function narrows the space of "how else could a mask be wrong" beyond
  * copy-paste drift in that literal.
  */
-export function assertValidFieldsMask(mask: string): void {
-  if (mask.length === 0) {
-    throw new Error('fields mask is empty');
-  }
-  if (/\s/.test(mask)) {
-    throw new Error(
-      `fields mask contains whitespace — a Drive fields mask is never whitespace-separated: ${JSON.stringify(mask)}`,
-    );
-  }
+type TokenKind = 'ident' | ',' | '(' | ')' | '/' | '*';
+interface Token {
+  kind: TokenKind;
+  value: string;
+}
 
-  type TokenKind = 'ident' | ',' | '(' | ')' | '/' | '*';
-  interface Token {
-    kind: TokenKind;
-    value: string;
-  }
+const TOKEN_PATTERN = /[A-Za-z_][A-Za-z0-9_]*|[,()/*]/g;
 
+/**
+ * Splits `mask` into `Token`s, or throws if any character does not belong
+ * to a recognized token (an identifier or one of `,()/*`). Whitespace is
+ * assumed already rejected by the caller, so any gap between matches here
+ * is a genuinely unrecognized character, never a space.
+ */
+function tokenizeFieldsMask(mask: string): Token[] {
   const tokens: Token[] = [];
-  const tokenPattern = /[A-Za-z_][A-Za-z0-9_]*|[,()/*]/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
-  while ((match = tokenPattern.exec(mask)) !== null) {
+  TOKEN_PATTERN.lastIndex = 0;
+  while ((match = TOKEN_PATTERN.exec(mask)) !== null) {
     if (match.index !== cursor) {
       throw new Error(
         `fields mask has an unrecognized character at index ${cursor}: ${JSON.stringify(mask.slice(cursor, match.index))} in ${JSON.stringify(mask)}`,
@@ -67,10 +66,16 @@ export function assertValidFieldsMask(mask: string): void {
       `fields mask has an unrecognized character at index ${cursor}: ${JSON.stringify(mask.slice(cursor))} in ${JSON.stringify(mask)}`,
     );
   }
-  if (tokens.length === 0) {
-    throw new Error('fields mask has no tokens');
-  }
+  return tokens;
+}
 
+/**
+ * Walks the token stream checking paren balance (never negative),
+ * no two identifiers adjacent without a separator, and no empty/stray
+ * comma. Returns the final paren depth for the caller to check against 0
+ * (an unclosed `(` at end-of-mask is a separate, caller-owned check).
+ */
+function validateTokenSequence(tokens: Token[], mask: string): number {
   let depth = 0;
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
@@ -98,11 +103,11 @@ export function assertValidFieldsMask(mask: string): void {
       throw new Error(`fields mask has an empty or stray comma (token ${i}) in ${JSON.stringify(mask)}`);
     }
   }
+  return depth;
+}
 
-  if (depth !== 0) {
-    throw new Error(`fields mask has ${depth} unmatched '(' (unbalanced parentheses): ${JSON.stringify(mask)}`);
-  }
-
+/** The last token alone determines a trailing-comma or unclosed-paren error. */
+function validateTrailingToken(tokens: Token[], mask: string): void {
   const last = tokens[tokens.length - 1];
   if (last.kind === ',') {
     throw new Error(`fields mask ends with a trailing comma: ${JSON.stringify(mask)}`);
@@ -110,4 +115,27 @@ export function assertValidFieldsMask(mask: string): void {
   if (last.kind === '(') {
     throw new Error(`fields mask ends with an unclosed '(': ${JSON.stringify(mask)}`);
   }
+}
+
+export function assertValidFieldsMask(mask: string): void {
+  if (mask.length === 0) {
+    throw new Error('fields mask is empty');
+  }
+  if (/\s/.test(mask)) {
+    throw new Error(
+      `fields mask contains whitespace — a Drive fields mask is never whitespace-separated: ${JSON.stringify(mask)}`,
+    );
+  }
+
+  const tokens = tokenizeFieldsMask(mask);
+  if (tokens.length === 0) {
+    throw new Error('fields mask has no tokens');
+  }
+
+  const depth = validateTokenSequence(tokens, mask);
+  if (depth !== 0) {
+    throw new Error(`fields mask has ${depth} unmatched '(' (unbalanced parentheses): ${JSON.stringify(mask)}`);
+  }
+
+  validateTrailingToken(tokens, mask);
 }

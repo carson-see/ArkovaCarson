@@ -17,14 +17,25 @@ export const DEFAULT_ESPLORA = 'https://blockstream.info/api';
 
 const ARKOVA_HOST_RE = /(^|\.)arkova\.(io|ai|com|app|dev)$/i;
 
-// Cloud Run's raw *.run.app host (e.g. the SDK's DEFAULT_BASE_URL,
-// packages/sdk/src/client.ts: arkova-worker-270018525501.us-central1.run.app)
-// IS an Arkova-operated endpoint even though it carries no arkova.* vanity
-// domain. Refuse the whole *.run.app suffix rather than just Arkova's own
-// service name: Cloud Run hostnames are shared, project-scoped infrastructure
-// with no ownership signal in the hostname itself, so a narrower match (e.g.
-// requiring "arkova-worker") would trust an operator-controlled naming
-// convention as a security boundary.
+// Cloud Run's raw *.run.app host IS an Arkova-operated endpoint even though
+// it carries no arkova.* vanity domain. Refuse the whole *.run.app suffix
+// rather than just Arkova's own service name: Cloud Run hostnames are
+// shared, project-scoped infrastructure with no ownership signal in the
+// hostname itself, so a narrower match (e.g. requiring "arkova-worker")
+// would trust an operator-controlled naming convention as a security
+// boundary.
+//
+// As of 2026-09-21 (#3035, #2986 recovery), packages/sdk's
+// `DEFAULT_BASE_URL` and packages/embed's `DEFAULT_API_BASE` no longer
+// default to this raw host — both now default to the public API gateway
+// host `api.arkova.ai` (refused by `ARKOVA_HOST_RE` below, not this
+// regex — this file deliberately never spells out a scheme + Arkova host
+// as one string literal; see test/no-network.test.ts's mechanical audit).
+// The raw Cloud Run host itself is still a live, directly reachable
+// Arkova-operated endpoint (see CLAUDE.md §1.1: it answers publicly and
+// unauthenticated, with nothing in front of it), so
+// this refusal stays in place independent of which host any SDK currently
+// defaults to — a caller can still type or paste the raw host into --rpc.
 const CLOUD_RUN_HOST_RE = /\.run\.app$/i;
 
 /**

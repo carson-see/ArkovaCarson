@@ -72,13 +72,26 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
     }
 
     test('spreadsheet choice, mapping, extraction and processing fit', async ({ page }, testInfo) => {
-      await openLayoutFixture(page);
+      await openLayoutFixture(page, 'org-review', true);
       const csv = `fingerprint,filename,${'Long column heading '.repeat(5)}\n${'a'.repeat(64)},${LONG_NAME},value\n${'b'.repeat(64)},second.pdf,another value`;
       await page.locator('input[type="file"]').setInputFiles({ name: 'Records.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
       await expect(page.getByTestId('spreadsheet-mode-choice')).toBeVisible();
       await assertLayout(page, testInfo, 'spreadsheet-choice');
       await page.getByTestId('spreadsheet-mode-records').click();
       await expect(page.getByRole('heading', { name: 'Column Mapping', exact: true })).toBeVisible();
+      await expect(page.getByLabel('Public description for every row')).toBeVisible();
+      await expect(page.getByLabel('Private tags for every row')).toBeVisible();
+      await expect(page.getByLabel('Organization tags for every row')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Add all to queue' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Secure all instantly' })).toBeVisible();
+      await page.getByLabel('Public description for every row').fill('Quarterly spreadsheet import');
+      await page.getByLabel('Private tags for every row').fill('legal, quarterly');
+      await page.getByLabel('Organization tags for every row').fill('audit');
+      await page.getByRole('button', { name: 'Secure all instantly' }).click();
+      await expect(page.getByText(/Instant securing uses one credit per row/)).toBeVisible();
+      await page.getByRole('button', { name: 'Add all to queue' }).focus();
+      await page.keyboard.press('Tab');
+      await expect(page.getByRole('button', { name: 'Secure all instantly' })).toBeFocused();
       await assertLayout(page, testInfo, 'bulk-review');
       await page.getByRole('button', { name: 'Back', exact: true }).click();
       await expect(page.getByText('Select File', { exact: true })).toBeVisible();
@@ -95,7 +108,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
       await expect(page.getByText('Processing records...', { exact: true })).toBeVisible();
       await assertLayout(page, testInfo, 'bulk-processing');
       await page.evaluate(() => window.__layout.finishBulk?.());
-      // The actual parent closes on completion; there is no persistent bulk completion dialog.
+      // The fixture exercises the production parent, which closes on completion.
       await expect(page.getByRole('dialog')).toHaveCount(0);
     });
 

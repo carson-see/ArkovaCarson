@@ -12,7 +12,7 @@
 
 ---
 
-## 0. MANDATORY METHODOLOGY (10 rules)
+## 0. MANDATORY METHODOLOGY (11 rules)
 
 ### 1. TDD
 Red-Green-Refactor. Write a failing test before production code. No `test.skip`, no "will add later."
@@ -57,6 +57,16 @@ When the carve-out applies, the workflow is `git commit` + `git push origin main
 The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done.
 
 **Ordering is hook-enforced (2026-08-30).** A prod `apply_migration` is blocked by `.claude/hooks/check-prod-migration-apply.sh` unless the migration's `NNNN` prefix is EITHER already on `origin/main` OR already listed in `exemptPrefixes` in `scripts/ci/snapshots/ledger-numeric-exemptions.json`. Migrate-before-merge is still legal — the drift gate requires it — but **the apply and its exemption land in the same motion**. Applying without either creates an orphan ledger row, and because `Check supabase/migrations vs prod` is a Mergify queue gate, that reds every migration-touching PR at once: `0401`/`0402` (08-11), `0418`/`0419` (08-27), `0425` (08-30). Deliberate exception: `ARKOVA_ALLOW_UNRECONCILED_PROD_APPLY=1`, with the reason recorded. Scope, stated honestly: `apply_migration` against the prod ref only — DDL smuggled through `execute_sql` is NOT covered and remains on the operator.
+
+### 11. Actions spend discipline (founder decision 2026-09-21)
+GitHub Actions minutes are a metered budget. On 2026-09-21 it ran out and blocked every merge and deploy for five hours.
+- **PRs open as DRAFT and stay draft until merge-ready** — drafts skip the full test matrix. Total open PRs ≤ 20, all draft until merge-ready; ≤ 15 if any session-authored PR is non-draft. Bot PRs count.
+- **CI runs once per head.** Never "re-run all". Never re-run CI on a head that is mid-soak just to turn it green — run it once, when that head is merge-ready.
+- **Batch commits locally.** Every push to a PR branch is a full matrix. Push when a head is ready to be reviewed, soaked, or merged — not to save work.
+- **A job that fails with zero steps and the annotation "an Actions budget is preventing further use" is a billing wall, not a code signal.** Stop pushing, do not re-run, tell the founder. Red checks in that state say nothing about the code.
+- **Dependabot volume is capped in `.github/dependabot.yml`** (sum of `open-pull-requests-limit` ≤ 7, majors grouped, schedules staggered). Raising it is a founder decision.
+
+Knowingly unenforceable today, and on the operator: every bullet except the Dependabot cap, which the file itself enforces. See `memory/feedback_actions_spend_discipline.md`.
 
 ---
 
@@ -301,6 +311,7 @@ For confluence audit pages, see [Confluence space A](https://arkova.atlassian.ne
 | Adding rolling narrative to CLAUDE.md | Put it in HANDOFF.md |
 | `.md` file as "documentation" | Confluence page, with the `.md` either deleted or demoted to internal notes |
 | Pushing to / editing a PR while it's in the Mergify queue | Check it's not queued first — a push resets queue progress + re-runs speculative checks (pure churn). Dequeue deliberately if a change is truly needed |
+| Re-running failed checks on a soaking head, or pushing WIP to a PR branch | CI runs once, on the merge-ready head; batch commits locally; PRs stay draft (§0 rule 11) |
 | Appending `## Recent migrations` at EOF of `supabase/migrations/agents.md` (two PRs collide → loser dequeued from Mergify) | Title each block `## Recent migrations (PR #NNNN)` in PR-number order, not blindly at EOF; union-resolve as doc-only (no re-soak). Prefer per-PR notes in the PR description |
 
 ---

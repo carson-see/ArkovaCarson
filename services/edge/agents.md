@@ -600,3 +600,5 @@ the legacy ordinary control remains. Retain all imported verifier tests for
 shared JWKS fetches, cooldown on failures, timeout, cache and key rotation. The
 separate `supabase-jwt.ts` helper has no runtime importer; preserve its existing
 pending guard without inventing an unused ES256 implementation.
+
+UAT-23 row import shares the anchor write flag/scope gate, uses strict 1–100 row validation, and never retries or exposes unbounded upstream errors.

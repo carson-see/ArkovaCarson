@@ -17,11 +17,33 @@ ResourceDetailType = Literal["record", "fingerprint", "document"]
 # services/worker/src/api/v1/anchor-bulk.ts. Keep in sync; the server is
 # authoritative and rejects unknown values.
 BulkAnchorCredentialType = Literal[
-    "DEGREE", "LICENSE", "CERTIFICATE", "TRANSCRIPT", "PROFESSIONAL", "CPE", "CLE",
-    "BADGE", "ATTESTATION", "FINANCIAL", "LEGAL", "INSURANCE", "SEC_FILING", "PATENT",
-    "REGULATION", "PUBLICATION", "CHARITY", "ACCREDITATION", "FINANCIAL_ADVISOR",
-    "BUSINESS_ENTITY", "RESUME", "MEDICAL", "MILITARY", "IDENTITY",
-    "CONTRACT_PRESIGNING", "CONTRACT_POSTSIGNING", "OTHER",
+    "DEGREE",
+    "LICENSE",
+    "CERTIFICATE",
+    "TRANSCRIPT",
+    "PROFESSIONAL",
+    "CPE",
+    "CLE",
+    "BADGE",
+    "ATTESTATION",
+    "FINANCIAL",
+    "LEGAL",
+    "INSURANCE",
+    "SEC_FILING",
+    "PATENT",
+    "REGULATION",
+    "PUBLICATION",
+    "CHARITY",
+    "ACCREDITATION",
+    "FINANCIAL_ADVISOR",
+    "BUSINESS_ENTITY",
+    "RESUME",
+    "MEDICAL",
+    "MILITARY",
+    "IDENTITY",
+    "CONTRACT_PRESIGNING",
+    "CONTRACT_POSTSIGNING",
+    "OTHER",
 ]
 
 # How the server should handle a fingerprint that already exists (in-batch or in-org).
@@ -362,6 +384,7 @@ class OrgList(ArkovaModel):
 # Mirrors the worker's mapAnchorDetail shape; never carries internal
 # id/org_id/user_id/record_id columns.
 
+
 class OrganizationDetail(ArkovaModel):
     """Response of ``GET /api/v2/organizations/{public_id}``.
 
@@ -572,3 +595,71 @@ class BulkAnchorResponse(ArkovaModel):
     dry_run: bool
     # Omitted by the server on dry runs.
     anchors: list[BulkAnchorResultRow] | None = None
+
+
+@dataclass
+class AnchorImportRow:
+    fingerprint: str
+    filename: str
+    fingerprint_provided: bool
+    file_size: int | None = None
+    credential_type: str | None = None
+    metadata: dict[str, Any] | None = None
+    recipient_email: str | None = None
+    recipient_name: str | None = None
+
+
+class AnchorImportResultRow(ArkovaModel):
+    fingerprint: str
+    #: ``created_recipient_failed`` / ``skipped_recipient_failed`` mean the
+    #: anchor committed and the recipient did not resolve. The record exists
+    #: -- do not re-submit the row. The status does NOT say whether the
+    #: recipient was linked; read ``reason`` for that.
+    status: Literal[
+        "created",
+        "skipped",
+        "failed",
+        "created_recipient_failed",
+        "skipped_recipient_failed",
+    ]
+    public_id: str | None = None
+    instant_status: str | None = None
+    #: Bounded machine-readable code for a ``failed`` or ``*_recipient_failed``
+    #: row. For a ``*_recipient_failed`` row this code, not the status, says
+    #: what happened -- the ``anchor_recipients`` link commits BEFORE the
+    #: activation email is sent, so "recipient failed" does not imply
+    #: "recipient not linked":
+    #:
+    #: * ``recipient_provisioning_forbidden`` /
+    #:   ``recipient_authorization_unavailable`` -- the caller may not assign
+    #:   recipients (personal scope, or a plain org member). Nothing linked,
+    #:   nothing sent.
+    #: * ``recipient_email_invalid``, ``recipient_pepper_unavailable``,
+    #:   ``recipient_anchor_unavailable``,
+    #:   ``recipient_profile_lookup_failed``,
+    #:   ``recipient_profile_create_failed``, ``recipient_link_failed``,
+    #:   ``recipient_link_conflict`` -- thrown at or before the link insert:
+    #:   the recipient was NOT linked and no invitation was sent.
+    #: * ``recipient_activation_email_failed`` -- the recipient WAS linked;
+    #:   only the invitation email was rejected.
+    #: * ``recipient_activation_delivery_pending``,
+    #:   ``recipient_activation_claim_failed`` -- the recipient WAS linked and
+    #:   whether the invitation went out is unknown.
+    #:
+    #: Treat any other code as unknown: assert nothing about the recipient.
+    reason: str | None = None
+
+
+class AnchorImportResponse(ArkovaModel):
+    total: int
+    created: int
+    skipped: int
+    failed: int
+    #: Rows whose anchor committed but whose recipient did not resolve.
+    #: Additive: already counted in ``created``/``skipped`` and never in
+    #: ``failed``, so ``created + skipped + failed`` still equals ``total``.
+    #: Counts rows whose recipient was never linked AND rows that were linked
+    #: but whose invitation did not go out -- see each row's ``reason``.
+    #: Older workers omit it, which reads as zero.
+    recipient_link_failed: int = 0
+    results: list[AnchorImportResultRow]

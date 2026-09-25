@@ -17,6 +17,9 @@ exactly what a pre-cutover connection's grant looks like. Getting this backwards
 refresh token to the new client's token endpoint, which Google rejects with `invalid_grant`; there is
 no migration path for a refresh token itself (it is bound to the client that issued it).
 
+_Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
+_Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
 ## 2026-09-21 — 410/404 cursor re-bootstrap + per-integration single-flight lease (SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)
 
 Companion to the `listChanges` fields-mask fix in `oauth/agents.md`. Because
@@ -450,3 +453,11 @@ Signer status values are restricted to documented DocuSign recipient status code
 ## 2026-09-14 — PR #2937 shared Drive folder-binding contract
 
 The side-effect-free drive-folder-bindings.ts extracts non-empty legacy folder_id and drive_folders[].folder_id values. Both loadWatchedFolderIds and connector-health use it, so an enabled rule with no actual folder cannot create a cursor-stale warning while the runner intentionally skips processing. The runtime runner keeps the same org-wide rule selection and returned folder union; health separately performs a bounded complete inventory scan and reports503 when it cannot complete.
+
+## 2026-09-22 — Dirty marker moved to jobs/run-lease.ts (PR #3054)
+
+`drive-changes-runner.ts` no longer touches `job_queue` directly. The dirty /
+rerun-requested marker it uses at the end of a leased run is
+`markRunLeaseDirty` / `checkAndClearRunLeaseDirty` from `../../jobs/run-lease.ts`
+(see that folder's agents.md for why). The bounded "exactly one extra pass"
+behaviour is unchanged and still pinned by `drive-changes-runner.test.ts`.
