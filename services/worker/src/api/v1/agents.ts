@@ -211,6 +211,13 @@ router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response)
   }
 });
 
+/**
+ * Marks keys deactivated by an ORG-ADMIN suspension. Distinct from the
+ * 'computeid:…' markers migration 0448 writes, so the two resume paths cannot
+ * restore each other's keys.
+ */
+const ADMIN_SUSPEND_REASON = 'admin:agent.suspended';
+
 // ─── PATCH /api/v1/agents/:agentId — Update agent ───────────────
 
 router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
@@ -260,6 +267,60 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
     if (error || !agent) {
       res.status(404).json({ error: 'Agent not found or update failed' });
       return;
+    }
+
+    // SCRUM-5290: a status change is INERT unless the keys move with it. The
+    // auth path reads only `api_keys` (middleware/apiKeyAuth.ts selects
+    // is_active / revoked_at / expires_at and never joins `agents`), so before
+    // this an org admin could suspend an agent and its key kept authenticating.
+    //
+    // Mirrors migration 0448's `apply_computeid_agent_transition`, whose TLA+
+    // invariant is `suspendedHasNoKey`: the ComputeID-driven path already
+    // enforced this; the admin path did not.
+    //
+    // The marker is deliberately NOT the RPC's 'computeid:…' value. Reactivation
+    // matches on it, so an org admin resuming an agent can never revive a key
+    // that ComputeID suspended — that would let a tenant undo a partner
+    // revocation. Keys suspended by the partner stay dead until the partner
+    // reinstates them.
+    //
+    // Scoped by org_id as well as agent_id, per the DELETE handler's rule:
+    // defense-in-depth against an agent_id collision touching another tenant.
+    if (parsed.data.status === 'suspended') {
+      const { error: keyError } = await dbAny
+        .from('api_keys')
+        .update({
+          is_active: false,
+          revoked_at: new Date().toISOString(),
+          revocation_reason: ADMIN_SUSPEND_REASON,
+        })
+        .eq('agent_id', agentId)
+        .eq('org_id', orgId)
+        .eq('is_active', true);
+      // Fail loudly: reporting a successful suspension while the keys are still
+      // live is the exact false assurance this change exists to remove.
+      if (keyError) {
+        logger.error({ agentId, error: keyError }, 'Agent suspended but key deactivation failed');
+        res.status(500).json({
+          error: 'Agent status updated but its API keys could not be deactivated — retry the suspension',
+        });
+        return;
+      }
+    } else if (parsed.data.status === 'active') {
+      const { error: keyError } = await dbAny
+        .from('api_keys')
+        .update({ is_active: true, revoked_at: null, revocation_reason: null })
+        .eq('agent_id', agentId)
+        .eq('org_id', orgId)
+        .eq('is_active', false)
+        .eq('revocation_reason', ADMIN_SUSPEND_REASON);
+      if (keyError) {
+        logger.error({ agentId, error: keyError }, 'Agent reactivated but key restoration failed');
+        res.status(500).json({
+          error: 'Agent status updated but its API keys could not be restored — retry, or mint a new key',
+        });
+        return;
+      }
     }
 
     void recordAuditEvent({
