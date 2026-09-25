@@ -1655,6 +1655,29 @@ claims are absent; every service-role comparison must coalesce that result to
 service-role paths remain unchanged.
 | `0477` | `0477_uat19_queue_resolve_authorization.sql` | SCRUM-5268 / UAT-19 | PRE-PUBLICATION | Replaces only the service-role four-argument `resolve_anchor_queue_by_public_id` body. Tenant and collision scope come from the selected public anchor; authorization is exact `org_members` owner/admin, platform admin, or exact owner/admin of one APPROVED direct parent (no profile-role fallback or recursive ancestry). A tenant+collision advisory transaction lock precedes deterministic row locks, so different-winner races cannot deadlock; the durable receipt is rechecked under lock. ACL/signature stay service-role-only/unchanged. Native proof: `scripts/uat19/native-pg-queue-resolution.sh`. |
 
+## Recent migrations (PR #TBD — SCRUM-5280)
+
+Placed immediately after the `0477` row — 0482's sibling fix, the same
+stale-role class — rather than at EOF or at the shared anchor after
+`(PR #2825)`, where two PRs appending blindly collide and Mergify dequeues the
+loser (CLAUDE.md §6).
+
+| Prefix | File | Ticket | Applied? | Notes |
+|---|---|---|---|---|
+| `0482` | `0482_scrum5280_org_domain_verification_guard.sql` | SCRUM-5280 / SCRUM-5282 | NO — file only. Not applied to production, staging, or any shared rig. | Compensating security migration. **(A)** `protect_org_tenancy_fields()` is replaced, 0429's body verbatim plus a service_role-only guard over `domain_verified`, `domain_verification_method`, `domain_verified_at`, `verification_status`, `domain_verification_token` and `domain_verification_token_expires_at`; a real (normalized, NULL-safe) `domain` change by a non-service_role caller demotes the verification instead of raising, because `domain` is a legitimate `EditableOrgFields` column. The token pair is guarded beyond the ticket's four columns because `POST /api/v1/orgs/confirm-domain` treats the stored token as the only secret, so writing it is writing `domain_verified` one hop later. The trigger is **not** recreated: `trg_protect_org_tenancy_fields` is already `BEFORE UPDATE ... FOR EACH ROW` with no column list, so no AccessExclusiveLock is taken on the `organizations` hot table. **(B)** `add_existing_org_member(uuid,uuid,text,text)` is replaced byte-identically to 0470 minus the third authorization branch (`profiles.org_id = p_org_id AND profiles.role = 'ORG_ADMIN'`) — the stale-role fallback 0477 removed from the queue RPC for the same reason. Same signature, argument names and return shape, so the deployed worker route is unaffected. **(C)** SCRUM-5282: `EXECUTE` on the 3-argument `resolve_anchor_queue_by_public_id(text,text,text)` is revoked from `PUBLIC`, `anon` and `authenticated`. Zero callers on `origin/main` (`queue-resolution.ts` passes `p_caller_user_id` and resolves to 0477's 4-arg overload); the function is kept, not dropped, per CLAUDE.md §6 overload churn. Both `CREATE OR REPLACE`s reissue `REVOKE ALL ... FROM PUBLIC, anon, authenticated` plus the correct `GRANT`, because Supabase re-triggers `ALTER DEFAULT PRIVILEGES` on every replace (0364/0377/0378/0388/0406). `SET LOCAL lock_timeout = '5s'`, `SET search_path` preserved on both SECURITY DEFINER functions, `NOTIFY pgrst, 'reload schema'`. Number derived 2026-09-21 after `git fetch origin`: `origin/main`'s numeric head is `0480`; a scan of every remote branch for `04[789]0`–`04[789]9` prefixes found `0470 0471 0473 0474 0475 0476 0477 0480 0481` and nothing at or above `0482`; no `agents.md` reservation claims it. `0478`/`0479` read as unclaimed in that scan and were deliberately skipped rather than back-filled. A re-scan after the commit found an UNPUSHED sibling session holding `0483_scrum4939_credit_rpc_followups.sql` (SCRUM-4939) in a local worktree — not visible to any remote-branch or `agents.md` scan, which is exactly the blind spot that produces collisions. `0482` is claimed by this entry alone. **Next author claims `0484` — re-derive, do not trust this line, and check sibling worktrees as well as remote branches.** |
+
+Proof: `tests/rls/scrum-5280-org-domain-verification-guard.test.ts` (nine cases,
+four of them positive controls) against a native loopback replay of the baseline
+plus every numbered migration. Seen failing 5/9 before the migration and 9/9
+after; the extracted `-- ROLLBACK:` block restores both `pg_proc.prosrc` bodies
+byte-identically and turns the same five red again. Rolling back re-opens the
+hole — the file header says so in full. No hosted project was touched.
+`tests/rls/email-signup-org-association.test.ts` is also repaired here: two of
+its cases established the actor with a direct `UPDATE profiles SET org_id`,
+which `protect_privileged_profile_fields` refuses, so they failed in setup and
+were keeping main's `Tests` job red. They now seed an exact `org_members` admin
+row — the authority 0482 makes canonical.
+
 ## 2026-09-19 — UAT-24 global-personal folder privacy (0480)
 
 `0480_uat24_global_personal_folder_privacy.sql` is an additive correction to
