@@ -1840,3 +1840,26 @@ Approve/revoke, credit transfer and offboard events emit once inside the shared 
 `failed` keep their meaning and the `required` list is unchanged, so existing
 clients keep parsing. The new values mean the anchor exists and the row must not
 be re-submitted.
+## 2026-09-21 — SCRUM-5285: `orgVerification.ts` domain grants are compare-and-swapped AND domain-bound
+
+`POST /org/verify-domain` and `POST /org/confirm-domain` each read `organizations` in one PostgREST statement and wrote it in a second, keyed only by `.eq('id', orgId)`. RLS policy `organizations_update_admin` grants an org admin UPDATE on every column of their own row, and the same admin drives both requests — so a PATCH of `organizations.domain` between the two statements landed `domain_verified = true` on a domain the org never proved. That matters because migration `0470`'s `auto_associate_profile_to_org_by_email_domain` auto-joins every confirmed signup whose email domain matches an org with `domain_verified IS TRUE`, and `verification_status = 'VERIFIED'` gates credential issuance and every connector OAuth.
+
+**Two windows, two mechanisms — do not remove either thinking the other covers it.**
+
+1. *Within a request* (SELECT → UPDATE): both writes now carry the values read in the SELECT into the WHERE clause and read the affected-row list back with `.select('id')`. confirm-domain CAS-guards on `domain` **and** `domain_verification_token`; verify-domain on `domain` **and** `.not('domain_verified', 'is', true)` (NULL-safe: the column is nullable and `.eq(…, false)` would lock a NULL row out of verification entirely). Zero rows is 409 `verification_superseded` with no audit row — never a hollow 200.
+2. *Between the two requests*: the CAS cannot see this one, because nothing on the row records which domain the pending token was issued FOR. The binding therefore travels inside the token: `domain_verification_token` is now `code:token:binding`, binding = `sha256(domain)` truncated to 16 hex chars. confirm-domain recomputes it from the domain it is about to grant. The check runs AFTER the code check so it never becomes an oracle that answers before the code does. A two-segment legacy token is refused (fail closed, 24h lifetime bounds the cost), and a case or whitespace edit to `organizations.domain` invalidates the pending code — deliberate.
+
+`confirm-domain` reads `domain` in the SAME SELECT as the token, and refuses outright (400) when it is null: `.eq('domain', null)` renders as `domain = NULL` and matches nothing, so a CAS on it would be an unreachable refusal rather than a guard.
+
+`dev-verify` is deliberately NOT compare-and-swapped: it reads no domain, makes no claim about one, and is hard-gated on `isDev`. If it ever grows a "verify THIS domain" parameter it needs the same treatment.
+
+Proven by `machines/orgDomainVerification.machine.ts`, which found window 2 and the not-verified predicate — neither was in the original report. The `error` field stays a plain string for the existing frontend; `code` is an additive sibling.
+
+**Not fixed here, and not a TOCTOU:** changing `organizations.domain` AFTER a legitimate grant leaves `domain_verified = true` beside a domain nobody proved. No trigger demotes it — none exists in `supabase/migrations/`. That is a schema-level fix (a demoting trigger, its own migration and lock-timeout review per CLAUDE.md §1.2) and is unreachable from application code.
+
+## SCRUM-5285 — corrections + hardening from the independent review of PR #3058 (2026-09-21)
+
+- **The binding is the FULL `sha256(domain)`, not "truncated to 16 hex chars"** as the note above says. Commit `bac5b0ab7` removed the truncation: the attacker controls both domains, so a short tag invites a collision search, and the column is unbounded text. The code comment in `orgVerification.ts` is the correct statement.
+- **"No trigger demotes it" is wrong for production.** Migration `0482` (on prod 2026-09-21) demotes `domain_verified` and clears the pending token on a non-service_role domain change. See `machines/agents.md` for what that does and does not close.
+- **Added in the same round (test-first, 5 red → 62/62):** the grant is also compare-and-swapped on `ein_tax_id` (it decides `verification_status = 'VERIFIED'` and is NOT one of 0482's guarded columns) — `.is('ein_tax_id', null)` when no EIN was read, never `.eq(..., null)`; a pending token with a NULL or unparseable expiry is refused (it used to never expire); the 6-digit code is compared with `crypto.timingSafeEqual`, a length mismatch being an ordinary wrong code.
+- **NOT fixed here, and it dominates the residual risk:** `confirm-domain` has no per-token attempt limit. A wrong code neither counts nor burns the token; the only throttle is 60 req/min per IP, and the prod origin is reachable directly. The attacker in this threat model is the org admin, who sets `domain = victim.com` and grinds the code. Ticketed separately — do not describe `domain_verified` as sound until a counter burns the token after N failures.

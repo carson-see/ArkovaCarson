@@ -14,7 +14,11 @@ vi.mock('./middleware.js', () => ({
 }));
 vi.mock('../utils/rateLimit.js', () => {
   const passthrough = (_req: Request, _res: Response, next: NextFunction) => next();
-  return { rateLimiters: { checkout: passthrough } };
+  // `rateLimit` must be present: admin.ts calls it at module scope to build
+  // the raised-ceiling limiter used under E2E. A mock missing it makes the
+  // import throw and every route 500 — which reads as a routing bug rather
+  // than an incomplete mock.
+  return { rateLimiters: { checkout: passthrough }, rateLimit: () => passthrough };
 });
 vi.mock('../utils/platformAdmin.js', () => ({ isPlatformAdmin: mockIsPlatformAdmin }));
 vi.mock('../utils/logger.js', () => ({
@@ -25,7 +29,14 @@ vi.mock('../utils/db.js', () => ({
   getQueryStats: vi.fn(() => ({})),
   getConnectionInfo: vi.fn(() => ({})),
 }));
-vi.mock('../config.js', () => ({ config: { frontendUrl: 'https://app.arkova.test' } }));
+vi.mock('../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.test' },
+  // admin.ts consults this to choose between the 10/min limiter and the
+  // raised-ceiling E2E one.
+  // It must be present in the mock: a partial config mock makes the import
+  // resolve undefined and every route 500s.
+  adminRateLimitBypassActive: () => false,
+}));
 vi.mock('../api/admin-invitations.js', () => ({
   handleAdminCreateInvitation: mockHandleInvitation,
   handleAdminListInvitations: mockHandleListInvitations,

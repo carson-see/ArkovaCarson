@@ -12,6 +12,12 @@
 - Client-side fingerprinting via SHA-256 (documents never leave the user's device).
 - Published via `.github/workflows/publish-sdk.yml`, or manually via `scripts/release/publish-npm.sh`.
 - Must stay in sync with `integrations/shared/src/fingerprint.ts` algorithm.
+- The package-local typecheck includes Node-based metadata and terminology tests, so `@types/node`
+  is an explicit devDependency; do not rely on the repository root install to supply it.
+- Runtime support starts at Node 20: the SDK uses global `crypto.subtle`, which is not available
+  by default on the supported Node 18 line. Keep README and `engines.node` aligned.
+- The default origin is the public gateway `https://api.arkova.ai`, not a raw Cloud Run revision
+  hostname. `client.test.ts` pins the exact default request URL.
 - **npm name is unscoped `arkova` (CTO ruling 2026-08-18), superseding the 2026-08-01
   `@carsonarkova/sdk` scoped-package ruling below.** Parity with the PyPI package, which already
   publishes unscoped as `arkova`. An unscoped name needs no npm org at all — first-publish
@@ -168,3 +174,16 @@ throws `invalid_request` locally with a message naming the field. The
 `AnchorImportResultRow.reason` doc comment also now enumerates which codes mean
 the recipient was NOT linked and which mean it WAS linked but the invitation
 did not go out — the link commits before the email is sent.
+## 2026-09-21 — recovered #2986 onto `main` (`DEFAULT_BASE_URL`, `engines.node`)
+
+PR #2986 shipped `DEFAULT_BASE_URL = 'https://api.arkova.ai'` (was the raw Cloud Run revision
+hostname) and `engines.node >=20` / `@types/node` (the SDK's Node-based metadata/terminology tests
+need it, and global `crypto.subtle` needs Node 20+ — see above) but never reached `main`: its PR
+merged into a feature branch that had already merged into `main`, so the merge commit's diff never
+landed there despite showing MERGED on GitHub. Recovered here. `main` had moved to `arkova@3.1.0`
+and added `folder.*`/`record.folder_changed` webhook events (#2968) and the `ANCHOR_LIFECYCLE_STATUSES`
+/`ANCHOR_INSTANT_STATUSES` sets in `client.ts` in the interim — the recovery kept all of that (never
+downgraded the version, never dropped the newer status sets or folder events) and applied only
+#2986's `DEFAULT_BASE_URL`/`engines`/`@types/node` qualification fixes on top. See
+`packages/embed/agents.md`, `sdks/langchain-ts/agents.md`, `sdks/mcp-server/agents.md`, and
+`packages/api-cli/agents.md` for the sibling-package side of the same recovery.

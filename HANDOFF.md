@@ -14,6 +14,93 @@
 
 ## Now
 
+### 2026-09-22T14:55Z — CTO execution session (Claude Opus 5): `E2E Tests` has been broken on `main` since 2026-09-19; #3072 fixes it and MUST merge before #3054/#3059
+
+**Read this block first.** It supersedes the 12:40Z block where they differ, and it changes the merge order from a list into a sequence.
+
+### The broken gate
+
+`e2e/connectors.spec.ts` landed 2026-09-19 (`ebf5c2f16`, #2912) with a pre-flight that **cannot be satisfied**. `adminRouter.use(rateLimiters.checkout)` applies a **10 req/min per-IP** limiter to every admin route; the spec waits for `remaining >= 16` from a bucket whose ceiling is 10. It has **never passed while actually running**.
+
+Measured on a live rig, not inferred: 13 sequential `GET /api/rules` returned `200` with `x-ratelimit-remaining` counting 8 → 0, then `429`. Never observed above 9.
+
+Deleting the gate would not rescue it — `ConnectorsPage` mounts two `useConnectorRule` cards, so one run issues ~8-12 admin requests against 10/min, and four specs (`connectors`, `billing`, `treasury-observability`, `uat19-org-profile`) contend for the same `::1` bucket under parallel workers.
+
+**It survived unnoticed** because the change-detector skips `.md`/`docs/`/`memory/`/`machines/`/`services/edge/` diffs, #3054 happened to skip E2E at 12:26Z, and #3035 was admin-merged over a red E2E. Main's own CI shows `dd0985375` → failure, `171b335aa` → skipped. **Two earlier diagnoses of this were wrong** (a capacity-quota story, and "it passed earlier today"); both are recorded as dead in the ticket so nobody re-derives them.
+
+### The fix and its ORDERING CONSTRAINT
+
+**PR #3072** (`fix/e2e-admin-ratelimit-bypass`, T2) scopes a bypass of that limiter to **adminRouter's mount point only** — billing checkout, credit purchase, account deletion and the anchor routes keep their limiter, and `/api/v1` is untouched so `e2e/verify-ratelimit-contract.spec.ts` still proves §1.10. Fails closed twice: `adminRateLimitBypassActive()` requires `nodeEnv !== 'production'`, and `config.ts` throws at boot if the flag is set in production. **No production limit changes.** New env var documented in `docs/reference/ENV.md`.
+
+**#3072 MUST MERGE FIRST, ALONE.** Verified against `origin/main`'s `.mergify.yml`: `queue_conditions` do NOT include `E2E Tests`, but `merge_conditions` DO, and they are evaluated on the **speculative candidate** at `batch_size: 1`. The candidate for #3054 is `main + #3054`; if #3072 is not already on `main` that candidate lacks the fix, its E2E fails, and #3054 is **dequeued** — one wasted speculative matrix per attempt. Once #3072 is on `main`, the other two pick it up with **no head move**. `main` has **no `required_status_checks`** configured (`enforce_admins: false`), so GitHub itself will not block on a red PR-level E2E — the ordering constraint alone is sufficient.
+
+Merge sequence: **1) #3072 alone → wait for `main`. 2) #3054 and #3059.**
+
+### Soaks
+
+Train G is **staged and idle, clock NOT started** — candidate rebuilt three times as heads moved; it will be rebuilt once more on all three final heads. Per-cycle probes: identity, Drive pack, D pack, lease, error identity, and a **negative control** asserting the `checkout` limiter still enforces with #3072's flag OFF (the rig stays flag-off so it stays representative of prod; CI proves the positive path). Trains A and B unaffected — A's T3 floor is tonight 21:43:19Z, B's is 2026-09-23T12:03Z.
+
+### Also today
+
+- **#3035 MERGED** (`b2df81d9a`). Its red `E2E Tests` was this same defect, not its own code.
+- **Registry drift, scoped precisely:** published `arkova-mcp-server@3.1.0` carries `overrides` as caret ranges while `main` has exact pins — it was published from a pre-pin head, so that artifact is not reproducible from `main` and violates the DEP-15 policy our own required check enforces. Diffed both published tarballs against `main`: **`arkova@3.1.0` is clean**; only `arkova-mcp-server`'s `package.json` differs, by exactly two lines. Remedy is to supersede with **3.1.1 from `main` via Trusted Publishing**, not to republish or deprecate. `dist/` was not rebuilt and byte-compared — stated as an inference, not a check.
+- The `arkova-ci-publish` npm token has been **deleted**.
+- **Six instances of one failure shape** — a green signal compatible with the mechanism being absent — are recorded with detection methods in `memory/feedback_assertion_that_cannot_fail_is_not_evidence.md`. Two were in this session's own work, one in its own monitor.
+
+### 2026-09-22T12:40Z — CTO execution session (Claude Opus 5): TRAIN C AND TRAIN D EVIDENCE ARE VOID; TRAIN B RESTARTED AT 12:03Z; main's zapier lockfile was breaking `Tests` on every PR
+
+**Read this block first.** It supersedes the 2026-09-21T22:30Z `### Soaks` table below, which is wrong in three ways that will cost you a window if you act on it.
+
+### Soaks — as of 2026-09-22T12:40Z. Verified by reading `tail -1 train-X/supervisor-cycles.ndjson`, not by trusting any alert.
+
+| Train | State | Window | Verified |
+|---|---|---|---|
+| **A** T3 | **LIVE** | first cycle 2026-09-21T21:43:19Z, 170 rows, 0 not-ok, last 12:30:52Z → floor **2026-09-22T21:43Z** stands | row count and both endpoints read from the ndjson |
+| **B** T3 | **LIVE, BUT RESTARTED** | first cycle **2026-09-22T12:03:14Z**, 7 rows → floor is **2026-09-23T12:03Z**, NOT tonight | the 22:30Z table's `2026-09-22T21:51:51Z` floor is dead; B died ~05:25Z at cycle 34, the alert fired 05:37Z and nothing acted on it for 5.5 h |
+| **C** T2 | **SEALED, EVIDENCE VOID for #3054** | 51 cycles, 0 failures, 22:11:35Z → 02:21:32Z, bound to head `fae91b7e4` | #3054's head has moved three times since; see below |
+| **D** T2 | **SEALED, EVIDENCE VOID for #3059** | 50 cycles, 0 failures, 23:29:22Z → 03:37:13Z, bound to head `1c5f0e1a0` | post-soak delta measured at 54 files incl. `orgVerification.ts` and `copy.ts` — not T0, so the allowance rejects |
+| **s3058** | done | #3058 merged | — |
+
+**Why C and D are void, and why no amount of arguing recovers them.** Both windows were clean. Both are bound to heads that no longer exist as PR heads. `check-staging-evidence.ts`'s `Post-soak T0 delta` allowance requires EVERY file in `changedFilesBetween(soakedSha, headSha)` to classify T0; the residual-risk note waives rig contamination only and cannot waive head identity. For #3059 the head had to move regardless: it showed `CONFLICTING` on `scripts/ci/agents.md`, which is a REAL conflict to GitHub — GitHub ignores the repo's `.gitattributes` union merge driver even though a local union merge is clean. #3054 and #3059 now ride ONE combined 4 h window instead of two.
+
+**main was broken and it was reddening `Tests` on every open PR.** Dependabot #3043 (`4b57a290a`) bumped vitest to 5.0.1 in `integrations/zapier/package.json` and in the lock's own vitest entry but never added vitest 5's transitive deps (vite 8.3.0, the rolldown bindings, lightningcss, postcss, nanoid, source-map-js, `@oxc-project/types`) to the lockfile, so `npm ci` there fails EUSAGE. That runs inside the required `Tests` job. Reproduced on a clean `origin/main` worktree, not inferred from a branch. Fixed as **`d984356de`** (T0, lockfile only, +764 lines, no `package.json` change, vitest stays 5.0.1); the complete four-command CI step was verified end to end before the push (`npm ci`, `npm test` 28/28, `npm run build`, `npm run validate` → "structurally sound"), and `npm audit` counts are identical before and after (9: 1 low, 8 high, all pre-existing dev-only via `zapier-platform-cli` — nothing new introduced). Failure class recorded in `memory/project_dependabot_lockfile_desync_reds_every_pr.md` (`7cc759ac5`). **A job re-run cannot clear this on a PR** — `actions/checkout` on `pull_request` resolves the merge commit from the replayed event payload, so only a push picks up a fixed main.
+
+**#3064 is separately, genuinely broken** — do not rebase it, see `Tests` still red, and conclude main is still broken. Its `Tests` fails on three steps and its root suite has 10 real failures from pinned versions the bump moved (`scripts/vendor-ner-runtime.test.ts` expects `1.26.0-dev.20260416-b7804b056c`, `tests/infra/seed-fixture-uuids.test.ts` expects `4.6.2`, `src/pages/MyRecordsPage.test.tsx`, plus a fourth file), on top of `Third-Party Notices Freshness`. #3060 / #3061 / #3063 fail `Tests` only and should clear on a rebase onto `d984356de`.
+
+**Prod, verified 2026-09-22T12:11Z:** worker `/health` healthy at `git_sha c172eab5f` (`#3058`'s merge; deploy run succeeded 11:39:35Z). Edge `/health` ok at `git_sha 441c196f5`, built 11:40:05Z. `#3066` (`171b335aa`) touched only `docs/api` and `integrations/**`, so the absent worker deploy is the path filter working, not deploy lag. Merged today by Carson: **#3067, #3058, #3066**.
+
+**Open from this lane, all `do-not-merge`, all on current main:** #3035 `a4b465b84` (T2, packages/SDK, unsoakable-surface evidence path, gate `ok:true` locally — ready on green), #3054 `7d1412c6a` and #3059 `edc31c5f8` (both awaiting the combined window), #3069 draft (blocked on new `google-drive-oauth-client-id/-secret` secrets Carson must create).
+
+**npm is unblocked and two packages are LIVE:** `arkova@3.1.0` (shasum `29b00d0ef9ad…`) and `arkova-mcp-server@3.1.0` (`ee36497bbe24…`), both verified by fetching `registry.npmjs.org/<pkg>/3.1.0` directly — `npm view` lags on CDN and is not evidence. PyPI `arkova` 2.4.1 unchanged. They were published manually from #3035's reviewed head, which is drift worth knowing: the registry artifacts do not yet correspond to any commit on main. **The publish token is deliberately NOT in `NPM_TOKEN`** — it is 2FA-bypass with read-write to ALL packages, expires **2026-09-29**, and npm removes bypass-2FA publishing January 2027. Plan and the npmjs.com steps only Carson can do: `/Volumes/Extreme/offload/cto-plan-0921/npm-trusted-publishing-plan.md`.
+
+**Drive prod baseline captured 12:15Z, before #3054 ships** (`/Volumes/Extreme/offload/cto-plan-0921/drive-prod-baseline-20260922T1215Z.md`, proof script `drive-post-deploy-proof.sh`): exactly one Drive integration in prod, `2b47529f-e3d6-4d35-a902-2c8c9731b64b` on org `40383eb2-f1cd-4a85-8099-afafff95e5cf`, not revoked, connected 2026-04-25; `changes.list failed` 12 times in the trailing hour and still firing at 11:57Z; and **zero `google_drive.file_changed` rows in `job_queue`, all time**. Not "few" — zero, for five months. That is the "before" the post-deploy proof compares against.
+
+**New standing rule on main:** `memory/feedback_gates_before_pin.md` (`448046ae2`) — every required check green on the exact head, run in full and locally first, before a soak window pins it. It has now caught three reds that would each have cost a window (a SonarCloud S5850 regex, the `job_queue` producer/consumer guard, and this lockfile fix). The "in full" clause exists because I verified two of a four-command step and reported the step clear; the hosted matrix disagreed.
+
+### 2026-09-21T22:30Z — CTO review session (Claude Fable): THREE SOAK TRAINS RUNNING — read the Soaks block before touching any rig, PR head or deploy
+
+**Read this block first.** It supersedes the 17:10Z block below where they differ.
+
+### Soaks — THREE RUNNING as of 2026-09-21T22:30Z. Every listed PR head is FROZEN; a push to any of them voids its whole train.
+
+| Train | PRs (exact heads) | Rig (Supabase · Cloud Run) | Candidate · image | Clock start → floor |
+|---|---|---|---|---|
+| **A** T3 | #3036 `32363aabb` · #3053 `28abb9847` | `dlfcwhljvkomeouykcwk` · `arkova-worker-cto-train-b4-0913-staging` rev `…-00020-jek` | `59f444b5f` · `sha256:26c99881…` | 2026-09-21T21:43:09Z → **2026-09-22T21:43:09Z** |
+| **B** T3 | #3033 `4750fb382` · #3034 `96f332dbc` | `vaarxclqdxnwoxziolmp` · `arkova-worker-uat17-0914-staging` rev `…-00006-nv7` | `a25e88b72` · `sha256:e1cf41dd…` | 2026-09-21T21:51:51Z → **2026-09-22T21:51:51Z** |
+| **C** T2 | #3054 `fae91b7e4` · #3045 `9031fb00b` · #3050 `d2d46832a` | `xhvasifpunswhsgfsstd` · `arkova-worker-cto-train-b-0912-staging` rev `…-00053-hiy` | `a4cce723e` · `sha256:1226adde…` | 2026-09-21T22:11:35Z → **2026-09-22T02:11:35Z** |
+
+- Evidence, harness and watcher live OUTSIDE the repo: `/Volumes/Extreme/offload/cto-release-2026-09-21/` — `train-a/`, `train-b/`, `train-c/` (each: preflight JSON, candidate, deploy log, `cycle.sh`, `window.ndjson`, `supervisor-cycles.ndjson`), `soak-harness-v2/soak-supervisor-v2.sh` (setsid-detached, hash-bound sources, health-gated retry-once, NO fixture teardown on a non-terminal stop) and `deadman.sh` (alerts to `deadman-alerts.log` + a macOS notification when a train's last cycle is stale / not ok / has a stop receipt / has no supervisor). **Check `tail -1 train-X/supervisor-cycles.ndjson` before claiming any train is running** — I reported A as soaking while it had been dead for 15 minutes.
+- Two windows already died and were restarted; both are archived with a `WHY-VOID.md`. A window 1: a transient network timeout killed a probe mid-run, its leftover MFA factor made GoTrue refuse every retry — probes now clear their fixture users' factors at the START of each run. C window 1: the candidate's hourly Drive renewal job rewrote a fixture row with a NULL subscription — a fixture defect, fixed in the pack. **Anything time-scheduled in a candidate is a fixture hazard.**
+- Rigs were brought to prod parity with a parity migrations dir (main + the prod-ahead files 0471 / 0476 / 0481 / 0482, byte-checked) and `supabase db push --linked --include-all`. **A ledger HEAD number hides holes** — rig 1 "at 0481" lacked 0470, 0471, 0476 and 0482. Compare version SETS or run the preflight.
+- Rig deploys used `scripts/staging/deploy.sh` with its documented `ARKOVA_ALLOW_USER_GCLOUD=breakglass` path (the WIF workflows were down with the Actions budget). During the windows everything runs as `soak-automation@arkova1` (run.invoker on the three rig services only). Rig-only secrets created today: `recipient-identifier-pepper-uat17-0914-staging`, `recipient-identifier-pepper-cto-train-b4-0913-staging`, `integration-state-hmac-cto-train-b-0912-staging`, `google-oauth-client-secret-dummy-cto-train-b-0912-staging`.
+- **Next window:** #3058 (SCRUM-5285, T2, head `707c486b5`) gets its own 4 h on rig 1 after C seals. Its four independent passes are done (code correct; two false doc claims and three hardening gaps fixed).
+
+**Other state**
+- **Migration numbers 0482–0485 are taken** (0482 #3036; 0483/0484/0485 #3053). 0486 is reserved for SCRUM-5292. **Next free: 0487.** Apply order for the credits set: DB first, 0483→0484→0485 in one motion, never 0484 without 0485; not expedited.
+- Open security work, in priority order: **SCRUM-5292 (Highest)** — `confirm-domain` has no attempt limit on the 6-digit code; `domain_verified` is not sound until it lands. SCRUM-5285 → PR #3058. SCRUM-5288 — `RECIPIENT_IDENTIFIER_PEPPER` is not set on prod (secret `recipient-identifier-pepper` v1 exists, inert; wiring is a T1 workflow PR, pin `:1`). SCRUM-5291 — public org profile RPCs are keyed by the internal org uuid. SCRUM-5289 — `/ai/embed/batch` 402s an UNPROVISIONED org (a defect, not a policy; 0 embedding events in 30 days so #3053's window was not restarted) plus four deferred #3053 should-fixes. SCRUM-5286 — refund idempotency key.
+- **GitHub Actions budget is rationed** (exhausted ~16:59Z, $25 added ~22:17Z). PRs from this lane are DRAFT + `do-not-merge` so they skip the full matrix; do not re-run CI on a frozen mid-soak head — run it once when the PR is ready to merge. Open-PR ceiling is 20 total while PRs stay draft.
+- Every PR gets four independent passes by a non-author before its soak clock. Today that caught: a surviving domain-capture TOCTOU, a whole-batch 403 regression, a missing prod secret, a 402-on-lock-timeout, a probe that relabelled unknown statuses as `failed`, and — in another session's PR — a TLA invariant that watched a decoy action.
+
 ### 2026-09-21T17:10Z — CTO review session (Claude Fable): queue cleared and recovered, 0482 on prod (SCRUM-5280 database half), four PRs open, NO soak running
 
 **Read this block first.** It supersedes every block below it, including "SCRUM-5280 has no fix yet", "#3019 DO-NOT-SHIP" and "#2968 close as superseded".
@@ -21,7 +108,7 @@
 - **Prod:** worker `7a98c3d2f`, `/health` 200 healthy (database / anchoring / kms ok) at 2026-09-21T16:58Z. Numeric ledger head is `0482`. Migrations `0470 0471 0473 0474 0475 0476 0477 0481` were applied 2026-09-20T16:10–16:15Z and `0482` 2026-09-21 ~16:57Z, each via Supabase MCP with the numeric reconcile and a readback. `0480` was applied 2026-09-20 (SCRUM-5281; fixed on prod and on main — close the ticket).
 - **0482 was applied ahead of its T3 window, deliberately.** The one-PATCH domain-verification capture was live. It was rehearsed apply → rollback → re-apply on the b4 rig, reviewed independently (GO), and re-verified on prod by a second session. Prod function bodies are md5-identical to the rig. Only file lines 387–712 were sent (the header is comments), so `schema_migrations.statements` will NOT byte-match the file for 0482 — that is not drift. Record: `/Volumes/Extreme/offload/cto-release-2026-09-21/scrum5280-prod-apply/PROD-APPLY-0482.md`. Merging #3036 still needs the 24 h soak.
 - **SCRUM-5280 is NOT closed.** `confirm-domain` / `verify-domain` read the token and write the verification in two requests with no compare-and-swap; reproduced with 0482 applied. SCRUM-5285, worker fix + `orgDomainVerification` machine in progress (branch `fix/scrum-5285-domain-verify-cas`, local only). Prod had 0 pending tokens at 16:56Z.
-- **Open PRs from this lane, all `do-not-merge`, none soaked:** #3033 (UAT-14 recovery, T3), #3034 (UAT-23 recovery, T3, head `827d7b3ac`), #3036 (0482, T3, head FROZEN at `32363aabb` — do not push to it), #3053 (AI-credit refunds, migrations 0483 + 0484, T3, SCRUM-5284 / residual SCRUM-5286). Migration numbers 0482–0484 are taken; next author uses **0485**.
+- **Open PRs from this lane, all `do-not-merge`, none soaked:** #3033 (UAT-14 recovery, T3), #3034 (UAT-23 recovery, T3, head `827d7b3ac`), #3036 (0482, T3, head FROZEN at `32363aabb` — do not push to it), #3053 (AI-credit refunds, migrations 0483 + 0484, T3, SCRUM-5284 / residual SCRUM-5286). Migration numbers 0482–0484 are taken; next author uses ~~0485~~ — SUPERSEDED, see the 22:30Z block (next free is 0487).
 - **Why two of those are "recoveries":** #3025 (UAT-14) and #3020 (UAT-23) were stacked PRs that merged into their parents *after* the parents had already merged to main, so their code never reached main while their migrations did reach prod. #3033 / #3034 rebuild them onto main. Migrations 0471 / 0476 in #3034 are byte-identical to what prod stored.
 - **Exemptions on main:** `0443 0471 0476 0481 0482`. Remove 0481 with #3033, 0471 / 0476 with #3034, 0482 with #3036. Main also carries `fix(ci): no-credit-limits-beta …` — `P0002` on a not-found error no longer flags; the `post-beta-quota-rollout` label on #3036 was a false-positive unblock and does NOT mean beta is over.
 - **A red worker test blocks every prod deploy.** `docsDenylist.test.ts` was reported to me as "pre-existing failing" and blocked two deploys (`b320bca5b`, `336dda350`) until `7a98c3d2f`. Require full suites from sub-agents; never accept that phrase without proof against `origin/main`.
@@ -236,7 +323,7 @@
   running per §1.11A (do not tear down). Full trail:
   `/Volumes/Extreme/offload/cto-soak-2026-09-12/train-b5b/SEAL-LOG.md`.
 
-### Soaks — NONE running anywhere from this lane as of 2026-09-21T17:10Z (b4 rig idle since 2026-09-20T13:00Z; c2ce window 2 ended 12:54:18Z; the paragraph below is historical)
+### Soaks (HISTORICAL, superseded by the 22:30Z table above) — none were running as of 2026-09-21T17:10Z (b4 rig idle since 2026-09-20T13:00Z; c2ce window 2 ended 12:54:18Z; the paragraph below is historical)
 
 Rig `arkova-worker-cto-train-b4-0913-staging` / Supabase `dlfcwhljvkomeouykcwk` is IN USE: supervisor pid 85953, floors T1 2026-09-19T23:27:23Z, T2 2026-09-20T01:27:23Z, T3 2026-09-20T21:27:23Z. Details in the 2026-09-19 block above. The Codex controller was additionally preparing rig 1 for #3024/#3025 at 21:14Z — confirm with its evidence dir before touching rig 1.
 
@@ -2994,3 +3081,5 @@ _Last refreshed: 2026-09-10 by Codex release review — claims verified against 
 _Last refreshed: 2026-09-19 by CTO completion session — claims verified against gcloud/MCP/CI output (historical runtime entries retain their own dated evidence; this refresh records local candidate checks and tracking readbacks only, not new runtime state)._
 _Last refreshed: 2026-09-20 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
 _Last refreshed: 2026-09-21 by Claude Fable 5.1 (CTO review session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-22 by Claude Opus 5 (CTO execution session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-22 by Claude Opus 5 (CTO execution session) — claims verified against gcloud/MCP/CI output._

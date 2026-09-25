@@ -1,8 +1,70 @@
 # agents.md — services/worker/src/integrations/oauth/
 
+_Last updated: 2026-09-21 (`drive.ts` `listChanges()` fields-mask incident fix — SCRUM-2903/3661/5094/2330)._
 _Last updated: 2026-09-13 (`drive.ts` gained `listChildFolders()` + `drive.metadata.readonly` scope — Connectors page folder picker, SPEC-CONNECTORS §2.1/§2.2)._
 _Last updated: 2026-08-31 (signer-backfill follow-on to PR #2474: `fetchDocusignEnvelopeRecipients` + `extractCapturedSigners`, now delegating to the shared `captureDocusignSigners` mapper)._
 _Last updated: 2026-08-30 (`adobe-sign.ts` gained the OAuth + webhook-provisioning client)._
+
+## 2026-09-21 — `listChanges()` `fields` mask was concatenated — every Drive change notification failed since 2026-05-04 (SCRUM-2903/3661/5094/2330)
+
+**Root cause.** `listChanges()` built its `fields` query param as
+`[ 'newStartPageToken', 'nextPageToken', 'changes(fileId,removed,changeType,time,', 'file(...,', 'lastModifyingUser(...)))' ].join('')`
+— an EMPTY-STRING join. The first two top-level entries and the start of
+`changes(...)` fused together with **no separating commas**:
+`newStartPageTokennextPageTokenchanges(...`. Google rejected EVERY call with
+HTTP 400 `Invalid field selection newStartPageTokennextP...` (confirmed in
+prod logs: 150 failures/day, zero successes, ever, since the commit that
+introduced this — 90b4b9c72, 2026-05-04). The webhook 200-acks on any
+`runDriveChanges` failure (so Drive does not retry-storm), which is exactly
+why this went unnoticed for months: nothing downstream of `changes.list` —
+folder-rule match, revision ledger, rule-event enqueue, file-changed job
+enqueue, connector_artifact insert — had EVER run against a real Google
+response for any org.
+
+**Fix.** Rebuilt as one explicit string with commas written where they
+belong (`CHANGES_LIST_FIELDS` constant) — no `.join('')` at all, so there is
+no empty separator to get wrong a second time. Test coverage pins the EXACT
+decoded string (the only assertion that actually catches THIS defect class —
+see the doc comment on `assertValidFieldsMask` in
+`__test-helpers__/fields-mask.ts` for why a purely structural validator
+cannot: a no-separator join fuses two field names into one
+syntactically-valid-looking identifier that a generic tokenizer cannot tell
+apart from a legitimately long one).
+
+**Full call-site sweep** (every Google API call in this file that sets
+`fields`/`q`/`pageToken`/`supportsAllDrives`/`includeItemsFromAllDrives`):
+`listChanges` was the ONLY defect. `getFileMetadata` (`fields=id,name,parents,driveId`),
+`getSharedDriveName` (`fields=name`), `listChildFolders`
+(`fields=nextPageToken,files(id,name,driveId)`, already had exact-string
+coverage + `q` escaping via `escapeDriveQueryLiteral`) were all already
+correct — each now also has an exact-string regression test.
+`createChangesWatch`/`changes.watch` and `changes/startPageToken` carry no
+`fields` param at all (channel-resource response is small by default) — both
+now have exact-URL/param assertions too. Repo-wide `git grep -n "\.join('')"`
+across `services/worker/src/integrations` and `services/worker/src/api/v1/integrations`
+found no other instance of this pattern (DocuSign's `oauth/docusign.ts` joins
+scopes with `.join(' ')`, which is the CORRECT separator for a
+space-delimited OAuth scope string — not the same defect class).
+
+**`getStartPageToken` extracted** from `createChangesWatch` into its own
+exported function — same behavior, now independently callable. Needed for
+the new 410/404 "pageToken invalid/expired" recovery path in
+`drive-changes-processor.ts` (see `connectors/agents.md`): Google's
+documented recovery for an expired page token is exactly this call, never a
+retry of `changes.list` with the same stale token.
+
+**Google docs verification.** The `google-developer-knowledge` MCP returned
+`API key not valid` this session (server-side auth failure, not a missing
+capability) — confirmed instead via `WebFetch` against
+`developers.google.com/drive/api/guides/fields-parameter` (comma separates
+sibling fields at a level; parentheses denote the next nesting level — e.g.
+`fields=nextPageToken,changes(file(id,name,owners(displayName,emailAddress)))`,
+which is exactly the shape `CHANGES_LIST_FIELDS` now uses) and
+`.../reference/rest/v3/changes/list` (confirms `pageToken`, `includeRemoved`,
+`supportsAllDrives`, `includeItemsFromAllDrives` are the right params, and
+that `newStartPageToken` appears only on the final page while `nextPageToken`
+appears on every page with more to fetch — matches the existing pagination
+logic in `drive-changes-processor.ts`, unchanged by this fix).
 
 ## 2026-09-13 — `drive.ts`: `listChildFolders()` + `DRIVE_DEFAULT_SCOPES` gained `drive.metadata.readonly`
 

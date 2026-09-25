@@ -7,16 +7,13 @@
     "capturedAt": "2026-08-11",
     "workerGitSha": "2de4e4e344f3749a09c52d7411831b7d2735528c"
   },
-  "acknowledgedInertEnvFlags": [
-    "ENABLE_SEMANTIC_SEARCH",
-    "ENABLE_AI_FRAUD"
-  ],
+  "acknowledgedInertEnvFlags": [],
   "acknowledgedClaimContradictions": [
     "ENABLE_SEMANTIC_SEARCH",
     "ENABLE_AI_FRAUD"
   ],
   "_claimsNote": "R-7 (CLAUDE.md \u00a71.13). Two capabilities are OFF in prod while public and auditor-facing surfaces state they are available. Acknowledged so the gate stays green for unrelated PRs, but they are printed loudly on every run and flagInventory.test.ts pins the exact pair \u2014 a NEW contradiction is a hard CI error. FIXING THEM IS A COPY/DOCS CHANGE, NOT A FLAG FLIP: do not enable a feature to make a marketing claim true. ENABLE_SEMANTIC_SEARCH is the more serious of the two \u2014 src/pages/DevelopersPage.tsx:65 lists POST /ai/search at $0.010/call, which is a priced commercial offer for an endpoint that 503s.",
-  "_acknowledgedNote": "Both are DB-backed with a live switchboard row set FALSE while deploy-worker.yml sets them =true. The env var is inert (the row wins) AND states the opposite of the truth. Acknowledged as warnings rather than hard errors because editing deploy-worker.yml is a deploy-surface change owned by release-ops/Carson, not by this gate's PR. FIX: set both =false in deploy-worker.yml so they fail SAFE and read true, then delete them from this list \u2014 flagInventory.test.ts pins the current pair, so the fix forces the test to be updated deliberately.",
+  "_acknowledgedNote": "RESOLVED 2026-09-21. ENABLE_SEMANTIC_SEARCH and ENABLE_AI_FRAUD were DB-backed with a live switchboard row set FALSE while deploy-worker.yml set them =true (inert, and stating the opposite of the truth). deploy-worker.yml now sets both =false, so they fail SAFE and read true; this list is empty and flagInventory.test.ts pins ZERO env-db contradictions on the real tree. The env vars remain inert (the row wins) and still surface as inert-env-var warnings by design. Founder directive 2026-09-21: AI fraud stays OFF. Do not re-add an acknowledgment to make a =true line pass \u2014 fix the line.",
   "flags": {
     "USE_MOCKS": {
       "sources": [

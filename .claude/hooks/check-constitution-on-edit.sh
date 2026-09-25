@@ -132,7 +132,53 @@ resolve_root_for_file() {
   git -C "$dir" rev-parse --show-toplevel 2>/dev/null
 }
 
+# Out-of-scope allowlist (CTO session decision 2026-09-21: memory and scratchpad
+# paths are outside the constitution's scope).
+#
+# Claude Code's persistent memory (~/.claude/projects/*/memory/) and the session
+# scratchpad (/private/tmp/claude-*/, /tmp/claude-*/) can never be repo files, so
+# the fail-closed deny below blocked them for a rule set that cannot apply.
+#
+# This is consulted ONLY when no git work tree owns the target, and it matches
+# the PHYSICAL path, never the string the caller passed:
+#   * any `..` component disqualifies the path outright, so
+#     `~/.claude/../../Volumes/…/services/worker/src/x.ts` is never allowlisted;
+#   * the nearest existing ancestor is resolved with `pwd -P`, so a symlinked
+#     directory under ~/.claude that points elsewhere resolves to elsewhere;
+#   * a target that is itself a symlink is disqualified.
+# Anything that fails these tests falls through to the fail-closed deny, exactly
+# as before. Do NOT widen this into a general "unresolvable path passes".
+physical_path_no_traversal() {
+  local path="$1" dir rest=""
+  [[ "$path" == /* ]] || return 1
+  case "$path" in */../*|*/..|*/./*|*/.) return 1 ;; esac
+  [[ -L "$path" ]] && return 1
+  dir=$(dirname -- "$path")
+  rest=$(basename -- "$path")
+  while [[ ! -d "$dir" && "$dir" != "/" ]]; do
+    rest="$(basename -- "$dir")/${rest}"
+    dir=$(dirname -- "$dir")
+  done
+  dir=$(cd -- "$dir" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "${dir%/}" "$rest"
+}
+
+is_out_of_scope_path() {
+  local phys claude_home
+  phys=$(physical_path_no_traversal "$1") || return 1
+  if [[ -n "${HOME:-}" && -d "${HOME}/.claude" ]]; then
+    claude_home=$(cd -- "${HOME}/.claude" 2>/dev/null && pwd -P) || claude_home=""
+    [[ -n "$claude_home" && "$phys" == "${claude_home}/"* ]] && return 0
+  fi
+  [[ "$phys" =~ ^(/private)?/tmp/claude-[^/]+/.+ ]] && return 0
+  return 1
+}
+
 repo_root=$(resolve_root_for_file "$file_path" || true)
+if [[ -z "$repo_root" ]] && is_out_of_scope_path "$file_path"; then
+  printf 'check-constitution-on-edit.sh: %s is outside any git work tree and under ~/.claude or the session scratchpad — outside the constitution'"'"'s scope, passed through unchecked.\n' "$file_path" >&2
+  exit 0
+fi
 if [[ -z "$repo_root" ]]; then
   repo_root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)}"
 fi

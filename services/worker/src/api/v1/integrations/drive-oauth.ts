@@ -30,9 +30,11 @@ import {
   createChangesWatch,
   exchangeCode,
   stopDriveChannel,
+  driveGrantExcessScopes,
   // revokeOAuthToken intentionally NOT imported — see SCRUM-1237 / AUDIT-0424-12
   type DriveClientDeps,
 } from '../../../integrations/oauth/drive.js';
+import { recordAuditEvent } from '../../../utils/auditEvent.js';
 import {
   createDefaultKmsClient,
   decryptTokens,
@@ -289,6 +291,37 @@ async function recordIntegrationEvent(db: DbClient, args: {
   }
 }
 
+// S3776 cognitive-complexity extraction (behavior-neutral): the callback
+// handler's own nested try/catch around `createChangesWatch`, unchanged —
+// same call, same log line, same null-on-failure fallback (DRIVE B1: the
+// caller derives `watchColumns` from this result and deliberately leaves
+// `last_page_token` untouched on a null, so an existing cursor is never
+// wiped by a failed re-watch).
+async function tryCreateDriveChangesWatch(args: {
+  accessToken: string;
+  channelId: string;
+  address: string;
+  token: string;
+  deps: DriveClientDeps;
+  orgId: string;
+}): Promise<{ resourceId: string; expiration: string; startPageToken: string } | null> {
+  try {
+    return await createChangesWatch({
+      accessToken: args.accessToken,
+      channelId: args.channelId,
+      address: args.address,
+      token: args.token,
+      deps: args.deps,
+    });
+  } catch (watchError) {
+    logger.warn(
+      { watchError, orgId: args.orgId },
+      'Drive changes.watch failed; saving OAuth connection without subscription',
+    );
+    return null;
+  }
+}
+
 export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
   const router = Router();
   const db = deps.db ?? defaultDb;
@@ -426,6 +459,37 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         redirectUri: buildRedirectUri(req),
         deps: driveDeps,
       });
+
+      // SCRUM-5287 (P1 security): the grant Google actually returned must
+      // not exceed what was requested (`DRIVE_DEFAULT_SCOPES`, plus the
+      // harmless `openid` Google may bundle — see
+      // `driveGrantExcessScopes`'s doc comment). This is the shared OAuth
+      // client's own history leaking through: a prior, unrelated consent on
+      // the SAME Google account can leave broader scopes (full `drive`,
+      // `gmail.modify`, `contacts`, …) sitting on the token exchange
+      // response even though `include_granted_scopes` is never sent. Refuse
+      // BEFORE any further call uses this token, and before anything is
+      // persisted — an over-scoped token must never reach Postgres.
+      const excessScopes = driveGrantExcessScopes(tokens.scope);
+      if (excessScopes.length > 0) {
+        logger.error(
+          { orgId: callbackOrgId, excessScopes },
+          'Drive OAuth callback: granted scope EXCEEDS the requested set — refusing to persist (SCRUM-5287)',
+        );
+        // Audit event: org id + excess scope NAMES only — never the token,
+        // never an email. Scope names are public OAuth constants, not PII.
+        void recordAuditEvent({
+          event_type: 'drive_oauth_grant_exceeds_requested',
+          event_category: 'AUTH',
+          org_id: callbackOrgId,
+          target_type: 'org_integrations',
+          target_id: null,
+          details: JSON.stringify({ excess_scopes: excessScopes }),
+        });
+        res.redirect(302, appendResult(returnTo, 'drive_error', 'grant_exceeds_requested'));
+        return;
+      }
+
       const identity = await fetchGoogleIdentity(tokens.access_token, deps);
       const kms = deps.kms ?? await createDefaultKmsClient();
       const expiresAt = new Date((deps.now?.() ?? new Date()).getTime() + tokens.expires_in * 1000).toISOString();
@@ -447,20 +511,14 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       // be seeded — `advancePageToken` is the only other writer, and it runs
       // exclusively inside `processDriveChanges`, which refuses to run without a
       // token. Dropping it made the pipeline unreachable by construction.
-      let subscription:
-        | { resourceId: string; expiration: string; startPageToken: string }
-        | null = null;
-      try {
-        subscription = await createChangesWatch({
-          accessToken: tokens.access_token,
-          channelId,
-          address: buildWebhookAddress(req),
-          token: channelToken,
-          deps: driveDeps,
-        });
-      } catch (watchError) {
-        logger.warn({ watchError, orgId: callbackOrgId }, 'Drive changes.watch failed; saving OAuth connection without subscription');
-      }
+      const subscription = await tryCreateDriveChangesWatch({
+        accessToken: tokens.access_token,
+        channelId,
+        address: buildWebhookAddress(req),
+        token: channelToken,
+        deps: driveDeps,
+        orgId: callbackOrgId,
+      });
 
       // Every column derived from the watch result, resolved ONCE. These four
       // must agree with each other — a row claiming an active subscription but

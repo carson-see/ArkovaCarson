@@ -925,3 +925,6 @@ throw site in `services/worker/src/api/bulk-recipient.ts`. An unrecognised or
 absent code is `unknown`, which asserts nothing, so a newer worker's reason
 code can never make the UI claim something we did not measure (§1.5).
 Classification lives here, not in `copy.ts`: the copy layer stays copy.
+## 2026-09-21 — SCRUM-5285 org-verification superseded copy
+
+`ORG_VERIFICATION_LABELS` carries the two 409 `verification_superseded` messages for `components/org/OrgVerification.tsx`. Both must keep telling the user to START AGAIN rather than to retry: the worker's compare-and-swap makes the refusal permanent for that code, so "try again" would be false. API error codes stay literals in the handlers — only user-visible strings live here.

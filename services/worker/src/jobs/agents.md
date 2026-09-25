@@ -2036,3 +2036,16 @@ The instant consumer now uses the generated table/RPC types directly, replacing 
 The revocation and attestation anchoring jobs emit registered finality events
 using public resource ids and chain receipt fields only. Never restore
 `anchor_id`, `attestation_id`, or `fingerprint` to either payload.
+
+## 2026-09-22 — Lease dirty marker lives here (PR #3054)
+
+`markRunLeaseDirty` / `checkAndClearRunLeaseDirty` in `run-lease.ts` are the
+"a push arrived while the lease was held" hint on a LEASE row (`job_queue.
+attempts`, unused by the lease CAS, no payload merge, no migration). They were
+relocated from `integrations/connectors/drive-changes-runner.ts` because
+`scripts/ci/check-job-queue-parity.ts` rule 4 reads any raw `.from('job_queue')`
+write outside the allow-listed queue internals as an unregistered producer —
+this module is the allow-listed owner of lease-row access, so lease primitives
+belong here, not in an allow-list exception for the caller. Semantics are pinned
+in `__tests__/run-lease.test.ts` ("dirty marker"): unconditional set without
+holding the lease, read-and-clear exactly once, fail-soft on store errors.

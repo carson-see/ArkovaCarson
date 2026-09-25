@@ -14,6 +14,8 @@ import {
   resolveDriveExportMimeType,
   DriveApiError,
   DriveDocumentTooLargeError,
+  DriveFileAccessError,
+  DriveExportSizeLimitError,
   MAX_DRIVE_DOCUMENT_BYTES,
 } from './drive.js';
 
@@ -72,13 +74,13 @@ describe('fetchDriveFileBytes — transport selection', () => {
 });
 
 describe('fetchDriveFileBytes — §1.6A error discipline (pre-mortem a)', () => {
-  it('throws status+message only and does NOT read the error body', async () => {
+  it('a non-403 failure throws status+message only and does NOT read the error body', async () => {
     const json = vi.fn(async () => ({ error: 'boom', maybe_bytes: 'x'.repeat(9999) }));
     const text = vi.fn(async () => 'x'.repeat(9999));
     const arrayBuffer = vi.fn(async () => new ArrayBuffer(8));
     const fetchImpl = vi.fn(async () => ({
       ok: false,
-      status: 403,
+      status: 500,
       headers: { get: () => null },
       json,
       text,
@@ -99,7 +101,7 @@ describe('fetchDriveFileBytes — §1.6A error discipline (pre-mortem a)', () =>
 
     expect(caught).toBeInstanceOf(DriveApiError);
     const err = caught as DriveApiError;
-    expect(err.status).toBe(403);
+    expect(err.status).toBe(500);
     expect(err.message).toBe('Drive file bytes fetch failed');
     // §1.6A: NO detail, NO body — nothing derived from the response payload.
     expect(err.detail).toBeUndefined();
@@ -108,6 +110,89 @@ describe('fetchDriveFileBytes — §1.6A error discipline (pre-mortem a)', () =>
     expect(json).not.toHaveBeenCalled();
     expect(text).not.toHaveBeenCalled();
     expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+});
+
+// Fix-round item 6: a 403 IS classified — narrowly. §1.6A is upheld by WHAT
+// is extracted (a short, known reason CODE only), never by refusing to read
+// at all — see oauth/drive.ts's `extractDriveFileErrorReason` doc comment.
+describe('fetchDriveFileBytes — 403 classification (fix-round item 6)', () => {
+  function errorResponse(status: number, body: unknown) {
+    return {
+      ok: false,
+      status,
+      headers: { get: () => null },
+      json: vi.fn(async () => body),
+      text: vi.fn(async () => JSON.stringify(body)),
+    } as unknown as Response;
+  }
+
+  it('appNotAuthorizedToFile -> DriveFileAccessError carrying ONLY that reason code', async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(403, {
+      error: {
+        code: 403,
+        message: 'The user does not have sufficient permissions for this file.',
+        errors: [{ domain: 'global', reason: 'appNotAuthorizedToFile', message: 'The user does not have sufficient permissions for this file.' }],
+      },
+    }));
+    const err = await fetchDriveFileBytes({
+      fileId: 'f', accessToken: 'tok', mimeType: 'application/pdf',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveFileAccessError);
+    expect((err as DriveFileAccessError).reason).toBe('appNotAuthorizedToFile');
+    // Never the free-text `message` — only the short code.
+    expect((err as DriveFileAccessError).message).not.toContain('sufficient permissions');
+  });
+
+  it.each(['insufficientFilePermissions', 'insufficientPermissions', 'forbidden', 'cannotDownloadAbusiveFile'])(
+    '%s -> DriveFileAccessError',
+    async (reason) => {
+      const fetchImpl = vi.fn(async () => errorResponse(403, { error: { errors: [{ reason }] } }));
+      const err = await fetchDriveFileBytes({
+        fileId: 'f', accessToken: 'tok', mimeType: 'application/pdf',
+        deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+      }).catch((e) => e);
+      expect(err).toBeInstanceOf(DriveFileAccessError);
+      expect((err as DriveFileAccessError).reason).toBe(reason);
+    },
+  );
+
+  it('exportSizeLimitExceeded -> DriveExportSizeLimitError, distinct from DriveFileAccessError', async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(403, { error: { errors: [{ reason: 'exportSizeLimitExceeded' }] } }));
+    const err = await fetchDriveFileBytes({
+      fileId: 'f', accessToken: 'tok', mimeType: 'application/vnd.google-apps.spreadsheet',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveExportSizeLimitError);
+    expect(err).not.toBeInstanceOf(DriveFileAccessError);
+  });
+
+  it('an UNRECOGNIZED 403 reason (e.g. rateLimitExceeded) falls through to the generic, retryable DriveApiError — not mislabeled as access-denied', async () => {
+    const fetchImpl = vi.fn(async () => errorResponse(403, { error: { errors: [{ reason: 'userRateLimitExceeded' }] } }));
+    const err = await fetchDriveFileBytes({
+      fileId: 'f', accessToken: 'tok', mimeType: 'application/pdf',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect(err).not.toBeInstanceOf(DriveFileAccessError);
+    expect((err as DriveApiError).status).toBe(403);
+    expect((err as DriveApiError).detail).toBeUndefined();
+  });
+
+  it('an unparseable/empty 403 body falls through to the generic DriveApiError rather than throwing from classification itself', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      headers: { get: () => null },
+      json: vi.fn(async () => { throw new Error('not json'); }),
+    }) as unknown as Response);
+    const err = await fetchDriveFileBytes({
+      fileId: 'f', accessToken: 'tok', mimeType: 'application/pdf',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(403);
   });
 });
 
