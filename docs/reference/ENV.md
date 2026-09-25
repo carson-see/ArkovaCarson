@@ -69,7 +69,39 @@ BATCH_ANCHOR_INTERVAL_MINUTES=10
 BATCH_ANCHOR_MAX_SIZE=100
 MAX_FEE_THRESHOLD_SAT_PER_VBYTE=
 ANCHOR_CONFIDENCE_THRESHOLD=0.4
+E2E_ADMIN_RATELIMIT_BYPASS=false    # CI-ONLY. Skips the 10 req/min `checkout` limiter for adminRouter so the Playwright stack can run. NEVER set in production.
 ```
+
+**`E2E_ADMIN_RATELIMIT_BYPASS` — read this before touching it.** It exists
+because the Playwright stack cannot fit inside the `checkout` limiter: every
+E2E browser shares `::1`, one `ConnectorsPage` run issues ~8-12 admin requests
+against a 10/min budget, and four specs contend for the same tokens. It is set
+ONLY in `ci.yml`'s "Start worker for E2E tests" step.
+
+Scope and safety, because this one disables a rate limit:
+- It is applied at **adminRouter's mount point**, not on the shared
+  `rateLimiters.checkout` instance — so billing checkout, credit purchase,
+  account deletion and the anchor routes stay rate-limited even under E2E.
+- The `/api/v1` limiter is untouched, so the §1.10 anon 100/min contract and
+  `e2e/verify-ratelimit-contract.spec.ts` are unaffected.
+- It **fails closed twice**: `adminRateLimitBypassActive()` additionally
+  requires `nodeEnv !== 'production'`, and `config.ts` **throws at boot** if
+  the flag is set in production. CLAUDE.md §1.1 records that the in-code
+  limiters are the ONLY real limits — there is no Cloudflare rate limiting on
+  arkova.ai to catch a mistake here, which is why one guard was not enough.
+- Under E2E it is a **raised ceiling, not an absence**: adminRouter is served
+  by a second limiter (`scope: 'checkout-e2e'`, 1000/min) rather than no
+  limiter at all. Skipping outright would set **no `X-RateLimit-*` headers**,
+  and `e2e/connectors.spec.ts`'s headroom probe throws on absent headers — so
+  a bypass would have swapped one deterministic failure for another.
+
+**Operational gotcha — setting this on a staging rig crashes the worker.**
+Staging rigs run `NODE_ENV=production`, and `config.ts` throws at boot when
+this flag is set in production. Setting it on a rig "to try it out" therefore
+produces a **crash-looping worker, not a bypass**. That is the guard working
+as designed, but it reads as a mysterious deploy failure — check the worker
+log for the `E2E_ADMIN_RATELIMIT_BYPASS is set in production` message before
+diagnosing anything else.
 
 ## Verification API (worker only)
 ```bash

@@ -73,6 +73,8 @@ you cite `memory/x.md`, the file has to be in this directory.
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
+| `project_dependabot_lockfile_desync_reds_every_pr.md` | Documentation only (diagnosis procedure: a Dependabot bump that desyncs a sub-package lockfile reds the required `Tests` job on EVERY open PR; reproduce on a clean `origin/main` checkout before theorising per-branch) | 📖 docs only |
+| `feedback_assertion_that_cannot_fail_is_not_evidence.md` | Documentation only (evidence-quality rule: red-proof every assertion with a DIFFERENT wrong answer, pin the stable discriminator not a message string, and write soak evidence as enforced / observed-once / not-exercised without blurring them) | 📖 docs only |
 | `feedback_gates_before_pin.md` | Documentation only (procedure: every required check green on the exact head, locally and hosted, before a soak window pins it; founder directive 2026-09-22 after two voided #3054 windows) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 | `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |

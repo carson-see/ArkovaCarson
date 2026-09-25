@@ -147,18 +147,21 @@ describe('parseDbFlagNames (flagRegistry.ts DB_FLAGS)', () => {
   });
 });
 
-// Smoke test against the REAL tree — documents the LIVE fail-open hazard:
-// deploy-worker.yml sets ENABLE_SEMANTIC_SEARCH=true and ENABLE_AI_FRAUD=true, both of
-// which the asserted manifest pins effective=false. flagRegistry.ts classifies both as
-// DB-backed. This is exactly the env↔DB delta the gate must now catch.
+// Smoke test against the REAL tree. Until 2026-09-21 this documented a LIVE fail-open
+// hazard: deploy-worker.yml set ENABLE_SEMANTIC_SEARCH=true and ENABLE_AI_FRAUD=true while
+// the asserted manifest pinned effective=false (DB row false). Both env values are now
+// `false` (founder directive 2026-09-21: AI fraud stays OFF; the flag-inventory's own
+// documented FIX covers both), so the real tree must show NO env↔DB delta for them. The
+// gate's ability to catch the hazard is covered by the synthetic cases above — if someone
+// re-introduces `=true` here, this test goes red.
 describe('flag-SPOF on the real tree (current-state smoke)', () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-  it('deploy-worker.yml sets ENABLE_SEMANTIC_SEARCH=true and ENABLE_AI_FRAUD=true (the fail-open env state is live)', () => {
+  it('deploy-worker.yml sets ENABLE_SEMANTIC_SEARCH=false and ENABLE_AI_FRAUD=false (env agrees with the DB row; fails SAFE)', () => {
     const yml = readFileSync(resolve(repoRoot, '.github/workflows/deploy-worker.yml'), 'utf8');
     const flags = parseDeployedFlags(yml);
-    expect(flags.ENABLE_SEMANTIC_SEARCH).toBe(true);
-    expect(flags.ENABLE_AI_FRAUD).toBe(true);
+    expect(flags.ENABLE_SEMANTIC_SEARCH).toBe(false);
+    expect(flags.ENABLE_AI_FRAUD).toBe(false);
     expect(flags.ENABLE_AI_EXTRACTION).toBe(true); // launch-required, correctly ON
   });
 

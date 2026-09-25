@@ -32,7 +32,7 @@
     "directory": "packages/sdk"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
     "@types/node": "26.4.1",

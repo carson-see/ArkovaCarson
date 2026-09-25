@@ -3,28 +3,42 @@
 Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep 2026-08-18). Exposes Arkova verification as Model Context Protocol tools.
 
 ## Files
-- **`index.ts`** — MCP tool definitions (`TOOL_DEFINITIONS`) and `handleToolCall()` dispatcher. **6 tools**, all `arkova_`-prefixed (`arkova_verify_anchor`, `arkova_anchor_status`, `arkova_search_anchors`, `arkova_create_attestation`, `arkova_batch_verify`, `arkova_verify_signature`). NCE-19 previously added 4 `nessie_`-prefixed compliance-intelligence tools (`nessie_compliance_score`, `nessie_gap_analysis`, `nessie_ask`, `nessie_cross_reference`) without this file or `index.test.ts`'s assertions being updated at the time — that caused a silent 2-test regression until fixed 2026-08-18. All 4 were then removed outright 2026-09-02 (see `sdks/mcp-server/agents.md` "nessie_* tool removal" — three 401'd for every real caller because the worker's `/compliance/*` routes require a Supabase JWT and explicitly reject `Bearer ak_…`, which is all this server ever sends; the fourth, `nessie_ask`, was already a standing 503). If you add or remove a tool, update the count **here** and in `index.test.ts` in the same change; this file drifting is exactly what caused the earlier miscount.
-  - **CLAUDE.md §1.3 (2026-08-18, clean-room verification):** two tool descriptions said "Bitcoin anchor status" / "Bitcoin anchor information" — tool descriptions ship verbatim in every `tools/list` response, so they're user-visible the same way UI copy is. Fixed to "network anchor status"/"network anchor information". `index.test.ts` now asserts no §1.3-banned term appears in any tool name, description, or input-property description — added as a standing guard, not a one-off fix. Extended 2026-09-02 with an F8 "credential" scrub guard: no tool name may contain "credential", no description/property description may contain "credentials" (plural). `credential_type` survives only as a literal API field name.
-  - **2026-09-02 truth-audit fixes (D5-F13):** see `sdks/mcp-server/agents.md`'s dated entry for the full list — `nessie_*` removal, `arkova_create_attestation` now requires+sends `attester_name`/`claims` and surfaces validation `details`, `arkova_search_anchors`/`arkova_verify_signature` disclose a disabled-capability 503 instead of swallowing it, `arkova_batch_verify` capped at 20 (was 100), the false "or document fingerprint" claim dropped, and the `limit` NaN parsing bug fixed.
-- **`index.test.ts`** — colocated tests with mocked fetch. Covers all 6 `arkova_`-prefixed tools, the §1.3 + credential-scrub terminology guards above, and the 2026-09-02 fixes (attestation required-field + details-surfacing tests, disabled-capability disclosure tests for search/signature, batch cap tests, limit-NaN-fallback tests).
-- **`index.ts`** — MCP tool definitions (`TOOL_DEFINITIONS`) and `handleToolCall()` dispatcher. 10 tools: `arkova_verify_credential`, `arkova_credential_status`, `arkova_search_credentials`, `arkova_create_attestation`, `arkova_batch_verify`, `nessie_compliance_score`, `nessie_gap_analysis`, `nessie_ask`, `nessie_cross_reference` (NCE-19 compliance intelligence), `arkova_verify_signature` (Phase III).
-- **`index.test.ts`** — colocated tests with mocked fetch. Pins the exact tool-name list — adding/removing a tool must update it deliberately. Gated by root CI (`Tests` job, `sdk-tests` step: `node_modules/.bin/vitest run --root sdks`).
-- **`index.ts`** — MCP tool definitions (`TOOL_DEFINITIONS`) and `handleToolCall()` dispatcher. **10 tools**, not 6 — 6 `arkova_`-prefixed (`arkova_verify_credential`, `arkova_credential_status`, `arkova_search_credentials`, `arkova_create_attestation`, `arkova_batch_verify`, `arkova_verify_signature`) plus 4 `nessie_`-prefixed compliance-intelligence tools added by NCE-19 (`nessie_compliance_score`, `nessie_gap_analysis`, `nessie_ask`, `nessie_cross_reference`) without this file or `index.test.ts`'s assertions being updated at the time — `index.test.ts` silently regressed to 2 failing tests until fixed 2026-08-18. If you add or remove a tool, update the count **here** and in `index.test.ts` in the same change; this file drifting is exactly what caused the miscount.
-  - **CLAUDE.md §1.3 (2026-08-18, clean-room verification):** two tool descriptions said "Bitcoin anchor status" / "Bitcoin anchor information" — tool descriptions ship verbatim in every `tools/list` response, so they're user-visible the same way UI copy is. Fixed to "network anchor status"/"network anchor information". `index.test.ts` now asserts no §1.3-banned term appears in any tool name, description, or input-property description — added as a standing guard, not a one-off fix.
-  - **`nessie_ask` R-7 disclosure (2026-08-18):** description now states the endpoint isn't yet enabled in production and calls return 503 until launch — see the "Nessie-off gap" section in `sdks/mcp-server/agents.md` for why only this one tool (not all 4 `nessie_`-prefixed) needed it. `handleNessieAsk` also now surfaces the server's actual error message on failure instead of a bare status code.
-- **`index.test.ts`** — colocated tests with mocked fetch. Now also covers all 4 `nessie_`-prefixed tools (previously zero coverage) and the §1.3 terminology guard above.
+- **`index.ts`** — MCP tool definitions (`TOOL_DEFINITIONS`) and `handleToolCall()` dispatcher. **9 tools**, all `arkova_`-prefixed: `arkova_submit_anchor`, `arkova_get_submission_status`, `arkova_verify_anchor`, `arkova_anchor_status`, `arkova_search_anchors`, `arkova_create_attestation`, `arkova_batch_verify`, `arkova_verify_signature`, `arkova_manage_folders`. If you add or remove a tool, update the count **here** and in `index.test.ts`'s exact-name ratchet in the same change — this file drifting out of sync with the real tool list is what caused a silent 2-test regression in 2026-08 (see History below).
+  - **CLAUDE.md §1.3 (2026-08-18, clean-room verification):** tool names/descriptions/input-property descriptions are the §1.3 UI-copy terminology surface — `index.test.ts` asserts no banned term (and no "credential"/"credentials") appears anywhere in `TOOL_DEFINITIONS`.
+  - `vitest.config.ts` (package-local) scopes test discovery to `src/**/*.test.ts` so `npm ci --ignore-scripts && npm test` passes in a checkout with no root `node_modules` — do not rely on `sdks/vitest.config.ts` picking this package up; module resolution for that parent config starts one directory up from where this package's own `vitest` dependency resolves.
+  - `arkovaFetch` sets `redirect: 'error'`. Node preserves the custom `X-API-Key` header across an origin-changing redirect, so following one could disclose the key even when the configured base URL itself is trusted — regression-tested in `index.test.ts`'s "HTTP transport" suite.
+- **`index.test.ts`** — colocated tests with mocked fetch. Pins the exact 9-tool name list (exact-name ratchet — adding/removing a tool must update it deliberately), the §1.3 + credential-scrub terminology guards, the redirect-refusal transport test, and per-tool behavior (attestation required-fields, disabled-capability disclosure, batch cap, folder CRUD/reparent/connector/bulk-move). Gated by root CI (`Tests` job, `sdk-tests` step: `node_modules/.bin/vitest run --root sdks`) and independently runnable standalone via `npm ci --ignore-scripts && npm test` in this package directory.
 - **`cli.ts`** — the npm `bin` entrypoint; wires `TOOL_DEFINITIONS`/`handleToolCall` onto a real `@modelcontextprotocol/sdk` stdio `Server`. See `sdks/mcp-server/agents.md` for why this is a separate file from `index.ts`, and for the P0 symlink-entrypoint fix (2026-08-18) — the guard is `isRunAsScript()` now, not a plain `import.meta.url` string compare.
 - **`cli.test.ts`** — drives `cli.ts`'s `createServer()` over the SDK's `InMemoryTransport` + `Client`, i.e. through the real MCP protocol (list/call), not by reaching into private handler maps. Cannot, by construction, catch an argv-vs-symlink entrypoint bug — see `cli.bin.test.ts`.
 - **`cli.bin.test.ts`** (2026-08-18) — builds `dist/cli.js`, symlinks it into a temp dir the way `node_modules/.bin/` does, and spawns a real `node` process against the symlink, driving an actual stdio JSON-RPC session (`initialize` + `tools/list`) and asserting the `ARKOVA_API_KEY`-unset stderr warning. This is the test that would have caught the P0 entrypoint bug; `cli.test.ts`'s in-process tests could not have.
 
 ## Conventions
 - Auth: `ARKOVA_API_KEY` environment variable.
-- All tool names prefixed with `arkova_` for namespace consistency (DX-04). (Was "`arkova_` or `nessie_`" before the 2026-09-02 `nessie_*` removal — see above.)
-- Compatible with Claude, OpenAI, Cursor, and any MCP client.
+- All tool names prefixed with `arkova_` for namespace consistency (DX-04). (Was "`arkova_` or `nessie_`" before the 2026-09-02 `nessie_*` removal — see History below.)
 - Compatible with Claude, OpenAI, Cursor, and any MCP client (stdio transport only — see `cli.ts`).
 - Tool names/descriptions/input-property descriptions are CLAUDE.md §1.3 terminology surface (see `index.test.ts`'s standing guard above) — treat them like UI copy, not internal code, when adding or editing a tool.
 
-## 2026-09-14 — SCRUM-5142 folders
+## 2026-09-19 — UAT-12 / UAT-24 status and folder tools
 
-`arkova_manage_folders` is one action-discriminated tool over the canonical worker REST routes. It forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model.
-Its tests exercise every CRUD/reparent/connector action and both bulk identifier modes against the same worker paths.
+`arkova_get_submission_status` and `arkova_submit_anchor` (action defaults to queue) round out anchor
+submission parity with the API-key caller-scoped worker routes. `arkova_manage_folders` (added
+2026-09-14, SCRUM-5142) is one action-discriminated tool over the canonical worker REST routes — it
+forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model. Tool
+count moved 6 → 9 across these two changes; see the exact-name ratchet in `index.test.ts`.
+
+## History (superseded — do not read as current state)
+
+- **NCE-19 (pre-2026-08-18):** 4 `nessie_`-prefixed compliance-intelligence tools
+  (`nessie_compliance_score`, `nessie_gap_analysis`, `nessie_ask`, `nessie_cross_reference`) were
+  added without `index.test.ts`'s assertions being updated at the time, causing a silent 2-test
+  regression until fixed 2026-08-18.
+- **2026-09-02 (D5-F13 truth-audit + `nessie_*` removal):** all 4 `nessie_`-prefixed tools were
+  removed outright — three 401'd for every real caller because the worker's `/compliance/*` routes
+  require a Supabase JWT and explicitly reject `Bearer ak_…`, which is all this server ever sends;
+  the fourth, `nessie_ask`, was already a standing 503 by founder directive. Same change: tool names
+  were rewritten off "credential" (see `sdks/mcp-server/agents.md`'s "tool rename" entry),
+  `arkova_create_attestation` began requiring+sending `attester_name`/`claims` and surfacing
+  validation `details`, `arkova_search_anchors`/`arkova_verify_signature` began disclosing a
+  disabled-capability 503 instead of swallowing it, `arkova_batch_verify` was capped at 20 (was
+  100), and a `limit` NaN-parsing bug was fixed. Tool count was 6, all `arkova_`-prefixed, from this
+  point until the 2026-09-19 additions above.
