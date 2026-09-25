@@ -942,7 +942,14 @@ export async function handleConnectorHealth(
   // `last_error` is the only signal available without a dedicated column;
   // `processDriveFileChangedJob`'s error path already writes `err.message`
   // verbatim into it via the shared job-queue failure handler.
-  const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN = /^Drive file access denied|export size limit/i;
+  //
+  // The alternation is grouped and BOTH branches are prefix-anchored
+  // (SonarCloud typescript:S5850 — an ungrouped `^A|B` binds `^` to `A`
+  // only, so `B` used to match "export size limit" ANYWHERE in the
+  // string, misclassifying any unrelated last_error that happened to
+  // mention that phrase mid-sentence as file_access_not_granted).
+  const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN =
+    /^(?:Drive file access denied|Drive file export exceeds Google's export size limit)/i;
   const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
     (row) => typeof row.last_error === 'string' && DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN.test(row.last_error),
   ).length;
