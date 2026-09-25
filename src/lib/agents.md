@@ -950,3 +950,24 @@ Glossary values are user-visible copy and are subject to §1.3 — "block" and
 "hash" are banned there. Mirror the existing `block_height` entry's phrasing
 ("permanent network record", "fingerprint"). The glossary KEYS are machine field
 names and stay as-is.
+
+### Completeness is a FIELD, not a toast (2026-09-25 follow-up)
+
+`proof_bundle_complete` was added after review found the JSON persisted no record
+of an incomplete proof. `buildProofPacket` still returns a full-looking packet
+when `sourceProofInput` reports `complete: false` (a batch member whose
+`leaf_count` could not be counted, which is what arms the CVE-2012-2459
+duplicate-leaf guard). The only signal was a transient toast, so once dismissed
+the downloaded file was indistinguishable from a fully-verifiable proof — the
+§1.5 failure this work exists to prevent, in the opposite direction from the
+original bug. The PDF certificate has carried this signal since PROOF-04.
+
+It is `null` — not `false` — when there is no bundle, because `false` would read
+as a claim about a proof that does not exist.
+
+**A malformed stored branch is permanent, and must not say "try again".** The
+entry type-guards in `sourceProofInput`/`generateAuditReport` accept any string
+hash, while `MerkleProofEntrySchema` requires 64-hex, so a corrupt stored
+`proof_path` throws at package build. That now surfaces as
+`RECORD_DETAIL_LABELS.PROOF_PACKAGE_CORRUPT` and is logged with the record id,
+rather than being swallowed into the generic retry message.

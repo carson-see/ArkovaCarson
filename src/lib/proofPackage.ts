@@ -114,6 +114,15 @@ export const ProofPackageSchema = z.object({
   // its `proof_path` is a bare hash list with no sibling positions.
   proof_bundle: ProofBundleSchema.nullable().optional(),
 
+  // Whether every field needed to run EVERY offline check was sourced. False
+  // means the bundle is present and inspectable but at least one guard cannot
+  // be run — today that is `leaf_count`, which arms the CVE-2012-2459
+  // duplicate-leaf check for a batch member. The PDF certificate has carried
+  // this since PROOF-04 (it swaps in different prose); the JSON carried it only
+  // as a transient toast, so once dismissed the file was indistinguishable from
+  // a fully-verifiable proof. §1.5: state what is measured.
+  proof_bundle_complete: z.boolean().nullable().optional(),
+
   // Metadata
   metadata: z.object({
     created_at: z.string().datetime(),
@@ -166,7 +175,8 @@ function toIsoDateTime(value: string): string {
 export function generateProofPackage(
   anchor: AnchorData,
   proof?: ProofData,
-  proofBundle?: ProofPacket | null
+  proofBundle?: ProofPacket | null,
+  proofBundleComplete?: boolean
 ): ProofPackage {
   const hasNetworkReceipt =
     anchor.status === 'SECURED' &&
@@ -212,6 +222,10 @@ export function generateProofPackage(
     // consumer can tell "no proof stored" from "older export format".
     proof_bundle: proofBundle ?? null,
 
+    // Only meaningful when a bundle exists; null otherwise so a consumer cannot
+    // read "complete: false" as a statement about a record that has no proof.
+    proof_bundle_complete: proofBundle ? (proofBundleComplete ?? false) : null,
+
     metadata: {
       created_at: toIsoDateTime(anchor.created_at),
       user_id: anchor.user_id,
@@ -231,6 +245,7 @@ export function generateProofPackage(
       block_header: 'The raw 80-byte header of the permanent network record holding this proof. Recomputing its fingerprint shows the verification tree root was committed to that record.',
       op_return_payload: 'The exact bytes Arkova committed to the network for this group of documents.',
       tx_inclusion_branch: 'The sibling path showing this anchor receipt is contained in the permanent network record identified by the header above.',
+      proof_bundle_complete: 'True when every field needed to run all offline checks was available. If false, the proof is still shown for inspection but at least one check cannot be completed.',
     },
   };
 

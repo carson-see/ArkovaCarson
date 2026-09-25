@@ -24,6 +24,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
 import { RECORD_DETAIL_LABELS } from '@/lib/copy';
 import { sourceProofInput } from '@/lib/sourceProofInput';
+import { ZodError } from 'zod';
 
 export function RecordDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -371,14 +372,27 @@ export function RecordDetailPage() {
                   }
                 : undefined,
               proofBundle,
+              complete,
             );
             const filename = getProofPackageFilename({
               filename: anchor.filename,
               public_id: anchor.public_id,
             });
             downloadProofPackage(proofPackage, filename);
-          } catch {
-            toast.error('Failed to generate proof package. Please try again.');
+          } catch (err) {
+            // A stored branch whose sibling hash is malformed fails the
+            // package schema. That is a permanent data defect, not a transient
+            // one, so it must not be reported as "try again" — and the error is
+            // logged rather than swallowed so the record can be found.
+            const corruptProof = err instanceof ZodError;
+            if (corruptProof) {
+              console.error('Proof package rejected for record', anchor.public_id ?? anchor.id, err);
+            }
+            toast.error(
+              corruptProof
+                ? RECORD_DETAIL_LABELS.PROOF_PACKAGE_CORRUPT
+                : RECORD_DETAIL_LABELS.PROOF_PACKAGE_FAILED,
+            );
           }
         }}
       />

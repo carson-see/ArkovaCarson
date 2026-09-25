@@ -513,4 +513,24 @@ describe('proof_bundle (1.1)', () => {
     expect(parsed.version).toBe('1.0');
     expect(parsed.proof_bundle ?? null).toBeNull();
   });
+
+  it('records an INCOMPLETE bundle in the file, not just a toast', () => {
+    const pkg = generateProofPackage(validAnchorSecured, validProofData, bundle, false);
+    expect(pkg.proof_bundle_complete).toBe(false);
+    // The bundle is still present and inspectable — incompleteness is a
+    // statement about which checks can run, not a reason to withhold evidence.
+    expect(pkg.proof_bundle).not.toBeNull();
+    expect(validateProofPackage(pkg).proof_bundle_complete).toBe(false);
+  });
+
+  it('records a COMPLETE bundle as complete', () => {
+    const pkg = generateProofPackage(validAnchorSecured, validProofData, bundle, true);
+    expect(pkg.proof_bundle_complete).toBe(true);
+  });
+
+  it('leaves completeness null when there is no bundle at all', () => {
+    const pkg = generateProofPackage(validAnchorSecured, validProofData);
+    // Not `false` — that would read as a claim about a proof that does not exist.
+    expect(pkg.proof_bundle_complete).toBeNull();
+  });
 });
