@@ -4,17 +4,17 @@
  * useBulkAnchors Hook Tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoist mock functions
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockRefreshEntitlements = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockCanCreateCount = vi.hoisted(() => vi.fn().mockReturnValue(true));
 const mockRemaining = vi.hoisted(() => ({ current: 100 as number | null }));
-const mockGetSession = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastWarning = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
+const mockWorkerFetch = vi.hoisted(() => vi.fn());
 
 vi.mock('sonner', () => ({
   toast: {
@@ -24,16 +24,9 @@ vi.mock('sonner', () => ({
   },
 }));
 
-// Every test in this file passes `{ orgId }` explicitly (see recordsWithEmail
-// tests below), so the hook never falls into the `supabase.from('profiles')`
-// org-id-lookup branch — no `.from()` mock (or RLS-scoping assertion) is
-// needed here. That branch is unchanged by this fix and out of scope.
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     rpc: mockRpc,
-    auth: {
-      getSession: mockGetSession,
-    },
   },
 }));
 
@@ -52,6 +45,7 @@ vi.mock('@/hooks/useEntitlements', () => ({
     error: null,
   }),
 }));
+vi.mock('@/lib/workerClient', () => ({ workerFetch: mockWorkerFetch }));
 
 // Import after mocks
 import { renderHook, act } from '@testing-library/react';
@@ -66,6 +60,148 @@ describe('useBulkAnchors', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockWorkerFetch.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String((init as RequestInit).body));
+      const legacy = await mockRpc('bulk_create_anchors', {
+        anchors_data: body.rows.map((row: Record<string, unknown>) => ({
+          fingerprint: row.fingerprint,
+          filename: row.filename,
+          fileSize: row.file_size ?? null,
+          credentialType: row.credential_type ?? null,
+          metadata: row.metadata ?? null,
+          fingerprintProvided: row.fingerprint_provided ?? false,
+          ...(body.org_id ? { orgId: body.org_id } : {}),
+        })),
+      });
+      return new Response(JSON.stringify(legacy.data ?? {}), { status: legacy.error ? 500 : 200 });
+    });
+  });
+
+  it('routes an explicit spreadsheet action and shared metadata through the canonical worker boundary', async () => {
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      total: 3, created: 3, skipped: 0, failed: 0, results: [],
+    }), { status: 200 }));
+    const { result } = renderHook(() => useBulkAnchors({ orgId: 'child-org' }));
+    await act(async () => {
+      await result.current.createBulkAnchors(mockRecords, {
+        action: 'instant', description: 'Quarterly import',
+        privateTags: { user: ['mine'], organization: ['audit'] },
+      });
+    });
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockWorkerFetch).toHaveBeenCalledWith('/api/v1/anchor-self-service/bulk', expect.objectContaining({ method: 'POST' }));
+    const body = JSON.parse(mockWorkerFetch.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      org_id: 'child-org', action: 'instant', description: 'Quarterly import',
+      private_tags: { user: ['mine'], organization: ['audit'] },
+    });
+    expect(body.rows).toHaveLength(3);
+    expect(body.rows[0]).toMatchObject({ fingerprint: 'a'.repeat(64), filename: 'test1.pdf' });
+  });
+
+  it('preserves per-row NEEDS_CREDIT outcomes without fabricating failure or success', async () => {
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0,
+      results: [{ fingerprint: 'a'.repeat(64), status: 'created', public_id: 'ARK-1', instant_status: 'NEEDS_CREDIT' }],
+    }), { status: 200 }));
+    const { result } = renderHook(() => useBulkAnchors());
+    let outcome: { results: Array<{ status: string; instant_status?: string | null }>; failed: number } | null = null;
+    await act(async () => {
+      outcome = await result.current.createBulkAnchors([mockRecords[0]], { action: 'instant' });
+    });
+    expect(outcome).not.toBeNull();
+    expect(outcome!.results[0]).toMatchObject({ status: 'created', instant_status: 'NEEDS_CREDIT' });
+    expect(outcome!.failed).toBe(0);
+  });
+
+  // SHOULD-FIX from the #3020 review: a created anchor whose recipient link
+  // failed must reach the UI as a secured-but-unlinked row, never as `failed`.
+  // Reporting it as failed is what makes a caller re-upload an existing anchor.
+  it('surfaces a created-but-unlinked row without counting it as failed', async () => {
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0, recipient_link_failed: 1,
+      results: [{
+        fingerprint: 'a'.repeat(64), status: 'created_recipient_failed',
+        public_id: 'ARK-1', reason: 'recipient_activation_email_failed',
+      }],
+    }), { status: 207 }));
+    const { result } = renderHook(() => useBulkAnchors());
+    let outcome: {
+      results: Array<{ status: string; reason?: string }>;
+      failed: number; created: number; recipient_link_failed?: number;
+    } | null = null;
+    await act(async () => {
+      outcome = await result.current.createBulkAnchors([mockRecords[0]], { action: 'queue' });
+    });
+    expect(outcome).not.toBeNull();
+    expect(outcome!.results[0]).toMatchObject({
+      status: 'created_recipient_failed', reason: 'recipient_activation_email_failed',
+    });
+    expect(outcome!.created).toBe(1);
+    expect(outcome!.failed).toBe(0);
+    expect(outcome!.recipient_link_failed).toBe(1);
+  });
+
+  it('does not automatically retry an ambiguous failed chunk', async () => {
+    const eleven = Array.from({ length: 11 }, (_, index) => ({
+      fingerprint: index.toString(16).padStart(64, '0'), filename: `row-${index}.pdf`,
+    }));
+    mockWorkerFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total: 10, created: 10, skipped: 0, failed: 0, results: [] }), { status: 200 }))
+      .mockRejectedValueOnce(new Error('connection lost'));
+    const { result } = renderHook(() => useBulkAnchors());
+    await act(async () => { await result.current.createBulkAnchors(eleven, { action: 'queue' }); });
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toContain('connection lost');
+  });
+
+  it('preserves prior-chunk and structured 503 receipts without replaying either chunk', async () => {
+    const eleven = Array.from({ length: 11 }, (_, index) => ({
+      fingerprint: index.toString(16).padStart(64, '0'), filename: `row-${index}.pdf`,
+    }));
+    const firstResults = eleven.slice(0, 10).map((row) => ({ fingerprint: row.fingerprint, status: 'created', public_id: `ARK-${row.filename}` }));
+    mockWorkerFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total: 10, created: 10, skipped: 0, failed: 0, results: firstResults }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        total: 1, created: 1, skipped: 0, failed: 0,
+        results: [{ fingerprint: eleven[10].fingerprint, status: 'created', public_id: 'ARK-final', instant_status: 'HELD' }],
+      }), { status: 503 }));
+    const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-a' }));
+    let outcome: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+    await act(async () => { outcome = await result.current.createBulkAnchors(eleven, { action: 'instant' }); });
+
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({ total: 11, created: 11, partial: true });
+    expect(outcome!.results).toHaveLength(11);
+    expect(outcome!.results[10]).toMatchObject({ public_id: 'ARK-final', instant_status: 'HELD' });
+    expect(result.current.error).toContain('receipts were preserved');
+  });
+
+  it('keeps every chunk in the organization scope captured when submission began', async () => {
+    const eleven = Array.from({ length: 11 }, (_, index) => ({
+      fingerprint: index.toString(16).padStart(64, '0'), filename: `row-${index}.pdf`,
+    }));
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    mockWorkerFetch
+      .mockImplementationOnce(async () => {
+        await firstPending;
+        return new Response(JSON.stringify({ total: 10, created: 10, skipped: 0, failed: 0, results: [] }), { status: 200 });
+      })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, created: 1, skipped: 0, failed: 0, results: [] }), { status: 200 }));
+    const { result, rerender } = renderHook(
+      ({ orgId }) => useBulkAnchors({ orgId }),
+      { initialProps: { orgId: 'org-a' } },
+    );
+    let submission!: Promise<unknown>;
+    act(() => { submission = result.current.createBulkAnchors(eleven, { action: 'queue' }); });
+    await vi.waitFor(() => expect(mockWorkerFetch).toHaveBeenCalledTimes(1));
+    rerender({ orgId: 'org-b' });
+    releaseFirst();
+    await act(async () => { await submission; });
+
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(2);
+    expect(mockWorkerFetch.mock.calls.map((call) => JSON.parse(String(call[1].body)).org_id)).toEqual(['org-a', 'org-a']);
   });
 
   it('should create anchors successfully', async () => {
@@ -313,7 +449,7 @@ describe('useBulkAnchors', () => {
     });
 
     expect(finalResult).toBeNull();
-    expect(result.current.error).toContain('Database error');
+    expect(result.current.error).toContain('Failed to process batch');
   });
 
   it('should track progress', async () => {
@@ -401,91 +537,97 @@ describe('useBulkAnchors', () => {
     expect(mockRefreshEntitlements).toHaveBeenCalled();
   });
 
-  describe('recipient creation failures (SCRUM-2598)', () => {
+  describe('recipient linking hints', () => {
     const recordsWithEmail = [
       { fingerprint: 'a'.repeat(64), filename: 'test1.pdf', email: 'a@example.com' },
       { fingerprint: 'b'.repeat(64), filename: 'test2.pdf', email: 'b@example.com' },
     ];
 
-    beforeEach(() => {
-      mockRpc.mockResolvedValue({
-        data: { total: 2, created: 2, skipped: 0, failed: 0, results: [] },
-        error: null,
-      });
-      mockGetSession.mockResolvedValue({
-        data: {
-          session: { access_token: 'test-token', user: { id: 'user-1' } },
-        },
-      });
-    });
-
-    afterEach(() => {
-      vi.unstubAllGlobals();
-    });
-
-    it('surfaces a real per-recipient failure count instead of a false "complete" toast', async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(new Response(null, { status: 201 }))
-        .mockResolvedValueOnce(new Response(null, { status: 500 }));
-      vi.stubGlobal('fetch', fetchMock);
-
+    it('sends recipient hints only through the canonical bulk request', async () => {
       const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
-
-      let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
-      await act(async () => {
-        finalResult = await result.current.createBulkAnchors(recordsWithEmail);
-      });
-
-      // The anchor batch itself fully succeeded...
-      expect(finalResult).not.toBeNull();
-      expect(finalResult!.created).toBe(2);
-      expect(finalResult!.failed).toBe(0);
-
-      // ...but one of the two recipient POSTs failed (HTTP 500), and that must
-      // be surfaced — not swallowed into a blanket success toast.
-      expect(mockToastSuccess).not.toHaveBeenCalled();
-      expect(mockToastWarning).toHaveBeenCalledTimes(1);
-      const [warningMessage] = mockToastWarning.mock.calls[0];
-      expect(warningMessage).toContain('2');
-      expect(warningMessage).toContain('1');
-      expect(warningMessage.toLowerCase()).toContain('recipient');
-    });
-
-    it('shows a blanket success toast only when every recipient POST actually succeeds', async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(new Response(null, { status: 201 }))
-        .mockResolvedValueOnce(new Response(null, { status: 201 }));
-      vi.stubGlobal('fetch', fetchMock);
-
-      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
-
       await act(async () => {
         await result.current.createBulkAnchors(recordsWithEmail);
       });
 
-      expect(mockToastWarning).not.toHaveBeenCalled();
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows).toEqual(expect.arrayContaining([
+        expect.objectContaining({ recipient_email: 'a@example.com' }),
+        expect.objectContaining({ recipient_email: 'b@example.com' }),
+      ]));
       expect(mockToastSuccess).toHaveBeenCalledTimes(1);
     });
 
-    it('counts a network-level rejection (not just non-2xx) as a recipient failure', async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(new Response(null, { status: 201 }))
-        .mockRejectedValueOnce(new Error('network down'));
-      vi.stubGlobal('fetch', fetchMock);
-
-      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
-
+    // B1(b): `main` never attempted recipient creation when there was no
+    // resolvable org — it simply skipped the pass. Sending a recipient from
+    // personal scope asks the worker for something personal scope can never be
+    // granted, so every row would come back `*_recipient_failed` for a reason
+    // the user cannot act on. The hook knows its own scope, so it strips them.
+    it('omits recipient hints entirely when the active scope is personal', async () => {
+      const { result } = renderHook(() => useBulkAnchors({ orgId: null }));
       await act(async () => {
-        await result.current.createBulkAnchors(recordsWithEmail);
+        await result.current.createBulkAnchors([{
+          fingerprint: 'a'.repeat(64),
+          filename: 'test1.pdf',
+          email: 'a@example.com',
+          metadata: { recipient_name: 'Reese Recipient' },
+        }]);
       });
 
-      expect(mockToastSuccess).not.toHaveBeenCalled();
-      expect(mockToastWarning).toHaveBeenCalledTimes(1);
-      const [warningMessage] = mockToastWarning.mock.calls[0];
-      expect(warningMessage).toContain('1');
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.org_id).toBeNull();
+      expect(body.rows[0]).not.toHaveProperty('recipient_email');
+      expect(body.rows[0]).not.toHaveProperty('recipient_name');
+      // The row itself still goes through untouched.
+      expect(body.rows[0]).toMatchObject({ fingerprint: 'a'.repeat(64), filename: 'test1.pdf' });
+      // No email address may survive anywhere in the personal-scope payload.
+      expect(JSON.stringify(body)).not.toContain('a@example.com');
+    });
+
+    it('omits recipient hints when no scope was supplied at all', async () => {
+      const { result } = renderHook(() => useBulkAnchors());
+      await act(async () => {
+        await result.current.createBulkAnchors([
+          { fingerprint: 'a'.repeat(64), filename: 'test1.pdf', email: 'a@example.com' },
+        ]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows[0]).not.toHaveProperty('recipient_email');
+    });
+
+    it('still forwards the recipient name alongside the email in organization scope', async () => {
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+      await act(async () => {
+        await result.current.createBulkAnchors([{
+          fingerprint: 'a'.repeat(64),
+          filename: 'test1.pdf',
+          email: 'a@example.com',
+          metadata: { recipient_name: 'Reese Recipient' },
+        }]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows[0]).toMatchObject({
+        recipient_email: 'a@example.com',
+        recipient_name: 'Reese Recipient',
+      });
+    });
+
+    // A recipient_name with no recipient_email is rejected by the worker's
+    // superRefine for the WHOLE request, so the hook must never emit that pair.
+    it('never sends a recipient name without the email it belongs to', async () => {
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+      await act(async () => {
+        await result.current.createBulkAnchors([{
+          fingerprint: 'a'.repeat(64),
+          filename: 'test1.pdf',
+          metadata: { recipient_name: 'Reese Recipient' },
+        }]);
+      });
+
+      const body = JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body));
+      expect(body.rows[0]).not.toHaveProperty('recipient_name');
+      expect(body.rows[0]).not.toHaveProperty('recipient_email');
     });
   });
 });

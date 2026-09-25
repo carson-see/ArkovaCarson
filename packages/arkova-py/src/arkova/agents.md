@@ -122,3 +122,10 @@ Folder updates use an internal omission sentinel so rename-only requests retain 
 ## 2026-09-19 — UAT-12 durable status
 
 Sync and async clients expose `get_anchor_submission_status(public_id)` returning `AnchorSubmissionStatus`. This is caller-scoped API state, not public verification, and includes no private tags or internal ids.
+
+## 2026-09-21 — AnchorImport models accept recipient-link statuses (PR #3034)
+
+`AnchorImportResultRow.status` accepts `created_recipient_failed` /
+`skipped_recipient_failed`, and `AnchorImportResponse.recipient_link_failed`
+defaults to 0 so a response from an older worker still validates. Keep the
+Literal in sync with the worker's OpenAPI enum.

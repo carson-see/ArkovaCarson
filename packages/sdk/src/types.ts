@@ -691,6 +691,80 @@ export interface BulkAnchorInput {
   externalId?: string;
 }
 
+export interface AnchorImportRow {
+  fingerprint: string;
+  filename: string;
+  fingerprintProvided: boolean;
+  fileSize?: number;
+  credentialType?: string;
+  metadata?: Record<string, unknown>;
+  recipientEmail?: string;
+  recipientName?: string;
+}
+
+export interface AnchorImportOptions {
+  action: 'queue' | 'instant';
+  description?: string;
+  privateTags?: { user: string[]; organization: string[] };
+}
+
+export interface AnchorImportResultRow {
+  fingerprint: string;
+  /**
+   * `created_recipient_failed` / `skipped_recipient_failed` mean the anchor
+   * committed and the recipient did not resolve. The record exists — do not
+   * re-submit the row; re-submitting dedupes but wastes a call, and for a
+   * capped org an instant re-submission can consume credit. The status does
+   * NOT say whether the recipient was linked: read `reason` for that.
+   */
+  status: 'created' | 'skipped' | 'failed' | 'created_recipient_failed' | 'skipped_recipient_failed';
+  publicId?: string;
+  instantStatus?: AnchorInstantStatus | null;
+  /**
+   * Bounded machine-readable code for a `failed` or `*_recipient_failed` row.
+   *
+   * For a `*_recipient_failed` row this code, NOT the status, says what
+   * actually happened — the `anchor_recipients` link commits BEFORE the
+   * activation email is sent, so "recipient failed" does not imply "recipient
+   * not linked":
+   *
+   * - `recipient_provisioning_forbidden` / `recipient_authorization_unavailable`
+   *   the caller may not assign recipients (personal scope, or a plain org
+   *   member). Nothing was linked and nothing was sent.
+   * - `recipient_email_invalid`, `recipient_pepper_unavailable`,
+   *   `recipient_anchor_unavailable`, `recipient_profile_lookup_failed`,
+   *   `recipient_profile_create_failed`, `recipient_link_failed`,
+   *   `recipient_link_conflict` — thrown at or before the link insert: the
+   *   recipient was NOT linked and no invitation was sent.
+   * - `recipient_activation_email_failed` — the recipient WAS linked; only the
+   *   invitation email was rejected.
+   * - `recipient_activation_delivery_pending`,
+   *   `recipient_activation_claim_failed` — the recipient WAS linked and
+   *   whether the invitation went out is unknown (a concurrent claim holder
+   *   may already have sent it).
+   *
+   * Treat any code not listed here as "unknown": assert nothing about the
+   * recipient rather than guessing.
+   */
+  reason?: string;
+}
+
+export interface AnchorImportResponse {
+  total: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  /**
+   * Rows whose anchor committed but whose recipient did not resolve. Additive:
+   * these are already counted in `created`/`skipped` and never in `failed`,
+   * so `created + skipped + failed` still equals `total`. It counts rows whose
+   * recipient was never linked AND rows that were linked but whose invitation
+   * did not go out — see each row's `reason`.
+   */
+  recipientLinkFailed: number;
+  results: AnchorImportResultRow[];
+}
+
 /** Options for `arkova.anchorBulk()`. */
 export interface AnchorBulkOptions {
   /** Validate every row but don't queue or deduct credits. */

@@ -17,9 +17,41 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 - All tool names prefixed with `arkova_` for namespace consistency (DX-04). (Was "`arkova_` or `nessie_`" before the 2026-09-02 `nessie_*` removal — see History below.)
 - Compatible with Claude, OpenAI, Cursor, and any MCP client (stdio transport only — see `cli.ts`).
 - Tool names/descriptions/input-property descriptions are CLAUDE.md §1.3 terminology surface (see `index.test.ts`'s standing guard above) — treat them like UI copy, not internal code, when adding or editing a tool.
+- UAT-23 `arkova_import_rows` accepts 1–100 strict fingerprint rows through the canonical API-key import endpoint; raw file fields and tenant overrides are rejected before fetch, with no automatic write retry.
+- The built stdio server currently lists 9 tools; `cli.bin.test.ts` pins that count through a real symlinked process after UAT-12 status and UAT-23 import were added.
 
 ## 2026-09-19 — UAT-12 / UAT-24 status and folder tools
 
+`arkova_manage_folders` is one action-discriminated tool over the canonical worker REST routes. It forwards `ARKOVA_API_KEY`, preserves partial bulk results, and adds no MCP-only folder model.
+Its tests exercise every CRUD/reparent/connector action and both bulk identifier modes against the same worker paths.
+
+## 2026-09-21 — stdio arkova_import_rows description parity (PR #3034)
+
+Same recipient-link sentence as the hosted edge tool. The tool NAME is
+`arkova_import_rows` on both servers — do not let this one drift the way
+`arkova_batch_verify`/`arkova_verify_batch` and
+`arkova_submit_anchor`/`arkova_anchor_document` already have.
+
+## 2026-09-21 — stdio import description carries the same disclosure (PR #3034)
+
+Mirrors the hosted edge text: a row may carry `recipient_email` /
+`recipient_name`, which assigns the record to that third party and can cause an
+activation email to be sent to that address, and the row's reason code — not its
+status — says whether the recipient was linked and whether the invitation was
+sent. Wording differs only where it already did (`document bytes`, the trailing
+API_ONLY_NOTE); the recipient sentences are identical on both servers.
+
+## 2026-09-21 — arkova_import_rows returns a bounded projection (PR #3034)
+
+`projectImportResponse` replaces the raw `JSON.stringify(body)`: allowlisted
+counters plus per-row `fingerprint` / `status` / `public_id` / `reason` /
+`instant_status`, each shape-validated, `results` capped at 100, unknown keys
+dropped, and `reason` kept only when it already matches
+`/^[a-zA-Z0-9_.-]{1,80}$/`. Issuer-/user-controlled text must not reach the
+model verbatim. The hosted edge handler has the identical function — change both
+together. The row validator also now rejects `file_size: 0` and a
+`recipient_name` with no `recipient_email`, both of which the worker rejects for
+the whole request.
 `arkova_get_submission_status` and `arkova_submit_anchor` (action defaults to queue) round out anchor
 submission parity with the API-key caller-scoped worker routes. `arkova_manage_folders` (added
 2026-09-14, SCRUM-5142) is one action-discriminated tool over the canonical worker REST routes — it

@@ -77,3 +77,10 @@ They also pin omitted-versus-null parent updates and one-attempt mutation behavi
 Client tests pin the version-aware status path and typed NEEDS_CREDIT/retryable response; keep sync and async method parity when extending it.
 Both clients are exercised directly. Unknown lifecycle/instant enum values must surface the existing
 bounded `ArkovaError("unexpected response shape")`, not enter the typed model.
+
+## 2026-09-21 — Recipient-link status model coverage (PR #3034)
+
+`test_anchor_import_models_accept_recipient_link_statuses` pins that both new
+statuses validate, that the additive counter parses, and that
+`created + skipped + failed == total` with recipient-link rows counted inside
+`created`/`skipped`.

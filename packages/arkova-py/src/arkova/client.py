@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from .errors import ArkovaError
 from .models import (
     Anchor,
+    AnchorImportResponse,
+    AnchorImportRow,
     AnchorReceipt,
     AnchorSubmissionStatus,
     BulkAnchorDuplicateStrategy,
@@ -53,6 +55,7 @@ RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 # atomicity across the whole logical batch. Same posture as the TypeScript
 # SDK's `anchorBulk()` / `verifyBatch()`.
 BULK_ANCHOR_MAX_ROWS = 1000
+ANCHOR_IMPORT_MAX_ROWS = 100
 
 try:
     _VERSION = _package_version("arkova")
@@ -190,6 +193,64 @@ def _resolve_anchor_fingerprint(*, data: str | bytes | None, fingerprint: str | 
             code="invalid_request",
         )
     return fingerprint if fingerprint is not None else _compute_fingerprint(data)  # type: ignore[arg-type]
+
+
+def _build_anchor_import_payload(
+    rows: Sequence[AnchorImportRow],
+    action: Literal["queue", "instant"],
+    description: str | None,
+    user_tags: Sequence[str],
+    organization_tags: Sequence[str],
+) -> dict[str, Any]:
+    if action not in ("queue", "instant"):
+        raise ArkovaError(
+            "anchor_import action must be queue or instant",
+            status_code=400,
+            code="invalid_request",
+        )
+    if not 1 <= len(rows) <= ANCHOR_IMPORT_MAX_ROWS:
+        raise ArkovaError(
+            "anchor_import accepts 1-100 rows", status_code=400, code="invalid_request"
+        )
+    if description is not None and len(description) > 1000:
+        raise ArkovaError(
+            "anchor_import description exceeds 1000 characters",
+            status_code=400,
+            code="invalid_request",
+        )
+    wire_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if (
+            len(row.fingerprint) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in row.fingerprint)
+            or not 1 <= len(row.filename) <= 255
+            or not isinstance(row.fingerprint_provided, bool)
+        ):
+            raise ArkovaError(
+                f"anchor_import row {index} is invalid", status_code=400, code="invalid_request"
+            )
+        wire = {
+            "fingerprint": row.fingerprint.lower(),
+            "filename": row.filename,
+            "fingerprint_provided": row.fingerprint_provided,
+        }
+        for key in (
+            "file_size",
+            "credential_type",
+            "metadata",
+            "recipient_email",
+            "recipient_name",
+        ):
+            value = getattr(row, key)
+            if value is not None:
+                wire[key] = value
+        wire_rows.append(wire)
+    payload: dict[str, Any] = {"action": action, "rows": wire_rows}
+    if description is not None:
+        payload["description"] = description
+    if user_tags or organization_tags:
+        payload["private_tags"] = {"user": list(user_tags), "organization": list(organization_tags)}
+    return payload
 
 
 def _empty_bulk_response(*, batch_id: str | None, dry_run: bool | None) -> BulkAnchorResponse:
@@ -330,7 +391,10 @@ class Arkova:
         if description is not None:
             body["description"] = description
         if user_tags is not None or organization_tags is not None:
-            body["private_tags"] = {"user": list(user_tags or ()), "organization": list(organization_tags or ())}
+            body["private_tags"] = {
+                "user": list(user_tags or ()),
+                "organization": list(organization_tags or ()),
+            }
         return _parse_json(
             self._request("POST", path, json=body),
             AnchorReceipt,
@@ -375,13 +439,33 @@ class Arkova:
             return _empty_bulk_response(batch_id=batch_id, dry_run=dry_run)
 
         payload = _build_bulk_anchor_payload(
-            inputs, dry_run=dry_run, duplicate_strategy=duplicate_strategy, batch_id=batch_id,
+            inputs,
+            dry_run=dry_run,
+            duplicate_strategy=duplicate_strategy,
+            batch_id=batch_id,
         )
         path = _versioned_path(str(self._client.base_url), "v1", "/anchor/bulk")
         return _parse_json(
             self._request("POST", path, json=payload),
             BulkAnchorResponse,
         )
+
+    def anchor_import(
+        self,
+        rows: Sequence[AnchorImportRow],
+        *,
+        action: Literal["queue", "instant"],
+        description: str | None = None,
+        user_tags: Sequence[str] = (),
+        organization_tags: Sequence[str] = (),
+    ) -> AnchorImportResponse:
+        payload = _build_anchor_import_payload(
+            rows, action, description, user_tags, organization_tags
+        )
+        path = _versioned_path(str(self._client.base_url), "v1", "/anchor/import")
+        response = self._client.request("POST", path, json=payload)
+        _raise_for_error(response)
+        return _parse_json(response, AnchorImportResponse)
 
     def search(
         self,
@@ -583,7 +667,10 @@ class AsyncArkova:
         if description is not None:
             body["description"] = description
         if user_tags is not None or organization_tags is not None:
-            body["private_tags"] = {"user": list(user_tags or ()), "organization": list(organization_tags or ())}
+            body["private_tags"] = {
+                "user": list(user_tags or ()),
+                "organization": list(organization_tags or ()),
+            }
         return _parse_json(
             await self._request("POST", path, json=body),
             AnchorReceipt,
@@ -614,13 +701,33 @@ class AsyncArkova:
             return _empty_bulk_response(batch_id=batch_id, dry_run=dry_run)
 
         payload = _build_bulk_anchor_payload(
-            inputs, dry_run=dry_run, duplicate_strategy=duplicate_strategy, batch_id=batch_id,
+            inputs,
+            dry_run=dry_run,
+            duplicate_strategy=duplicate_strategy,
+            batch_id=batch_id,
         )
         path = _versioned_path(str(self._client.base_url), "v1", "/anchor/bulk")
         return _parse_json(
             await self._request("POST", path, json=payload),
             BulkAnchorResponse,
         )
+
+    async def anchor_import(
+        self,
+        rows: Sequence[AnchorImportRow],
+        *,
+        action: Literal["queue", "instant"],
+        description: str | None = None,
+        user_tags: Sequence[str] = (),
+        organization_tags: Sequence[str] = (),
+    ) -> AnchorImportResponse:
+        payload = _build_anchor_import_payload(
+            rows, action, description, user_tags, organization_tags
+        )
+        path = _versioned_path(str(self._client.base_url), "v1", "/anchor/import")
+        response = await self._client.request("POST", path, json=payload)
+        _raise_for_error(response)
+        return _parse_json(response, AnchorImportResponse)
 
     async def search(
         self,
