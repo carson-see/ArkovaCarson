@@ -92,11 +92,62 @@ describe('PATCH {status:"suspended"} — the keys must stop working', () => {
     expect(apiKeys.update).not.toHaveBeenCalled();
   });
 
-  it('does not touch keys when the agent update itself failed', async () => {
+  it('leaves keys DEACTIVATED when the suspend status write fails', async () => {
     const { apiKeys } = setup([{ data: activeRow }, { data: null, error: { message: 'boom' } }]);
     const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'suspended' });
 
     expect(res.status).toBe(404);
+    // Keys go first by design, so this failure leaves dead keys and a stale
+    // 'active' status. That is the safe direction: the agent cannot act, and a
+    // retry completes the suspension. Asserting the opposite would be asserting
+    // the original defect.
+    expect(apiKeys.update).toHaveBeenCalledWith(expect.objectContaining({ is_active: false }));
+  });
+
+  it('does not touch keys when a RESUME status write fails', async () => {
+    const { apiKeys } = setup([{ data: suspendedRow }, { data: null, error: { message: 'boom' } }]);
+    const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'active' });
+
+    expect(res.status).toBe(404);
+    // Resume grants access, so it must come LAST — a failed status write must
+    // never hand a live key back.
     expect(apiKeys.update).not.toHaveBeenCalled();
+  });
+
+  // ORDER IS THE DESIGN. These are two round-trips, so a crash between them is
+  // reachable; the order decides whether the intermediate state fails closed.
+  it('deactivates keys BEFORE touching status, so a key failure leaves the agent unsuspended', async () => {
+    const agents = builder([{ data: activeRow }, { data: suspendedRow }]);
+    const apiKeys = builder({ data: null, error: { message: 'key write blew up' } });
+    routeDbTables(dbFromMock, {
+      profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_ADMIN' } }),
+      agents,
+      api_keys: apiKeys,
+    });
+
+    const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'suspended' });
+
+    expect(res.status).toBe(500);
+    // The proof of ordering: the status write never happened. Had it run first,
+    // this would be a suspended agent holding live keys — the original defect.
+    expect(agents.update).not.toHaveBeenCalled();
+  });
+
+  it('restores status BEFORE keys on resume, so a key failure leaves the agent keyless', async () => {
+    const agents = builder([{ data: suspendedRow }, { data: activeRow }]);
+    const apiKeys = builder({ data: null, error: { message: 'key write blew up' } });
+    routeDbTables(dbFromMock, {
+      profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_ADMIN' } }),
+      agents,
+      api_keys: apiKeys,
+    });
+
+    const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'active' });
+
+    expect(res.status).toBe(500);
+    // Status moved, keys did not: the agent still cannot authenticate, which is
+    // the safe direction. The reverse would hand back a live key to an agent
+    // whose status change had not committed.
+    expect(agents.update).toHaveBeenCalled();
   });
 });

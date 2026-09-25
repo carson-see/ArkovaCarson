@@ -126,6 +126,30 @@ and remains the only way this route now 503s.
 Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and clamped to `PASSPORT_AGENT_SCOPE_ALLOWLIST` (`verify`, `verify:batch`, `anchor:write`/`write:anchors`, `anchor:read`, `read:records`, `read:search`) — never a management scope; unknown scope names are a 400 (`z.enum(API_KEY_SCOPES)`). Keys are minted through `agent-keys.ts::mintAgentKey` so passport-minted keys emit `AGENT_KEY_CREATED` like every other agent key. The raw key is returned once; if the key insert fails the freshly inserted agent row is deleted so no unkeyed binding is left behind. The API-key HMAC secret comes from `config.apiKeyHmacSecret`, NOT `req.hmacSecret` — that field is attached only by the JWT `requireAuth` this mount omits (a review-found bug that would have 500'd every real admission). Admission also refuses (`409 passport_revoked`) when a REVOKED binding for the passport exists in the org and the receipt was not provably issued after the revocation, so a captured receipt cannot resurrect a revoked passport.
 
 `PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. **Fixed 2026-09-25 (SCRUM-5290):** `PATCH {status:'suspended'}` now deactivates the agent's active keys, and `{status:'active'}` restores them — the auth path reads only `api_keys`, so a status change alone was inert and org-side suspension was decorative. Reactivation matches `revocation_reason = 'admin:agent.suspended'`, a marker deliberately distinct from 0448's `computeid:…` values: an org admin resuming an agent must never revive a key ComputeID suspended. A key-write failure returns 500 rather than reporting a suspension that did not take effect. See `agents-suspend-keys.test.ts`.
+
+**Order is the design, because these are two round-trips and not one transaction.**
+The write that RESTRICTS access commits first, so the crash window fails CLOSED:
+suspend does `keys off -> status suspended` (a crash leaves dead keys and a stale
+`active` status: the agent cannot act, a retry finishes the job); resume does
+`status active -> keys on` (a crash leaves an active status with dead keys: still
+cannot act). Reversing either would leave a suspended agent holding a LIVE key —
+the exact defect this closes. Full atomicity needs a SECURITY DEFINER function
+doing both writes under a row lock, the way 0448 does; that is a migration (T3)
+and is deliberate follow-up, not an oversight.
+
+**The marker namespace is closed at the input boundary.** `revocation_reason` on
+`PATCH /api/v1/keys/:keyId` is otherwise free text, so an admin could have
+revoked a key FOR CAUSE under the literal string `admin:agent.suspended` and had
+a later resume resurrect it — turning a revocation that `keys.ts` documents as
+one-way into a reversible one. `UpdateKeySchema` now rejects any
+`revocation_reason` starting with a reserved prefix (`RESERVED_REVOCATION_PREFIXES`
+= `admin:`, `computeid:`). If you add a machine marker, add its prefix there too.
+
+**Not modelled in TLA.** `machines/agentPassport.machine.ts` models the
+ComputeID-driven `passport.suspended`/`passport.reinstated` transitions, not this
+admin PATCH path, so `suspendedHasNoKey` is asserted here by unit tests and
+ordering, NOT proven. Extending the machine with an admin actor would let TLC
+explore the two-write interleaving directly.
 ## 2026-08-30 R3 — `/verify/:publicId/proof` reports a tri-state `verdict` beside `verified`
 
 - `verify-proof.ts` emits additive `verdict` (`valid` | `invalid` | `unverifiable`) + `verdict_note` on the 200 body. **`verified` is byte-unchanged and NOT deprecated** — §1.8 additive only. Vocabulary, note text and the mapping live in ONE place: `services/worker/src/constants/proofVerdict.ts` (read its `agents.md` entry before touching any of this).
