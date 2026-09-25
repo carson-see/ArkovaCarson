@@ -39,7 +39,29 @@ async function waitForRulesRateLimitHeadroom(page: Page, needed: number): Promis
       throw new Error('The /api/rules headroom probe returned malformed rate-limit headers');
     }
     if (probe.status !== 429 && Number(probe.remaining) >= needed) return;
-    if (Date.now() > deadline) throw new Error('Shared /api/rules rate-limit bucket never freed up');
+
+    // `/api/rules` writes are guarded by a CAPACITY quota, not a time bucket:
+    // `requireOrgQuota({ kind: 'rules_total', mode: 'capacity' })`, whose
+    // `getCapacityCount` is `count(*) FROM organization_rules WHERE org_id = ?`
+    // (services/worker/src/middleware/perOrgRateLimit.ts). Capacity does not
+    // decay — it frees only when rules are DELETED — and in capacity mode the
+    // server reports `resetValue = 'none'` with a NOMINAL `retryAfter = 3600`.
+    // Waiting on that reset can never succeed, so sleeping until it burns the
+    // deadline and then both Playwright retries. Callers must free capacity
+    // (delete the org's rules) BEFORE asking for headroom; if headroom is still
+    // short here, say so truthfully instead of sleeping on a quota that will
+    // not move.
+    const resetSecondsAway = Number(probe.reset) - Math.floor(Date.now() / 1_000);
+    if (resetSecondsAway > 600) {
+      throw new Error(
+        `/api/rules reports ${probe.remaining} remaining of the ${needed} needed, with a reset ` +
+          `${resetSecondsAway}s away — that is the rules_total CAPACITY quota, which never decays. ` +
+          'Delete this org\'s organization_rules rows to free capacity; waiting cannot help.',
+      );
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`/api/rules still reports only ${probe.remaining} of ${needed} needed after the wait deadline`);
+    }
 
     let waitMs = 5_000;
     if (probe.status === 429) {
@@ -66,7 +88,11 @@ test.describe('Connectors page', () => {
       .single();
     const orgId = profile?.org_id as string | undefined;
     if (!orgId) return;
-    await service.from('organization_rules').delete().eq('org_id', orgId).eq('trigger_type', 'WORKSPACE_FILE_MODIFIED');
+    // Delete EVERY rule this org owns, not just WORKSPACE_FILE_MODIFIED. The
+    // `rules_total` quota counts rows of any trigger_type, so a rule of another
+    // type created anywhere in the run permanently consumes capacity for the
+    // rest of it — and capacity is the thing the headroom probe waits on.
+    await service.from('organization_rules').delete().eq('org_id', orgId);
     await service.from('org_integrations').delete().eq('org_id', orgId).eq('provider', 'google_drive');
   });
 
@@ -76,8 +102,14 @@ test.describe('Connectors page', () => {
     // X-Forwarded-For, so every browser shares ::1. Wait for measured room in
     // the real /api/rules limiter before mounting the connector hooks instead
     // of pretending a header creates an isolated client.
+    //
+    // ORDER MATTERS. `rules_total` is a capacity quota over existing
+    // `organization_rules` rows, so headroom is created by DELETING rules, not
+    // by waiting. This used to probe for headroom first and delete afterwards,
+    // which could never succeed once the org sat at its cap: the probe burned
+    // its 150s deadline and then both Playwright retries on the 180s timeout.
+    // Resolve the org, free its capacity, and only then ask for headroom.
     await orgAdminPage.goto(ROUTES.DASHBOARD);
-    await waitForRulesRateLimitHeadroom(orgAdminPage, 16);
     const service = getServiceClient();
     const { data: profile, error } = await service
       .from('profiles')
@@ -89,11 +121,16 @@ test.describe('Connectors page', () => {
     }
     const orgId = profile.org_id as string;
 
+    // Free the rules_total capacity this run may have consumed, across EVERY
+    // trigger_type, before measuring headroom below.
+    await service.from('organization_rules').delete().eq('org_id', orgId);
+    await service.from('org_integrations').delete().eq('org_id', orgId).eq('provider', 'google_drive');
+
+    await waitForRulesRateLimitHeadroom(orgAdminPage, 16);
+
     // Seed a connected Drive integration directly — this test exercises the
     // Connectors page's folder/action UI and the REAL /api/rules write path,
     // not the OAuth round-trip (covered by integrations-drive.spec.ts).
-    await service.from('organization_rules').delete().eq('org_id', orgId).eq('trigger_type', 'WORKSPACE_FILE_MODIFIED');
-    await service.from('org_integrations').delete().eq('org_id', orgId).eq('provider', 'google_drive');
     await service.from('org_integrations').insert({
       org_id: orgId,
       provider: 'google_drive',

@@ -239,6 +239,16 @@ export interface RunLeaseRow {
   status: string;
   scheduled_for: string | null;
   payload: Record<string, unknown>;
+  /**
+   * `job_queue.attempts` — UNUSED by the lease mechanism itself (defaults
+   * 0). Additive field: `drive-changes-runner.ts`'s dirty/rerun-requested
+   * marker (SCRUM-2903/3661 fix-round item 3) repurposes it as a cheap
+   * boolean hint, read via a plain `.select('attempts').eq('id', ...)` (no
+   * `.maybeSingle()` — see below) and written via `.update({attempts: ...})`.
+   * Every pre-existing consumer of this double ignores it; adding it here
+   * does not change their behavior.
+   */
+  attempts: number;
 }
 
 /** The subset of `RunLeaseSpec` the double needs, kept local to avoid a cycle. */
@@ -387,11 +397,14 @@ export function createRunLeaseStore(
     builder.then = (resolve: (v: { data: unknown; error: unknown }) => unknown) => {
       calls += 1;
       // READ path — `.select()` with no staged write. This is how the CAS now
-      // confirms ownership (a plain point lookup, nothing re-filtered).
+      // confirms ownership (a plain point lookup, nothing re-filtered), and
+      // (additive) how `checkAndClearLeaseDirty` reads `attempts` — both
+      // fields are always returned regardless of the requested projection,
+      // same simplification the CAS read-back already relied on.
       if (mode === undefined) {
         const idMatchesRead = row !== undefined && filters.id === row.id;
         return Promise.resolve(
-          resolve({ data: idMatchesRead ? [{ payload: row?.payload }] : [], error: null }),
+          resolve({ data: idMatchesRead ? [{ payload: row?.payload, attempts: row?.attempts ?? 0 }] : [], error: null }),
         );
       }
       // Real PostgREST rejects the whole statement before it matches any row.
@@ -415,6 +428,18 @@ export function createRunLeaseStore(
         return Promise.resolve(resolve({ data: null, error: null }));
       }
       const idMatches = row !== undefined && filters.id === row.id;
+      // Additive (fix-round item 3): a genuinely UNCONDITIONAL update — no
+      // `.or()` CAS predicate, no `payload->>holder` ownership filter, just
+      // `.eq('id', ...)`. Real Postgres/PostgREST supports this fine; no
+      // pre-existing caller of this double ever issued one (every write was
+      // either a CAS-acquire or an owned release/renew), so it fell through
+      // to the catch-all `data:[]` below and silently no-op'd. This is
+      // exactly `markLeaseDirty`'s shape — an unconditional hint write that
+      // does not require holding the lease.
+      if (releaseHolder === undefined && orExpression === undefined && idMatches) {
+        row = { ...(row as RunLeaseRow), ...(pending as Partial<RunLeaseRow>) };
+        return Promise.resolve(resolve({ data: [{ id: row.id }], error: null }));
+      }
       if (releaseHolder !== undefined) {
         ownedWriteAttempts += 1;
         if (ownedWritesLeftToFail > 0) {
@@ -458,7 +483,7 @@ export function createRunLeaseStore(
 
 function seedRow(spec: RunLeaseSpecLike, seed: RunLeaseStoreSeed): RunLeaseRow | undefined {
   if (seed === 'absent') return undefined;
-  const base = { id: spec.leaseId, type: spec.leaseType };
+  const base = { id: spec.leaseId, type: spec.leaseType, attempts: 0 };
   if (seed === 'free') {
     return { ...base, status: 'completed', scheduled_for: null, payload: {} };
   }

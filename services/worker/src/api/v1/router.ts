@@ -62,6 +62,7 @@ import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { anchorBulkRouter } from './anchor-bulk.js';
 import { anchorBulkSelfServiceRouter } from './anchor-bulk-self-service.js';
+import { handleAnchorImport } from '../../routes/anchor-self-service-bulk.js';
 import { anchorLifecycleRouter } from './anchor-lifecycle.js';
 import { anchorEvidenceRouter } from './anchor-evidence.js';
 import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
@@ -607,6 +608,7 @@ router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // SCRUM-1273: mutating anchor writes require the explicit anchor:write scope.
+router.post('/anchor/import', requireScope('anchor:write'), batchRateLimiter, handleAnchorImport);
 router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
 // SCRUM-2911 (W1, founder P0 2026-07-28): dashboard bridge for mixed-format
 // batch anchoring. MUST be mounted BEFORE `/anchor/bulk` below (same

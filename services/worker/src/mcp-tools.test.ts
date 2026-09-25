@@ -58,6 +58,7 @@ const EXPECTED_TOOL_NAMES = [
   'nessie_query',
   'arkova_anchor_document',
   'arkova_get_submission_status',
+  'arkova_import_rows',
   'arkova_verify_document',
   'arkova_verify_batch',
   'arkova_search',

@@ -18,9 +18,44 @@
  *   GD-05 — multi-user attribution where Google metadata permits
  *   GD-06 — multi-file burst handling without drops
  *   GD-07 — revision-level dedupe via drive_revision_ledger UNIQUE
+ *
+ * CONCURRENCY SAFETY (SCRUM-2903/3661/5094/2330 fix-round, items 4A/C):
+ *
+ *   - The caller (`drive-changes-runner.ts`) holds a per-integration
+ *     single-flight lease for the whole call, heartbeat-renewed. But a
+ *     heartbeat that stops renewing (definitive loss — another instance won
+ *     the lease) does NOT reach back into an in-flight body to stop it —
+ *     see `RunLeaseContext`'s doc comment in `jobs/run-lease.ts`. So this
+ *     loop independently re-verifies ownership (`deps.stillHoldsLease`,
+ *     when injected) before starting each page, and aborts WITHOUT
+ *     advancing the cursor the instant it reads back "no longer held" —
+ *     see `result.leaseLost`.
+ *   - `advancePageToken` is a COMPARE-AND-SWAP keyed on the token value this
+ *     run started from (`expected_page_token`), not an unconditional write.
+ *     If another run already advanced past that point — the exact
+ *     scenario a lease race that slips past the check above would produce —
+ *     the CAS reports `advanced: false` and this loop stops without
+ *     rewinding the cursor; see `result.cursorAdvanceLost`.
+ *
+ * KNOWN LIMITATION, NOT FIXED BY THIS PR (documented per fix-round item C
+ * — flagged for its own follow-up ticket rather than half-done here): a
+ * hard process kill BETWEEN `insertRevisionLedger` (the reserve) and the
+ * paired `enqueueRuleEvent`/`enqueueFileChangedJob` (the confirm) leaves an
+ * ORPHANED ledger row — reserved, never enqueued, and with no compensating
+ * delete, because the code that would have run it never got the chance.
+ * That row then permanently blocks a legitimate retry of the SAME
+ * (integration, file, revision) from ever re-queuing (the UNIQUE
+ * constraint reads it as "already handled"). This is a pre-existing
+ * property of the reserve-then-confirm design, not introduced by this PR.
+ * A full remediation (periodic detection of ledger rows older than N
+ * minutes with `rule_event_id IS NULL` and no matching queued/completed
+ * job, then re-drive or release) needs its own migration-free detection
+ * query design, its own soak, and its own review — out of scope here.
  */
 import {
   listChanges,
+  getStartPageToken,
+  DriveApiError,
   type DriveChangesListEntry,
   type DriveChangesListResponseT,
 } from '../oauth/drive.js';
@@ -56,11 +91,23 @@ export interface DriveProcessorDb {
     file_id: string;
     revision_id: string;
   }): Promise<void>;
-  /** Atomically update the integration's last_page_token + last_token_advanced_at. */
+  /**
+   * Compare-and-swap update of the integration's last_page_token +
+   * last_token_advanced_at (fix-round item 4A). `expected_page_token` MUST
+   * be the value this run's own `last_page_token` started from (never an
+   * intermediate walked-through `nextPageToken`, which is never persisted
+   * mid-walk) — the write only lands `WHERE last_page_token =
+   * expected_page_token`. Returns `{ advanced: false }` on a CAS miss
+   * (another run already advanced past this point) rather than throwing —
+   * that is an EXPECTED outcome under a lease race, not an error; the
+   * caller decides how to respond (stop without rewinding, never retry the
+   * write with a different expectation).
+   */
   advancePageToken(args: {
     integration_id: string;
     new_page_token: string;
-  }): Promise<void>;
+    expected_page_token: string;
+  }): Promise<{ advanced: boolean }>;
   /** Enqueue a canonical rule event (returns the new event id, null on failure). */
   enqueueRuleEvent(payload: {
     org_id: string;
@@ -107,6 +154,36 @@ export interface DriveProcessorDb {
     folder_path: string | null;
     revision_kind: DriveRevisionKind;
   }): Promise<string | null>;
+  /**
+   * Gap-visibility record for a 410/404-style cursor re-bootstrap (orchestrator
+   * fix-round item 2, SCRUM-2903/3661/5094/2330 follow-up). A re-bootstrap
+   * jumps the cursor to "now" and DISCARDS whatever changed between
+   * `gap_start` (the integration's `last_token_advanced_at` BEFORE this
+   * reset — the last point we know we were caught up) and `gap_end` (when
+   * the fresh token was minted) — Drive offers no way to enumerate that
+   * window once the expired token is gone. Silently overwriting
+   * `last_token_advanced_at` to "now" (which `advancePageToken` does
+   * unconditionally) would erase the only evidence that gap ever existed by
+   * the time anything reads the row back. This is the durable record —
+   * real implementations persist it as an `audit_events` row (no migration:
+   * that table already exists and is exactly "append-only record of a
+   * notable thing that happened"), which `connector-health.ts` separately
+   * reads to surface `changes_gap` (round-2 fix, SCRUM-2903/3661/5094/2330:
+   * the ORIGINAL fix-round PR body claimed this read existed when it did
+   * not — `connector-health.ts` had no `changes_gap` HealthReason and never
+   * queried `audit_events` at all, so a gap was durably written but had no
+   * product-visible surface; that claim was false until this fix landed).
+   * NEVER throws — a failed write here is
+   * logged (adapter-layer concern) but must not itself fail an otherwise-
+   * successful recovery; the processor ALSO logs both bounds directly
+   * (see `processDriveChanges`), independent of whether this call lands.
+   */
+  recordCursorGap(args: {
+    integration_id: string;
+    org_id: string;
+    gap_start: string | null;
+    gap_end: string;
+  }): Promise<void>;
 }
 
 export interface DriveProcessorIntegration {
@@ -114,12 +191,27 @@ export interface DriveProcessorIntegration {
   org_id: string;
   last_page_token: string | null;
   watched_folder_ids: string[];
+  /**
+   * Orchestrator fix-round item 2: the LAST KNOWN-GOOD cursor-advance
+   * timestamp, read BEFORE a 410/404 recovery would overwrite it. `null`
+   * for an integration whose cursor has never advanced (its own,
+   * pre-existing degraded state — see `connector-health.ts`'s
+   * `changes_list_never_succeeded`, a DIFFERENT signal).
+   */
+  last_token_advanced_at: string | null;
 }
 
 export interface DriveProcessorDeps {
   /** Network boundary: `listChanges` from oauth/drive.ts by default. Swapped
    *  in tests for a mocked async function returning fixture pages. */
   listChanges?: typeof listChanges;
+  /**
+   * Network boundary: `getStartPageToken` from oauth/drive.ts by default.
+   * Used ONLY for 410/404 "pageToken invalid/expired" recovery — see the
+   * doc comment above the catch block in `processDriveChanges`. Swapped in
+   * tests so the recovery path never needs a real Drive credential.
+   */
+  getStartPageToken?: typeof getStartPageToken;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
   /**
    * SCRUM-1837: resolve a Drive file's human-readable folder path so
@@ -137,6 +229,15 @@ export interface DriveProcessorDeps {
     fileId: string;
     accessToken: string;
   }) => Promise<string | null>;
+  /**
+   * Fix-round item 4A: on-demand lease-ownership re-check. Production
+   * wiring (`drive-changes-runner.ts`) binds this to
+   * `stillHoldsRunLease(client, spec, holder)` from `jobs/run-lease.ts`.
+   * Called before EVERY page (including the first) when injected; omitted
+   * in tests that don't exercise the lease-race path, which then behaves
+   * exactly as before this fix-round (no lease re-check at all).
+   */
+  stillHoldsLease?: () => Promise<boolean>;
 }
 
 export interface ProcessChangesResult {
@@ -146,7 +247,52 @@ export interface ProcessChangesResult {
   duplicates: number;
   pagesProcessed: number;
   newPageToken: string | null;
+  /**
+   * True when this pass recovered from a 410/404 "pageToken invalid/expired"
+   * `changes.list` error by re-bootstrapping the cursor via
+   * `changes.getStartPageToken` rather than failing the pass outright. Any
+   * changes that occurred in the gap between the expired token and the fresh
+   * one are NOT recovered (Google does not offer a way to — the expired
+   * token is why) — this only stops the integration from failing FOREVER on
+   * every subsequent webhook. Absent/false on every other path.
+   */
+  cursorReset?: true;
+  /**
+   * Fix-round item 4A: this pass detected (via `deps.stillHoldsLease`) that
+   * it no longer holds the single-flight lease and stopped BEFORE starting
+   * the next page — no `changes.list` call was made for that page, no
+   * cursor advance was attempted. The lease's new holder (or the periodic
+   * reconciliation sweep) is responsible for the remaining backlog.
+   */
+  leaseLost?: true;
+  /**
+   * Fix-round item 4A: `advancePageToken`'s compare-and-swap reported
+   * `advanced: false` — another run already moved the persisted cursor past
+   * the token this run started from. This pass's OWN work up to that point
+   * (ledger rows, enqueued jobs) is unaffected and stands; it simply did
+   * NOT get to record its own cursor position, because doing so would have
+   * REWOUND whatever the other run already committed.
+   */
+  cursorAdvanceLost?: true;
 }
+
+/**
+ * "This pageToken is no longer valid" detection lives in `oauth/drive.ts`
+ * (`DriveApiError.pageTokenInvalid` / `isInvalidPageTokenError`), NOT here —
+ * that is the ONE call site that still has Google's parsed error body in
+ * hand. https://developers.google.com/drive/api/guides/manage-changes
+ * documents 410 Gone as the primary case; Google's issue tracker 196413673
+ * additionally reports a 400 `invalidPageToken` shape on some accounts for
+ * the identical underlying condition, so `listChanges` also matches a 400
+ * whose parsed body explicitly names `pageToken` as invalid. 404 is treated
+ * the same as 410 defensively (observed from other Google list APIs for an
+ * unrecognized/expired opaque token). Any OTHER 400 (including THIS
+ * incident's own fields-mask bug — its Google error names the `fields`
+ * parameter, not `pageToken`) and every other status (401, 403, 429, 5xx) is
+ * a different failure class and must keep failing loud — recovering from
+ * those by discarding the cursor would silently skip real changes for
+ * reasons that have nothing to do with token validity.
+ */
 
 const SAFE_PAGE_LIMIT = 25;
 
@@ -364,17 +510,168 @@ export async function processDriveChanges(args: {
     // bail loudly so the operator notices instead of silently no-op'ing.
     throw new Error(`drive integration ${args.integration.id} has no last_page_token`);
   }
+  // Fix-round item 4A: the CAS anchor for every `advancePageToken` call this
+  // pass makes — the token value the DB row held when THIS run started.
+  // Never reassigned; `pageToken` (below) walks forward through intermediate
+  // `nextPageToken` values that are never persisted mid-walk, but the CAS
+  // must always check against what was actually committed before we began.
+  const startingPageToken = pageToken;
 
   // Bounded page walk. Drive guarantees a finite changes list per call but
   // a misconfigured rule could in theory loop forever; the cap is
   // defensive. SAFE_PAGE_LIMIT × ~50 changes = ~1250 changes per webhook,
   // which exceeds GD-09's 1000/day stress target.
   for (let page = 0; page < SAFE_PAGE_LIMIT; page += 1) {
+    // Fix-round item 4A: re-verify lease ownership before EVERY page,
+    // including the first. Independent of the heartbeat (see
+    // `RunLeaseContext`'s doc comment in jobs/run-lease.ts for why the
+    // heartbeat alone cannot stop an in-flight walk that already lost the
+    // lease) — abort cleanly, without advancing the cursor or making
+    // another Drive call, the instant ownership cannot be verified.
+    if (args.deps?.stillHoldsLease) {
+      const stillHeld = await args.deps.stillHoldsLease();
+      if (!stillHeld) {
+        log?.warn?.(
+          { integrationId: args.integration.id, orgId: args.integration.org_id, page },
+          'drive changes walk: lease ownership could not be verified — aborting without advancing the cursor',
+        );
+        result.leaseLost = true;
+        return result;
+      }
+    }
     let response: DriveChangesListResponseT;
     try {
       response = await list({ accessToken: args.accessToken, pageToken });
     } catch (err) {
-      // Bubble up; webhook handler decides whether to 200-ack or retry.
+      // "pageToken invalid/expired" recovery (410/404 always; a 400 only
+      // when `oauth/drive.ts` positively identified it as this specific
+      // condition — see `DriveApiError.pageTokenInvalid`'s doc comment).
+      // Google's documented response to an expired changes.list page token
+      // is to call changes.getStartPageToken and resume from "now" —
+      // retrying changes.list with the SAME stale token just fails again
+      // forever, which before this fix meant a page-token could fail an
+      // integration PERMANENTLY with no operator-visible recovery path
+      // (every future webhook would hit this same throw). Any changes made
+      // in the gap between the expired token and the fresh one are
+      // unrecoverable by definition — Drive does not offer a way to
+      // enumerate them once the token backing them has expired — so this
+      // trades silent permanent failure for a bounded, LOUD gap (see
+      // `cursorReset` + the gap-visibility handling below) and a working
+      // cursor going forward. Every OTHER failure (a bare 400 — including
+      // this incident's own bug shape — 401/403, 429, 5xx) keeps failing
+      // loud below; "recovering" from those by discarding the cursor would
+      // silently fast-forward past real, still-retrievable changes for
+      // reasons that have nothing to do with token validity.
+      if (err instanceof DriveApiError && err.pageTokenInvalid) {
+        const getToken = args.deps?.getStartPageToken ?? getStartPageToken;
+        log?.warn?.(
+          { err, integrationId: args.integration.id, pageToken, status: err.status },
+          'drive changes.list: pageToken invalid/expired — re-bootstrapping cursor via changes.getStartPageToken',
+        );
+        let freshToken: string;
+        try {
+          freshToken = await getToken({ accessToken: args.accessToken });
+        } catch (bootstrapErr) {
+          // Recovery itself failed — this IS a genuine, non-recoverable
+          // failure now. Bubble up exactly like any other changes.list error
+          // (webhook handler decides whether to 200-ack or retry; the OLD
+          // cursor is left untouched, so a later successful attempt is not
+          // blocked by anything this catch did).
+          log?.error?.(
+            { err: bootstrapErr, integrationId: args.integration.id },
+            'drive changes.getStartPageToken (410/404 recovery) failed',
+          );
+          reportDriveProcessingFailure(bootstrapErr, {
+            stage: 'changes_list',
+            orgId: args.integration.org_id,
+            integrationId: args.integration.id,
+          });
+          throw bootstrapErr;
+        }
+        // Gap visibility (fix-round item 2): compute and LOG both bounds
+        // BEFORE persisting anything — this must be true regardless of
+        // whether the persist below succeeds. `gapStart` is read from the
+        // integration snapshot this call started with, i.e. BEFORE
+        // `advancePageToken` overwrites `last_token_advanced_at` to "now".
+        const gapStart = args.integration.last_token_advanced_at;
+        const gapEnd = new Date().toISOString();
+        log?.warn?.(
+          { integrationId: args.integration.id, orgId: args.integration.org_id, gapStart, gapEnd },
+          'drive changes cursor gap: re-bootstrap will jump the cursor forward — changes between gapStart and gapEnd are unrecoverable',
+        );
+
+        // The actual cursor-jump write. Wrapped explicitly (rather than
+        // letting a throw here fall through to the outer catch) so a
+        // failed persist is logged WITH the gap bounds it would otherwise
+        // silently widen — every retry against the SAME still-invalid old
+        // token re-hits this exact 410/404 branch and recomputes a LATER
+        // gapEnd each time, so a persist failure here is not a one-off
+        // blip, it is the gap growing on every subsequent webhook until it
+        // succeeds.
+        let persisted: { advanced: boolean };
+        try {
+          persisted = await args.db.advancePageToken({
+            integration_id: args.integration.id,
+            new_page_token: freshToken,
+            expected_page_token: startingPageToken,
+          });
+        } catch (persistErr) {
+          log?.error?.(
+            { err: persistErr, integrationId: args.integration.id, orgId: args.integration.org_id, gapStart, gapEnd },
+            'drive changes cursor gap: advancePageToken (post-bootstrap persist) failed — the gap is WIDENING, not just unrecorded, until this succeeds',
+          );
+          reportDriveProcessingFailure(persistErr, {
+            stage: 'changes_list',
+            orgId: args.integration.org_id,
+            integrationId: args.integration.id,
+          });
+          throw persistErr;
+        }
+        if (!persisted.advanced) {
+          // CAS miss: another run already moved the cursor past
+          // `startingPageToken` — meaning it did NOT hit this 410/404 (or
+          // recovered from it first). Our own reset is stale; the real
+          // cursor is already in a good state, so there is no gap to
+          // record on our behalf. Stop cleanly, without rewinding.
+          log?.warn?.(
+            { integrationId: args.integration.id, orgId: args.integration.org_id, gapStart, gapEnd },
+            'drive changes cursor gap: CAS miss on the post-bootstrap persist — another run already advanced the cursor; standing down without recording a gap',
+          );
+          result.cursorAdvanceLost = true;
+          return result;
+        }
+
+        // Best-effort durable record — see recordCursorGap's doc comment.
+        // Never allowed to fail the recovery itself (the cursor IS fixed
+        // regardless of whether this write lands); the adapter logs its
+        // own failure.
+        await args.db.recordCursorGap({
+          integration_id: args.integration.id,
+          org_id: args.integration.org_id,
+          gap_start: gapStart,
+          gap_end: gapEnd,
+        });
+
+        // Still reported — an expired token is a real operational event an
+        // operator should see, even though the pipeline recovered from it.
+        reportDriveProcessingFailure(err, {
+          stage: 'changes_list',
+          orgId: args.integration.org_id,
+          integrationId: args.integration.id,
+        });
+        result.newPageToken = freshToken;
+        result.cursorReset = true;
+        return result;
+      }
+
+      // Bubble up; webhook handler decides whether to 200-ack or retry. The
+      // page token is NOT advanced — the next attempt retries from the SAME
+      // `pageToken` this call read from `args.integration.last_page_token`
+      // (or the prior page's `nextPageToken`, held only in the LOCAL
+      // `pageToken` variable, never persisted mid-walk), so a transient
+      // failure costs redundant re-processing of already-seen pages, never a
+      // skipped change — the ledger's UNIQUE(integration, file, revision)
+      // constraint makes that redundant re-processing idempotent.
       log?.error?.({ err, integrationId: args.integration.id, pageToken }, 'drive changes.list failed');
       // P0-2: this is exactly the class of failure (a stuck/410/429/5xx
       // changes.list call) the hardening audit found invisible — reported
@@ -580,10 +877,24 @@ export async function processDriveChanges(args: {
     // the last seen pageToken if the response didn't carry one — that
     // means Drive currently has no further changes).
     const advance = response.newStartPageToken ?? pageToken;
-    await args.db.advancePageToken({
+    const finalPersist = await args.db.advancePageToken({
       integration_id: args.integration.id,
       new_page_token: advance,
+      expected_page_token: startingPageToken,
     });
+    if (!finalPersist.advanced) {
+      // CAS miss: another run already advanced the cursor past our
+      // starting point while we were walking. Our OWN work in this pass
+      // (ledger rows, enqueues) already landed and stands — only the final
+      // cursor write is skipped, so we never rewind whatever the other run
+      // committed.
+      log?.warn?.(
+        { integrationId: args.integration.id, orgId: args.integration.org_id },
+        'drive changes walk: CAS miss on final-page advancePageToken — another run already advanced the cursor; standing down without rewinding',
+      );
+      result.cursorAdvanceLost = true;
+      return result;
+    }
     result.newPageToken = advance;
     return result;
   }
@@ -595,10 +906,19 @@ export async function processDriveChanges(args: {
   // without advancing. Persist the latest token we successfully consumed
   // so the next pass picks up where this one left off.
   log?.warn?.({ integrationId: args.integration.id, pages: SAFE_PAGE_LIMIT }, 'drive changes.list page cap reached — partial drain, advancing token');
-  await args.db.advancePageToken({
+  const capPersist = await args.db.advancePageToken({
     integration_id: args.integration.id,
     new_page_token: pageToken,
+    expected_page_token: startingPageToken,
   });
+  if (!capPersist.advanced) {
+    log?.warn?.(
+      { integrationId: args.integration.id, orgId: args.integration.org_id },
+      'drive changes walk: CAS miss on cap-reached advancePageToken — another run already advanced the cursor; standing down without rewinding',
+    );
+    result.cursorAdvanceLost = true;
+    return result;
+  }
   result.newPageToken = pageToken;
   return result;
 }

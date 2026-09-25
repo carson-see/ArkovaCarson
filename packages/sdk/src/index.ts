@@ -31,7 +31,7 @@
  *   });
  */
 
-export { Arkova, ArkovaError, VERIFY_BATCH_SYNC_LIMIT, BULK_ANCHOR_MAX_ROWS } from './client';
+export { Arkova, ArkovaError, VERIFY_BATCH_SYNC_LIMIT, BULK_ANCHOR_MAX_ROWS, ANCHOR_IMPORT_MAX_ROWS } from './client';
 export { BULK_ANCHOR_CREDENTIAL_TYPES } from './types';
 export type {
   ArkovaConfig,
@@ -50,6 +50,10 @@ export type {
   BulkAnchorResultRow,
   BulkAnchorCredentialType,
   BulkAnchorDuplicateStrategy,
+  AnchorImportRow,
+  AnchorImportOptions,
+  AnchorImportResultRow,
+  AnchorImportResponse,
   NessieQueryResult,
   NessieContextResult,
   WebhookEventType,

@@ -61,6 +61,13 @@ on:
 # to publish different versions would make "which commit is actually live"
 # (the whole point of this workflow) briefly undefined. Mirrors
 # deploy-worker.yml's `group: deploy-worker` / cancel-in-progress: false.
+#
+# Actions-budget hygiene (2026-09-21): this queues a burst of pushes rather
+# than racing them, but queuing alone still runs a full deploy for every
+# push. The `deploy-gate` job's "Evaluate DEPLOY_EDGE_PAUSED" step now also
+# skips a queued run whose commit is no longer the tip of `main` (superseded
+# by a later push already queued behind it) — see that step's own comment
+# for why `cancel-in-progress: true` was rejected instead.
 concurrency:
   group: deploy-edge
   cancel-in-progress: false
@@ -145,7 +152,13 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Generate build-info (dry run — not written back to git)
-        run: node scripts/generate-build-info.mjs "${{ github.event.pull_request.head.sha }}"
+        # ARK-SEC-012 (Actions-budget hygiene sweep, 2026-09-21): assign to an
+        # env var rather than interpolating the expression directly into the
+        # run: script — same fix as ci.yml's workflow-level BASE_REF_SHA and
+        # staging-evidence.yml's live_pr step.
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/generate-build-info.mjs "$PR_HEAD_SHA"
 
       # Execute only the binary installed by the locked npm ci above. A missing
       # binary fails immediately, with no registry download or lifecycle-script
@@ -174,6 +187,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
           SHA: ${{ needs.test.outputs.resolved-sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -181,6 +195,33 @@ jobs:
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Manual workflow_dispatch by ${ACTOR} — deploy proceeds regardless of DEPLOY_EDGE_PAUSED (intentional-override path)."
             exit 0
+          fi
+
+          # Actions-budget hygiene (2026-09-21): the workflow-level
+          # `concurrency: { group: deploy-edge, cancel-in-progress: false }`
+          # below queues, but does not coalesce, a burst of pushes to main —
+          # every queued run still reaches this point and would otherwise
+          # deploy. `cancel-in-progress: true` was rejected: this job's
+          # `wrangler deploy` step and its deployed-version parity check are
+          # separate LATER steps in the same job, so a cancellation landing
+          # between them could leave a real, live deploy with no completed
+          # verification run for it — an "unverified worker" outcome, which
+          # rules out cancelling an in-flight run here. Instead: once this
+          # run's queue turn arrives, check whether its commit is STILL the
+          # tip of main. A queued run whose commit has been superseded by a
+          # later push (already merged, already queued behind this one) skips
+          # its own deploy and lets that later run's full deploy+parity
+          # pipeline be the one that verifies what actually goes live. A
+          # burst of N pushes to main becomes (up to) N cheap supersession
+          # checks plus exactly ONE real deploy — the newest commit at the
+          # moment its turn in the queue arrives.
+          if [ "$EVENT_NAME" = "push" ]; then
+            CURRENT_MAIN_SHA="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+            if [ "$CURRENT_MAIN_SHA" != "$SHA" ]; then
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Commit ${SHA} is no longer the tip of main (now ${CURRENT_MAIN_SHA}) — superseded by a later push queued behind this run. Skipping deploy; the newer run's own pipeline covers this commit."
+              exit 0
+            fi
           fi
 
           if [ "$PAUSED" = "true" ]; then
@@ -232,7 +273,7 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
       # No CLOUDFLARE_* GitHub Actions secret exists (verified via `gh secret
       # list` — SCRUM-3907). `cloudflare-api-token` already lives in Secret

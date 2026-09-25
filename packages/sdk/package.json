@@ -1,6 +1,6 @@
 {
   "name": "arkova",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Arkova verification SDK — anchor and verify documents with cryptographic proof",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -32,7 +32,7 @@
     "directory": "packages/sdk"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
     "@types/node": "26.4.1",

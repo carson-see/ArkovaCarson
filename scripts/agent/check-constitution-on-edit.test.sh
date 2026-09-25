@@ -150,6 +150,90 @@ assert_allowed "ordinary .ts file is not terminology-scanned" \
   "src/lib/other.ts" 'export const blockHeight = 42;'
 
 echo ""
+echo "--- out-of-scope allowlist: ~/.claude + session scratchpad ---"
+# Claude Code's persistent memory (~/.claude/projects/*/memory/) and the session
+# scratchpad (/private/tmp/claude-*/, /tmp/claude-*/) can never be repo files, so
+# no path-scoped rule applies to them. They pass through with a stderr note.
+# EVERYTHING else that fails to normalize keeps failing closed: the allowlist is
+# matched on the PHYSICAL path, only when no git work tree owns the target.
+TMP_DIR=$(mktemp -d)
+FAKE_HOME="${TMP_DIR}/home"
+mkdir -p "${FAKE_HOME}/.claude/projects/-proj/memory" "${TMP_DIR}/elsewhere"
+FP_IMPORT='import { generateFingerprint } from "@/lib/f";'
+
+run_hook_home() { # file_path, content, stderr_file — HOME pinned to the fixture
+  jq -n --arg fp "$1" --arg c "$2" \
+    '{tool_name:"Write", tool_input:{file_path:$fp, content:$c}}' \
+    | HOME="$FAKE_HOME" "$HOOK" 2>"${3:-/dev/null}"
+}
+
+assert_passthrough() { # label, file_path
+  local err out; err=$(mktemp)
+  out=$(run_hook_home "$2" "$FP_IMPORT" "$err")
+  if [[ -z "$out" ]] && grep -qF 'outside the constitution' "$err"; then
+    echo "  PASS  $1"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL  $1  (expected a pass-through with a stderr note)"; echo "        $out"; FAIL=$((FAIL + 1))
+  fi
+  rm -f "$err"
+}
+
+assert_denied_home() { # label, file_path
+  local out; out=$(run_hook_home "$2" "$FP_IMPORT")
+  if grep -qF '"permissionDecision": "deny"' <<<"$out"; then
+    echo "  PASS  $1"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL  $1  (edit was NOT denied)"; FAIL=$((FAIL + 1))
+  fi
+}
+
+assert_passthrough "memory-dir write is allowed" \
+  "${FAKE_HOME}/.claude/projects/-proj/memory/note.md"
+assert_passthrough "memory-dir write into a not-yet-created directory" \
+  "${FAKE_HOME}/.claude/projects/-new/memory/note.md"
+assert_passthrough "scratchpad write under /private/tmp/claude-*/" \
+  "/private/tmp/claude-hooktest-$$/session/scratchpad/n.md"
+assert_passthrough "scratchpad write under /tmp/claude-*/" \
+  "/tmp/claude-hooktest-$$/session/scratchpad/n.md"
+
+assert_denied_home "outside any repo and NOT allowlisted stays blocked" \
+  "${TMP_DIR}/elsewhere/x.ts"
+assert_denied_home "a bare /tmp path is not the scratchpad" \
+  "/tmp/not-claude-$$/x.ts"
+assert_denied_home "a file directly named /tmp/claude-* is not a scratchpad dir" \
+  "/tmp/claude-hooktest-$$"
+assert_denied_home "repo file is still evaluated (§1.6, absolute path)" \
+  "${REPO_ROOT}/services/worker/src/x.ts"
+
+# Traversal: lexically under ~/.claude, physically a worker file in this repo.
+UP=$(printf '../%.0s' {1..40})
+assert_denied_home "~/.claude/../.. traversal into the repo is NOT allowlisted" \
+  "${FAKE_HOME}/.claude/${UP}${REPO_ROOT#/}/services/worker/src/x.ts"
+assert_denied_home "~/.claude/.. traversal to a non-repo dir is NOT allowlisted" \
+  "${FAKE_HOME}/.claude/../../elsewhere/x.ts"
+assert_denied_home "traversal through a not-yet-created directory is NOT allowlisted" \
+  "${FAKE_HOME}/.claude/nope/../../../elsewhere/x.ts"
+
+# Symlinks: the match is on the physical path, so a link out of ~/.claude is out.
+ln -s "${REPO_ROOT}/services/worker/src" "${FAKE_HOME}/.claude/to-repo"
+ln -s "${TMP_DIR}/elsewhere" "${FAKE_HOME}/.claude/to-elsewhere"
+: > "${TMP_DIR}/elsewhere/real.ts"
+ln -s "${TMP_DIR}/elsewhere/real.ts" "${FAKE_HOME}/.claude/linked-file.ts"
+assert_denied_home "symlinked dir under ~/.claude pointing INTO the repo" \
+  "${FAKE_HOME}/.claude/to-repo/x.ts"
+assert_denied_home "symlinked dir under ~/.claude pointing outside it" \
+  "${FAKE_HOME}/.claude/to-elsewhere/x.ts"
+assert_denied_home "symlinked FILE under ~/.claude pointing outside it" \
+  "${FAKE_HOME}/.claude/linked-file.ts"
+
+# A git work tree nested under ~/.claude is a repo: its files are evaluated.
+if git init -q "${FAKE_HOME}/.claude/nested" 2>/dev/null; then
+  mkdir -p "${FAKE_HOME}/.claude/nested/services/worker/src"
+  assert_denied_home "git work tree under ~/.claude is evaluated, not allowlisted" \
+    "${FAKE_HOME}/.claude/nested/services/worker/src/x.ts"
+fi
+
+echo ""
 echo "--- must not regress ---------------------------------------"
 assert_allowed "clean docs file" "docs/x.md" 'Ordinary documentation prose.'
 assert_allowed "clean source file" "src/a.ts" 'export const x = 1;'

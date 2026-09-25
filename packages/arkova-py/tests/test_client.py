@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from arkova import (
     BULK_ANCHOR_MAX_ROWS,
     Anchor,
+    AnchorImportResponse,
+    AnchorImportRow,
     AnchorReceipt,
     Arkova,
     ArkovaError,
@@ -35,6 +37,102 @@ def json_response(
     headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     return httpx.Response(status_code, json=payload, headers=headers)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_anchor_import_uses_canonical_path_and_parses_207(asynchronous: bool) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(
+            {
+                "total": 1,
+                "created": 0,
+                "skipped": 0,
+                "failed": 1,
+                "results": [
+                    {
+                        "fingerprint": "a" * 64,
+                        "status": "failed",
+                        "reason": "invalid_public_metadata",
+                    }
+                ],
+            },
+            207,
+        )
+
+    row = AnchorImportRow(fingerprint="a" * 64, filename="row.pdf", fingerprint_provided=True)
+    if asynchronous:
+
+        async def run():
+            async with AsyncArkova(
+                api_key="ak_test", transport=httpx.MockTransport(handler)
+            ) as client:
+                return await client.anchor_import([row], action="queue")
+
+        result = asyncio.run(run())
+    else:
+        with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+            result = client.anchor_import([row], action="queue")
+    assert result.failed == 1
+    assert seen[0].url.path == "/v1/anchor/import"
+    assert "org_id" not in json.loads(seen[0].content)
+
+
+# SHOULD-FIX from the #3020 review: an anchor that exists is never reported as
+# a failed row, so the typed model must accept the two recipient-link statuses
+# and the additive counter without dropping to a generic string.
+def test_anchor_import_models_accept_recipient_link_statuses() -> None:
+    parsed = AnchorImportResponse.model_validate(
+        {
+            "total": 2,
+            "created": 1,
+            "skipped": 1,
+            "failed": 0,
+            "recipient_link_failed": 2,
+            "results": [
+                {
+                    "fingerprint": "a" * 64,
+                    "status": "created_recipient_failed",
+                    "public_id": "ARK-1",
+                    "reason": "recipient_activation_email_failed",
+                },
+                {
+                    "fingerprint": "b" * 64,
+                    "status": "skipped_recipient_failed",
+                    "public_id": "ARK-2",
+                    "reason": "recipient_link_failed",
+                },
+            ],
+        }
+    )
+    assert parsed.recipient_link_failed == 2
+    assert parsed.failed == 0
+    assert [row.status for row in parsed.results] == [
+        "created_recipient_failed",
+        "skipped_recipient_failed",
+    ]
+    assert parsed.created + parsed.skipped + parsed.failed == parsed.total
+
+
+def test_anchor_import_never_retries_a_write_error() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return json_response({"error": "unavailable"}, 503)
+
+    with (
+        Arkova(api_key="ak_test", retries=3, transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError),
+    ):
+        client.anchor_import(
+            [AnchorImportRow(fingerprint="a" * 64, filename="row.pdf", fingerprint_provided=True)],
+            action="queue",
+        )
+    assert calls == 1
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])

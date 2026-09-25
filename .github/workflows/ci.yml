@@ -137,7 +137,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
+        uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
         with:
           extra_args: --only-verified
 
@@ -1909,6 +1909,15 @@ jobs:
           cat "$RUNNER_TEMP/arkova-worker.log"
           exit 1
         env:
+          # The Playwright stack cannot fit inside the 10 req/min `checkout`
+          # bucket: every browser shares `::1`, one ConnectorsPage run issues
+          # ~8-12 admin requests, and four specs contend for the same tokens
+          # under parallel workers. Scoped to adminRouter only, and inert in
+          # production by construction (config.ts throws at boot if set there,
+          # and adminRateLimitBypassActive() requires nodeEnv !== 'production').
+          # The /api/v1 limiter is untouched, so
+          # e2e/verify-ratelimit-contract.spec.ts still proves §1.10.
+          E2E_ADMIN_RATELIMIT_BYPASS: 'true'
           PORT: 3001
           NODE_ENV: test
           LOG_LEVEL: warn
@@ -2418,9 +2427,13 @@ jobs:
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           GH_TOKEN: ${{ github.token }}
+          # ARK-SEC-012 (Actions-budget hygiene sweep, 2026-09-21): assign to
+          # an env var rather than interpolating the expression directly into
+          # the run: script — same fix as the workflow-level BASE_REF_SHA env
+          # binding above and staging-evidence.yml's live_pr step.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          PR_NUMBER="${{ github.event.pull_request.number }}"
           if [[ -z "${PR_NUMBER}" ]]; then
             echo "::error::No pull_request.number in event context; cannot resolve live PR state."
             exit 1

@@ -160,3 +160,7 @@ to have been regenerated from an unapplied migration.
 # UAT-17
 
 `database.types.ts` includes the additive `add_existing_org_member` RPC result used by the worker's atomic exact-email member-add action.
+
+## UAT-23 activation delivery receipt — 2026-09-19
+
+Added the generated-shape table entry for `recipient_activation_deliveries` from migration 0471. The matching frontend type copy is identical. Canonical regeneration against a qualified migrated database remains a release check.

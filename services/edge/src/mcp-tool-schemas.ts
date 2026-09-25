@@ -95,6 +95,34 @@ export const anchorDocumentSchema = z
 
 export const submissionStatusSchema = z.object({ public_id: publicIdSchema }).strict();
 
+export const importRowsSchema = z.object({
+  rows: z.array(z.object({
+    fingerprint: contentHashSchema,
+    filename: z.string().min(1).max(255),
+    fingerprint_provided: z.boolean(),
+    file_size: z.number().int().positive().optional(),
+    credential_type: z.enum(['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE', 'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL', 'INSURANCE', 'SEC_FILING', 'PATENT', 'REGULATION', 'PUBLICATION', 'CHARITY', 'ACCREDITATION', 'FINANCIAL_ADVISOR', 'BUSINESS_ENTITY', 'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY', 'CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING', 'OTHER']).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    recipient_email: z.string().email().optional(),
+    recipient_name: z.string().max(255).optional(),
+  }).strict().superRefine((row, context) => {
+    // Mirrors the worker's own superRefine. The worker rejects the WHOLE
+    // request for this pair, so catching it locally saves a round trip that
+    // can only ever come back 400 (#3034 review).
+    if (row.recipient_name && !row.recipient_email) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recipient_name'],
+        message: 'recipient_email is required when recipient_name is provided',
+      });
+    }
+  })).min(1).max(100),
+  action: z.enum(['queue', 'instant']),
+  description: z.string().max(1000).optional(),
+  user_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+  organization_tags: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+}).strict();
+
 export const verifyDocumentSchema = z
   .object({
     content_hash: contentHashSchema,
@@ -181,6 +209,7 @@ export const MCP_TOOL_SCHEMAS = {
   nessie_query: nessieQuerySchema,
   arkova_anchor_document: anchorDocumentSchema,
   arkova_get_submission_status: submissionStatusSchema,
+  arkova_import_rows: importRowsSchema,
   arkova_verify_document: verifyDocumentSchema,
   arkova_verify_batch: verifyBatchSchema,
   arkova_search: agentSearchSchema,

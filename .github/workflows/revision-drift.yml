@@ -1,18 +1,34 @@
 name: Revision Drift Alert
 
-# SCRUM-1247 (R0-1): every 10 minutes, fetch the live worker /health.git_sha
-# and compare to HEAD of main. If drift > 1 hour, fire a Sentry event and
-# (when configured) ping Slack via the existing Sentry → Slack integration.
+# SCRUM-1247 (R0-1): on a cron, fetch the live worker /health.git_sha and
+# compare to HEAD of main. If drift > 1 hour, fire a Sentry event and (when
+# configured) ping Slack via the existing Sentry → Slack integration.
+#
+# Cadence history (this header previously went stale against the actual
+# cron below — the 2026-09-12 widening to 30 min landed without updating
+# this docstring from its original "every 10 minutes"; keep them in sync):
+#   - originally every 10 min (~4,200 runs/mo) — worst-case page ~70 min
+#     after a regression (drift threshold 1h + up to 10 min to the next poll
+#     that observes AGE >= threshold).
+#   - widened to every 30 min 2026-09-12 (~1,400 runs/mo) — worst-case page
+#     ~90 min.
+#   - widened to hourly 2026-09-21 Actions-budget hygiene (~720 runs/mo) —
+#     worst-case page ~2h (the 1h drift threshold below + up to 1h to the
+#     next poll that observes it). Still serves the job's actual purpose:
+#     the alert condition is COMMIT AGE, not poll cadence, so a real
+#     regression is never missed — only detected later. This is a P2
+#     observability page, not a safety gate (deploy-worker.yml's own
+#     pre-deploy/deploy-gate/health-verify steps are the fast path for a
+#     deploy that just happened), so trading detection latency for run
+#     count here was judged worth it. Tighten back to 30/10 min again if
+#     that 2h worst case stops being acceptable.
 #
 # Replaces "nobody noticed prod was 12 commits behind for 12 hours" with a
-# guaranteed page within ~70 minutes of any deploy regression.
+# guaranteed page within the SLA above.
 
 on:
   schedule:
-    # Every 30 minutes (widened from 10 min 2026-09-12, cost-reduction sweep:
-    # ~4,200 runs/mo -> ~1,400 runs/mo). GitHub clamps cron precision but
-    # 30 min is still well inside the 1-hour drift threshold below.
-    - cron: '*/30 * * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 concurrency:

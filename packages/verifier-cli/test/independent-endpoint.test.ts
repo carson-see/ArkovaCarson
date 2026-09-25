@@ -24,11 +24,36 @@ describe('independent-node guard', () => {
     }
   });
 
-  // The raw Cloud Run host (no arkova.* vanity domain) is still an
-  // Arkova-operated endpoint — it's the SDK's DEFAULT_BASE_URL
-  // (packages/sdk/src/client.ts). A caller who typos or copy-pastes it into
-  // --rpc would otherwise route the "independent" confirmation straight back
-  // through Arkova's own worker, defeating the whole point of this guard.
+  // 2026-09-21 review (#3035): packages/sdk's DEFAULT_BASE_URL and
+  // packages/embed's DEFAULT_API_BASE moved from the raw Cloud Run host to
+  // the public gateway `https://api.arkova.ai`. `ARKOVA_HOST_RE`'s
+  // `(^|\.)arkova\.(io|ai|com|app|dev)$` suffix match already covers every
+  // `*.arkova.ai` subdomain (verified: `api.`, `edge.`, `app.`, `search.`
+  // all match — this is a suffix anchor, not a fixed subdomain list), so
+  // this was not actually a gap. Explicit regression coverage for the exact
+  // hostnames the review asked about, so a future edit to the regex that
+  // narrowed it (e.g. to only `app.arkova.ai`) would be caught here
+  // directly rather than only by the broader tests above.
+  it('REFUSES the public API gateway and its sibling subdomains (api./edge./app./search.arkova.ai)', () => {
+    for (const host of [
+      'https://api.arkova.ai',
+      'https://api.arkova.ai/api/v1/verify',
+      'https://edge.arkova.ai',
+      'https://app.arkova.ai',
+      'https://search.arkova.ai',
+    ]) {
+      expect(() => assertIndependentEndpoint(host), host).toThrow(/Arkova-operated/);
+    }
+  });
+
+  // The raw Cloud Run host (no arkova.* vanity domain) is still a live,
+  // directly reachable Arkova-operated endpoint (CLAUDE.md §1.1: it answers
+  // publicly and unauthenticated, nothing in front of it) — even though
+  // packages/sdk/src/client.ts's DEFAULT_BASE_URL no longer defaults to it
+  // as of 2026-09-21 (see the source file's comment on CLOUD_RUN_HOST_RE).
+  // A caller who typos or copy-pastes the raw host into --rpc would
+  // otherwise route the "independent" confirmation straight back through
+  // Arkova's own worker, defeating the whole point of this guard.
   it('REFUSES any *.run.app host (the raw Cloud Run host is an Arkova endpoint)', () => {
     for (const host of [
       'https://arkova-worker-270018525501.us-central1.run.app',

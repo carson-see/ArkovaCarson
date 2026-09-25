@@ -418,7 +418,7 @@ describe('real-tree smoke — the committed manifest reconciles today', () => {
     expect(claims).toEqual(['ENABLE_AI_FRAUD', 'ENABLE_SEMANTIC_SEARCH']);
   });
 
-  it('still reports the two known env↔DB contradictions as acknowledged warnings', () => {
+  it('reports no env↔DB contradictions on the real tree (both were fixed 2026-09-21)', () => {
     // Regression guard: if someone "fixes" this by deleting the acknowledgement
     // instead of the deploy line, the smoke test above goes red. If someone
     // fixes deploy-worker.yml properly, THIS test goes red and must be updated —
@@ -432,7 +432,9 @@ describe('real-tree smoke — the committed manifest reconciles today', () => {
       .filter((f) => f.code === 'env-db-contradiction')
       .map((f) => f.flag)
       .sort();
-    expect(contradictions).toEqual(['ENABLE_AI_FRAUD', 'ENABLE_SEMANTIC_SEARCH']);
+    // 2026-09-21: deploy-worker.yml now sets both to `false`, agreeing with the DB rows.
+    // Ratchet: the real tree must carry ZERO env↔DB contradictions from here on.
+    expect(contradictions).toEqual([]);
     for (const f of findings.filter((x) => x.code === 'env-db-contradiction')) {
       expect(f.severity).toBe('warn');
     }

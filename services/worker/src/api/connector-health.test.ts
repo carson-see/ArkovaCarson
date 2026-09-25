@@ -24,6 +24,8 @@ const executionsAggregate = vi.fn();
 const driveRulesList = vi.fn();
 const driveRulesPages = vi.fn();
 const driveFetchJobFailuresList = vi.fn();
+// Round-2 fix (item 2): the gap-visibility read from audit_events.
+const driveGapEventsList = vi.fn();
 
 vi.mock('../config.js', () => ({ config: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -90,6 +92,21 @@ vi.mock('../utils/db.js', () => {
       }),
     }),
   };
+  // Round-2 fix (item 2): audit_events, scoped by org_id + event_type
+  // (both indexed — idx_audit_events_org_id, idx_audit_events_event_type)
+  // and a created_at lookback window.
+  // .select(...).eq('org_id').eq('event_type').gte('created_at').order(...).limit(...)
+  const auditEventsChain = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          gte: () => ({
+            order: () => ({ limit: () => driveGapEventsList() }),
+          }),
+        }),
+      }),
+    }),
+  };
   return {
     db: {
       from: (table: string) => {
@@ -100,6 +117,7 @@ vi.mock('../utils/db.js', () => {
         if (table === 'organization_rule_executions') return executionsChain;
         if (table === 'organization_rules') return rulesChain;
         if (table === 'job_queue') return jobQueueChain;
+        if (table === 'audit_events') return auditEventsChain;
         throw new Error(`unexpected table: ${table}`);
       },
     },
@@ -137,6 +155,7 @@ beforeEach(() => {
   driveRulesPages.mockImplementation((offset: number) => offset === 0
     ? driveRulesList() : Promise.resolve({ data: [], error: null }));
   driveFetchJobFailuresList.mockResolvedValue({ data: [], error: null });
+  driveGapEventsList.mockResolvedValue({ data: [], error: null });
 });
 
 describe('connector-health (SCRUM-1146)', () => {
@@ -587,7 +606,7 @@ describe('connector-health (SCRUM-1146)', () => {
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
     });
 
-    it('does NOT flag cursor_stale for a never-bootstrapped cursor (last_token_advanced_at null — that is P0-1 territory, out of scope here)', async () => {
+    it('does NOT flag cursor_stale (specifically) for a never-bootstrapped cursor — see changes_list_never_succeeded below for what IS now flagged', async () => {
       integrationsList.mockResolvedValueOnce({
         data: [driveIntegrationRow({ last_token_advanced_at: null })],
         error: null,
@@ -598,6 +617,112 @@ describe('connector-health (SCRUM-1146)', () => {
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('cursor_stale');
     });
+  });
+
+  // Task 4 (orchestrator "make this failure loud" review, SCRUM-2903/3661
+  // fields-mask incident follow-up): the P0-2 cursor_stale signal above was
+  // BLIND to a cursor that has never once advanced — which is exactly the
+  // shape of a connection whose every changes.list call has failed since it
+  // connected (this incident: HTTP 400 fields-mask bug, 150 failures/day,
+  // zero successes, ever). Before this fix the dashboard showed
+  // 'connected'/'none' for that entire window with no signal at all — the
+  // previous test block's `driveIntegrationRow()` default `connected_at`
+  // ('2026-04-20') is already old enough to demonstrate this: it was
+  // ASSERTED as "out of scope" there and is now covered here.
+  describe('Drive changes_list_never_succeeded signal (Task 4 gap fix)', () => {
+    const FAR_PAST_CONNECT = '2020-01-01T00:00:00Z';
+    const RECENT_CONNECT = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+    function neverAdvancedDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: FAR_PAST_CONNECT,
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: null,
+        last_renewal_error: null,
+        last_token_advanced_at: null,
+        ...overrides,
+      };
+    }
+
+    it('flags changes_list_never_succeeded when the cursor has NEVER advanced, connected_at is old, AND the org has an enabled Drive rule', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [neverAdvancedDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('changes_list_never_succeeded');
+      expect(drive?.last_error).toContain('never succeeded');
+    });
+
+    it('does NOT flag a freshly-connected integration (connected_at recent, cursor never advanced yet — expected, not a finding)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [neverAdvancedDriveRow({ connected_at: RECENT_CONNECT })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('does NOT flag an org with zero enabled Drive rules (same false-positive guard as cursor_stale)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [neverAdvancedDriveRow()], error: null });
+      // driveRulesList stays at the default empty-array mock (beforeEach).
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('changes_list_never_succeeded');
+    });
+
+    it('is mutually exclusive with cursor_stale — a cursor that HAS advanced at least once never reads changes_list_never_succeeded', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [neverAdvancedDriveRow({ last_token_advanced_at: '2020-06-01T00:00:00Z' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('cursor_stale');
+    });
+
+    it('subscription_expiry still outranks changes_list_never_succeeded (broken channel already explains it)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [neverAdvancedDriveRow({ last_renewal_error: 'invalid_grant' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('subscription_expiry');
+    });
+  });
+
+  describe('Drive cursor-staleness + fetch-job-failure signals (P0-2), continued', () => {
+    const FAR_PAST = '2020-01-01T00:00:00Z';
+
+    function driveIntegrationRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        ...overrides,
+      };
+    }
 
     it('subscription_expiry still outranks cursor_stale (channel itself is broken — a stale cursor is the expected side effect, not new information)', async () => {
       integrationsList.mockResolvedValueOnce({
@@ -655,6 +780,329 @@ describe('connector-health (SCRUM-1146)', () => {
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
       expect(body.connectors.find((c) => c.id === 'docusign')?.health_reason).toBe('none');
+    });
+  });
+
+  // SCRUM-5287 (P1 security, fix-round item 5): the OAuth callback guard
+  // (drive-oauth.ts) only protects NEW connections going forward — an
+  // EXISTING over-scoped row (like the flagged prod org) needs its own
+  // visible signal so an admin can see it and force a re-consent.
+  describe('grant_exceeds_requested signal (SCRUM-5287)', () => {
+    function overScopedDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        // The flagged prod shape: full drive + gmail.modify + contacts, far
+        // beyond DRIVE_DEFAULT_SCOPES.
+        scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/contacts',
+        ...overrides,
+      };
+    }
+
+    it('an existing row whose stored scope exceeds DRIVE_DEFAULT_SCOPES reads degraded/grant_exceeds_requested', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [overScopedDriveRow()], error: null });
+      // No rule needed — unlike cursor_stale/changes_list_never_succeeded,
+      // an over-grant is a finding regardless of whether anything is
+      // actively watching.
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('grant_exceeds_requested');
+      expect(drive?.last_error).toContain('gmail.modify');
+    });
+
+    it('outranks every other Drive reason, including subscription_expiry', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [overScopedDriveRow({ last_renewal_error: 'invalid_grant' })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('grant_exceeds_requested');
+    });
+
+    it('a row whose scope is within DRIVE_DEFAULT_SCOPES (including the `email` alias) is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [overScopedDriveRow({
+          scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly email',
+        })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('grant_exceeds_requested');
+    });
+
+    it('a row with no stored scope (null) is NOT flagged', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [overScopedDriveRow({ scope: null })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).not.toBe('grant_exceeds_requested');
+    });
+  });
+
+  // Fix-round item 6 (scope-reality finding): the FIRST customer failure —
+  // `drive.file` not actually covering an ordinary watched-folder file —
+  // must be visible here, not only in job_queue.last_error.
+  describe('file_access_not_granted signal (fix-round item 6)', () => {
+    function healthyDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly email',
+        ...overrides,
+      };
+    }
+
+    it('a job whose last_error matches DriveFileAccessError\'s message reads degraded/file_access_not_granted', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'dead', last_error: 'Drive file access denied: appNotAuthorizedToFile' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('file_access_not_granted');
+      expect(drive?.last_error).toContain('grant does not cover');
+    });
+
+    it('a job whose last_error matches the export-size-limit message ALSO reads file_access_not_granted', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'failed', last_error: "Drive file export exceeds Google's export size limit" }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('file_access_not_granted');
+    });
+
+    it('outranks the generic fetch_job_failures reason', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [
+          { status: 'dead', last_error: 'Drive file access denied: forbidden' },
+          { status: 'failed', last_error: 'some unrelated transient error' },
+        ],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('file_access_not_granted');
+    });
+
+    it('a failure with an UNRELATED last_error still reads the generic fetch_job_failures, not file_access_not_granted', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'failed', last_error: 'ETIMEDOUT connecting to googleapis.com' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+    });
+
+    // SonarCloud typescript:S5850 (confirmed): the pattern
+    // `/^Drive file access denied|export size limit/i` binds as
+    // `(^Drive file access denied)|(export size limit)` — the SECOND
+    // alternative is unanchored, so it matches "export size limit"
+    // anywhere in last_error, not just Google's own export-size-limit
+    // message. An unrelated failure that merely mentions that phrase
+    // mid-string must NOT be counted as file_access_not_granted.
+    it('an UNRELATED last_error that merely contains "export size limit" mid-string does NOT read file_access_not_granted (S5850)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'failed', last_error: 'Timeout while waiting; upstream said export size limit unknown' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
+    });
+
+    // Case-insensitivity is intentional (the pattern carries `/i`) and must
+    // survive the anchoring fix — a lowercase-at-start message still counts.
+    it('a lowercase-at-start "drive file access denied" last_error still reads file_access_not_granted (case-insensitive, S5850)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({
+        data: [{ status: 'dead', last_error: 'drive file access denied: appNotAuthorizedToFile' }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('file_access_not_granted');
+    });
+  });
+
+  // Round-2 fix (item 2): the re-bootstrap gap IS durably persisted to
+  // audit_events (fix-round item 2), but until this fix nothing in
+  // connector-health.ts ever read it back — an admin had no product-visible
+  // way to learn a gap occurred. This makes that read real.
+  describe('changes_gap signal (round-2 fix item 2)', () => {
+    function healthyDriveRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'integration-gap-1',
+        provider: 'google_drive',
+        account_label: 'Acme',
+        connected_at: '2026-04-20T00:00:00Z',
+        revoked_at: null,
+        subscription_expires_at: '2026-12-01T00:00:00Z',
+        last_renewal_at: '2026-09-01T00:00:00Z',
+        last_renewal_error: null,
+        last_token_advanced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        scope: null,
+        ...overrides,
+      };
+    }
+
+    function gapRow(overrides: Record<string, unknown> = {}) {
+      return {
+        target_id: 'integration-gap-1',
+        created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h ago
+        details: JSON.stringify({
+          gap_start: '2026-09-20T10:00:00.000Z',
+          gap_end: '2026-09-20T10:05:00.000Z',
+          reason: 'pageTokenInvalid',
+        }),
+        ...overrides,
+      };
+    }
+
+    it('a gap event within the lookback window reads degraded/changes_gap with both bounds in last_error', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; health_reason: string | null; last_error: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('degraded');
+      expect(drive?.health_reason).toBe('changes_gap');
+      expect(drive?.last_error).toContain('2026-09-20T10:00:00.000Z');
+      expect(drive?.last_error).toContain('2026-09-20T10:05:00.000Z');
+    });
+
+    it('no gap event at all reads connected/none (unaffected by this signal)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('a gap event OUTSIDE the lookback window is not reported', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      // The query itself is window-bounded (a gte('created_at', cutoff)
+      // filter at the DB layer), so an out-of-window row is simply never
+      // returned by the mock — this proves the CALLER treats an empty
+      // result as "no gap," not that a stale row leaks through.
+      driveGapEventsList.mockResolvedValueOnce({ data: [], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('a gap event for a DIFFERENT integration does not leak onto this one', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow({ target_id: 'some-other-integration' })], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('outranks the generic fetch_job_failures reason (data loss outranks a retryable fetch error)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
+      driveFetchJobFailuresList.mockResolvedValueOnce({ data: [{ status: 'dead', last_error: 'some unrelated error' }], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('changes_gap');
+    });
+
+    it('is outranked by cursor_stale (an ACTIVELY broken connector right now outranks a past, already-recovered-from gap)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [healthyDriveRow({ last_token_advanced_at: '2020-01-01T00:00:00Z' })],
+        error: null,
+      });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('cursor_stale');
+    });
+
+    it('never puts a token or raw JSON blob in last_error — only the two ISO bounds', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({
+        data: [gapRow({ details: JSON.stringify({ gap_start: '2026-09-20T10:00:00.000Z', gap_end: '2026-09-20T10:05:00.000Z', reason: 'pageTokenInvalid', channel_token: 'super-secret-token-should-never-appear' }) })],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; last_error: string | null }> };
+      const lastError = body.connectors.find((c) => c.id === 'google_drive')?.last_error ?? '';
+      expect(lastError).not.toContain('super-secret-token-should-never-appear');
+      expect(lastError).not.toContain('channel_token');
+    });
+
+    it('a malformed details payload degrades gracefully (still flags changes_gap, does not throw)', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveGapEventsList.mockResolvedValueOnce({ data: [gapRow({ details: 'not valid json{{' })], error: null });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
+      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('changes_gap');
     });
   });
 });

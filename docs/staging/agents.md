@@ -122,3 +122,5 @@ denials. This remains local evidence; it is not hosted or soak evidence.
 ## 2026-09-14 — Staging bootstrap privilege correction
 
 `staging_lease.sql` resets inherited table privileges before granting only SELECT, INSERT and DELETE to service_role. RLS does not restrict TRUNCATE, so explicit grants are required even on forced-RLS staging tables. Bootstrap changes are staging-only operational DDL; verify the actual project and record the application without adding production migration-ledger rows. Existing audit evidence must remain intact.
+
+UAT-23 T3 planning requires a closing cycle begun after both 25-hour clocks, exact candidate identity, JWT/API-key route parity, and preservation of activation-delivery claims during rollback.

@@ -189,6 +189,63 @@ const ANCHOR_SUBMIT_RESPONSES = {
   },
 } as const;
 
+const ANCHOR_IMPORT_PROPERTIES = {
+  org_id: { type: 'string', format: 'uuid', nullable: true, description: 'JWT transport only: selected caller-owned organization, or null for personal import. API-key transport derives this from the key.' },
+  action: { type: 'string', enum: ['queue', 'instant'] },
+  description: { type: 'string', maxLength: 1000 },
+  private_tags: {
+    type: 'object',
+    description: 'Import-wide private tags; never public or included in webhooks',
+    properties: {
+      user: { type: 'array', maxItems: 10, items: { type: 'string', minLength: 1, maxLength: 64 } },
+      organization: { type: 'array', maxItems: 10, items: { type: 'string', minLength: 1, maxLength: 64 } },
+    },
+  },
+  rows: {
+    type: 'array', minItems: 1, maxItems: 100,
+    items: {
+      type: 'object', required: ['fingerprint', 'filename', 'fingerprint_provided'], additionalProperties: false,
+      properties: {
+        fingerprint: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+        filename: { type: 'string', minLength: 1, maxLength: 255 },
+        file_size: { type: 'integer', minimum: 1 },
+        credential_type: { type: 'string', enum: [...ANCHOR_CREDENTIAL_TYPES] },
+        metadata: { type: 'object', additionalProperties: true, description: 'PII-stripped extraction/source metadata. Reserved private keys and underscore-prefixed keys are dropped; invalid public evidence claims are rejected per row.' },
+        fingerprint_provided: { type: 'boolean', description: 'True only when the imported fingerprint was computed from document bytes; false remains unclassified.' },
+        recipient_email: { type: 'string', format: 'email', maxLength: 254, description: 'Optional recipient assignment. Assigns the record to that third party and can cause an activation email to be sent to that address. Requires owner/admin authority for the selected organization; without it the row is still anchored and reports recipient_provisioning_forbidden.' },
+        recipient_name: { type: 'string', minLength: 1, maxLength: 255 },
+      },
+    },
+  },
+} as const;
+
+const ANCHOR_IMPORT_RESPONSE = {
+  type: 'object', required: ['total', 'created', 'skipped', 'failed', 'results'],
+  properties: {
+    total: { type: 'integer', minimum: 1, maximum: 100 },
+    created: { type: 'integer', minimum: 0 },
+    skipped: { type: 'integer', minimum: 0 },
+    failed: { type: 'integer', minimum: 0 },
+    // Additive (§1.8): rows counted here are ALSO counted in `created` or
+    // `skipped`, so `created + skipped + failed` still equals `total`.
+    recipient_link_failed: {
+      type: 'integer', minimum: 0,
+      description: 'Rows whose anchor committed but whose recipient did not resolve. Already included in created/skipped; never in failed. Counts rows whose recipient was never linked AND rows that were linked but whose invitation did not go out - see each row reason.',
+    },
+    results: { type: 'array', maxItems: 100, items: { type: 'object', required: ['fingerprint', 'status'], properties: {
+      fingerprint: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      status: {
+        type: 'string',
+        enum: ['created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed'],
+        description: 'The *_recipient_failed values mean the anchor exists and must not be re-submitted; the recipient did not resolve. The status does not say whether the recipient was linked - the reason code does. The anchor_recipients link commits before the activation email is sent, so recipient_activation_* reasons mean the recipient WAS linked and only the invitation did not go out (or its delivery is unknown), while reasons thrown at or before the link insert mean it was not linked. recipient_provisioning_forbidden means the caller may not assign recipients at all.',
+      },
+      public_id: { type: 'string' },
+      reason: { type: 'string', description: 'Bounded machine-readable failure code' },
+      instant_status: { type: 'string', enum: ['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED'] },
+    } } },
+  },
+} as const;
+
 /**
  * SCRUM-3971 — sub-organization management over an organization API key.
  *
@@ -1100,6 +1157,49 @@ export const openApiSpec: Record<string, any> = {
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: ANCHOR_SUBMIT_REQUEST_BODY,
         responses: ANCHOR_SUBMIT_RESPONSES,
+      },
+    },
+    '/anchor/import': {
+      post: {
+        summary: 'Import up to 100 document fingerprints',
+        description: 'API-key transport for canonical queue or instant submission. Every row uses the same idempotency, quota, credit, tag, metadata, and recipient-linking rules as single submit. The organization is derived from the authenticated key; caller-supplied cross-tenant org_id is rejected. Recipient assignment requires owner/admin authority: without it every row is still anchored and the recipient-bearing rows report recipient_provisioning_forbidden, rather than the request being rejected.',
+        operationId: 'importAnchors',
+        tags: ['Anchoring'],
+        'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: {
+          type: 'object', required: ['action', 'rows'], additionalProperties: false, properties: ANCHOR_IMPORT_PROPERTIES,
+        } } } },
+        responses: {
+          '200': { description: 'Every row created or idempotently skipped', content: { 'application/json': { schema: ANCHOR_IMPORT_RESPONSE } } },
+          '207': { description: 'Bounded partial result; at least one row failed while successful rows remain committed and retry-safe', content: { 'application/json': { schema: ANCHOR_IMPORT_RESPONSE } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '429': { description: 'Import request rate limit exceeded' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/anchor-self-service/bulk': {
+      post: {
+        summary: 'Import up to 100 document fingerprints from the dashboard',
+        description: 'JWT bridge for the same canonical import orchestration. The selected personal or organization scope is re-derived from the authenticated caller. Recipient assignment requires owner/admin authority for that organization; a caller without it still gets every anchor, and only the recipient-bearing rows report recipient_provisioning_forbidden.',
+        operationId: 'importAnchorsSelfService',
+        tags: ['Anchoring'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: {
+          type: 'object', required: ['org_id', 'action', 'rows'], additionalProperties: false, properties: ANCHOR_IMPORT_PROPERTIES,
+        } } } },
+        responses: {
+          '200': { description: 'Every row created or idempotently skipped', content: { 'application/json': { schema: ANCHOR_IMPORT_RESPONSE } } },
+          '207': { description: 'Bounded partial result; at least one row failed', content: { 'application/json': { schema: ANCHOR_IMPORT_RESPONSE } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '429': { description: 'Batch-tier rate limit exceeded' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
       },
     },
     '/anchor/{publicId}/submission-status': {

@@ -1,5 +1,80 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-09-21 — Actions-budget hygiene sweep (T1, see PR body for the run census)
+
+The 2026-09-21 budget exhaustion (Staging Soak Evidence Gate 55 runs / CI 40 /
+Migration Drift 40 / gitleaks 40 / Revision Drift Alert 31 / sonatype-scan 22 /
+Deploy Edge Worker 19 in one day) drove a targeted trigger-and-cost pass.
+Per-workflow before/after and expected-reduction numbers are in the PR body,
+not repeated here (dated one-off narrative belongs there / HANDOFF.md, not
+this file). What's load-bearing for future edits:
+
+- **`staging-evidence.yml` Dependabot T0 fast-path.** A Dependabot PR whose
+  changed files ALL classify T0 under the real `requiredTierFor()` (e.g. a
+  `packages/*` or `integrations/*` package.json+package-lock.json bump — see
+  `isT0OnlyFile()`'s carve-out comment in `check-staging-evidence.ts`) skips
+  the expensive full `check()` invocation. It does **not** skip
+  `actions/checkout` / `npm ci` — those still run once, unconditionally, for
+  every `evaluate == 'true'` PR (the workflow-contract test pins exactly one
+  `actions/checkout@` in this file, so a second/sparse checkout was rejected
+  as a design). A second, cheaper checkout carries its own correctness risk
+  (leftover sparse-checkout state bleeding into a later full checkout in the
+  same job) that outweighed the marginal saving. What the fast path DOES
+  avoid is re-deriving tier classification with a second, hand-rolled rule
+  set — `scripts/ci/check-dependabot-fastpath-eligible.ts` imports and calls
+  the exact same `requiredTierFor()` export the full gate uses, against the
+  PR's real changed-file list fetched from `gh api .../pulls/<n>/files` (a
+  file-path list needs no checkout to obtain). A parallel classifier was
+  rejected for the same reason `scripts/ci/agents.md`'s 2026-09-05
+  `CLAIM_RULES` entry exists: a rule scoped to a name/shape another file owns
+  goes silently dead the moment that file changes, and a dead T0 rule here
+  would silently skip real evidence for a non-T0 Dependabot PR. The job
+  `name:` ternary is untouched by this path (it already resolves to
+  `Staging Soak Evidence Gate` for any non-draft, non-queue, non-status-edit
+  run), so the required check name Mergify's `merge_conditions` key on is
+  unchanged whether the fast path fires or not.
+- **ARK-SEC-012 sweep.** Every `${{ github.event.* }}` / `${{ github.head_ref
+  }}` expression interpolated directly into a `run:` script body (rather than
+  bound through a step/job `env:` — the pattern `ci.yml`'s top-level
+  `BASE_REF_SHA` comment already names ARK-SEC-012) was swept and fixed:
+  `staging-evidence.yml`'s `live_pr` step (`EVENT_DRAFT`, plus a redundant
+  inline `PR_NUMBER` re-assignment removed in favor of the job-level env
+  already binding it), `ci.yml`'s `evidence-identity` job (`PR_NUMBER`, same
+  shape as `live_pr` — the two steps are near-duplicates), and
+  `edge-deploy.yml`'s `Generate build-info` step (`PR_HEAD_SHA`).
+  `s33-wave2-batch-acceptance.yml` has the same pattern at six call sites
+  (`--trusted-main-head`, `--candidate-head`, etc.) but is out of scope here —
+  see the file's own note below; it is `disabled_manually` and untouched.
+- **`revision-drift.yml`**: cron widened 30 min -> hourly (~1,400 -> ~720
+  runs/mo). The file's own header previously went stale against the actual
+  cron once already (still said "every 10 minutes" after the 2026-09-12
+  30-min widening) — now carries the full cadence history plus the current
+  worst-case detection SLA (~2h) so the next change can't repeat that. The
+  alert condition is commit AGE vs the 1h drift threshold, not poll cadence,
+  so hourly still catches every real regression — only later.
+- **`edge-deploy.yml`**: the `concurrency: { group: deploy-edge,
+  cancel-in-progress: false }` group already existed (queue-of-one, mirroring
+  `deploy-worker.yml`) but only serialized a push burst, never coalesced it —
+  every queued push still ran a full deploy. `cancel-in-progress: true` was
+  rejected (the deploy + parity-check split across two later steps in one job
+  means a mid-flight cancel can leave a live-but-unverified deploy). Instead
+  `deploy-gate`'s "Evaluate DEPLOY_EDGE_PAUSED" step now also checks whether
+  its push commit is still the tip of `main` and skips (not fails) if a later
+  push has already superseded it — see that step's own comment. Contract:
+  `scripts/ci/edge-deploy-workflow-contract.test.ts`.
+- **`sonatype-scan.yml`**: root cause of the "weekly" job running far more
+  often was never a cron misfire — `gh run list` showed 99 of the last 100
+  runs were `pull_request` (only 1 `schedule`), which is largely intentional
+  (it scans PRs that touch a manifest/lockfile) and largely free (a
+  Dependabot-authored PR's job-level `if:` skip never provisions a runner —
+  18 of the last 40 runs were exactly this, zero-cost). The one real waste:
+  Mergify merge-queue speculative PRs forced a full re-scan even though this
+  job is advisory-only (not in `.mergify.yml` `merge_conditions`) and the
+  original PR already ran it — 7 of the last 15 non-skipped runs. Now skipped
+  the same branch-prefix + `mergify[bot]`-author way
+  `staging-evidence.yml`/`ci.yml` do. Also gained `workflow_dispatch` for
+  on-demand runs. Contract: `scripts/ci/sonatype-draft-admission.test.ts`.
+
 ## 2026-09-19 — staging evidence defers ordinary drafts before install
 
 `staging-evidence.yml` resolves the PR's live `draft` field before checkout or

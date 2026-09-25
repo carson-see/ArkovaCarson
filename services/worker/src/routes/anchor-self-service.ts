@@ -3,6 +3,8 @@ import { anchorSubmitRouter } from '../api/v1/anchor-submit.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { z } from 'zod';
+import { handleSelfServiceBulk } from './anchor-self-service-bulk.js';
+import { rateLimit } from '../utils/rateLimit.js';
 
 const RequestedContextSchema = z.object({ org_id: z.string().uuid().nullable().optional() }).passthrough();
 const StatusContextSchema = z.union([
@@ -12,6 +14,12 @@ const StatusContextSchema = z.union([
 
 /** JWT bridge into the canonical submit handler; scope is always re-derived. */
 export const anchorSelfServiceRouter = Router();
+const bulkImportLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  scope: 'anchor-self-service-bulk',
+  keyGenerator: (req) => req.userId ?? req.ip ?? 'unknown',
+});
 anchorSelfServiceRouter.use(async (req, res, next) => {
   if (!req.userId) {
     res.status(401).json({ error: 'authentication_required' });
@@ -41,7 +49,7 @@ anchorSelfServiceRouter.use(async (req, res, next) => {
       return;
     }
   }
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.path !== '/bulk') {
     const body = { ...(req.body as Record<string, unknown>) };
     delete body.org_id;
     req.body = body;
@@ -59,4 +67,5 @@ anchorSelfServiceRouter.use(async (req, res, next) => {
   };
   next();
 });
+anchorSelfServiceRouter.post('/bulk', bulkImportLimiter, handleSelfServiceBulk);
 anchorSelfServiceRouter.use(anchorSubmitRouter);
