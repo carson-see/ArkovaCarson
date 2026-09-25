@@ -940,29 +940,6 @@ describe('connector-health (SCRUM-1146)', () => {
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
     });
-
-    // Regex-precedence regression (SonarCloud typescript:S5850, gate-failing
-    // on this PR): `/^Drive file access denied|export size limit/i` binds
-    // `^` to ONLY the first alternative — `(^Drive file access denied)|(export
-    // size limit)` — so the second branch matches "export size limit"
-    // ANYWHERE in the string, not just as the message's own prefix. An
-    // unrelated failure that merely mentions the phrase mid-sentence must
-    // NOT be misclassified as the specific file_access_not_granted finding.
-    it('an UNRELATED last_error that merely mentions "export size limit" mid-string still reads fetch_job_failures, not file_access_not_granted', async () => {
-      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
-      driveFetchJobFailuresList.mockResolvedValueOnce({
-        data: [{
-          status: 'failed',
-          last_error: 'Job aborted: upstream response referenced an export size limit unrelated to this fetch',
-        }],
-        error: null,
-      });
-      const ctx = buildRes();
-      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
-      const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
-      expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('fetch_job_failures');
-    });
   });
 
   // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): an

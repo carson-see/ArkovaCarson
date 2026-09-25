@@ -947,9 +947,14 @@ export async function handleConnectorHealth(
   // (SonarCloud typescript:S5850 — an ungrouped `^A|B` binds `^` to `A`
   // only, so `B` used to match "export size limit" ANYWHERE in the
   // string, misclassifying any unrelated last_error that happened to
-  // mention that phrase mid-sentence as file_access_not_granted).
+  // mention that phrase mid-sentence as file_access_not_granted). The
+  // trailing `\b` after "denied" matches `origin/main`'s independent fix
+  // of the same S5850 finding byte-for-byte — this PR's branch is 31
+  // commits behind main and still carried the pre-fix regex; kept
+  // identical here (rather than a merely-equivalent variant) so a future
+  // rebase of this branch onto main produces no conflict on this line.
   const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN =
-    /^(?:Drive file access denied|Drive file export exceeds Google's export size limit)/i;
+    /^(?:Drive file access denied\b|Drive file export exceeds Google's export size limit)/i;
   const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
     (row) => typeof row.last_error === 'string' && DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN.test(row.last_error),
   ).length;
