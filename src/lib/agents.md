@@ -928,3 +928,25 @@ Classification lives here, not in `copy.ts`: the copy layer stays copy.
 ## 2026-09-21 — SCRUM-5285 org-verification superseded copy
 
 `ORG_VERIFICATION_LABELS` carries the two 409 `verification_superseded` messages for `components/org/OrgVerification.tsx`. Both must keep telling the user to START AGAIN rather than to retry: the worker's compare-and-swap makes the refusal permanent for that code, so "try again" would be false. API error codes stay literals in the handlers — only user-visible strings live here.
+
+## 2026-09-25 — PROOF-06: the JSON proof package carries the canonical bundle
+
+`proofPackage.ts` exports schema version **1.1**. The addition is `proof_bundle`
+— the SAME canonical packet `buildProofPacket` embeds in the PDF certificate,
+`GET /api/v1/verify/:id/proof` emits, and `e2e/public-proof-gate.spec.ts`
+already downloads verbatim. The schema accepts `'1.0' | '1.1'` so files exported
+before this still validate; `proof_bundle` is optional for the same reason, and
+is emitted as explicit `null` (not omitted) so a consumer can distinguish "no
+proof stored" from "older export format".
+
+**Do not reintroduce a flattened branch.** The legacy `proof.proof_path` is
+`string[]` — bare hashes with no sibling side — and is retained only for
+back-compat. It is NOT sufficient to recompute a root, so it must never be the
+only branch in the file; it is now derived from `proof_bundle.merkle_proof` so
+the two cannot disagree. Sibling positions live in `proof_bundle.merkle_proof`
+and `proof_bundle.tx_inclusion_branch`, which are `{hash, position}[]`.
+
+Glossary values are user-visible copy and are subject to §1.3 — "block" and
+"hash" are banned there. Mirror the existing `block_height` entry's phrasing
+("permanent network record", "fingerprint"). The glossary KEYS are machine field
+names and stay as-is.

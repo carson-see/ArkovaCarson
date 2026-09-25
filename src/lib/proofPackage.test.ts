@@ -191,7 +191,9 @@ describe('ProofPackageSchema', () => {
 describe('generateProofPackage', () => {
   it('generates a valid package for a PENDING anchor', () => {
     const pkg = generateProofPackage(validAnchorPending);
-    expect(pkg.version).toBe('1.0');
+    // 1.1 since `proof_bundle` was added; historical 1.0 files still validate
+    // (see the ProofPackageSchema suite, whose fixture is a 1.0 package).
+    expect(pkg.version).toBe('1.1');
     expect(pkg.document.filename).toBe('document.pdf');
     expect(pkg.document.fingerprint).toBe(validAnchorPending.fingerprint);
     expect(pkg.document.file_size).toBe(1024);
@@ -302,7 +304,7 @@ describe('validateProofPackage', () => {
   it('returns parsed package for valid input', () => {
     const pkg = generateProofPackage(validAnchorSecured, validProofData);
     const validated = validateProofPackage(pkg);
-    expect(validated.version).toBe('1.0');
+    expect(validated.version).toBe('1.1');
     expect(validated.verification.status).toBe('SECURED');
   });
 
@@ -448,5 +450,67 @@ describe('downloadProofPackage', () => {
     // The Blob constructor was called with the JSON content
     const call = mockCreateObjectURL.mock.calls[0][0];
     expect(call).toBeInstanceOf(Blob);
+  });
+});
+
+describe('proof_bundle (1.1)', () => {
+  const bundle = {
+    fingerprint: 'a'.repeat(64),
+    merkle_root: 'c'.repeat(64),
+    merkle_proof: [{ hash: 'b'.repeat(64), position: 'right' as const }],
+    merkle_index: 0,
+    leaf_count: 2,
+    tx_id: 'd'.repeat(64),
+    block_height: 104,
+    block_hash: 'f'.repeat(64),
+    block_header: '0'.repeat(160),
+    op_return_payload: 'deadbeef',
+    proof_schema_version: 1,
+    block_timestamp: '2026-09-02T02:00:00Z',
+    tx_inclusion_branch: [{ hash: 'e'.repeat(64), position: 'left' as const }],
+    tx_block_index: 3,
+    signature: null,
+  };
+
+  it('round-trips the canonical bundle with sibling positions intact', () => {
+    const pkg = generateProofPackage(validAnchorSecured, validProofData, bundle);
+    expect(pkg.proof_bundle).toEqual(bundle);
+    // The position is the part a bare string[] would have destroyed.
+    expect(pkg.proof_bundle?.merkle_proof?.[0].position).toBe('right');
+    expect(validateProofPackage(pkg).proof_bundle?.leaf_count).toBe(2);
+  });
+
+  it('emits proof_bundle: null rather than omitting it when no branch is stored', () => {
+    const pkg = generateProofPackage(validAnchorSecured, validProofData);
+    expect(pkg.proof_bundle).toBeNull();
+  });
+
+  it('rejects a bundle whose sibling entry lost its position', () => {
+    const pkg = generateProofPackage(validAnchorSecured, validProofData, bundle);
+    const broken = {
+      ...pkg,
+      proof_bundle: { ...bundle, merkle_proof: ['b'.repeat(64)] },
+    };
+    expect(() => validateProofPackage(broken)).toThrow();
+  });
+
+  it('still accepts a historical 1.0 package with no proof_bundle field', () => {
+    // A file exported before 1.1 existed: no `proof_bundle` key at all.
+    const legacy = {
+      version: '1.0',
+      generated_at: '2026-09-01T00:00:00.000Z',
+      document: { filename: 'd.pdf', fingerprint: 'a'.repeat(64), file_size: 1, mime_type: 'application/pdf' },
+      verification: { status: 'SECURED', verified: true, public_id: 'ARK-1' },
+      network_receipt: null,
+      proof: null,
+      metadata: {
+        created_at: '2026-09-01T00:00:00.000Z',
+        user_id: '44444444-0000-0000-0000-000000000001',
+        org_id: null,
+      },
+    };
+    const parsed = validateProofPackage(legacy);
+    expect(parsed.version).toBe('1.0');
+    expect(parsed.proof_bundle ?? null).toBeNull();
   });
 });
