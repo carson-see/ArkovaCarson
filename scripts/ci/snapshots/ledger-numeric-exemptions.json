@@ -265,13 +265,20 @@
       "date": "2026-08-02",
       "author": "CTO, post-merge cleanup",
       "note": "REMOVED 15 now-stale exemptions whose owning PRs merged today and whose source .sql is present on main \u2014 0350, 0351, 0352, 0353, 0359, 0360, 0362, 0363, 0364, 0375, 0379, 0380, 0383, 0385, 0390. Verified by listing supabase/migrations/ on origin/main, not assumed. A stale exemption is worse than no exemption: it masks a future real drift on that prefix. STILL EXEMPT (source not yet on main): 0381 (#1782 merged but file landed via that PR \u2014 recheck), 0382 (#1808), 0386 (#1854), 0387 (its branch has no PR), 0388 (#1863)."
+    },
+    {
+      "date": "2026-09-25",
+      "action": "remove",
+      "prefixes": [
+        "0443",
+        "0482"
+      ],
+      "reason": "both .sql files are now on origin/main (0443 via #2825, 0482 via #3036); the exemption is only for prod rows with no file on main"
     }
   ],
   "exemptPrefixes": [
-    "0443",
     "0471",
     "0476",
-    "0481",
-    "0482"
+    "0481"
   ]
 }
