@@ -702,3 +702,27 @@ The canonical create RPC can now return `contractual_quota_exceeded` after its
 transactional final-slot decision. `v1/anchor-submit.ts` maps it back to the
 existing partner-facing 402 `quota_exhausted` problem response. The distinct
 `quota_exceeded` result remains the tier daily limit and keeps its 429 response.
+
+## 2026-09-25 — `rules-crud.ts` wires eager Drive-folder mirroring (feat/mirror-connected-drive-folders)
+
+`handleCreateRule` and `handleUpdateRule` now fire (unawaited, non-fatal —
+`mirrorDriveFoldersForRuleWrite`) a call into
+`integrations/connectors/drive-folder-mirror.ts`'s `mirrorConnectedDriveFolders`
+whenever the write is the Connectors page's own `WORKSPACE_FILE_MODIFIED` +
+`connector-google_drive`-tagged rule AND the resulting `trigger_config`
+carries a non-empty `drive_folders[]`. On PATCH, `trigger_type` is immutable
+and not in the patch body, so `validatePatchAgainstCurrent` was extended to
+also return `currentTriggerType` / `currentActionConfig` from the SAME
+current-row read it already does — no extra query. Guarded to fire only when
+THIS patch actually resends `trigger_config` (a bare `{enabled:true}` toggle
+or a plain rename never re-derives or re-mirrors). See
+`connectors/agents.md`'s matching entry for the mirror module itself — why
+it's eager instead of only the existing lazy anchor-time path (0462), why it
+does NOT use the `folder_api_*` RPCs, and the nesting decision flagged for
+founder sign-off. Zero risk to existing tests: no rule fixture anywhere in
+`rules-crud.test.ts` had a non-empty `drive_folders[]` before this change, so
+the new guard never fired for them; a new "Drive folder mirror wiring"
+describe block covers the call-through and no-call cases directly (the
+DB-touching `mirrorConnectedDriveFolders` call itself is stubbed there — its
+own idempotency/race/tenant-isolation behavior is proven in
+`drive-folder-mirror.test.ts`).

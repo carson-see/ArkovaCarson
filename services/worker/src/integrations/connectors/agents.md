@@ -444,3 +444,52 @@ rerun-requested marker it uses at the end of a leased run is
 `markRunLeaseDirty` / `checkAndClearRunLeaseDirty` from `../../jobs/run-lease.ts`
 (see that folder's agents.md for why). The bounded "exactly one extra pass"
 behaviour is unchanged and still pinned by `drive-changes-runner.test.ts`.
+
+## 2026-09-25 — `drive-folder-mirror.ts`: eager mirror at connect/rule-save time (feat/mirror-connected-drive-folders)
+
+THE GAP: migration 0462 already mirrors a connector-sourced Drive folder into
+`public.folders`, but LAZILY — only the first time a document from that
+folder is actually anchored (`resolve_connector_destination_folder`, fired
+from the `anchors`/`connector_artifact` triggers). Founder spec wants the
+mirror folder to exist "upon setup", not on first document. This new module
+adds the EAGER half, wired from `api/rules-crud.ts`'s `handleCreateRule` /
+`handleUpdateRule` (fire-and-forget, same contract as `emitRuleAudit`),
+scoped to the Connectors page's own `WORKSPACE_FILE_MODIFIED` +
+`action_config.tag === 'connector-google_drive'` rule with a non-empty
+`trigger_config.drive_folders[]`.
+
+**No new migration.** Reuses `public.folders` and the SAME dedupe key
+(`owner_scope='ORG', org_id, connector_provider, connector_source_id` — the
+partial unique index `idx_folders_connector_destination_unique` from 0462)
+the lazy SQL path already uses, so the two paths can never create two rows
+for one connected folder — whichever runs first wins, the other
+finds-and-reuses (select-then-insert, with a `23505` unique-violation
+race fallback that re-selects the winner).
+
+**Deliberately NOT `folder_api_create`/`folder_api_update`** (also 0462):
+`folder_api_administers_org()` authorizes off `org_members` alone and lacks
+the "owner linked only via `profiles.org_id`" fallback that
+`rules-crud.ts`'s own `requireOrgAdmin()` (and `drive-folders.ts`'s
+`isCallerOrgAdminResult`) already correctly implement — routing back through
+the narrower RPC check would silently drop mirroring for exactly the
+org-owner accounts `drive-folders.ts`'s own doc comment already flags as a
+known landmine. This module writes directly against `public.folders` via the
+worker's service-role client instead, the same idiom `rules-crud.ts` already
+uses for `organization_rules` (explicit `.eq('org_id', orgId)` scoping, not
+RLS, which service_role bypasses).
+
+**Nesting — flagged for founder/product sign-off, not decided here:**
+`trigger_config.drive_folders[]` carries only `{folder_id, folder_name}`
+today (no ancestor path), so the mirror folder is created FLAT
+(`parent_folder_id = NULL`), one per connected Drive folder. Whether a
+deeply nested Drive tree should someday mirror as a matching nested Arkova
+tree is out of scope — punted, not invented; the existing lazy 0462 path has
+the identical granularity limitation for a file's actual parent folder.
+
+Test coverage: `drive-folder-mirror.test.ts` proves idempotency (exactly one
+row per connected folder across create + reconnect), the concurrent-insert
+race fallback, and tenant isolation (including an adversarial
+same-`connector_source_id`-across-two-orgs case). `api/rules-crud.test.ts`
+has a matching "Drive folder mirror wiring" describe block proving the
+create/update handlers call through only for a connector-tagged Drive rule
+with a non-empty `drive_folders[]`, and never for any other rule shape.

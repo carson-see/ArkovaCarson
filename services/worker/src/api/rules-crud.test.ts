@@ -99,6 +99,19 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// Eager Drive-folder mirror wiring (founder spec — "duplicate connected
+// folders in Arkova automatically upon setup"). Only `mirrorConnectedDriveFolders`
+// (the DB-touching call) is stubbed — the pure guard/extraction helpers stay
+// real so the wiring tests below prove `rules-crud.ts` actually calls through
+// with the real trigger_type/action_config-derived decision, not a fake one.
+const driveFolderMirrorMock = vi.hoisted(() => ({
+  mirrorConnectedDriveFolders: vi.fn(async () => []),
+}));
+vi.mock('../integrations/connectors/drive-folder-mirror.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../integrations/connectors/drive-folder-mirror.js')>();
+  return { ...actual, mirrorConnectedDriveFolders: driveFolderMirrorMock.mirrorConnectedDriveFolders };
+});
+
 import {
   handleCreateRule,
   handleGetRule,
@@ -1199,6 +1212,149 @@ describe('handleUpdateRule', () => {
     if (parsed.success) {
       expect('trigger_type' in parsed.data).toBe(false);
     }
+  });
+});
+
+// -- Drive-folder mirror wiring (connect/rule-save time) ----------------
+
+describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', () => {
+  const CONNECTOR_CREATE_WITH_FOLDERS = {
+    ...VALID_CREATE_BODY,
+    trigger_type: 'WORKSPACE_FILE_MODIFIED' as const,
+    trigger_config: {
+      vendors: ['google_drive'],
+      drive_folders: [{ type: 'drive_folder', folder_id: 'drv-1', folder_name: 'Invoices' }],
+    },
+    action_type: 'AUTO_ANCHOR' as const,
+    action_config: { tag: 'connector-google_drive' },
+  };
+
+  it('a connector-tagged Drive create with drive_folders mirrors — calls through with the org, actor, and selected folders', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), raceCheck.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: CONNECTOR_CREATE_WITH_FOLDERS }), res);
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledTimes(1);
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledWith(
+      expect.objectContaining({ db: expect.anything() }),
+      { orgId: ORG_ID, actorUserId: USER_ID, folders: [{ folderId: 'drv-1', folderName: 'Invoices' }] },
+    );
+  });
+
+  it('a plain DocuSign create (no WORKSPACE_FILE_MODIFIED / no drive_folders) never calls the mirror — unrelated rules are unaffected', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: VALID_CREATE_BODY }), res);
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).not.toHaveBeenCalled();
+  });
+
+  it('a WORKSPACE_FILE_MODIFIED create WITHOUT drive_folders (vendors filter only) never calls the mirror', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), raceCheck.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status } = mockRes();
+    await handleCreateRule(
+      USER_ID,
+      mockReq({
+        body: {
+          ...CONNECTOR_CREATE_WITH_FOLDERS,
+          trigger_config: { vendors: ['google_drive'] },
+        },
+      }),
+      res,
+    );
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).not.toHaveBeenCalled();
+  });
+
+  it('adopting/re-saving the connector rule (PATCH with trigger_config + action_config) re-mirrors', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRow = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'] },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+          org_id: ORG_ID,
+        },
+        error: null,
+      },
+    });
+    const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), currentRow.from(''), ruleUpdate.from('')));
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: {
+          trigger_config: {
+            vendors: ['google_drive'],
+            drive_folders: [{ type: 'drive_folder', folder_id: 'drv-2', folder_name: 'Contracts' }],
+          },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+        },
+      }),
+      res,
+    );
+
+    expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledTimes(1);
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledWith(
+      expect.objectContaining({ db: expect.anything() }),
+      { orgId: ORG_ID, actorUserId: USER_ID, folders: [{ folderId: 'drv-2', folderName: 'Contracts' }] },
+    );
+  });
+
+  it('a bare {enabled:true} PATCH (no trigger_config in the request) never re-derives or calls the mirror', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const enableRaceCheck = tableMock({
+      select: {
+        data: { trigger_type: 'WORKSPACE_FILE_MODIFIED', action_config: { tag: 'connector-google_drive' }, enabled: false },
+        error: null,
+      },
+    });
+    const raceLookup = tableMock({ select: { data: null, error: null } });
+    const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), enableRaceCheck.from(''), raceLookup.from(''), ruleUpdate.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(USER_ID, mockReq({ params: { id: RULE_ID }, body: { enabled: true } }), res);
+
+    expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).not.toHaveBeenCalled();
   });
 });
 

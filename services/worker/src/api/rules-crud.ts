@@ -28,6 +28,12 @@ import {
   validateRuleConfigs,
 } from '../rules/schemas.js';
 import { evaluateRule, type TriggerEvent, type RuleRow } from '../rules/evaluator.js';
+import {
+  mirrorConnectedDriveFolders,
+  extractDriveFoldersToMirror,
+  shouldMirrorDriveFoldersForRule,
+  type DriveFolderMirrorDb,
+} from '../integrations/connectors/drive-folder-mirror.js';
 
 /**
  * Connectors page (SPEC-CONNECTORS §1.4) marks the rule it writes with
@@ -40,6 +46,33 @@ function isConnectorManagedActionConfig(actionConfig: unknown): boolean {
   if (!actionConfig || typeof actionConfig !== 'object') return false;
   const tag = (actionConfig as Record<string, unknown>).tag;
   return typeof tag === 'string' && /^connector-[a-z0-9_]+$/.test(tag);
+}
+
+/**
+ * Fire-and-forget Drive-folder mirroring (same contract as `emitRuleAudit`
+ * below: must never gate response latency and must never throw into the
+ * caller). Scoped to the Connectors page's own Drive rule
+ * (`shouldMirrorDriveFoldersForRule`) with a non-empty `drive_folders` list —
+ * every other rule create/update (DocuSign, RulesPage/RuleBuilderPage,
+ * bare enable-toggles) is a no-op call that never touches `org_integrations`
+ * or `folders`.
+ */
+function mirrorDriveFoldersForRuleWrite(
+  orgId: string,
+  actorUserId: string,
+  triggerType: string,
+  triggerConfig: unknown,
+  actionConfig: unknown,
+): void {
+  if (!shouldMirrorDriveFoldersForRule(triggerType, actionConfig)) return;
+  const folders = extractDriveFoldersToMirror(triggerConfig as Record<string, unknown> | null | undefined);
+  if (folders.length === 0) return;
+  void mirrorConnectedDriveFolders(
+    { db: db as unknown as DriveFolderMirrorDb, logger },
+    { orgId, actorUserId, folders },
+  ).catch((error: unknown) => {
+    logger.warn({ error, orgId }, 'drive-folder-mirror wiring failed');
+  });
 }
 
 const UuidSchema = z.string().uuid();
@@ -706,6 +739,16 @@ export async function handleCreateRule(
     const newId = (data as { id?: string } | null)?.id;
     res.status(201).json({ id: newId });
     if (newId) {
+      // Eager Drive-folder mirror (founder spec — "duplicate connected
+      // folders in Arkova automatically upon setup"). Fire-and-forget, same
+      // contract as the audit emit below.
+      mirrorDriveFoldersForRuleWrite(
+        orgId,
+        userId,
+        parsed.data.trigger_type,
+        parsed.data.trigger_config,
+        parsed.data.action_config,
+      );
       // Fire-and-forget: audit must not gate response latency.
       void emitRuleAudit('ORG_RULE_CREATED', {
         actorId: userId,
@@ -726,7 +769,7 @@ export async function handleCreateRule(
 }
 
 type PatchValidationResult =
-  | { kind: 'ok'; currentActionType?: string }
+  | { kind: 'ok'; currentActionType?: string; currentTriggerType?: string; currentActionConfig?: unknown }
   | { kind: 'error'; status: number; body: Record<string, unknown> };
 
 type ParsedUpdateRuleRequest =
@@ -838,7 +881,12 @@ async function validatePatchAgainstCurrent(
   };
   try {
     validateRuleConfigs(merged);
-    return { kind: 'ok', currentActionType: current.action_type as string | undefined };
+    return {
+      kind: 'ok',
+      currentActionType: current.action_type as string | undefined,
+      currentTriggerType: current.trigger_type as string | undefined,
+      currentActionConfig: current.action_config,
+    };
   } catch (err) {
     return {
       kind: 'error',
@@ -987,6 +1035,19 @@ export async function handleUpdateRule(
       return;
     }
     res.json({ ok: true });
+    // Eager Drive-folder mirror, adopt/re-save path (founder spec). Only when
+    // THIS patch actually carries a trigger_config — a bare `{enabled:true}`
+    // toggle or an unrelated rename never re-derives it. `trigger_type` is
+    // immutable and absent from the patch body itself, so it comes from the
+    // current-row read `validatePatchAgainstCurrent` already did; same for
+    // `action_config` when this patch didn't also resend it.
+    if (parsed.patch.trigger_config) {
+      const triggerType = validation.currentTriggerType;
+      const actionConfig = parsed.patch.action_config ?? validation.currentActionConfig;
+      if (triggerType) {
+        mirrorDriveFoldersForRuleWrite(orgId, userId, triggerType, parsed.patch.trigger_config, actionConfig);
+      }
+    }
     void emitUpdateAudit(userId, orgId, parsed.ruleId, parsed.patch, validation.currentActionType);
   } catch (err) {
     logger.error({ error: err }, 'handleUpdateRule unexpected error');
