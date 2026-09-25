@@ -58,7 +58,7 @@
     "ci:run-app-host-literal": "tsx scripts/ci/check-run-app-host-literal.ts"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.3.0",
+    "@huggingface/transformers": "4.2.0",
     "@radix-ui/react-alert-dialog": "1.1.23",
     "@radix-ui/react-avatar": "1.2.6",
     "@radix-ui/react-checkbox": "1.3.11",
@@ -135,7 +135,7 @@
     "eslint-plugin-react-refresh": "0.5.7",
     "globals": "17.12.0",
     "js-yaml": "4.3.2",
-    "jsdom": "30.1.0",
+    "jsdom": "30.0.1",
     "license-checker": "25.0.1",
     "lockfile-lint": "5.0.1",
     "postcss": "8.5.28",
@@ -155,7 +155,7 @@
   "overrides": {
     "minimatch@<3.1.3": "3.1.5",
     "minimatch@>=9.0.0 <9.0.7": "9.0.7",
-    "undici": "7.24.2",
+    "undici": "7.30.0",
     "sharp": "0.35.4",
     "adm-zip": "0.6.1",
     "brace-expansion@1": "1.1.18",

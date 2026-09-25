@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-19T12:39:22.322Z",
+  "generatedAt": "2026-09-25T15:33:02.252Z",
   "generalDependencies": [
     {
       "name": "@babel/runtime",
@@ -43,7 +43,7 @@
     },
     {
       "name": "@huggingface/jinja",
-      "version": "0.5.8",
+      "version": "0.5.10",
       "license": "MIT",
       "repository": "https://github.com/huggingface/huggingface.js",
       "copyright": "Copyright (c) 2023 Hugging Face",
@@ -158,9 +158,9 @@
     },
     {
       "name": "@protobufjs/utf8",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "license": "BSD-3-Clause",
-      "repository": "https://github.com/dcodeIO/protobuf.js",
+      "repository": "https://github.com/protobufjs/protobuf.js",
       "copyright": "Copyright (c) 2016, Daniel Wirtz  All rights reserved.",
       "licenseText": "Copyright (c) 2016, Daniel Wirtz  All rights reserved.\r\n\r\nRedistribution and use in source and binary forms, with or without\r\nmodification, are permitted provided that the following conditions are\r\nmet:\r\n\r\n* Redistributions of source code must retain the above copyright\r\n  notice, this list of conditions and the following disclaimer.\r\n* Redistributions in binary form must reproduce the above copyright\r\n  notice, this list of conditions and the following disclaimer in the\r\n  documentation and/or other materials provided with the distribution.\r\n* Neither the name of its author, nor the names of its contributors\r\n  may be used to endorse or promote products derived from this software\r\n  without specific prior written permission.\r\n\r\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\r\n\"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\r\nLIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\r\nA PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\r\nOWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\r\nSPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\r\nLIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\r\nDATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\r\nTHEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\r\n(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\r\nOF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
     },
@@ -486,7 +486,7 @@
     },
     {
       "name": "@sentry/browser",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2019 Functional Software, Inc. dba Sentry",
@@ -494,7 +494,7 @@
     },
     {
       "name": "@sentry/browser-utils",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2020 Functional Software, Inc. dba Sentry",
@@ -510,7 +510,7 @@
     },
     {
       "name": "@sentry/core",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2019 Functional Software, Inc. dba Sentry",
@@ -518,7 +518,7 @@
     },
     {
       "name": "@sentry/feedback",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2023 Functional Software, Inc. dba Sentry",
@@ -526,7 +526,7 @@
     },
     {
       "name": "@sentry/react",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2019 Functional Software, Inc. dba Sentry",
@@ -534,7 +534,7 @@
     },
     {
       "name": "@sentry/replay",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2022 Functional Software, Inc. dba Sentry",
@@ -542,7 +542,7 @@
     },
     {
       "name": "@sentry/replay-canvas",
-      "version": "10.74.0",
+      "version": "10.75.0",
       "license": "MIT",
       "repository": "https://github.com/getsentry/sentry-javascript",
       "copyright": "Copyright (c) 2024 Functional Software, Inc. dba Sentry",
@@ -614,7 +614,7 @@
     },
     {
       "name": "@tanstack/query-core",
-      "version": "5.102.8",
+      "version": "5.103.1",
       "license": "MIT",
       "repository": "https://github.com/TanStack/query",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -622,7 +622,7 @@
     },
     {
       "name": "@tanstack/react-query",
-      "version": "5.102.8",
+      "version": "5.103.1",
       "license": "MIT",
       "repository": "https://github.com/TanStack/query",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -630,7 +630,7 @@
     },
     {
       "name": "@tanstack/react-virtual",
-      "version": "3.14.12",
+      "version": "3.14.13",
       "license": "MIT",
       "repository": "https://github.com/TanStack/virtual",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -638,7 +638,7 @@
     },
     {
       "name": "@tanstack/virtual-core",
-      "version": "3.17.10",
+      "version": "3.17.11",
       "license": "MIT",
       "repository": "https://github.com/TanStack/virtual",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -646,7 +646,7 @@
     },
     {
       "name": "@types/node",
-      "version": "26.5.1",
+      "version": "26.6.2",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
       "licenseText": "MIT License\n\n    Copyright (c) Microsoft Corporation.\n\n    Permission is hereby granted, free of charge, to any person obtaining a copy\n    of this software and associated documentation files (the \"Software\"), to deal\n    in the Software without restriction, including without limitation the rights\n    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n    copies of the Software, and to permit persons to whom the Software is\n    furnished to do so, subject to the following conditions:\n\n    The above copyright notice and this permission notice shall be included in all\n    copies or substantial portions of the Software.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n    SOFTWARE"
@@ -1148,7 +1148,7 @@
     },
     {
       "name": "lucide-react",
-      "version": "1.45.0",
+      "version": "1.47.0",
       "license": "ISC",
       "repository": "https://github.com/lucide-icons/lucide",
       "copyright": "Copyright (c) 2026 Lucide Icons and Contributors*",
@@ -1156,7 +1156,7 @@
     },
     {
       "name": "mammoth",
-      "version": "1.12.2",
+      "version": "1.12.3",
       "license": "BSD-2-Clause",
       "repository": "https://github.com/mwilliamson/mammoth.js",
       "copyright": "Copyright (c) 2013, Michael Williamson. All rights reserved.",
@@ -1290,7 +1290,7 @@
     },
     {
       "name": "protobufjs",
-      "version": "7.6.4",
+      "version": "7.6.6",
       "license": "BSD-3-Clause",
       "repository": "https://github.com/protobufjs/protobuf.js",
       "copyright": "Copyright (c) 2016, Daniel Wirtz  All rights reserved.",
@@ -1350,7 +1350,7 @@
     },
     {
       "name": "react-router",
-      "version": "7.18.3",
+      "version": "7.18.4",
       "license": "MIT",
       "repository": "https://github.com/remix-run/react-router",
       "copyright": "Copyright (c) React Training LLC 2015-2019. Copyright (c) Remix Software Inc. 2020-2021. Copyright (c) Shopify Inc. 2022-2023",
@@ -1358,7 +1358,7 @@
     },
     {
       "name": "react-router-dom",
-      "version": "7.18.3",
+      "version": "7.18.4",
       "license": "MIT",
       "repository": "https://github.com/remix-run/react-router",
       "copyright": "Copyright (c) React Training LLC 2015-2019. Copyright (c) Remix Software Inc. 2020-2021. Copyright (c) Shopify Inc. 2022-2023",
@@ -1441,14 +1441,6 @@
       "repository": "https://github.com/react/react",
       "copyright": "Copyright (c) Meta Platforms, Inc. and affiliates.",
       "licenseText": "MIT License\n\nCopyright (c) Meta Platforms, Inc. and affiliates.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
-    },
-    {
-      "name": "semver",
-      "version": "7.7.4",
-      "license": "ISC",
-      "repository": "https://github.com/npm/node-semver",
-      "copyright": "Copyright (c) Isaac Z. Schlueter and Contributors",
-      "licenseText": "The ISC License\n\nCopyright (c) Isaac Z. Schlueter and Contributors\n\nPermission to use, copy, modify, and/or distribute this software for any\npurpose with or without fee is hereby granted, provided that the above\ncopyright notice and this permission notice appear in all copies.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\nWITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\nMERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\nANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\nWHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\nACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR\nIN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE."
     },
     {
       "name": "semver",
@@ -1551,7 +1543,7 @@
     },
     {
       "name": "tailwind-merge",
-      "version": "3.6.0",
+      "version": "3.7.0",
       "license": "MIT",
       "repository": "https://github.com/dcastil/tailwind-merge",
       "copyright": "Copyright (c) 2021 Dany Castillo",
@@ -1740,7 +1732,7 @@
     },
     {
       "name": "zod",
-      "version": "4.6.2",
+      "version": "4.6.5",
       "license": "MIT",
       "repository": "https://github.com/colinhacks/zod",
       "copyright": "Copyright (c) 2025 Colin McDonnell",
