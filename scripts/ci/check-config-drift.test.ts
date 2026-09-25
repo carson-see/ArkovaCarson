@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -241,23 +241,35 @@ describe('flag-SPOF wiring end-to-end (real tree)', () => {
     ENABLE_AI_FRAUD: false,
   };
 
-  it('passes (no blocking errors) with the live acknowledgment list — the known hazards are warnings', () => {
-    const findings = runFlagSpofCheck(assertedFlags, sources);
-    const { errors, warnings } = classifyFlagSpofFindings(findings, [
-      'ENABLE_SEMANTIC_SEARCH',
-      'ENABLE_AI_FRAUD',
-    ]);
-    expect(errors).toEqual([]);
-    expect(warnings.length).toBeGreaterThanOrEqual(2); // the two live fail-open flags
-  });
-
-  it('FAILS CLOSED on the live env↔DB fail-open hazard when nothing is acknowledged', () => {
+  it('passes with NO acknowledgments — the env↔DB fail-open hazard was removed on 2026-09-21', () => {
+    // deploy-worker.yml now sets ENABLE_SEMANTIC_SEARCH=false and ENABLE_AI_FRAUD=false,
+    // agreeing with the switchboard rows, so the real tree carries no fail-open flag and
+    // needs no acknowledgment list. Re-introducing `=true` for a DB-false flag turns this red.
     const findings = runFlagSpofCheck(assertedFlags, sources);
     const { errors } = classifyFlagSpofFindings(findings, []); // acknowledge nothing
-    expect(errors.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(errors.map((e) => e.flag))).toEqual(
-      new Set(['ENABLE_SEMANTIC_SEARCH', 'ENABLE_AI_FRAUD']),
-    );
-    for (const e of errors) expect(e.code).toBe('fail-open-flag');
+    expect(errors.filter((e) => e.code === 'fail-open-flag')).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('still FAILS CLOSED when a DB-false flag is deployed env=true (synthetic yml from the real one)', () => {
+    // Keeps the end-to-end proof the previous real-tree test gave: take the REAL
+    // deploy-worker.yml, flip the two values back to `true` in a temp copy, and the gate
+    // must block with nothing acknowledged.
+    const yml = readFileSync(sources.deployYmlPath, 'utf8')
+      .replace('ENABLE_SEMANTIC_SEARCH=false', 'ENABLE_SEMANTIC_SEARCH=true')
+      .replace('ENABLE_AI_FRAUD=false', 'ENABLE_AI_FRAUD=true');
+    const dir = mkdtempSync(join(tmpdir(), 'flag-spof-'));
+    const tmpYml = join(dir, 'deploy-worker.yml');
+    writeFileSync(tmpYml, yml);
+    try {
+      const findings = runFlagSpofCheck(assertedFlags, { ...sources, deployYmlPath: tmpYml });
+      const { errors } = classifyFlagSpofFindings(findings, []);
+      expect(new Set(errors.map((e) => e.flag))).toEqual(
+        new Set(['ENABLE_SEMANTIC_SEARCH', 'ENABLE_AI_FRAUD']),
+      );
+      for (const e of errors) expect(e.code).toBe('fail-open-flag');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
