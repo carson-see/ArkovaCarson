@@ -86,6 +86,42 @@ describe('TriggerConfig discriminator', () => {
     expect(parsed.config.drive_folders).toHaveLength(2);
   });
 
+  // Spec ("Google Drive Expected Behavior"): "they should be able to connect up
+  // to three of those folders". The server is the authority — the picker's
+  // client-side cap is a courtesy, not a control.
+  it('accepts exactly three Drive folder bindings', () => {
+    const parsed = TriggerConfig.parse({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      config: {
+        vendors: ['google_drive'],
+        drive_folders: [
+          { type: 'drive_folder', folder_id: 'folder-a' },
+          { type: 'drive_folder', folder_id: 'folder-b' },
+          { type: 'drive_folder', folder_id: 'folder-c' },
+        ],
+      },
+    });
+    if (parsed.trigger_type !== 'WORKSPACE_FILE_MODIFIED') throw new Error('narrow');
+    expect(parsed.config.drive_folders).toHaveLength(3);
+  });
+
+  it('rejects a fourth Drive folder binding', () => {
+    expect(() =>
+      TriggerConfig.parse({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        config: {
+          vendors: ['google_drive'],
+          drive_folders: [
+            { type: 'drive_folder', folder_id: 'folder-a' },
+            { type: 'drive_folder', folder_id: 'folder-b' },
+            { type: 'drive_folder', folder_id: 'folder-c' },
+            { type: 'drive_folder', folder_id: 'folder-d' },
+          ],
+        },
+      }),
+    ).toThrow();
+  });
+
   it('rejects a Drive folder binding without folder_id', () => {
     expect(() =>
       TriggerConfig.parse({

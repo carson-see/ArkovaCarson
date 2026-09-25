@@ -92,7 +92,12 @@ export const TriggerConfigWorkspaceFileModified = z.object({
         watch_channel_id: z.string().trim().min(1).max(500).optional(),
       }),
     )
-    .max(20)
+    // Spec ("Google Drive Expected Behavior"): a user connects "up to three of
+    // those folders". This is the AUTHORITY for that cap — the picker's
+    // client-side limit is a courtesy that a direct API caller bypasses.
+    // Verified before tightening: prod had 1 rule with drive_folders, max 2
+    // bound, 0 over three, so no existing rule is invalidated.
+    .max(3)
     .optional(),
   semantic_match: TriggerConfigEsignCompleted.shape.semantic_match,
 }).superRefine((cfg, ctx) => {
