@@ -562,6 +562,31 @@ const ConfigSchema = z.object({
    * raise at startup, it will simply fail to disable anything.
    */
   disableOrgFieldPolicy: boolFlag(false),
+  /**
+   * E2E_ADMIN_RATELIMIT_BYPASS — skips ONLY the `checkout` limiter (10 req/min
+   * per IP), and ONLY outside production. It exists because the Playwright
+   * stack cannot fit inside that bucket: every browser shares `::1`, and
+   * `ConnectorsPage` alone mounts two `useConnectorRule` cards, so one spec
+   * issues roughly 8-12 admin requests per run against a 10/min budget —
+   * before four specs (`connectors`, `billing`, `treasury-observability`,
+   * `uat19-org-profile`) contend for the same tokens under parallel workers.
+   * `e2e/connectors.spec.ts` has been unsatisfiable since 2026-09-19: it waits
+   * for `remaining >= 16` from a bucket whose ceiling is 10.
+   *
+   * SCOPE IS DELIBERATE AND NARROW. It does not touch the `/api/v1` limiter,
+   * so `e2e/verify-ratelimit-contract.spec.ts` still proves the §1.10 anon
+   * 100/min contract and still proves no sub-contract 429 leaks onto verify.
+   *
+   * FAILS CLOSED TWICE. It is `false` by default, AND
+   * `adminRateLimitBypassActive()` additionally requires
+   * `nodeEnv !== 'production'`, so this cannot disable a production rate limit
+   * even if the variable leaks into prod env. That belt-and-braces matters
+   * because CLAUDE.md §1.1 records that the in-code limiters are the ONLY real
+   * limits — there is no Cloudflare rate limiting on arkova.ai to catch a
+   * mistake here — and `checkout` also guards billing checkout, credit
+   * purchase and account deletion.
+   */
+  e2eAdminRateLimitBypass: boolFlag(false),
   /** ENABLE_VERIFICATION_API — gates /api/v1/* surface. CLAUDE.md §1.9. Default true so customer keys work. */
   enableVerificationApi: boolFlag(true),
   /** ENABLE_VERTEX_AI — Gemini calls go through Vertex AI when true; Google AI Studio when false. */
@@ -740,6 +765,20 @@ const ConfigSchema = z.object({
   usptoBulkTsvUrl: z.string().url().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
+  // Fail LOUD at boot rather than silently serving prod with a disabled
+  // limiter. `adminRateLimitBypassActive()` already refuses to honour this in
+  // production, so this throw is the second half of a belt-and-braces pair:
+  // the runtime guard makes a leaked variable inert, and this makes it
+  // impossible to deploy unnoticed.
+  if (cfg.nodeEnv === 'production' && cfg.e2eAdminRateLimitBypass) {
+    throw new Error(
+      'E2E_ADMIN_RATELIMIT_BYPASS is set in production. This variable exists only for the '
+      + 'Playwright stack and would disable the checkout limiter that guards billing checkout, '
+      + 'credit purchase and account deletion. CLAUDE.md §1.1: the in-code limiters are the only '
+      + 'real limits — there is no Cloudflare rate limiting to fall back on. Unset it.',
+    );
+  }
+
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -1248,6 +1287,7 @@ function loadConfig(): Config {
     // SCRUM-1258 batch 2 — feature flags + observability + treasury
     enableAiFallback: process.env.ENABLE_AI_FALLBACK,
     disableOrgFieldPolicy: process.env.DISABLE_ORG_FIELD_POLICY,
+    e2eAdminRateLimitBypass: process.env.E2E_ADMIN_RATELIMIT_BYPASS,
     enableVerificationApi: process.env.ENABLE_VERIFICATION_API,
     enableVertexAi: process.env.ENABLE_VERTEX_AI,
     enableRulesEngine: process.env.ENABLE_RULES_ENGINE,
@@ -1330,3 +1370,17 @@ export const NETWORK_DISPLAY_NAMES = {
 export function getNetworkDisplayName(network: 'signet' | 'testnet' | 'testnet4' | 'mainnet'): string {
   return NETWORK_DISPLAY_NAMES[network];
 }
+
+/**
+ * True only when the E2E bypass flag is set AND we are not in production.
+ *
+ * Both halves are required. The flag defaults false; config validation throws
+ * at boot if it is set in production; and this predicate is the runtime half
+ * that makes a leaked variable inert rather than load-bearing. CLAUDE.md §1.1
+ * records that the in-code limiters are the ONLY real limits — there is no
+ * Cloudflare rate limiting on arkova.ai to catch a mistake here.
+ */
+export function adminRateLimitBypassActive(): boolean {
+  return config.e2eAdminRateLimitBypass === true && config.nodeEnv !== 'production';
+}
+
