@@ -130,9 +130,17 @@ jobs:
         if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           GH_TOKEN: ${{ github.token }}
+          # ARK-SEC-012: assign to an env var rather than interpolating the
+          # expression directly into the run: script (expression injection —
+          # see ci.yml's top-level env: block for the same pattern/rationale).
+          # PR_NUMBER needs no equivalent entry here: the job-level env below
+          # already binds it from the identical expression, and a step env:
+          # block only adds to that, never hides it.
+          EVENT_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           set -euo pipefail
-          PR_NUMBER="${{ github.event.pull_request.number }}"
+          # PR_NUMBER comes from the job-level env (same source expression,
+          # already ARK-SEC-012-safe) — no local re-assignment needed.
           if [[ -z "${PR_NUMBER}" ]]; then
             echo "::error::No pull_request.number in event context; cannot resolve live PR state."
             exit 1
@@ -143,7 +151,7 @@ jobs:
           # ready/draft transition. Missing or malformed draft state evaluates
           # fully (fail closed); only the literal boolean true defers work.
           IS_DRAFT="$(jq -r 'if (.draft | type) == "boolean" then (.draft | tostring) else "unknown" end' <<<"${DATA}")"
-          EVENT_DRAFT="${{ github.event.pull_request.draft }}"
+          # EVENT_DRAFT is bound via this step's env: block (ARK-SEC-012).
           # Event-time draft runs always stay in the cheap, distinct draft
           # bucket. If the PR is Ready now, its fresh ready_for_review event
           # owns the required gate; this stale draft run must not duplicate or
@@ -254,6 +262,29 @@ jobs:
           echo "Staging evidence is deferred for this ordinary draft PR."
           echo "The ready_for_review event runs the complete evidence gate."
 
+      # Actions-budget hygiene (2026-09-21): a Dependabot PR that only bumps
+      # a package-lock.json / a packages-or-integrations package.json is
+      # already T0 under requiredTierFor() (check-staging-evidence.ts's own
+      # isT0OnlyFile() carve-out) — every such PR still ran this job's full
+      # check() (RC-manifest loading, S3.3 Lane-1 import scanning, base-drift
+      # diagnostics, …) end to end. This step fetches the PR's real changed
+      # files from the API (no checkout needed for a file-path list) so the
+      # classification step below can reuse the SAME requiredTierFor() the
+      # full gate uses, rather than a second hand-rolled T0 rule that could
+      # drift from it (the class of bug scripts/ci/agents.md's 2026-09-05
+      # CLAIM_RULES entry documents — a rule scoped to a name/shape another
+      # file owns going silently dead while still reporting clean).
+      - name: Fetch changed files (Dependabot fast-path probe)
+        id: dependabot_files
+        if: steps.live_pr.outputs.evaluate == 'true' && steps.live_pr.outputs.author_login == 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' > "${RUNNER_TEMP}/dependabot-changed-files.txt"
+          echo "files_path=${RUNNER_TEMP}/dependabot-changed-files.txt" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.live_pr.outputs.evaluate == 'true'
         with:
@@ -280,8 +311,25 @@ jobs:
         if: steps.live_pr.outputs.evaluate == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
+      # Classifies with the real requiredTierFor() (never a reimplementation
+      # — see the "Fetch changed files" step above). Only ever runs for a
+      # Dependabot PR; every other author falls straight through to the full
+      # check below. A missing/empty file list or any tier above T0 fails
+      # CLOSED (eligible=false) inside the script itself.
+      - name: Classify Dependabot PR tier (fast-path)
+        id: dependabot_classify
+        if: steps.dependabot_files.outcome == 'success' && steps.live_pr.outputs.author_login == 'dependabot[bot]'
+        env:
+          CHANGED_FILES_PATH: ${{ steps.dependabot_files.outputs.files_path }}
+        run: node_modules/.bin/tsx scripts/ci/check-dependabot-fastpath-eligible.ts
+
+      - name: Dependabot T0 fast-path — pass
+        if: steps.dependabot_classify.outputs.eligible == 'true'
+        run: |
+          echo "Dependabot PR classifies T0 for every changed file (requiredTierFor()) — the full Staging Soak Evidence check is not required."
+
       - name: Run staging-evidence check
-        if: steps.live_pr.outputs.evaluate == 'true'
+        if: steps.live_pr.outputs.evaluate == 'true' && steps.dependabot_classify.outputs.eligible != 'true'
         env:
           # Live-resolved (SCRUM-3026) — supersede the frozen event payload
           # for exactly the fields that go stale on a bare rerun.

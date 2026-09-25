@@ -26,6 +26,14 @@ vi.mock('../../../utils/db.js', () => ({
   db: {},
 }));
 
+// SCRUM-5287 (P1 security, fix-round item 5): mocked so the over-grant
+// refusal test can assert the audit event's shape directly.
+const recordAuditEventMock = vi.fn();
+recordAuditEventMock.mockResolvedValue({ ok: true });
+vi.mock('../../../utils/auditEvent.js', () => ({
+  recordAuditEvent: (...args: unknown[]) => recordAuditEventMock(...args),
+}));
+
 // DRIVE-01 (SCRUM-2366): the connect gate resolves org membership/admin through
 // the canonical owner-inclusive resolver (api/_org-auth.ts), NOT org_members
 // directly. Mock it so these route tests control the admin/org answer and prove
@@ -445,6 +453,158 @@ describe('Drive OAuth router', () => {
       provider: 'google_drive',
       event_type: 'oauth_connected',
       status: 'success',
+    });
+  });
+
+  // SCRUM-5287 (P1 security, fix-round item 5): the shared OAuth client can
+  // carry scopes from an unrelated prior consent. This is the callback-side
+  // guard — verifying the actual token-exchange response, not trusting the
+  // request URL's `scope` param.
+  describe('over-grant guard (SCRUM-5287)', () => {
+    function buildApp(db: { from: ReturnType<typeof vi.fn> }, fetchImpl: ReturnType<typeof vi.fn>) {
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        (req as unknown as { userId: string }).userId = TEST_USER_ID;
+        next();
+      });
+      app.use('/api/v1/integrations', createDriveOAuthRouter({
+        db,
+        env: {
+          GOOGLE_OAUTH_CLIENT_ID: 'google-client',
+          GOOGLE_OAUTH_CLIENT_SECRET: 'google-secret',
+          GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+        },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        stateSecret: 'test-state-secret',
+        frontendUrl: 'http://localhost:5173',
+        now: () => new Date('2026-04-24T12:00:00.000Z'),
+        kms: {
+          async encrypt() { return Buffer.from('encrypted-token-payload'); },
+          async decrypt() { return Buffer.from('{}'); },
+        },
+      }));
+      return app;
+    }
+
+    async function runCallback(app: express.Express) {
+      const start = await request(app)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+      const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+      return request(app)
+        .get('/api/v1/integrations/google_drive/oauth/callback')
+        .set('host', 'worker.test')
+        .query({ code: 'google-code', state });
+    }
+
+    it('an EXACT-match grant (the full requested scope set) is accepted and persisted normally', async () => {
+      const captured: Record<string, unknown[]> = {};
+      const capture = (method: string, value: unknown) => {
+        captured[method] = [...(captured[method] ?? []), value];
+      };
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+          if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+          if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+          return mockQuery({ data: null, error: null }, capture);
+        }),
+      };
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') {
+          return new Response(JSON.stringify({
+            access_token: 'access-token-secret',
+            expires_in: 3600,
+            refresh_token: 'refresh-token-secret',
+            // The FULL requested set, exactly — drive.file,
+            // drive.activity.readonly, drive.metadata.readonly, userinfo.email.
+            scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.activity.readonly https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/userinfo.email',
+            token_type: 'Bearer',
+          }), { status: 200 });
+        }
+        if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
+          return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
+        }
+        if (url.includes('/changes/startPageToken')) {
+          return new Response(JSON.stringify({ startPageToken: 'page-token' }), { status: 200 });
+        }
+        if (url.includes('/changes/watch')) {
+          return new Response(JSON.stringify({ resourceId: 'drive-resource-1', expiration: String(Date.now() + 1000) }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      });
+
+      const callback = await runCallback(buildApp(db, fetchImpl));
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive=connected');
+      expect(captured.upsert?.[0]).toBeDefined();
+      expect(recordAuditEventMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ event_type: 'drive_oauth_grant_exceeds_requested' }),
+      );
+    });
+
+    it('a SUPERSET grant (excess scopes, the SCRUM-5287 prod shape) is refused BEFORE anything is persisted, and records an audit event with org id + scope names only — never the token', async () => {
+      const captured: Record<string, unknown[]> = {};
+      const capture = (method: string, value: unknown) => {
+        captured[method] = [...(captured[method] ?? []), value];
+      };
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+          if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+          // If the callback reaches the upsert at all, this test has already
+          // failed its real assertion — captured below regardless.
+          if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+          return mockQuery({ data: null, error: null }, capture);
+        }),
+      };
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === 'https://oauth2.googleapis.com/token') {
+          return new Response(JSON.stringify({
+            access_token: 'access-token-secret-must-never-be-logged',
+            expires_in: 3600,
+            refresh_token: 'refresh-token-secret',
+            // The flagged prod shape: full drive + gmail.modify + contacts,
+            // far beyond DRIVE_DEFAULT_SCOPES.
+            scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/drive.file',
+            token_type: 'Bearer',
+          }), { status: 200 });
+        }
+        // No further Google call should ever be reached — fail loudly if one is.
+        throw new Error(`unexpected fetch to ${url} — over-grant guard should have refused before this`);
+      });
+
+      const callback = await runCallback(buildApp(db, fetchImpl));
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive_error=grant_exceeds_requested');
+      // Nothing persisted — no org_integrations upsert happened at all.
+      expect(captured.upsert).toBeUndefined();
+      // Exactly one Google call — the token exchange. userinfo/watch were
+      // never reached (the thrown Error above would have surfaced as a 500
+      // if they had been).
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(recordAuditEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: 'drive_oauth_grant_exceeds_requested',
+          event_category: 'AUTH',
+          org_id: TEST_ORG_ID,
+        }),
+      );
+      const auditCall = recordAuditEventMock.mock.calls[0][0] as { details: string };
+      const details = JSON.parse(auditCall.details) as { excess_scopes: string[] };
+      expect(details.excess_scopes).toEqual([
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/gmail.modify',
+        'https://www.googleapis.com/auth/contacts',
+      ]);
+      // The audit call, serialized whole, must never contain the secret token.
+      expect(JSON.stringify(recordAuditEventMock.mock.calls[0])).not.toContain('access-token-secret-must-never-be-logged');
     });
   });
 

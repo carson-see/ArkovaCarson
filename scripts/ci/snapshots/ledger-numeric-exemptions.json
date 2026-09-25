@@ -3,11 +3,6 @@
   "_history": [
     {
       "date": "2026-09-21",
-      "author": "CTO review session (Claude Fable 5.1) \u2014 UAT-14 recovery PR",
-      "note": "REMOVED 0481 in the same PR that lands supabase/migrations/0481_uat14_profile_brand_media.sql on main (recovery of PR #3025, whose code never reached main because it was merged into its stack parent 16 seconds after that parent had merged upward). 0481 has been applied on prod vzwyaatejekddvltxyye since 2026-09-20 with a numeric ledger row; the file in this PR is byte-identical to what was applied (sha256 fd361840ac3f\u2026). Once this merges the prefix is on prod AND on main, so the exemption would be stale."
-    },
-    {
-      "date": "2026-09-21",
       "author": "CTO review session (Claude Fable 5.1) \u2014 SCRUM-5280 expedited security fix",
       "note": "ADDED 0482 (0482_scrum5280_org_domain_verification_guard, PR #3036, SCRUM-5280 + SCRUM-5282) immediately ahead of applying it to prod vzwyaatejekddvltxyye via MCP apply_migration. Expedited ahead of its T3 window by the coordinator session under the founder's delegation (2026-09-21): it closes a live, prod-reachable tenant-capture path (an org admin could self-assert organizations.domain_verified \u2014 and, via the writable verification token, have the worker assert it \u2014 then capture every confirmed signup at that email domain through 0470's auto-association), removes the stale profiles.role authorization fallback from add_existing_org_member, and revokes the browser-callable 3-arg resolve_anchor_queue_by_public_id overload. Exact bytes: sha256 b792667c54ec60af02e834352727eec22eb977876ca5457508c373e9cdb6b288 at PR head 32363aabb. Pre-apply: rig rehearsal apply/probe/rollback/re-apply on isolated rig dlfcwhljvkomeouykcwk (preflight clean_mirror 8/8 at 2026-09-21T16:23:27Z), and seven read-only prod preconditions (0 admins who would lose add-member authority, 0 self-asserted verifications, 0 contested domains, 0 pending tokens, trigger not column-scoped). Function bodies only; no trigger DDL, so no AccessExclusiveLock on the hot organizations table; lock_timeout 5s set regardless. Per CLAUDE.md \u00a70 rule 10 the apply and this exemption land in the same motion; the ledger row is reconciled to numeric 0482 in-session and list_migrations re-read. The 24 h T3 window still runs afterwards for merge evidence. REMOVE when #3036 lands the .sql on main."
     },
@@ -270,12 +265,27 @@
       "date": "2026-08-02",
       "author": "CTO, post-merge cleanup",
       "note": "REMOVED 15 now-stale exemptions whose owning PRs merged today and whose source .sql is present on main \u2014 0350, 0351, 0352, 0353, 0359, 0360, 0362, 0363, 0364, 0375, 0379, 0380, 0383, 0385, 0390. Verified by listing supabase/migrations/ on origin/main, not assumed. A stale exemption is worse than no exemption: it masks a future real drift on that prefix. STILL EXEMPT (source not yet on main): 0381 (#1782 merged but file landed via that PR \u2014 recheck), 0382 (#1808), 0386 (#1854), 0387 (its branch has no PR), 0388 (#1863)."
+    },
+    {
+      "date": "2026-09-25",
+      "action": "remove",
+      "prefixes": [
+        "0443",
+        "0482"
+      ],
+      "reason": "both .sql files are now on origin/main (0443 via #2825, 0482 via #3036); the exemption is only for prod rows with no file on main"
+    },
+    {
+      "date": "2026-09-25",
+      "action": "remove",
+      "prefixes": [
+        "0481"
+      ],
+      "reason": "0481_uat14_profile_brand_media.sql lands on main with this PR (#3033), so its prod ledger row is no longer file-less"
     }
   ],
   "exemptPrefixes": [
-    "0443",
     "0471",
-    "0476",
-    "0482"
+    "0476"
   ]
 }

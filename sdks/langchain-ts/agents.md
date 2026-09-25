@@ -1,6 +1,6 @@
 # sdks/langchain-ts/agents.md
 
-`@arkova/langchain` — LangChain tool wrappers for the Arkova record verification API. This is the maintained package; `sdks/langchain/` (no `package.json`, never wired up for publishing) is an earlier, superseded draft with a smaller tool set — see its `src/agents.md`.
+`@arkova/langchain` — zero-dependency, LangChain-style callable tools for the Arkova record verification API. This is the maintained package; `sdks/langchain/` (no `package.json`, never wired up for publishing) is an earlier, superseded draft with a smaller tool set — see its `src/agents.md`.
 
 ## Structure
 - **`src/index.ts`** — barrel export + tool classes (`ArkovaVerifyTool`, `ArkovaAnchorStatusTool`, `ArkovaSearchTool`, `ArkovaAttestTool`, `ArkovaBatchVerifyTool`, `ArkovaVerifySignatureTool`, `getArkovaTools`).
@@ -36,6 +36,12 @@ helper, the phrase, and the constant are duplicated here deliberately rather tha
 - `readErrorBody()` uses `try`/`catch`, not `res.json().catch()`, so a synchronously-throwing or
   absent `json()` cannot escape as a tool crash.
 
+Suite for this package is 32 tests after release qualification. Run it from
+this package directory so its local config and pinned dev toolchain are used.
+
+Historical pre-qualification note retained verbatim for append-only policy; the
+2026-09-19 section below supersedes its counts and toolchain state:
+
 Suite for this package is 31 tests; `npx vitest run --root sdks` from the repo root covers both
 packages (80 tests).
 
@@ -43,3 +49,82 @@ packages (80 tests).
 `tsconfig.json(5,25): TS5107 moduleResolution=node10 is deprecated`. It comes from the committed
 `tsconfig.json` (last touched in PR #761) meeting the newer TypeScript resolved from the repo root
 — this package declares no devDependencies of its own. Unrelated to this change and left alone.
+
+## 2026-09-19 — first-public-release qualification
+
+- The package now owns its TypeScript/Vitest dev toolchain, lockfile and local
+  Vitest config, and declares ESM so its emitted `dist/index.js` loads on the
+  advertised Node 18 floor.
+- Every API request rejects redirects before sending the custom `X-API-Key`;
+  the regression was observed red before the shared fetch helper was fixed.
+- README compatibility language is deliberately narrow: these are
+  zero-dependency callable tool objects, not `@langchain/core` subclasses.
+- `ArkovaVerifyTool.valid` derives only from the verification API's authoritative
+  `verified` boolean. `SUBMITTED`, `PENDING`, revoked, and unknown states fail
+  closed; the complete API response is preserved so status and proof evidence
+  remain available to the caller.
+
+## 2026-09-21 — recovered onto `main` + closed publish gaps (PR #2986 never actually landed)
+
+The 2026-09-19 entry above describes changes PR #2986 made but that never reached `main`: the PR's
+branch merged into `fix/hygiene-webhook-payloads`, which had already merged into `main` before #2986
+itself merged, orphaning the diff (GitHub still showed MERGED). Applied here with no conflicts. On
+top of the recovered content:
+
+- **`tsconfig.json` `moduleResolution` was still the deprecated `node10` alias**, despite reading
+  `"node"` in the file — `tsc --showConfig` shows `"node"` normalizes to `"node10"` internally, which
+  is exactly the "TS5107 moduleResolution=node10 is deprecated" error the "pre-existing" paragraph
+  above describes (that paragraph is now stale: this package DOES declare its own devDependencies as
+  of the recovered 2026-09-19 content). Changed to `nodenext`/`nodenext` (matching
+  `sdks/mcp-server/tsconfig.json`'s existing convention) — no source changes needed since this
+  package has no relative imports of its own. Regression test:
+  `src/package-metadata.test.ts`.
+- **README's "in parity with `sdks/mcp-server`'s tool set" claim was stale even at the moment #2986
+  merged its own branch**, and doubly so now: this package has always had 6 tools, but `sdks/mcp-server`
+  has grown to 9 (`arkova_submit_anchor`, `arkova_get_submission_status`, and `arkova_manage_folders`
+  have no equivalent here). Reworded to state the true, non-parity subset relationship.
+- `package-lock.json` didn't exist before this recovery (PR #2986 added one, but it was excluded from
+  the recovered diff and regenerated fresh via `npm install --package-lock-only` per the recovery's
+  "never hand-merge a lockfile" rule) and `src/package-metadata.test.ts` is new — neither is from the
+  original PR.
+
+See `packages/sdk/agents.md`'s 2026-09-21 entry for the sibling-package recovery.
+
+## 2026-09-21 — ESM-only decision (review finding, same recovery)
+
+`nodenext`/`"type": "module"` (both from the recovered content above) made this package ESM-only
+while `engines.node` still said `>=18` with no `exports` map — a CJS consumer on Node 18/20 hits
+`ERR_REQUIRE_ESM` with no warning ahead of time. Two ways to close that gap: dual-build (CJS+ESM
+with an `exports` map covering both) or stay ESM-only and make the constraint explicit + honest.
+**Decision: ESM-only, no dual build this wave.** Reasoning: a CJS build target here would be the
+first one in any `packages/`/`sdks/` package in this repo (every sibling — `packages/sdk`,
+`sdks/mcp-server`, `packages/verifier*`, `packages/embed` — is ESM-only or dual-format via `tsup`,
+none via a hand-rolled CJS `tsc` target), and this package's own consumer story (LangChain-adjacent
+agent tooling) skews overwhelmingly ESM already. Revisit if a real CJS consumer actually shows up.
+
+What changed instead:
+- `package.json` gained an `exports` map (`"."` → `types` + `import` only, no `require` condition)
+  — this is the actual, version-independent contract: a strict resolver or bundler now sees
+  "ESM-only" from the manifest itself, not just from `"type": "module"` (which some legacy tooling
+  still misreads).
+- `engines.node` stays `>=18` — verified, not assumed: the package's only Node-version-gated runtime
+  features are global `fetch` (unflagged since Node 18.0, stable since 21) and `AbortSignal.timeout`
+  (since Node 17.3), both present at the Node 18 floor. Being ESM-only is an orthogonal constraint
+  on TOP of that floor, not a reason to raise it — Node 18 runs this package fine via `import`, it
+  just cannot `require()` it.
+- README states the ESM-only contract prominently. **Corrected 2026-09-21 (independent review):**
+  an earlier version of this README hedged that `require()` "may transparently succeed" on Node
+  `>=22.12` via native `require(esm)` interop. Empirically false, verified against the real
+  published tarball on Node 25.6.1 and true by the exports-conditions algorithm on every Node
+  version: `require(esm)` interop only applies to a bare ESM file with no restricting `exports`
+  map — this package's `exports` map (present, `types`+`import` only, no `require` condition)
+  makes Node's exports-conditions resolver refuse a `require()` caller BEFORE that interop is ever
+  considered. `require('@arkova/langchain')` reliably throws `ERR_PACKAGE_PATH_NOT_EXPORTED`, full
+  stop — README now states this plainly instead of hedging with "may".
+- `src/packed-import.test.ts` (new): builds fresh, `npm pack`s the real tarball, installs it into an
+  empty temp project (no monorepo hoisting), and runs a real `node` process that `import`s it —
+  proving the published `exports` map actually resolves for a real consumer, which importing the
+  source under vitest cannot prove. Also asserts the packed `package.json`'s `exports.["."]` has
+  exactly `{types, import}` keys, no `require`, AND (added 2026-09-21) that a live `require()` call
+  against the real installed tarball throws `ERR_PACKAGE_PATH_NOT_EXPORTED` — so the README's claim
+  and this package's actual behavior cannot drift apart again undetected.

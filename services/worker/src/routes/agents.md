@@ -360,4 +360,57 @@ a quick per-instance signal, not a durable audit trail — the `origin_guard_wou
 ## 2026-09-19 — UAT-12 JWT status bridge
 
 `anchor-self-service.ts` accepts status GETs only with one explicit scope: `?scope=user` or `?org_id=<uuid>`. It re-derives profile/membership before delegating to the canonical anchor router; never infer GET scope from a body or trust a client organization id without membership.
++
+## 2026-09-19 — UAT-23 JWT bulk import bridge
+
+`POST /api/v1/anchor-self-service/bulk` accepts at most 100 strict rows and delegates each to the canonical single-submit handler without loopback HTTP. Recipient-bearing imports are authorized for the exact selected organization before any row runs: owner/admin or platform admin only; personal recipient provisioning fails closed. Non-recipient personal imports remain valid. Safe metadata survives; private/reserved/underscore keys remain filtered by the canonical handler. Results are 200 or 207 with bounded per-row codes and no internal IDs.
 - **2026-09-19 (UAT-19):** `queue-resolution-mounted.test.ts` exercises the real queue handlers through Express JSON/query parsing and the real `extractAuthUserId`/`verifyAuthToken` path using locally signed JOSE tokens. It pins missing/AAL1/expired/malformed 401 with no DB, malformed selected-org 400/no DB, exact secondary owner with no primary org, stale primary-role denial, and selected-anchor/org conflict before the resolution RPC.
+
+## 2026-09-21 — Bulk import: a created anchor is never a failed row (PR #3034)
+
+`handleSelfServiceBulk` used to report `status: 'failed'` when `linkBulkRecipient`
+threw AFTER the canonical submit had already returned 2xx. The anchor was
+permanent, but the row looked failed and was left out of `created`, so a caller
+(or our own wizard) would re-upload it — a duplicate submission and, for a
+capped/billable org, a double charge. The anchor is now always counted in
+`created`/`skipped` and the link failure gets its own status:
+`created_recipient_failed` / `skipped_recipient_failed`, plus an additive
+`recipient_link_failed` counter. `created + skipped + failed` still equals
+`total`; those rows are inside `created`/`skipped`, never `failed`. The response
+is 207 whenever a link failed, even with zero failed rows. Replay is safe and was
+already correct: the canonical submit dedupes on fingerprint, answers
+`idempotent: true` without creating or charging, and only the link is
+re-attempted. `handleAnchorImport` shares this handler, so `POST /anchor/import`
+gets the same behaviour.
+
+## 2026-09-21 — Bulk import never fails the whole batch over a recipient (PR #3034)
+
+B1, BLOCKING regression against `main`. A caller without recipient-provisioning
+authority (personal scope / `orgId` null, or a plain org member) had the ENTIRE
+request rejected `403 recipient_provisioning_forbidden` as soon as any row
+carried a `recipient_email`. On `main` the recipient pass was separate,
+non-fatal, and skipped outright when there was no org — so the new behaviour
+meant a personal-scope user importing a spreadsheet with any column containing
+"mail" (`csvParser` auto-maps it to email) got zero anchors and a generic
+"Failed to process batch".
+
+Now: every row's anchor is still submitted, the link is simply not attempted,
+and those rows report `created_recipient_failed` / `skipped_recipient_failed`
+with `reason: 'recipient_provisioning_forbidden'`, counted in
+`recipient_link_failed`, response 207. Rows without a recipient stay plain
+`created` / `skipped`. `created + skipped + failed == total` still holds.
+
+`unavailable` (the authority lookup itself errored) is deliberately NOT degraded
+the same way and still answers `503 recipient_authorization_unavailable` before
+any row runs: it is transient, it is decided before any anchor exists, so a
+retryable 503 loses no durable state — whereas guessing would either leak
+provisioning to an unauthorized caller or mark rows with a failure that may not
+be true.
+
+S7 logging: every skipped or failed recipient link now logs. `logger.warn` for
+the forbidden case, `logger.error` for a thrown one, carrying ONLY the bounded
+reason code, `publicId` and `orgId` — never the recipient email, the recipient
+name, or the raw thrown message (§1.4/§1.6A). A `RecipientPepperUnavailableError`
+gets its own reason code `recipient_pepper_unavailable` and raises
+`captureRecipientPepperUnavailableAlert` ONCE per request with the affected-row
+count, not once per row.

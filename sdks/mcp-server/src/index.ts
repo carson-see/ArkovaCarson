@@ -165,6 +165,21 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: 'arkova_import_rows',
+    description: 'Import 1-100 already-fingerprinted spreadsheet rows through the canonical queue or instant submission path. Never accepts document bytes. A row may carry recipient_email and recipient_name, which assigns the record to that third party and can cause an activation email to be sent to that address. A row reported created_recipient_failed or skipped_recipient_failed is already anchored: do not re-import it. Its reason code says whether the recipient was linked and whether the invitation was sent. ' + API_ONLY_NOTE,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rows: { type: 'string', description: 'JSON array of row objects with fingerprint, filename, and fingerprint_provided' },
+        action: { type: 'string', description: 'Submission path', enum: ['queue', 'instant'] },
+        description: { type: 'string', description: 'Optional shared public description, up to 1,000 characters' },
+        user_tags: { type: 'string', description: 'Optional JSON array of private user tags' },
+        organization_tags: { type: 'string', description: 'Optional JSON array of private organization tags' },
+      },
+      required: ['rows', 'action'],
+    },
+  },
+  {
     name: 'arkova_verify_anchor',
     description: 'Verify an anchored record on the Arkova network by its public ID. Returns the verification result including issuer, record type, and anchor proof. ' + API_ONLY_NOTE,
     inputSchema: {
@@ -310,6 +325,8 @@ export async function handleToolCall(
         return await handleSubmitAnchor(args);
       case 'arkova_get_submission_status':
         return await handleSubmissionStatus(args.public_id);
+      case 'arkova_import_rows':
+        return await handleImportRows(args);
       case 'arkova_verify_anchor':
         return await handleVerifyCredential(args.public_id);
       case 'arkova_anchor_status':
@@ -341,6 +358,92 @@ async function handleSubmissionStatus(publicId: string): Promise<McpToolResult> 
     return errorResult(`Submission status unavailable: ${code}`);
   }
   return textResult(JSON.stringify(body ?? {}));
+}
+
+async function handleImportRows(args: Record<string, string>): Promise<McpToolResult> {
+  let rows: unknown;
+  let userTags: string[];
+  let organizationTags: string[];
+  try {
+    rows = JSON.parse(args.rows);
+    userTags = parsePrivateTags(args.user_tags, 'user_tags');
+    organizationTags = parsePrivateTags(args.organization_tags, 'organization_tags');
+  } catch (error) {
+    return errorResult(error instanceof Error ? error.message : 'Invalid import input');
+  }
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) return errorResult('rows must be a JSON array of 1-100 row objects');
+  const keys = new Set(['fingerprint', 'filename', 'fingerprint_provided', 'file_size', 'credential_type', 'metadata', 'recipient_email', 'recipient_name']);
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)
+      || Object.keys(row).some((key) => !keys.has(key))
+      || typeof row.fingerprint !== 'string' || !/^[a-fA-F0-9]{64}$/.test(row.fingerprint)
+      || typeof row.filename !== 'string' || row.filename.length < 1 || row.filename.length > 255
+      || typeof row.fingerprint_provided !== 'boolean'
+      || (row.metadata !== undefined && (!row.metadata || typeof row.metadata !== 'object' || Array.isArray(row.metadata)))) return errorResult(`row ${index} is invalid or contains an unsupported field`);
+    // The worker requires a POSITIVE file_size, so a 0 used to be forwarded and
+    // then rejected server-side for the WHOLE request (#3034 review).
+    if (row.file_size !== undefined && (typeof row.file_size !== 'number' || !Number.isInteger(row.file_size) || row.file_size < 1)) {
+      return errorResult(`row ${index}: file_size must be a positive integer`);
+    }
+    // The worker's superRefine rejects the whole request for this pair.
+    if (row.recipient_name !== undefined && row.recipient_email === undefined) {
+      return errorResult(`row ${index}: recipient_email is required when recipient_name is provided`);
+    }
+  }
+  if (args.action !== 'queue' && args.action !== 'instant') return errorResult('action must be queue or instant');
+  const res = await arkovaFetch('/api/v1/anchor/import', { method: 'POST', body: JSON.stringify({
+    action: args.action, rows,
+    ...(args.description ? { description: args.description } : {}),
+    ...((userTags.length || organizationTags.length) ? { private_tags: { user: userTags, organization: organizationTags } } : {}),
+  }) });
+  if (!res.ok) return errorResult(`Import API returned ${res.status}`);
+  const body = await res.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body || !Array.isArray(body.results) || !['total', 'created', 'skipped', 'failed'].every((key) => Number.isInteger(body[key]))) {
+    return errorResult('Import API returned a malformed response');
+  }
+  return textResult(JSON.stringify(projectImportResponse(body), null, 2));
+}
+
+const BOUNDED_CODE_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
+const IMPORT_RESULT_STATUSES = new Set(['created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed']);
+const IMPORT_INSTANT_STATUSES = new Set(['QUEUED', 'PROCESSING', 'NEEDS_CREDIT', 'RETRYABLE', 'HELD', 'SUBMITTED', 'FAILED']);
+
+/**
+ * Allowlisted, bounded projection of an import response (#3034 review).
+ *
+ * The raw body is issuer-/user-influenced: filenames, reason strings and any
+ * field a future worker adds would otherwise flow verbatim into the model's
+ * context. Only the five counters and five per-row fields below survive, each
+ * length-capped; `reason` survives ONLY when it is already a bounded machine
+ * code, `results` is capped at the documented 100-row maximum, and every
+ * unknown key is dropped.
+ */
+export function projectImportResponse(body: Record<string, unknown>): Record<string, unknown> {
+  const counter = (key: string): number => (Number.isInteger(body[key]) ? body[key] as number : 0);
+  const rows = Array.isArray(body.results) ? body.results.slice(0, 100) : [];
+  return {
+    total: counter('total'),
+    created: counter('created'),
+    skipped: counter('skipped'),
+    failed: counter('failed'),
+    recipient_link_failed: counter('recipient_link_failed'),
+    results: rows.map((entry) => {
+      const row = (entry ?? {}) as Record<string, unknown>;
+      const fingerprint = typeof row.fingerprint === 'string' && /^[a-fA-F0-9]{64}$/.test(row.fingerprint) ? row.fingerprint : '';
+      const status = typeof row.status === 'string' && IMPORT_RESULT_STATUSES.has(row.status) ? row.status : 'unknown';
+      // `unknown`, never `failed`: a caller that reads `failed` re-submits the row,
+      // and a status this client predates may well describe a committed anchor.
+      const publicId = typeof row.public_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(row.public_id) ? row.public_id : undefined;
+      const reason = typeof row.reason === 'string' && BOUNDED_CODE_RE.test(row.reason) ? row.reason : undefined;
+      const instantStatus = typeof row.instant_status === 'string' && IMPORT_INSTANT_STATUSES.has(row.instant_status) ? row.instant_status : undefined;
+      return {
+        fingerprint, status,
+        ...(publicId ? { public_id: publicId } : {}),
+        ...(reason ? { reason } : {}),
+        ...(instantStatus ? { instant_status: instantStatus } : {}),
+      };
+    }),
+  };
 }
 
 function parsePrivateTags(raw: string | undefined, scope: string): string[] {

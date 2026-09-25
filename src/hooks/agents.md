@@ -257,6 +257,8 @@ explicit personal scope, poll only active instant intents, and refresh on focus.
 `usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
 its query key includes both user and selected organization to prevent stale scope
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
+
+UAT-23 bulk imports use only the JWT canonical HTTP bridge; preserve prior-chunk receipts, never auto-retry an ambiguous write, and keep the invocation's original organization scope.
 ## 2026-09-19 — `useOrgProfileFolders`
 
 This additive wrapper is deliberately route-org scoped and never consults profile/active-org state. Its query key includes caller, explicit org, resolved authorization, and manager authority; reads stay disabled and cached rows stay hidden until route authorization resolves. Mutations require the caller-visible manager gate and capture the explicit org. Worker authorization remains authoritative. `descendantFolderIds` is cycle-safe.
@@ -273,3 +275,25 @@ one success toast (row-update callers pass `{ silentSuccess: true }` to
 and it exposes ONE `busy` flag so every input on a surface disables on the same
 condition. `canUpload` carries the AAL2 gate. Do not reintroduce a per-page
 copy of this flow.
+
+## 2026-09-21 — useBulkAnchors carries recipient-link outcomes (PR #3034)
+
+`BulkAnchorResult.status` gained `created_recipient_failed` /
+`skipped_recipient_failed`, and `BulkCreateResult` gained the optional
+`recipient_link_failed` counter, summed across chunks like the other counters.
+Optional because an older worker omits it; absent reads as zero. These rows are
+NOT failures — do not fold them into `failed` in any consumer.
+
+## 2026-09-21 — useBulkAnchors omits recipients in personal scope (PR #3034)
+
+B1(b). The hook sent `recipient_email: record.email` unconditionally, and
+`csvParser` auto-maps ANY column containing "mail" to `email`. Combined with the
+worker's whole-request 403, a personal-scope user importing an ordinary
+spreadsheet got zero anchors. `main` never had this shape: its recipient pass
+was separate and skipped outright when no org could be resolved.
+
+`recipientFields()` now emits the recipient half only when an org scope is
+active, and emits `recipient_name` only alongside an email (the worker's schema
+rejects name-without-email for the whole request). The hook knows its scope but
+NOT the caller's org ROLE, so a plain org member is still left to the server,
+which anchors the rows and reports the refusal per row.

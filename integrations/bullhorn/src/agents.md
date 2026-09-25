@@ -33,4 +33,17 @@ Bullhorn ATS connector source code (INT-07).
   is absent — and a test asserts no config value (secret, REST token, or API key) appears in the
   warning.
 
-Suite is 20 tests. Run with `npx vitest run` from `integrations/bullhorn/`.
+Suite is 20 tests (21 as of 2026-09-21, see below). Run with `npx vitest run` from `integrations/bullhorn/`.
+
+## 2026-09-21 — ARKOVA_DEFAULT_URL de-duplicated onto integrations/shared (SCRUM-3888)
+
+`candidate-tab.ts` declared its own private `ARKOVA_DEFAULT_URL` copy (raw
+Cloud Run host — no Cloudflare origin guard in front of it, and SCRUM-3888
+will 403 it). Now imports `ARKOVA_DEFAULT_URL` from `../../shared/src/constants`
+instead, the same cross-package relative-import pattern `webhook-handler.ts`
+already used for `constantTimeEqual` (see the note a few lines above this
+one — this package's `noEmit: true` tsconfig is what makes the import
+resolve cleanly with no `package.json` dependency needed). New test:
+"CandidateVerificationTab defaults to the public API gateway" — the
+existing `TEST_CONFIG` always sets an explicit `arkovaBaseUrl` override, so
+none of the pre-existing tests ever exercised the actual default.

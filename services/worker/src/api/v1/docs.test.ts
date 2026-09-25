@@ -266,6 +266,31 @@ describe('OpenAPI spec', () => {
     expect(status.responses['200'].content['application/json'].schema.properties.instant_status.enum)
       .toContain('NEEDS_CREDIT');
     expect(openApiSpec.paths['/anchor-self-service/{publicId}/submission-status']).toBeDefined();
+    const importApi = openApiSpec.paths['/anchor/import'].post;
+    expect(importApi['x-arkova-required-scopes']).toEqual(expect.arrayContaining(['anchor:write']));
+    expect(importApi.requestBody.content['application/json'].schema.properties.rows.maxItems).toBe(100);
+    expect(importApi.responses['207'].content['application/json'].schema.properties.results.items.properties)
+      .not.toHaveProperty('id');
+    const selfServiceImport = openApiSpec.paths['/anchor-self-service/bulk'].post;
+    expect(selfServiceImport.security).toEqual([{ SupabaseJWT: [] }]);
+    expect(selfServiceImport.requestBody.content['application/json'].schema.required)
+      .toEqual(expect.arrayContaining(['org_id', 'action', 'rows']));
+  });
+
+  // SHOULD-FIX from the #3020 review. The per-row status is a published
+  // contract: a created anchor whose recipient link failed must be reportable
+  // without calling the row `failed`, and §1.8 allows only ADDITIVE changes,
+  // so `created`/`skipped`/`failed` stay exactly where they are.
+  it('publishes the recipient-link statuses additively and keeps the original three', () => {
+    const response = openApiSpec.paths['/anchor/import'].post
+      .responses['207'].content['application/json'].schema;
+    const rowStatus = response.properties.results.items.properties.status;
+    expect(rowStatus.enum).toEqual([
+      'created', 'skipped', 'failed', 'created_recipient_failed', 'skipped_recipient_failed',
+    ]);
+    // Additive counter; the four original counters remain required.
+    expect(response.properties.recipient_link_failed).toMatchObject({ type: 'integer', minimum: 0 });
+    expect(response.required).toEqual(['total', 'created', 'skipped', 'failed', 'results']);
   });
 
   it('has all four tags', () => {

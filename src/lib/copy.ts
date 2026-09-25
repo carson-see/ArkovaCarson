@@ -1717,6 +1717,24 @@ export const ORG_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// ORGANIZATION VERIFICATION (SCRUM-5285)
+//
+// The worker answers 409 `verification_superseded` when the organization's
+// domain (or its pending code) changed between the request being prepared and
+// the write landing — the compare-and-swap in
+// services/worker/src/api/v1/orgVerification.ts. The user has to be told the
+// proof no longer binds and that the flow restarts; a generic "failed" would
+// invite them to retry the same stale code forever.
+// =============================================================================
+
+export const ORG_VERIFICATION_LABELS = {
+  DOMAIN_START_SUPERSEDED:
+    'Your organization’s domain changed while verification was starting. Start domain verification again.',
+  DOMAIN_CONFIRM_SUPERSEDED:
+    'Your organization’s domain or verification code changed before this confirmation completed, so this code no longer applies. Start domain verification again.',
+} as const;
+
+// =============================================================================
 // PENDING INVITATIONS (org page — visibility for invites that have not
 // resulted in a member yet)
 // =============================================================================
@@ -5202,6 +5220,57 @@ export const TWO_FACTOR_SETUP_LABELS = {
   // instead once that call fails or times out.
   LOAD_ERROR_TITLE: "Couldn't load your two-factor authentication settings",
   LOAD_ERROR_RETRY: 'Retry',
+} as const;
+
+export const BULK_IMPORT_LABELS = {
+  DESCRIPTION: 'Public description for every row',
+  USER_TAGS: 'Private tags for every row',
+  ORGANIZATION_TAGS: 'Organization tags for every row',
+  QUEUE_ACTION: 'Add all to queue',
+  INSTANT_ACTION: 'Secure all instantly',
+  INSTANT_UNAVAILABLE: 'Instant securing is no longer available. Choose “Add all to queue” to continue without credits.',
+  INSTANT_CREDIT_COST: (count: number) => `Instant securing uses one credit per row — up to ${count} ${count === 1 ? 'credit' : 'credits'} for this import. Rows without available credits may be saved with “Need credit” status.`,
+  COMPLETE: 'Upload Complete',
+  COMPLETE_WITH_ISSUES: 'Upload Completed with Issues',
+  SAVED_BODY: 'The records below were saved. Instant securing states are reported separately.',
+  PARTIAL_BODY: 'Only the reported records are confirmed. Keep their receipts and retry only the unresolved rows.',
+  CREATED: (count: number) => `${count} Created`,
+  SKIPPED: (count: number) => `${count} Skipped`,
+  FAILED: (count: number) => `${count} Failed`,
+  NEEDS_CREDIT: (count: number) => `${count} Need credit`,
+  HELD: (count: number) => `${count} Held for review`,
+  INSTANT_FAILED: (count: number) => `${count} Instant failed`,
+  INSTANT_PENDING: (count: number) => `${count} Instant pending`,
+  INSTANT_UNKNOWN: (count: number) => `${count} Status unavailable`,
+  PARTIAL_TRANSPORT: 'The import stopped after a partial response. Confirmed row receipts were preserved.',
+  // SCRUM-5265 (#3020 / #3034 reviews). These rows ARE secured — only the
+  // recipient half did not resolve. Every string has to say both halves,
+  // because the reader's obvious next move (re-upload the row) would create a
+  // duplicate submission for a record that already exists.
+  //
+  // S3: there is NO single truthful sentence here. `anchor_recipients` commits
+  // BEFORE the activation email is sent, so an activation reason means the
+  // recipient WAS linked and only the invitation did not go — the previous
+  // single string ("could not be linked, so no invitation was sent") asserted
+  // two things we did not measure and pointed at the wrong remedy. §1.5: each
+  // variant states exactly what is measured and stops there. The `unknown`
+  // variant asserts nothing at all, so a reason code from a newer worker can
+  // never make this summary lie. Classification lives in
+  // `src/lib/bulkRecipientOutcome.ts`, pinned to the worker's throw sites.
+  RECIPIENT_OUTCOME_LABEL: {
+    notPermitted: (count: number) => `${count} Secured, recipient not added`,
+    notLinked: (count: number) => `${count} Secured, recipient not linked`,
+    linkedNotSent: (count: number) => `${count} Secured, invitation not sent`,
+    linkedUnconfirmed: (count: number) => `${count} Secured, invitation unconfirmed`,
+    unknown: (count: number) => `${count} Secured, recipient status unknown`,
+  },
+  RECIPIENT_OUTCOME_BODY: {
+    notPermitted: 'These records are secured and permanent. Recipients can only be added by an owner or admin of the organization the records belong to, so no recipient was added and no invitation was sent. Do not upload these rows again — ask an owner or admin to add the recipient from the record.',
+    notLinked: 'These records are secured and permanent. The recipient could not be linked, so no invitation was sent. Do not upload these rows again — invite the recipient from the record instead.',
+    linkedNotSent: 'These records are secured and permanent, and the recipient was linked to them. The invitation email was not delivered. Do not upload these rows again — resend the invitation from the record.',
+    linkedUnconfirmed: 'These records are secured and permanent, and the recipient was linked to them. We could not confirm whether the invitation email was sent; it may already be on its way. Do not upload these rows again — open the record to check before resending.',
+    unknown: 'These records are secured and permanent. We could not confirm whether the recipient was linked or notified. Do not upload these rows again — open the record to check the recipient.',
+  },
 } as const;
 
 export const ORG_MEMBER_ADD_LABELS = {

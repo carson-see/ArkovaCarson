@@ -14,8 +14,7 @@ import type {
   CandidateVerificationSummary,
 } from './types';
 import { BullhornConnector } from './connector';
-
-const ARKOVA_DEFAULT_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
+import { ARKOVA_DEFAULT_URL } from '../../shared/src/constants';
 
 export class CandidateVerificationTab {
   private readonly connector: BullhornConnector;
