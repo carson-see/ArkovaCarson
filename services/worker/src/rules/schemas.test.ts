@@ -122,6 +122,47 @@ describe('TriggerConfig discriminator', () => {
     ).toThrow();
   });
 
+  // The two binding shapes are MERGED by every consumer (`driveFolderIds()` in
+  // integrations/connectors/drive-folder-bindings.ts and
+  // `readDriveFolderBindings()` in rules/evaluator.ts both read `folder_id` AND
+  // `drive_folders[]`), so bounding only the array's length leaves the real
+  // limit at four. The UI never writes the singular shape; a direct API caller
+  // can.
+  it('rejects the legacy folder_id plus three drive_folders (four in total)', () => {
+    expect(() =>
+      TriggerConfig.parse({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        config: {
+          vendors: ['google_drive'],
+          type: 'drive_folder',
+          folder_id: 'legacy-folder',
+          drive_folders: [
+            { type: 'drive_folder', folder_id: 'folder-a' },
+            { type: 'drive_folder', folder_id: 'folder-b' },
+            { type: 'drive_folder', folder_id: 'folder-c' },
+          ],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('accepts the legacy folder_id plus two drive_folders (three in total)', () => {
+    const parsed = TriggerConfig.parse({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      config: {
+        vendors: ['google_drive'],
+        type: 'drive_folder',
+        folder_id: 'legacy-folder',
+        drive_folders: [
+          { type: 'drive_folder', folder_id: 'folder-a' },
+          { type: 'drive_folder', folder_id: 'folder-b' },
+        ],
+      },
+    });
+    if (parsed.trigger_type !== 'WORKSPACE_FILE_MODIFIED') throw new Error('narrow');
+    expect(parsed.config.drive_folders).toHaveLength(2);
+  });
+
   it('rejects a Drive folder binding without folder_id', () => {
     expect(() =>
       TriggerConfig.parse({
