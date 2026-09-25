@@ -31,6 +31,10 @@ vi.mock('../integrations/oauth/drive.js', () => ({
 vi.mock('../integrations/oauth/crypto.js', () => ({
   createDefaultKmsClient: vi.fn(async () => ({ encrypt: vi.fn(), decrypt: vi.fn() })),
 }));
+// Fix-round item 3, second half: runDriveReconciliationSweep is mocked so
+// the wiring test below is deterministic — the sweep's own scan/invoke
+// logic is covered independently in drive-changes-runner.test.ts.
+const runDriveReconciliationSweepMock = vi.fn();
 vi.mock('../integrations/connectors/drive-changes-runner.js', async () => {
   const actual = await vi.importActual<typeof import('../integrations/connectors/drive-changes-runner.js')>(
     '../integrations/connectors/drive-changes-runner.js',
@@ -38,6 +42,7 @@ vi.mock('../integrations/connectors/drive-changes-runner.js', async () => {
   return {
     ...actual,
     loadDriveAccessToken: (...args: unknown[]) => loadDriveAccessTokenMock(...args),
+    runDriveReconciliationSweep: (...args: unknown[]) => runDriveReconciliationSweepMock(...args),
   };
 });
 
@@ -437,16 +442,57 @@ describe('alertDriveSubscriptionRenewal', () => {
 describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 correction)', () => {
   beforeEach(() => {
     renewDriveSubscriptionsMock.mockReset();
+    runDriveReconciliationSweepMock.mockReset();
+    runDriveReconciliationSweepMock.mockResolvedValue({ scanned: 0, ran: 0, skipped: 0, errored: 0 });
   });
 
-  it('acquires the lease and runs the sweep, returning its summary unchanged', async () => {
+  it('acquires the lease and runs the sweep, returning its summary plus the reconciliation result', async () => {
     const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
     renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 3, renewed: 2, degraded: 0, failed: 1 });
 
     const result = await runDriveSubscriptionRenewal({ db: store.client });
 
-    expect(result).toEqual({ scanned: 3, renewed: 2, degraded: 0, failed: 1 });
+    expect(result).toEqual({
+      scanned: 3, renewed: 2, degraded: 0, failed: 1,
+      reconciliation: { scanned: 0, ran: 0, skipped: 0, errored: 0 },
+    });
     expect(renewDriveSubscriptionsMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Fix-round item 3, second half: the periodic reconciliation backstop —
+  // a webhook proves delivery, not completeness.
+  describe('reconciliation sweep wiring', () => {
+    it('runs the reconciliation sweep in the SAME lease-held pass, after renewal, and merges its result', async () => {
+      const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+      renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 5, renewed: 5, degraded: 0, failed: 0 });
+      runDriveReconciliationSweepMock.mockResolvedValueOnce({ scanned: 2, ran: 1, skipped: 1, errored: 0 });
+
+      const result = await runDriveSubscriptionRenewal({ db: store.client });
+
+      expect(runDriveReconciliationSweepMock).toHaveBeenCalledTimes(1);
+      expect(result.reconciliation).toEqual({ scanned: 2, ran: 1, skipped: 1, errored: 0 });
+    });
+
+    it('a thrown reconciliation sweep does NOT lose the renewal summary — failure-isolated', async () => {
+      const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+      renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 4, renewed: 3, degraded: 1, failed: 0 });
+      runDriveReconciliationSweepMock.mockRejectedValueOnce(new Error('reconciliation exploded'));
+
+      const result = await runDriveSubscriptionRenewal({ db: store.client });
+
+      expect(result).toMatchObject({ scanned: 4, renewed: 3, degraded: 1, failed: 0 });
+      expect(result.reconciliation).toBeUndefined();
+    });
+
+    it('when the renewal lease is held elsewhere, the reconciliation sweep never runs either', async () => {
+      const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, {
+        held: { holder: 'other-instance:1:nonce', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      });
+
+      await runDriveSubscriptionRenewal({ db: store.client });
+
+      expect(runDriveReconciliationSweepMock).not.toHaveBeenCalled();
+    });
   });
 
   it('returns skipped:true with a zeroed summary when the lease is already held by another instance', async () => {
