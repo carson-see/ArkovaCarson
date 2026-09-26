@@ -1602,6 +1602,25 @@ describe('defaultMaterializeAnchor — connector document-update supersession (f
     expect(db.connectorArtifact).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a non-RFC-variant uuid from supersede_anchor (a value Postgres legitimately holds) instead of reporting lost_lease', async () => {
+    // FD-15 / BUG-2026-08-12-003: the RPC result is a Postgres `uuid` read
+    // back from the database, so it is validated with dbUuid() (shape only).
+    // A strict RFC `.uuid()` rejects e.g. the nil-variant form below — which
+    // would turn a COMMITTED supersede into a spurious `lost_lease` and leave
+    // the artifact unlinked. Pinned by external-uuid-strictness.ratchet.test.ts.
+    const NON_RFC_ID = '00000000-0000-0000-0000-000000000001';
+    vi.mocked(callRpc).mockImplementation(async (_db, name) => {
+      expect(name).toBe('supersede_anchor');
+      return { data: NON_RFC_ID, error: null };
+    });
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_OLD } });
+
+    const result = await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(result).toEqual({ outcome: 'linked', anchorId: NON_RFC_ID, anchorPublicId: 'ARK-NEW-1', created: true });
+    expect(db.connectorArtifact).toHaveBeenCalledTimes(1);
+  });
+
   it('the prior anchor is left to the RPC\'s own SUPERSEDED transition, never explicitly REVOKED, by this glue code', async () => {
     // This test pins the CONTRACT this code relies on rather than re-deriving
     // supersede_anchor's own SQL (out of scope — see the RPC's own migration/
