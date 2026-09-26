@@ -199,6 +199,8 @@ export interface OrgProfile {
   linkedin_url: string | null;
   twitter_url: string | null;
   logo_url: string | null;
+  logo_storage_path?: string | null;
+  banner_storage_path?: string | null;
   location: string | null;
   founded_date: string | null;
   industry_tag: string | null;
@@ -222,36 +224,47 @@ export function useOrgProfile(): UseOrgProfileReturn {
   const [profile, setProfile] = useState<OrgProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const generationRef = useRef(0);
 
   const fetchProfile = useCallback(async (orgId: string) => {
+    const generation = ++generationRef.current;
     setLoading(true);
     setError(null);
+    setProfile(null);
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase as any).rpc(
-        'get_public_org_profile',
+        'get_public_org_profile_v2',
         { p_org_id: orgId }
       );
 
       if (rpcError) {
+        if (generation !== generationRef.current) return;
         setError(rpcError.message);
         return;
       }
 
       // RPC returns SETOF jsonb — unwrap from function name key
-      const result = Array.isArray(data) ? data[0]?.get_public_org_profile ?? data[0] : data;
+      const result = Array.isArray(data) ? data[0]?.get_public_org_profile_v2 ?? data[0]?.get_public_org_profile ?? data[0] : data;
 
       if (result?.error) {
+        if (generation !== generationRef.current) return;
         setError(result.error as string);
         return;
       }
 
+      if (generation !== generationRef.current) return;
+      if (!result || result.org_id !== orgId || typeof result.display_name !== 'string') {
+        setError('Organization profile response was invalid');
+        return;
+      }
       setProfile(result as OrgProfile);
     } catch (err) {
+      if (generation !== generationRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load profile');
     } finally {
-      setLoading(false);
+      if (generation === generationRef.current) setLoading(false);
     }
   }, []);
 
@@ -355,6 +368,8 @@ export interface PublicMemberProfile {
   public_id: string;
   display_name: string;
   avatar_url: string | null;
+  avatar_storage_path?: string | null;
+  banner_storage_path?: string | null;
   bio: string | null;
   social_links: Record<string, string> | null;
   created_at: string;
@@ -372,35 +387,48 @@ export function usePublicMemberProfile(): UsePublicMemberProfileReturn {
   const [profile, setProfile] = useState<PublicMemberProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const generationRef = useRef(0);
 
   const fetchProfile = useCallback(async (publicId: string) => {
+    const generation = ++generationRef.current;
     setLoading(true);
     setError(null);
+    setProfile(null);
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase as any).rpc(
-        'get_public_member_profile',
+        'get_public_member_profile_v2',
         { p_public_id: publicId },
       );
 
       if (rpcError) {
+        if (generation !== generationRef.current) return;
         setError(rpcError.message);
         return;
       }
 
-      const result = Array.isArray(data) ? data[0]?.get_public_member_profile ?? data[0] : data;
+      const result = Array.isArray(data)
+        ? data[0]?.get_public_member_profile_v2 ?? data[0]?.get_public_member_profile ?? data[0]
+        : data;
 
       if (result?.error) {
+        if (generation !== generationRef.current) return;
         setError(result.error as string);
         return;
       }
 
+      if (generation !== generationRef.current) return;
+      if (!result || result.public_id !== publicId || typeof result.display_name !== 'string' || !Array.isArray(result.organizations)) {
+        setError('Profile response was invalid');
+        return;
+      }
       setProfile(result as PublicMemberProfile);
     } catch (err) {
+      if (generation !== generationRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load profile');
     } finally {
-      setLoading(false);
+      if (generation === generationRef.current) setLoading(false);
     }
   }, []);
 
