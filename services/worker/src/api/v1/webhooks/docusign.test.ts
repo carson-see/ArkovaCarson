@@ -1313,7 +1313,10 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
       p_org_id: ORG_ID,
       p_source: 'docusign',
       p_external_ref: 'env-inbound-1',
-      p_external_revision: null,
+      // Content-addressed identity (docusign-content-addressed-revision):
+      // the declared hash IS the per-version identity here too — DocuSign
+      // gives this path no other revision token to key on.
+      p_external_revision: VALID_DOC_SHA256,
       p_fingerprint_sha256: VALID_DOC_SHA256, // the DECLARED hash — never a server-fetched one
       p_metadata: expect.objectContaining({
         _direction: 'inbound',

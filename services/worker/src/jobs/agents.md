@@ -1,3 +1,47 @@
+## 2026-09-25 — fix/docusign-content-addressed-revision: `docusign-envelope-completed.ts`'s `enqueueSignedDocument` now writes a real `external_revision`
+
+`enqueueSignedDocument`'s call to `enqueue_connector_artifact` (mig 0343) passed
+`p_external_revision: null` unconditionally. In prod this meant every `docusign`
+`connector_artifact` row (27/27) had `external_revision IS NULL`, vs 8/8 populated
+for `google_drive` — degenerating the dedupe key
+`(org_id, source, external_ref, COALESCE(external_revision,''))` from per-VERSION
+to per-ENVELOPE for the whole source. DocuSign Connect's envelope-completed
+payload (`DocusignEnvelopeCompleted`, `integrations/connectors/schemas.ts`) has
+no native revision token (no `documentIdGuid`/`statusChangedDateTime`/
+`completedDateTime`/`sentDateTime`/ETag), and DocuSign itself has no "new
+version of a completed envelope" concept — an amendment is a new envelope. So
+`external_revision` is now set to the SAME server-measured `fingerprint`
+(computed a few lines above, already in scope) this call sends as
+`p_fingerprint_sha256` — content-addressed identity, mirroring the precedent
+Drive already uses for a source with no native revision
+(`DRIVE_REVISION_KINDS` synthetic tokens, `integrations/connectors/
+drive-artifact-producer.ts`). The paired webhook-side inbound call
+(`api/v1/webhooks/docusign.ts`'s `enqueueInboundDeclaredHashArtifact`, see that
+folder's `agents.md`) gets the identical treatment, keyed off the DECLARED hash
+instead of a measured one.
+
+Paired compensating migration `supabase/migrations/
+0484_docusign_content_addressed_external_revision_backfill.sql`
+(`UPDATE connector_artifact SET external_revision = fingerprint_sha256 WHERE
+source='docusign' AND external_revision IS NULL`) is MANDATORY, not optional:
+without it, a genuine post-fix event for one of the 27 pre-existing envelopes
+computes a dedupe key that no longer matches its own existing row's key,
+producing a spurious duplicate. **NOT applied anywhere** (no rig, no staging,
+no prod) — see that migration's header and `supabase/migrations/agents.md`'s
+`(PR #TBD — fix/docusign-content-addressed-revision)` entry.
+
+New tests in `docusign-envelope-completed.test.ts` (`enqueueSignedDocument —
+DS-03 …` describe block): the pre-existing "computes a server-side SHA-256…"
+test's `p_external_revision` assertion changed from `null` to the fingerprint;
+two new cases assert (a) two different documents for the SAME envelope
+produce distinct `external_revision` values and both persist as separate
+rows, and (b) replaying the SAME envelope+fingerprint computes an IDENTICAL
+dedupe key both times (RPC `ON CONFLICT DO NOTHING` collapses it to one row).
+Drive's own call site (`drive-file-changed.ts` / `drive-artifact-producer.ts`)
+is untouched — already populates its own `external_revision` and is
+structurally independent of this change; its test suites were re-run
+unmodified as a regression check (26/26 green, unchanged).
+
 ## 2026-09-13 — SCRUM-4514: `webhook-dlq-report.ts` — first reader of `webhook_dlq`
 
 New job, `POST /jobs/webhook-dlq-report` (Cloud Scheduler HTTP trigger only, same shape as

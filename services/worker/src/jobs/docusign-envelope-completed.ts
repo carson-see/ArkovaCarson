@@ -481,7 +481,15 @@ export function makeDocusignEnvelopeJobDeps(
         p_org_id: input.orgId,
         p_source: 'docusign',
         p_external_ref: input.envelopeId,
-        p_external_revision: null,
+        // docusign-content-addressed-revision (backfill: migration 0487):
+        // DocuSign Connect's envelope-completed payload has no native
+        // per-version revision token (no documentIdGuid/statusChangedDateTime/
+        // ETag), so the fingerprint itself is the per-version identity — the
+        // dedupe key (org_id, source, external_ref, COALESCE(external_revision,''))
+        // otherwise degenerates from per-version to per-envelope, which was
+        // the case for every one of the 27 prod `docusign` connector_artifact
+        // rows (0/27 had external_revision populated, vs 8/8 for google_drive).
+        p_external_revision: fingerprint,
         p_fingerprint_sha256: fingerprint,
         p_byte_length: byteLength,
         p_source_timestamp: input.sourceTimestamp,

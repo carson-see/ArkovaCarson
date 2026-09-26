@@ -776,7 +776,12 @@ async function enqueueInboundDeclaredHashArtifact(args: {
     p_org_id: args.integration.org_id,
     p_source: 'docusign',
     p_external_ref: args.event.envelopeId,
-    p_external_revision: null,
+    // docusign-content-addressed-revision (backfill: migration 0487): same
+    // rationale as the outbound path (docusign-envelope-completed.ts) — this
+    // vendor gives us no native per-version revision, so the (here, DECLARED
+    // rather than measured) fingerprint is the per-version identity used for
+    // the dedupe key's third component.
+    p_external_revision: args.declaredHash,
     p_fingerprint_sha256: args.declaredHash,
     p_byte_length: null,
     p_source_timestamp: args.event.generatedDateTime ?? null,

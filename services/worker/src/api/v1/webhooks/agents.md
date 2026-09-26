@@ -1,7 +1,38 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
+_Last updated: 2026-09-25 (`docusign.ts`'s `enqueueInboundDeclaredHashArtifact` now writes a real `external_revision` — fix/docusign-content-addressed-revision)_
 _Last updated: 2026-09-21 (`drive.ts` catch block now logs `httpStatus`/`errorDetail` as structured fields — SCRUM-2903/3661/5094/2330)_
 _Last updated: 2026-09-13 (SCRUM-4514: CTO decision — no raw-body retention, no server-side replay)_
+
+## 2026-09-25 — fix/docusign-content-addressed-revision: `docusign.ts`'s `enqueueInboundDeclaredHashArtifact` now writes a real `external_revision`
+
+Same defect and same fix as the outbound job's `enqueueSignedDocument`
+(`jobs/docusign-envelope-completed.ts`, see that folder's `agents.md`), on
+the INBOUND declared-hash side: `p_external_revision: null` unconditionally,
+against the SAME dedupe key
+`(org_id, source, external_ref, COALESCE(external_revision,''))` the
+outbound path writes to for the same envelope. Now sets
+`p_external_revision: args.declaredHash` — the SAME value already sent as
+`p_fingerprint_sha256` a few lines below, so this is a one-line change with
+no new data source. This is the DECLARED (vendor-asserted, unverified) hash,
+not a server-measured one, consistent with everything else this function
+already does (`p_fingerprint_sha256: args.declaredHash`) — content-addressing
+does not change trust posture here, only the dedupe key's third component.
+
+Existing test `anchors via the declared-hash path when flag is ON: …` in
+`docusign.test.ts` updated in place (`p_external_revision` assertion:
+`null` -> `VALID_DOC_SHA256`). The outbound-then-inbound ordering test
+(`enqueue_connector_artifact` `ON CONFLICT DO NOTHING` returning a
+pre-existing outbound-owned row id) is unaffected by this change — it was
+already, and remains, agnostic to what value `external_revision` carries,
+since it asserts on call COUNT, not on that argument.
+
+Paired compensating migration:
+`supabase/migrations/0487_docusign_content_addressed_external_revision_backfill.sql`
+— NOT applied anywhere. See `jobs/agents.md`'s matching entry and
+`supabase/migrations/agents.md`'s `(PR #TBD —
+fix/docusign-content-addressed-revision)` entry for the full rationale
+(shared across both call sites) and the backfill's safety argument.
 
 ## 2026-09-21 — `drive.ts`: structured `httpStatus`/`errorDetail` on the `runDriveChanges` failure log (fields-mask incident follow-up)
 

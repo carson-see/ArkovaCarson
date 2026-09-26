@@ -306,7 +306,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       return { db, rpcCalls, state };
     }
 
-    it('computes a server-side SHA-256 and enqueues a durable connector artifact via the 0343 RPC', async () => {
+    it('computes a server-side SHA-256 and enqueues a durable connector artifact via the 0343 RPC, with external_revision = the fingerprint (content-addressed identity — DocuSign has no native per-version revision)', async () => {
       const { db, rpcCalls } = makeDb();
       const deps = makeDocusignEnvelopeJobDeps({ db });
 
@@ -318,7 +318,14 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         p_org_id: ORG_ID,
         p_source: 'docusign',
         p_external_ref: 'envelope-1',
-        p_external_revision: null,
+        // Content-addressed identity (docusign-content-addressed-revision):
+        // DocuSign Connect's envelope-completed payload carries no native
+        // per-version revision token, so the dedupe key's third component is
+        // the fingerprint itself — the ONLY per-version identity this vendor
+        // gives us. Was `null` pre-fix, which degenerated the dedupe key from
+        // per-version to per-envelope for every one of the 27 prod
+        // `docusign` connector_artifact rows.
+        p_external_revision: EXPECTED_SHA256,
         p_fingerprint_sha256: EXPECTED_SHA256,
         p_byte_length: SIGNED_BYTES.byteLength,
         p_source_timestamp: '2026-06-24T10:00:00.000Z',
@@ -337,6 +344,82 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
 
       expect(result).toEqual({ queuedId: 'existing-artifact' });
+    });
+
+    it('two DIFFERENT documents for the SAME envelope produce distinct dedupe keys (external_revision) and both persist as separate rows', async () => {
+      // Same envelopeId (external_ref), different bytes -> different
+      // fingerprints -> different external_revision -> the UNIQUE INDEX
+      // (org_id, source, external_ref, COALESCE(external_revision,'')) sees
+      // two DISTINCT keys, so both rows persist instead of the second
+      // silently colliding with (and being dropped in favor of) the first —
+      // which is exactly what happened pre-fix, when external_revision was
+      // always null and the key degenerated to per-envelope only.
+      const bytesA = Buffer.from('document A bytes');
+      const bytesB = Buffer.from('document B bytes');
+      const fingerprintA = createHash('sha256').update(bytesA).digest('hex');
+      const fingerprintB = createHash('sha256').update(bytesB).digest('hex');
+      expect(fingerprintA).not.toBe(fingerprintB);
+
+      const { db: dbA, rpcCalls: rpcCallsA } = makeDb({
+        artifactResult: { data: 'artifact-doc-a', error: null },
+        provenanceResult: { data: { fingerprint_sha256: fingerprintA, metadata: null }, error: null },
+      });
+      const resultA = await makeDocusignEnvelopeJobDeps({ db: dbA }).enqueueSignedDocument({
+        ...SINK_INPUT,
+        documentBytes: bytesA,
+      });
+
+      const { db: dbB, rpcCalls: rpcCallsB } = makeDb({
+        artifactResult: { data: 'artifact-doc-b', error: null },
+        provenanceResult: { data: { fingerprint_sha256: fingerprintB, metadata: null }, error: null },
+      });
+      const resultB = await makeDocusignEnvelopeJobDeps({ db: dbB }).enqueueSignedDocument({
+        ...SINK_INPUT,
+        documentBytes: bytesB,
+      });
+
+      // Same envelope (external_ref) both times.
+      expect(rpcCallsA[0].args.p_external_ref).toBe('envelope-1');
+      expect(rpcCallsB[0].args.p_external_ref).toBe('envelope-1');
+      // Distinct dedupe-key third component.
+      expect(rpcCallsA[0].args.p_external_revision).toBe(fingerprintA);
+      expect(rpcCallsB[0].args.p_external_revision).toBe(fingerprintB);
+      expect(rpcCallsA[0].args.p_external_revision).not.toBe(rpcCallsB[0].args.p_external_revision);
+      // Both persist as distinct artifact rows — neither was dropped by the
+      // dedupe index colliding with the other.
+      expect(resultA).toEqual({ queuedId: 'artifact-doc-a' });
+      expect(resultB).toEqual({ queuedId: 'artifact-doc-b' });
+    });
+
+    it('replaying the SAME envelope+fingerprint dedupes to ONE row (identical dedupe key both times, RPC ON CONFLICT DO NOTHING returns the same id)', async () => {
+      // Two independent deliveries of the identical document (a webhook
+      // redelivery or job retry) must compute the IDENTICAL dedupe key so
+      // Postgres's ON CONFLICT DO NOTHING collapses them to one row. Each
+      // delivery is modeled as its own fresh db/deps pair (a real retry is a
+      // brand-new job execution, not a second call against warm state), and
+      // both are configured to return the row's real (pre-existing) id — the
+      // same behavior the 0343 RPC provides on a genuine conflict.
+      const { db: dbFirst, rpcCalls: rpcCallsFirst } = makeDb({
+        artifactResult: { data: 'artifact-idempotent-1', error: null },
+      });
+      const first = await makeDocusignEnvelopeJobDeps({ db: dbFirst }).enqueueSignedDocument({
+        ...SINK_INPUT,
+      });
+
+      const { db: dbSecond, rpcCalls: rpcCallsSecond } = makeDb({
+        artifactResult: { data: 'artifact-idempotent-1', error: null },
+      });
+      const second = await makeDocusignEnvelopeJobDeps({ db: dbSecond }).enqueueSignedDocument({
+        ...SINK_INPUT,
+      });
+
+      // Identical dedupe key (org_id, source, external_ref, external_revision)
+      // on both deliveries.
+      expect(rpcCallsFirst[0].args).toEqual(rpcCallsSecond[0].args);
+      expect(rpcCallsFirst[0].args.p_external_revision).toBe(EXPECTED_SHA256);
+      // Both resolve to the SAME artifact id — one row, not two.
+      expect(first).toEqual({ queuedId: 'artifact-idempotent-1' });
+      expect(second).toEqual({ queuedId: 'artifact-idempotent-1' });
     });
 
     it('does not put the fingerprint or raw bytes into the integration_events audit details', async () => {
