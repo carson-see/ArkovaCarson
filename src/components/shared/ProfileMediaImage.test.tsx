@@ -4,9 +4,26 @@ import { act, render, renderHook, screen, waitFor } from '@testing-library/react
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createSignedUrl = vi.hoisted(() => vi.fn());
+const { authStateListeners, onAuthStateChange } = vi.hoisted(() => {
+  const authStateListeners: Array<(event: string, session: unknown) => void> = [];
+  const onAuthStateChange = vi.fn((cb: (event: string, session: unknown) => void) => {
+    authStateListeners.push(cb);
+    return { data: { subscription: { unsubscribe: vi.fn() } } };
+  });
+  return { authStateListeners, onAuthStateChange };
+});
 vi.mock('@/lib/supabase', () => ({
-  supabase: { storage: { from: () => ({ createSignedUrl }) } },
+  supabase: {
+    storage: { from: () => ({ createSignedUrl }) },
+    auth: { onAuthStateChange },
+  },
 }));
+
+/** Fires every registered `supabase.auth.onAuthStateChange` listener — stands
+ * in for a real session/AAL change (sign-in, MFA step-up, token refresh). */
+function fireAuthStateChange(event = 'TOKEN_REFRESHED') {
+  for (const listener of authStateListeners) listener(event, null);
+}
 
 import {
   ProfileMediaImage,
@@ -18,6 +35,8 @@ describe('profile media signing', () => {
   beforeEach(() => {
     vi.useRealTimers();
     createSignedUrl.mockReset();
+    authStateListeners.length = 0;
+    onAuthStateChange.mockClear();
   });
 
   it.each([
@@ -105,7 +124,7 @@ describe('profile media signing', () => {
       }
     });
 
-    it('gives up after a bounded number of consecutive failures and stays on the fallback', async () => {
+    it('gives up after a bounded number of consecutive failures and stays on the fallback absent a recovery signal', async () => {
       vi.useFakeTimers();
       createSignedUrl.mockResolvedValue({ data: null, error: { message: 'temporarily unavailable', status: 500 } });
       const { result } = renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
@@ -116,18 +135,129 @@ describe('profile media signing', () => {
       expect(createSignedUrl.mock.calls.length).toBeLessThanOrEqual(6);
       expect(result.current).toBe(FALLBACK);
       const settled = createSignedUrl.mock.calls.length;
+      // Time alone is still not a recovery signal — bounded means bounded.
       await act(async () => { vi.advanceTimersByTime(600_000); await Promise.resolve(); });
       expect(createSignedUrl).toHaveBeenCalledTimes(settled);
     });
 
-    it('stops immediately on a permission-style denial rather than backing off', async () => {
-      vi.useFakeTimers();
-      createSignedUrl.mockResolvedValue({ data: null, error: { message: 'Object not found', status: 403 } });
-      renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
-      await act(async () => { await Promise.resolve(); });
-      expect(createSignedUrl).toHaveBeenCalledTimes(1);
-      await act(async () => { vi.advanceTimersByTime(600_000); await Promise.resolve(); });
-      expect(createSignedUrl).toHaveBeenCalledTimes(1);
+    // P2 review follow-up (PR #3033): a temporary outage exhausted the bounded
+    // retries above, and the hook stayed on the fallback for the rest of the
+    // session — scheduling AND the visibility handler both refused to sign
+    // once stopped, and the effect depends only on `storagePath`, so nothing
+    // short of a remount could recover. Reproduced: six offline failures ->
+    // a subsequently-successful signing mock -> `online` event -> a visible-
+    // tab event -> still no recovery. Fixed by resetting the circuit on a
+    // meaningful recovery signal (`online`, tab becoming visible, or an
+    // auth-state change) instead of latching permanently.
+    describe('recovery after exhaustion (was: permanent — see P2 review follow-up)', () => {
+      it('recovers when the browser comes back online after exhausting retries', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: null, error: { message: 'temporarily unavailable', status: 500 } });
+        const { result } = renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        for (let i = 0; i < 12; i += 1) {
+          await act(async () => { vi.advanceTimersByTime(60_000); await Promise.resolve(); });
+        }
+        const settled = createSignedUrl.mock.calls.length;
+        expect(result.current).toBe(FALLBACK);
+
+        createSignedUrl.mockResolvedValue({ data: { signedUrl: 'https://signed.example/recovered' }, error: null });
+        await act(async () => { window.dispatchEvent(new Event('online')); await Promise.resolve(); });
+
+        expect(createSignedUrl.mock.calls.length).toBeGreaterThan(settled);
+        expect(result.current).toBe('https://signed.example/recovered');
+      });
+
+      it('recovers when the tab becomes visible after exhausting retries', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: null, error: { message: 'temporarily unavailable', status: 500 } });
+        renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        for (let i = 0; i < 12; i += 1) {
+          await act(async () => { vi.advanceTimersByTime(60_000); await Promise.resolve(); });
+        }
+        const settled = createSignedUrl.mock.calls.length;
+
+        createSignedUrl.mockResolvedValue({ data: { signedUrl: 'https://signed.example/recovered' }, error: null });
+        act(() => { setVisibility('hidden'); });
+        await act(async () => { setVisibility('visible'); await Promise.resolve(); });
+
+        expect(createSignedUrl.mock.calls.length).toBeGreaterThan(settled);
+      });
+
+      it('resumes bounded backoff (not unbounded polling) if recovery itself fails again', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: null, error: { message: 'temporarily unavailable', status: 500 } });
+        renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        for (let i = 0; i < 12; i += 1) {
+          await act(async () => { vi.advanceTimersByTime(60_000); await Promise.resolve(); });
+        }
+        const settled = createSignedUrl.mock.calls.length;
+
+        // Recovery signal fires, but the object is still unavailable — must
+        // not spin: it re-settles after another bounded run, not forever.
+        await act(async () => { window.dispatchEvent(new Event('online')); await Promise.resolve(); });
+        for (let i = 0; i < 12; i += 1) {
+          await act(async () => { vi.advanceTimersByTime(60_000); await Promise.resolve(); });
+        }
+        const resettled = createSignedUrl.mock.calls.length;
+        expect(resettled - settled).toBeLessThanOrEqual(6);
+
+        await act(async () => { vi.advanceTimersByTime(600_000); await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(resettled);
+      });
+    });
+
+    describe('permission failures: reconsidered only on a session/AAL change, never continuous unauthorized polling', () => {
+      it('stops immediately on a permission-style denial rather than backing off', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: null, error: { message: 'Object not found', status: 403 } });
+        renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(1);
+        await act(async () => { vi.advanceTimersByTime(600_000); await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(1);
+      });
+
+      it('does NOT retry on a plain online/visibility signal — that would be continuous unauthorized polling', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: null, error: { message: 'Object not found', status: 403 } });
+        renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(1);
+
+        await act(async () => { window.dispatchEvent(new Event('online')); await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(1);
+
+        act(() => { setVisibility('hidden'); });
+        await act(async () => { setVisibility('visible'); await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(1);
+      });
+
+      it('reconsiders after a session/AAL change (sign-in, MFA step-up, token refresh)', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: null, error: { message: 'Object not found', status: 403 } });
+        renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        expect(createSignedUrl).toHaveBeenCalledTimes(1);
+
+        createSignedUrl.mockResolvedValue({ data: { signedUrl: 'https://signed.example/now-authorized' }, error: null });
+        await act(async () => { fireAuthStateChange('MFA_CHALLENGE_VERIFIED'); await Promise.resolve(); });
+
+        expect(createSignedUrl).toHaveBeenCalledTimes(2);
+      });
+
+      it('unsubscribes the auth-state listener on unmount', async () => {
+        vi.useFakeTimers();
+        createSignedUrl.mockResolvedValue({ data: { signedUrl: 'https://signed.example/one' }, error: null });
+        const { unmount } = renderHook(() => useProfileMediaUrl(PATH, FALLBACK));
+        await act(async () => { await Promise.resolve(); });
+        expect(onAuthStateChange).toHaveBeenCalledTimes(1);
+        const { unsubscribe } = onAuthStateChange.mock.results[0]!.value.data.subscription;
+        unmount();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('does not poll while the tab is hidden and re-signs when it comes back', async () => {

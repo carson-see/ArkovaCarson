@@ -23,3 +23,36 @@ and signs nothing while the tab is hidden, re-signing on `visibilitychange`.
 The healthy 25-second refresh inside the 30-second lease is unchanged. Do not
 restore an unconditional fixed-interval retry: an unsignable object otherwise
 polls Storage forever, once per image.
+
+## 2026-09-26 — Signed-URL retry recovers on a signal instead of latching permanently (P2 review follow-up)
+
+The 2026-09-21 bounded-retry design above had a gap: once stopped (either
+six consecutive transport/server failures, or an immediate permission-style
+denial), NOTHING could resume it short of a remount — `schedule()` refused to
+arm a timer while stopped, and the `visibilitychange` handler called `sign()`
+directly, which itself refused to run while stopped. There was also no
+`online` listener at all. Reproduced: six offline failures, then a
+subsequently-successful signing mock, then an `online` event, then a
+visible-tab event — no recovery.
+
+Fixed by tracking WHY signing stopped (`stopReason: 'exhausted' | 'terminal' |
+null`) and gating recovery accordingly through a single `recover(allowedReasons)`
+helper:
+- `'exhausted'` (bounded retries ran out) resumes on `online` OR the tab
+  becoming visible — the outage that exhausted retries may simply be over.
+- `'terminal'` (permission-style denial — the viewer isn't allowed to read
+  this object right now) does NOT resume on `online`/visibility — that would
+  be continuous unauthorized polling against Storage — but DOES resume on a
+  `supabase.auth.onAuthStateChange` event (sign-in, MFA step-up, token
+  refresh), since a session/AAL change is exactly the kind of event that can
+  make a previously-forbidden object signable.
+
+The auth subscription is read with optional chaining
+(`supabase.auth?.onAuthStateChange?.(...)`) so a test harness's minimal
+`supabase` mock (storage-only, no `auth` — `Header.test.tsx`,
+`ProfileCard.test.tsx`) degrades to "no auth-driven recovery" rather than
+throwing; production `supabase` always has `.auth`, so this changes nothing
+for real usage.
+
+Do not revert to gating `sign()` itself on a stopped flag — recovery is now
+the caller's decision (`recover()`), not something baked into `sign()`.

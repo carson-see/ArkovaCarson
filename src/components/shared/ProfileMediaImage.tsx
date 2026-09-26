@@ -69,10 +69,18 @@ export function useProfileMediaUrl(storagePath?: string | null, fallbackUrl?: st
     if (!storagePath) return () => { active = false; };
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
-    // Set when the object is not signable for this viewer at all, or after
-    // SIGNED_URL_MAX_FAILURES in a row: we stay on the fallback until the
-    // inputs change (which remounts this effect) rather than polling forever.
-    let stopped = false;
+    // Why signing is currently stopped, so a recovery signal can decide
+    // whether retrying is safe:
+    //   'exhausted' — bounded transport/server retries ran out (SCRUM
+    //     UAT-14 P2 review). A network/visibility recovery signal is exactly
+    //     what should resume it — the outage that exhausted retries may
+    //     simply be over.
+    //   'terminal'  — the viewer isn't allowed to read this object right now
+    //     (private media, wrong org, AAL1 session). Retrying on the same
+    //     online/visibility signals would just be continuous unauthorized
+    //     polling against Storage, so only a session/AAL change (sign-in,
+    //     MFA step-up, token refresh) is a legitimate reason to reconsider.
+    let stopReason: 'exhausted' | 'terminal' | null = null;
 
     const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
@@ -80,43 +88,71 @@ export function useProfileMediaUrl(storagePath?: string | null, fallbackUrl?: st
       if (timer) clearTimeout(timer);
       timer = undefined;
       // A hidden tab renders nothing; `visibilitychange` resumes immediately.
-      if (!active || stopped || hidden()) return;
+      if (!active || stopReason !== null || hidden()) return;
       timer = setTimeout(() => { void sign(); }, delay);
     };
 
     const sign = async () => {
       // Re-checked here, not only at schedule time: a timer armed while visible
       // still fires after the tab is hidden.
-      if (!active || stopped || hidden()) return;
+      if (!active || hidden()) return;
       try {
         const { data, error } = await supabase.storage.from('profile-media')
           .createSignedUrl(storagePath, SIGNED_URL_SECONDS);
         if (!active) return;
         if (!error && data?.signedUrl) {
           failures = 0;
+          stopReason = null;
           setSigned({ path: storagePath, url: data.signedUrl });
           schedule(SIGNED_URL_REFRESH_MS);
           return;
         }
         setSigned(null);
-        if (isTerminalSigningError(error)) { stopped = true; return; }
+        if (isTerminalSigningError(error)) { stopReason = 'terminal'; return; }
       } catch {
         // A thrown error is transport-level (offline, DNS) — retryable.
         if (!active) return;
         setSigned(null);
       }
       failures += 1;
-      if (failures >= SIGNED_URL_MAX_FAILURES) { stopped = true; return; }
+      if (failures >= SIGNED_URL_MAX_FAILURES) { stopReason = 'exhausted'; return; }
       schedule(Math.min(SIGNED_URL_RETRY_BASE_MS * 2 ** (failures - 1), SIGNED_URL_RETRY_MAX_MS));
     };
 
-    const onVisibility = () => { if (!hidden()) void sign(); };
+    /**
+     * A recovery signal fired. Only acts if signing is either not currently
+     * stopped, or stopped for one of `allowedReasons` — e.g. a plain
+     * online/visibility event must NOT resume a `'terminal'` stop (that would
+     * be continuous unauthorized polling), only a session/AAL change should.
+     */
+    const recover = (allowedReasons: ReadonlyArray<'exhausted' | 'terminal'>) => {
+      if (!active || hidden()) return;
+      if (stopReason !== null && !allowedReasons.includes(stopReason)) return;
+      failures = 0;
+      stopReason = null;
+      void sign();
+    };
+
+    const onVisibility = () => { if (!hidden()) recover(['exhausted']); };
+    const onOnline = () => recover(['exhausted']);
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
+
+    // Session/AAL change (sign-in, MFA step-up, token refresh) is the only
+    // legitimate reason to reconsider a 'terminal' (permission) stop —
+    // guarded with optional chaining so a test harness's minimal `supabase`
+    // mock (storage-only, no `auth`) degrades to "no auth-driven recovery"
+    // rather than throwing.
+    const authSubscription = supabase.auth?.onAuthStateChange?.(() => {
+      recover(['exhausted', 'terminal']);
+    })?.data?.subscription;
 
     if (!hidden()) void sign();
     return () => {
       active = false;
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
+      authSubscription?.unsubscribe();
       if (timer) clearTimeout(timer);
     };
   }, [storagePath]);
