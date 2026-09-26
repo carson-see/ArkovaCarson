@@ -574,3 +574,11 @@ reasoning as the BUG-024 proof-keys mount test above).
 established daily-quota wire contract after reservation moves into PostgreSQL. They remain the
 authority for both `X-Org-Quota-Anchors*` stems, the denying `X-RateLimit-*` override,
 `Retry-After`, and the nested `ORG_QUOTA_EXCEEDED` body. Middleware behavior is unchanged.
+
+## 2026-09-26 — generic agent lifecycle dual-auth gate (SCRUM-3980)
+
+`agentLifecycleAuth.ts` is scoped to the generic `/api/v1/agents` mount. It
+requires exactly one verified JWT or one active API key carrying
+`agents:manage`, rejects valid dual credentials with 409, and fails closed on
+any separately presented malformed/unresolved key header. API-key scope denial
+occurs at the mount before request-body parsing or lifecycle database queries.

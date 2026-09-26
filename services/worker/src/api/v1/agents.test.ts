@@ -77,6 +77,11 @@ describe('Agent Identity schemas', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['oracle'] }).success).toBe(false);
     });
 
+    it('rejects caller-supplied provider metadata', () => {
+      const result = CreateAgentSchema.safeParse({ name: 'forged', metadata: { computeid: { passport_id: 'fake' } } });
+      expect(result.success).toBe(false);
+    });
+
     it('rejects empty scopes array', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [] }).success).toBe(false);
     });

@@ -18,6 +18,7 @@ const dbFromMock = vi.fn();
 vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: vi.fn() } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../config.js', () => ({ config: { apiKeyHmacSecret: 'test-hmac-secret' } }));
 
 import { agentsRouter } from './agents.js';
 

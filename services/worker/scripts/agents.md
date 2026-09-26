@@ -306,3 +306,13 @@ input; the earlier713a qualification remains identified by its actual source.
 Keep verification links in the release commit message as well as the PR body:
 Mergify's initial speculative body may omit the source PR's artifact links,
 while the HANDOFF claim gate also inspects the inherited commit messages.
+
+## 2026-09-26 — 0489 machine revoke coverage (SCRUM-3980)
+
+`test-agent-revoke-concurrency-native.sh` now loads 0488 and 0489. Run it once
+normally for the human RPC and once with
+`REVOKE_RPC=revoke_agent_and_keys_as_api_key` for the machine RPC. Both modes
+force mint/revoke and resume/revoke lock orders; machine mode also proves a
+caller expiring while blocked on its row lock is denied without agent, key, or
+audit changes. The harness remains a focused local PostgreSQL fixture, not a
+full Supabase lineage replay.

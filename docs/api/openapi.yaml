@@ -562,6 +562,124 @@ paths:
         "201":
           description: API key created (raw key returned only once)
 
+  /agents:
+    get:
+      operationId: listAgents
+      summary: List agents in the caller organization
+      tags: [Agents]
+      description: JWT members may read. API keys require agents:manage.
+      security:
+        - bearerAuth: []
+        - apiKey: []
+      responses:
+        "200":
+          description: Tenant-scoped agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+        "401": { description: Missing, malformed, invalid, revoked, or expired credential }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+    post:
+      operationId: registerAgent
+      summary: Register an agent
+      tags: [Agents]
+      description: JWT callers must be ORG_ADMIN. API keys require agents:manage and may delegate only scopes they hold.
+      security:
+        - bearerAuth: []
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentCreate" }
+      responses:
+        "201":
+          description: Agent registered
+          content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } }
+        "400": { $ref: "#/components/responses/AgentBadRequest" }
+        "401": { description: Missing, malformed, invalid, revoked, or expired credential }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+  /agents/{agentId}:
+    parameters:
+      - { name: agentId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAgent
+      summary: Get an agent and active-key metadata
+      description: JWT members may read. API keys require agents:manage.
+      tags: [Agents]
+      security: [{ bearerAuth: [] }, { apiKey: [] }]
+      responses:
+        "200":
+          description: Tenant-scoped agent with active key metadata
+          content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } }
+        "401": { description: Missing, malformed, invalid, revoked, or expired credential }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+    patch:
+      operationId: updateAgent
+      summary: Update, suspend, or resume an agent
+      tags: [Agents]
+      description: JWT callers must be ORG_ADMIN. API keys require agents:manage; allowed_scopes cannot exceed caller scopes. Status and accompanying fields commit atomically. Resume restores only organization-suspended keys still within the current agent scope ceiling; broader historical keys remain inactive.
+      security: [{ bearerAuth: [] }, { apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentUpdate" }
+      responses:
+        "200":
+          description: Agent updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } }
+        "400": { $ref: "#/components/responses/AgentBadRequest" }
+        "401": { description: Missing, malformed, invalid, revoked, or expired credential }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "409": { description: Terminal revocation or provider-owned suspension blocks the transition }
+    delete:
+      operationId: revokeAgent
+      summary: Terminally revoke an agent and its keys
+      tags: [Agents]
+      description: JWT callers must be ORG_ADMIN. API keys require an active, unexpired, same-organization agents:manage credential.
+      security: [{ bearerAuth: [] }, { apiKey: [] }]
+      responses:
+        "200":
+          description: Agent revoked atomically
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, agent_id]
+                properties:
+                  status: { type: string, enum: [revoked] }
+                  agent_id: { type: string, format: uuid }
+        "401": { description: Missing, malformed, invalid, revoked, or expired credential }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+  /agents/{agentId}/key:
+    post:
+      operationId: mintAgentKey
+      summary: Mint an agent API key
+      tags: [Agents]
+      description: Returns the raw key once. API-key callers must satisfy every scope allowed to the target agent.
+      security: [{ bearerAuth: [] }, { apiKey: [] }]
+      parameters:
+        - { name: agentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201":
+          description: Raw agent key returned once
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentKeyCreated" } } }
+        "401": { description: Missing, malformed, invalid, revoked, or expired credential }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { description: Agent is suspended or terminally revoked }
+
   /integrations/google_drive/folders:
     get:
       operationId: listGoogleDriveFolders
@@ -1769,7 +1887,94 @@ components:
       name: X-Payment
       description: Base64-encoded x402 payment proof
 
+  responses:
+    AgentBadRequest:
+      description: Invalid lifecycle request
+      content: { application/json: { schema: { $ref: "#/components/schemas/AgentError" } } }
+    AgentForbidden:
+      description: JWT role, agents:manage, tenant, caller-delegation, or provider scope ceiling denied
+      content: { application/json: { schema: { $ref: "#/components/schemas/AgentError" } } }
+    AmbiguousCaller:
+      description: More than one credential was presented
+      content: { application/json: { schema: { $ref: "#/components/schemas/AgentError" } } }
+
   schemas:
+    AgentCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 1000 }
+        agent_type: { type: string, enum: [llm_agent, ats_integration, hr_platform, compliance_tool, custom], default: custom }
+        allowed_scopes: { type: array, minItems: 1, items: { type: string } }
+        framework: { type: string, maxLength: 100 }
+        version: { type: string, maxLength: 50 }
+        callback_url: { type: string, format: uri, pattern: "^https://" }
+        metadata:
+          type: object
+          description: Arbitrary metadata except the provider-managed computeid namespace.
+          additionalProperties: true
+    AgentUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 1000 }
+        allowed_scopes: { type: array, minItems: 1, items: { type: string } }
+        status: { type: string, enum: [active, suspended] }
+        framework: { type: string, maxLength: 100 }
+        version: { type: string, maxLength: 50 }
+        callback_url: { type: string, format: uri, nullable: true, pattern: "^https://" }
+      additionalProperties: false
+    Agent:
+      type: object
+      required: [id, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        agent_type: { type: string }
+        status: { type: string, enum: [active, suspended, revoked] }
+        allowed_scopes: { type: array, items: { type: string } }
+        framework: { type: string, nullable: true }
+        version: { type: string, nullable: true }
+        callback_url: { type: string, format: uri, nullable: true }
+        metadata: { type: object, additionalProperties: true }
+        api_keys:
+          type: array
+          items:
+            type: object
+            required: [id, name, key_prefix, scopes, is_active, created_at]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              key_prefix: { type: string }
+              scopes: { type: array, items: { type: string } }
+              is_active: { type: boolean }
+              last_used_at: { type: string, format: date-time, nullable: true }
+              created_at: { type: string, format: date-time }
+              expires_at: { type: string, format: date-time, nullable: true }
+    AgentKeyCreated:
+      type: object
+      required: [key, key_id, key_prefix, agent_id, agent_name, scopes, created_at, warning]
+      properties:
+        key: { type: string, description: Returned once and never persisted raw. }
+        key_id: { type: string, format: uuid }
+        key_prefix: { type: string }
+        agent_id: { type: string, format: uuid }
+        agent_name: { type: string }
+        scopes: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        warning: { type: string }
+    AgentError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        message: { type: string }
+        required: { type: string }
+        granted: { type: array, items: { type: string } }
+        missing: { type: array, items: { type: string } }
+
     Folder:
       type: object
       required: [id, public_id, name, owner_scope, created_at, updated_at]

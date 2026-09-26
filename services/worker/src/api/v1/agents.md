@@ -127,15 +127,15 @@ Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and cl
 
 `PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. **Fixed 2026-09-25 (SCRUM-5290):** `PATCH {status:'suspended'}` now deactivates the agent's active keys, and `{status:'active'}` restores them — the auth path reads only `api_keys`, so a status change alone was inert and org-side suspension was decorative. Reactivation matches `revocation_reason = 'admin:agent.suspended'`, a marker deliberately distinct from 0448's `computeid:…` values: an org admin resuming an agent must never revive a key ComputeID suspended. A key-write failure returns 500 rather than reporting a suspension that did not take effect. See `agents-suspend-keys.test.ts`.
 
-**Order is the design, because these are two round-trips and not one transaction.**
-The write that RESTRICTS access commits first, so the crash window fails CLOSED:
-suspend does `keys off -> status suspended` (a crash leaves dead keys and a stale
-`active` status: the agent cannot act, a retry finishes the job); resume does
-`status active -> keys on` (a crash leaves an active status with dead keys: still
-cannot act). Reversing either would leave a suspended agent holding a LIVE key —
-the exact defect this closes. Full atomicity needs a SECURITY DEFINER function
-doing both writes under a row lock, the way 0448 does; that is a migration (T3)
-and is deliberate follow-up, not an oversight.
+**Status transitions are now one transaction.** Migration 0489's
+`apply_admin_agent_status_transition` locks the agent row shared with provider
+transitions, applies any accompanying PATCH fields, moves eligible keys, and
+writes one audit event. An explicit organization suspension owns the
+`admin:agent.suspended` marker even when it overlaps a provider suspension;
+provider reinstatement clears only provider authority and cannot resume the
+organization-owned suspension. Resume restores only admin-marked keys whose
+scopes remain within the agent's current `allowed_scopes`; broader historical
+keys stay inactive and an operator may mint a replacement within the ceiling.
 
 **The marker namespace is closed at the input boundary.** `revocation_reason` on
 `PATCH /api/v1/keys/:keyId` is otherwise free text, so an admin could have
@@ -1968,3 +1968,16 @@ no key insert; ORG_ADMIN still succeeds).
 SCRUM-1277 contract test (`agents-org-scope.test.ts`) scans this file's SOURCE
 TEXT for selectors and will read prose as a query.
 
+
+## 2026-09-26 — generic lifecycle dual authentication (SCRUM-3980)
+
+The generic `/agents` mount accepts exactly one Supabase JWT or one API key with
+`agents:manage`; `/agents/computeid` remains mounted first. JWT members retain
+read access and JWT mutations remain `ORG_ADMIN` only. Machine tenant authority
+comes only from the verified key's `orgId`. Registration, `allowed_scopes`
+updates, and child-key minting reject any scope the calling key does not satisfy;
+the mint also uses typed `config.apiKeyHmacSecret`. API-key audit records use a
+NULL human actor and JSON details containing the key id/prefix; `registered_by`
+and `created_by` retain the owning user only to satisfy their FK contracts.
+Terminal machine revoke calls the distinct service-only 0489 RPC. SDK, CLI, MCP,
+and outbound-event exposure are outside this server repair.

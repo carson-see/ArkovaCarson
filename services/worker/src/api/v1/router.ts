@@ -97,6 +97,7 @@ import { grcRouter } from './grc.js';
 import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
 import { oracleRouter } from './oracle.js';
 import { agentsRouter } from './agents.js';
+import { requireAgentLifecycleAuth } from '../../middleware/agentLifecycleAuth.js';
 import { agentsComputeIdRouter } from './agents-computeid.js';
 import { orgSubOrgsApiRouter } from './orgSubOrgsApiKey.js';
 import { computeidGate } from '../../middleware/computeidGate.js';
@@ -529,12 +530,12 @@ router.use('/webhooks/self-service', requireAuth, webhooksSelfServiceRateLimiter
 router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webhooksRouter);
 
 // ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
-// JWT auth required — agents are org-managed resources
+// Generic lifecycle accepts either a JWT or one agents:manage API key.
 // ComputeID AgentPassport admission — API-key callers with agents:manage.
-// MUST precede the '/agents' mount: that one is JWT-only (requireAuth) and
-// would 401 an API-key caller before this route is ever reached.
+// MUST precede the generic '/agents' mount so provider admission retains its
+// feature gate, rate limit, and handler contract.
 router.use('/agents/computeid', computeidGate, batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
-router.use('/agents', requireAuth, agentsRouter);
+router.use('/agents', requireAgentLifecycleAuth, agentsRouter);
 
 // SCRUM-5142: folder management is available to AAL2 browser sessions and
 // scoped SDK/API keys. When both credentials are presented, both are checked.

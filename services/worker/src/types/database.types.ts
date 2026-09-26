@@ -8674,6 +8674,14 @@ export type Database = {
         Args: { p_actor_id: string; p_agent_id: string; p_org_id: string }
         Returns: Json
       }
+      apply_admin_agent_status_transition: {
+        Args: { p_actor_id: string; p_actor_kind: string; p_agent_id: string; p_next_status: Database["public"]["Enums"]["agent_status"]; p_org_id: string; p_updates: Json }
+        Returns: Json
+      }
+      revoke_agent_and_keys_as_api_key: {
+        Args: { p_actor_api_key_id: string; p_agent_id: string; p_org_id: string }
+        Returns: Json
+      }
       revoke_anchor: {
         Args: { anchor_id: string; reason?: string }
         Returns: undefined

@@ -20,22 +20,14 @@ import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { toPublicAgent } from './agents.js';
 import type { ApiKeyScope } from '../apiScopes.js';
+import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
 import { loadPinnedCa, type PinnedCa } from '../../integrations/computeid/ca-cert.js';
 import { verifyComputeIdReceipt } from '../../integrations/computeid/receipt-verifier.js';
 import { ComputeIdAdmissionRequest, isRecord } from '../../integrations/computeid/schemas.js';
 
 export const agentsComputeIdRouter = Router();
 
-/** Scopes a passport-admitted agent may hold. Deliberately excludes every management scope. */
-export const PASSPORT_AGENT_SCOPE_ALLOWLIST: readonly ApiKeyScope[] = [
-  'verify',
-  'verify:batch',
-  'anchor:write',
-  'write:anchors', // V2 spelling; scopeSatisfies() treats it as anchor:write
-  'anchor:read',
-  'read:records',
-  'read:search',
-];
+export { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
 const DEFAULT_PASSPORT_AGENT_SCOPES: ApiKeyScope[] = ['verify'];
 
 let cachedCa: { pem: string; ca: PinnedCa } | null = null;
