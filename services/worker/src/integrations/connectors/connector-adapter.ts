@@ -147,7 +147,23 @@ export interface ConnectorAdapter {
   buildAuthorizationUrl(args: { redirectUri: string; state: string }): string;
   exchangeCode(args: { code: string; redirectUri: string }): Promise<OAuthTokenSet>;
   refreshToken(args: { refreshToken: string }): Promise<OAuthTokenSet>;
-  revoke(args: { token: string }): Promise<void>;
+  /**
+   * Call the vendor's raw token-revocation endpoint.
+   *
+   * **Named `Unsafe` deliberately — do not call this on a disconnect without
+   * first proving the vendor's tokens are org-scoped.** For Google Drive they
+   * are NOT: a refresh token is scoped to (Google account, OAuth client), not
+   * to an Arkova org, so revoking it when one org disconnects can yank access
+   * for a SIBLING org sharing the same Google identity. Production therefore
+   * never calls Google's real revoke endpoint (SCRUM-1237 / AUDIT-0424-12) and
+   * drops the stored token instead.
+   *
+   * The adapter layer exposes the raw vendor capability rather than baking in
+   * one vendor's policy, because the correct answer differs per provider. The
+   * hazard is in the NAME so that a future multi-vendor caller cannot reach for
+   * it without meeting the question: are THIS vendor's tokens org-scoped?
+   */
+  revokeVendorTokenUnsafe(args: { token: string }): Promise<void>;
 
   /**
    * Register a push-notification subscription. `resourceScope` is an opaque,

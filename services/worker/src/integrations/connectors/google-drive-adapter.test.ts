@@ -148,12 +148,12 @@ describe('GoogleDriveAdapter', () => {
     });
   });
 
-  describe('revoke', () => {
+  describe('revokeVendorTokenUnsafe', () => {
     it('delegates to revokeOAuthToken with the given token', async () => {
       driveMocks.revokeOAuthToken.mockResolvedValue(undefined);
       const adapter = new GoogleDriveAdapter();
 
-      await adapter.revoke({ token: 'tok-1' });
+      await adapter.revokeVendorTokenUnsafe({ token: 'tok-1' });
 
       expect(driveMocks.revokeOAuthToken).toHaveBeenCalledWith(
         expect.objectContaining({ token: 'tok-1' }),

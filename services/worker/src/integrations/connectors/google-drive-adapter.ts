@@ -52,14 +52,14 @@
  *      that plumbing without a consumer to prove it against would be the same
  *      premature generalization this PR is scoped to avoid elsewhere.
  *
- *   3. `revoke()` is a faithful wrapper over `revokeOAuthToken` — but note
+ *   3. `revokeVendorTokenUnsafe()` is a faithful wrapper over `revokeOAuthToken` — but note
  *      production DELIBERATELY NEVER CALLS Google's real revoke endpoint
  *      today (SCRUM-1237 / AUDIT-0424-12): a Drive refresh token is scoped to
  *      (Google account, OAuth client), not per Arkova org, so revoking it for
  *      one org's disconnect could yank access for a sibling org sharing the
  *      same Google identity. This adapter does not encode that policy — it
  *      exposes the raw vendor capability, matching the interface's promise —
- *      but any future caller of `ConnectorAdapter.revoke()` across vendors
+ *      but any future caller of `ConnectorAdapter.revokeVendorTokenUnsafe()` across vendors
  *      must independently re-derive whether THAT vendor's tokens are
  *      similarly org-scoped before calling it unconditionally.
  *
@@ -198,7 +198,7 @@ export class GoogleDriveAdapter implements ConnectorAdapter {
    * over the raw vendor capability; production has its own reasons not to
    * call Google's real revoke endpoint today, which this method does not
    * encode. */
-  async revoke(args: { token: string }): Promise<void> {
+  async revokeVendorTokenUnsafe(args: { token: string }): Promise<void> {
     await revokeOAuthToken({ token: args.token, deps: this.deps });
   }
 
