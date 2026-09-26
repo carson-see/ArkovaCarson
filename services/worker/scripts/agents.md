@@ -62,6 +62,43 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
     `org_integrations` google_drive connection — seeded directly rather than via a real OAuth round
     trip, the same idiom PR #3087's driver used for its own DS-04 bypass). Assertion 4 runs identically
     in both `self-test` and `--live` mode since it is rig-independent either way.
+- `pr3087-supersede-drain-driver.ts` (+ `.test.ts`) — admission driver for PR #3087
+  (`fix/connector-supersede-not-duplicate`, T3). `scripts/staging/provision-isolated-rig.sh` DEFAULTS
+  `driver_path` to `pr1408-chain-resilience-driver.ts` — using that default for this PR's soak would
+  drive zero of the changed behavior. Set `STAGING_DRIVER_PATH=services/worker/scripts/pr3087-supersede-drain-driver.ts`
+  before provisioning. Drives 8 named assertions (`ASSERTION` export) against
+  `services/worker/src/jobs/connector-artifact-drain.ts`'s supersede-not-duplicate fix and
+  `services/worker/src/api/v1/provenance.ts`'s `credential_superseded`-not-`credential_revoked` fix:
+  supersede-not-revoke, parent/version lineage, `/api/v1/verify/:publicId` still answering 200/SUPERSEDED
+  (not 404, not REVOKED), the provenance P0 (never `credential_revoked` for a SUPERSEDED anchor),
+  idempotent replay of the same `(source, external_ref, external_revision)`, a no-op on an unchanged
+  fingerprint, a NEGATIVE CONTROL proving DocuSign still double-anchors (the `google_drive`-only gate is
+  real, not just a code comment), and a non-`ORG_ADMIN`-member-owned prior anchor still superseding via
+  an independently-resolved org-admin actor. `--live` needs `--target-url` plus `SUPABASE_URL` /
+  `SUPABASE_SERVICE_ROLE_KEY` (fixtures — one org, one ORG_ADMIN owner, one plain ORG_MEMBER — are
+  seeded/reused idempotently by the driver itself, keyed on the `pr3087-soak` prefix); default mode is
+  `self-test`, whose rows are `evidenceForSoak: false` and must never be cited as soak evidence.
+  - **Assertion 8's scope is narrower than its name suggests — read the driver's own header
+    ("SCOPING NOTE") before citing it as DS-04 coverage.** `queue_scope: 'member'` is set only by the
+    DocuSign producers, and `member_integrations.provider` is `CHECK (provider = 'docusign')` (migration
+    0320) — so a `source='google_drive'` artifact can never pass the v1 DS-04 member-scope check
+    (migration 0462). Since supersession is gated to `google_drive` only, the literal combination in the
+    task ("a `queue_scope: 'member'` google_drive connection") is structurally unreachable today. The
+    driver instead seeds a prior anchor directly with `user_id` = a real non-`ORG_ADMIN` member (the
+    supersede branch reads the anchor's own `user_id`/`status`, never how it was created) and drives the
+    real update through the real HTTP drain endpoint — proving the actor-independence fix
+    (`supersedeConnectorAnchor` resolves its own org-admin caller via `resolveOrgActorUserId`,
+    independently of the anchor's owner) without depending on the unrelated, DocuSign-only DS-04 v1 gate.
+  - **Never scores a stuck artifact a pass on "no error surfaced."**
+    `supersedeConnectorAnchor` maps every `supersede_anchor` RPC error (wrong caller, already
+    REVOKED/SUPERSEDED, a genuine transport error) to the same generic `{ outcome: 'lost_lease' }` —
+    indistinguishable from outside the worker. `classifyMemberOwnedSupersede` requires POSITIVE polled
+    evidence (`connector_artifact.status === 'materialized'` + a concretely-lineaged child anchor) and
+    names the ambiguity explicitly in its failure detail rather than defaulting to a pass.
+  - Tier detector (`requiredTierFor()` in `scripts/ci/check-staging-evidence.ts`) run on this file +
+    its test: **T1** ("default frontend / additive change" — the fallback default; `services/worker/scripts/`
+    is not in the detector's T0 allowlist, so a driver file here needs a draft PR under §1.12, not a
+    direct push).
 
 - `pr2525-attestation-park-driver.ts` (+ `.test.ts`) — admission driver for the PR #2525 attestation
   park. Probes `GET /api/v1/verify/attestation/:id` and asserts the one behavior that PR changes:
