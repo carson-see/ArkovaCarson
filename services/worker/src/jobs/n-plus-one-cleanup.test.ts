@@ -186,146 +186,105 @@ describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
   });
 });
 
-describe('SCRUM-1296: attestationExpiry bulk operations', () => {
+describe('SCRUM-1296 / webhook-event-divergence: attestationExpiry bulk operations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('should bulk-insert webhook events instead of per-attestation inserts', async () => {
+  // SCRUM-webhook-event-divergence: the job no longer queues
+  // `attestation.expiring` / `attestation.expired` webhook events at all — it
+  // used to insert directly into a `webhook_events` table that does not exist
+  // in the schema, so every insert failed and (for `attestation.expired`)
+  // silently blocked the status transition below. See attestationExpiry.ts's
+  // file header. These tests now cover only the counting/status-update
+  // behavior that remains; there is no `webhooks_queued` field and no
+  // `webhook_events` table interaction to assert on.
+
+  it('never touches a webhook_events table', async () => {
     const { checkAttestationExpiry } = await import('./attestationExpiry.js');
 
     const now = new Date();
     const in5Days = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
-
-    // Mock: 3 attestations expiring within 7 days
     const expiringData = [
-      { id: '1', public_id: 'pub-1', attestation_type: 'TYPE_A', subject_identifier: 's1', attester_name: 'A', attester_org_id: 'org-1', expires_at: in5Days.toISOString(), status: 'ACTIVE' },
-      { id: '2', public_id: 'pub-2', attestation_type: 'TYPE_B', subject_identifier: 's2', attester_name: 'B', attester_org_id: 'org-1', expires_at: in5Days.toISOString(), status: 'ACTIVE' },
-      { id: '3', public_id: 'pub-3', attestation_type: 'TYPE_C', subject_identifier: 's3', attester_name: 'C', attester_org_id: 'org-2', expires_at: in5Days.toISOString(), status: 'ACTIVE' },
+      { id: '1', expires_at: in5Days.toISOString() },
+      { id: '2', expires_at: in5Days.toISOString() },
+      { id: '3', expires_at: in5Days.toISOString() },
     ];
-
-    const selectChain = makeChainable({ data: expiringData, error: null });
-    const insertChain = makeChainable({ data: null, error: null });
-    const expiredChain = makeChainable({ data: [], error: null });
 
     let callCount = 0;
     mockDbFrom.mockImplementation((table: string) => {
       callCount++;
-      if (table === 'attestations' && callCount <= 2) {
-        // First two calls are the two SELECT queries
-        if (callCount === 1) return selectChain;
-        return expiredChain;
-      }
-      if (table === 'webhook_events') return insertChain;
-      return makeChainable({ data: null, error: null });
-    });
-
-    const result = await checkAttestationExpiry();
-
-    // Should have used bulk insert (single call, not 3 individual ones)
-    expect(result.webhooks_queued).toBe(3);
-  });
-
-  it('should insert webhook events BEFORE updating status to EXPIRED (ordering guarantee)', async () => {
-    const { checkAttestationExpiry } = await import('./attestationExpiry.js');
-
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // 2 expired attestations
-    const expiredData = [
-      { id: 'e1', public_id: 'pub-e1', attestation_type: 'T', subject_identifier: 's', attester_name: 'A', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
-      { id: 'e2', public_id: 'pub-e2', attestation_type: 'T', subject_identifier: 's', attester_name: 'B', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
-    ];
-
-    // Track the order of operations
-    const operationOrder: string[] = [];
-
-    let callCount = 0;
-    mockDbFrom.mockImplementation((table: string) => {
-      callCount++;
-      if (table === 'attestations' && callCount <= 2) {
-        // First two calls are the SELECT queries
-        if (callCount === 1) return makeChainable({ data: [], error: null }); // no expiring
-        return makeChainable({ data: expiredData, error: null }); // expired
-      }
-      if (table === 'webhook_events') {
-        operationOrder.push('webhook_insert');
-        return makeChainable({ data: null, error: null });
-      }
-      if (table === 'attestations' && callCount > 2) {
-        operationOrder.push('status_update');
-        return makeChainable({ data: null, error: null });
-      }
+      if (table === 'attestations' && callCount === 1) return makeChainable({ data: expiringData, error: null });
+      if (table === 'attestations') return makeChainable({ data: [], error: null });
       return makeChainable({ data: null, error: null });
     });
 
     await checkAttestationExpiry();
 
-    // Webhook insert must happen BEFORE status update
-    expect(operationOrder.length).toBeGreaterThanOrEqual(2);
-    expect(operationOrder.indexOf('webhook_insert')).toBeLessThan(
-      operationOrder.indexOf('status_update'),
-    );
+    expect(mockDbFrom).not.toHaveBeenCalledWith('webhook_events');
   });
 
-  it('should NOT update status if webhook insert fails (prevents permanent event loss)', async () => {
+  it('flips ACTIVE-but-past-expiry attestations to EXPIRED unconditionally (no webhook gate)', async () => {
     const { checkAttestationExpiry } = await import('./attestationExpiry.js');
 
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
     const expiredData = [
-      { id: 'e1', public_id: 'pub-e1', attestation_type: 'T', subject_identifier: 's', attester_name: 'A', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
+      { id: 'e1', expires_at: yesterday.toISOString() },
+      { id: 'e2', expires_at: yesterday.toISOString() },
     ];
 
-    let callCount = 0;
     let statusUpdateCalled = false;
+    let callCount = 0;
     mockDbFrom.mockImplementation((table: string) => {
       callCount++;
-      if (table === 'attestations' && callCount <= 2) {
-        if (callCount === 1) return makeChainable({ data: [], error: null });
-        return makeChainable({ data: expiredData, error: null });
-      }
-      if (table === 'webhook_events') {
-        // Webhook insert FAILS
-        return makeChainable({ data: null, error: { message: 'DB connection lost' } });
-      }
-      if (table === 'attestations' && callCount > 2) {
+      if (table === 'attestations' && callCount === 1) return makeChainable({ data: [], error: null }); // no expiring
+      if (table === 'attestations' && callCount === 2) return makeChainable({ data: expiredData, error: null }); // just expired
+      if (table === 'attestations') {
         statusUpdateCalled = true;
-        return makeChainable({ data: null, error: null });
+        // Review follow-up (PR #3091, P2): newly_expired is counted from the
+        // rows the UPDATE (gated on status = 'ACTIVE') actually returns, not
+        // from the SELECT candidate count — so the mock must reflect what a
+        // real `.update(...).eq('status', 'ACTIVE').in('id', chunk).select('id')`
+        // would hand back: both candidates here really did flip.
+        return makeChainable({ data: expiredData.map((row) => ({ id: row.id })), error: null });
       }
       return makeChainable({ data: null, error: null });
     });
 
     const result = await checkAttestationExpiry();
 
-    // Status should NOT have been updated since webhook insert failed
-    expect(statusUpdateCalled).toBe(false);
-    // Webhooks queued should be 0 since insert failed
-    expect(result.webhooks_queued).toBe(0);
+    // No webhook side channel to gate on anymore — the status update always
+    // runs when there are newly-expired rows.
+    expect(statusUpdateCalled).toBe(true);
+    expect(result.newly_expired).toBe(2);
   });
 
-  it('should bulk-update expired attestation statuses', async () => {
+  it('should bulk-update expired attestation statuses (single .in() update, not per-row)', async () => {
     const { checkAttestationExpiry } = await import('./attestationExpiry.js');
 
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     // No expiring, 3 expired
     const expiredData = [
-      { id: 'e1', public_id: 'pub-e1', attestation_type: 'T', subject_identifier: 's', attester_name: 'A', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
-      { id: 'e2', public_id: 'pub-e2', attestation_type: 'T', subject_identifier: 's', attester_name: 'B', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
-      { id: 'e3', public_id: 'pub-e3', attestation_type: 'T', subject_identifier: 's', attester_name: 'C', attester_org_id: 'org-2', expires_at: yesterday.toISOString() },
+      { id: 'e1', expires_at: yesterday.toISOString() },
+      { id: 'e2', expires_at: yesterday.toISOString() },
+      { id: 'e3', expires_at: yesterday.toISOString() },
     ];
 
     let callCount = 0;
-    const updateChain = makeChainable({ data: null, error: null });
+    let updateCalls = 0;
+    // Review follow-up (PR #3091, P2): the mocked UPDATE must return the rows
+    // it actually touched (`.select('id')`) — newly_expired now counts those,
+    // not the SELECT candidate count.
+    const updateChain = makeChainable({ data: expiredData.map((row) => ({ id: row.id })), error: null });
     mockDbFrom.mockImplementation((table: string) => {
       callCount++;
       if (table === 'attestations') {
         if (callCount === 1) return makeChainable({ data: [], error: null }); // no expiring
         if (callCount === 2) return makeChainable({ data: expiredData, error: null }); // expired
+        updateCalls++;
         return updateChain; // bulk status update
       }
-      if (table === 'webhook_events') return makeChainable({ data: null, error: null });
       return makeChainable({ data: null, error: null });
     });
 
@@ -333,6 +292,7 @@ describe('SCRUM-1296: attestationExpiry bulk operations', () => {
 
     // Should do a bulk status update, not 3 individual .update().eq() calls
     expect(result.newly_expired).toBe(3);
+    expect(updateCalls).toBe(1);
   });
 });
 
