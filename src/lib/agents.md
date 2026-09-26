@@ -11,6 +11,21 @@ security-relevant condition plainly (the connected account granted MORE access t
 requested) rather than softening it into an internal "scope" finding. `npm run lint:copy` passes
 clean against these — no banned §1.3 term appears in any of them.
 
+## 2026-09-25 SPEC-AGENTS-UI — `ROUTES.SETTINGS_AGENTS`, `AGENT_LABELS`, `queryKeys.agents`/`agentDetail`
+
+New named route `/settings/agents` (`routes.ts`), the ComputeID agent
+management surface — see `src/components/agents/agents.md` and
+`src/pages/agents.md` for the full writeup. `AGENT_LABELS` /
+`AGENT_TYPE_LABELS` (`copy.ts`) are §1.3-clean: no banned terms, and
+`REVOKED_TERMINAL_ERROR` is the ONE curated string every 409
+terminal-revocation surfaces to instead of the server's raw error text.
+`NAV_POLISH_LABELS.BREADCRUMB_AGENTS` and `SETTINGS_PAGE_LABELS.AGENTS` /
+`AGENTS_DESC` follow the existing Webhooks/API-Keys/Referrals pattern
+exactly. `queryClient.ts` gained `queryKeys.agents(userId)` (the list) and
+`queryKeys.agentDetail(agentId)` (the lazy per-agent key fetch) — the latter
+is keyed by agent, not by user, since its data (one agent's active API keys)
+has no per-viewer variance.
+
 ## 2026-09-19 — UAT-12 public-description and recovery copy
 
 `DESCRIPTION_LABELS` truthfully identifies the description as public verification
@@ -113,7 +128,6 @@ Also promoted here in the same change: `LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / 
 which had been sitting in a local `SUB_ORG_STATE_COPY` constant in `ManageSubOrgs.tsx` since
 `copy.ts` was locked under a concurrent PR. The note there said to promote them the next time this
 file was touched; that has now happened and the local constant is gone.
-
 
 ## PR #2637 MFA assurance identity (2026-09-05)
 
@@ -304,9 +318,7 @@ inline). §1.3 clean.
 
 The signup copy now describes securing and verifying records. `BETA_GATE_LABELS` and the unused `ENV.BETA_INVITE_CODE` projection are retired; account registration does not consume a beta code. This does not change organization invitation tokens or any API authentication contract.
 
-
 _Last updated: 2026-08-29_
-
 
 ## 2026-09-02 — the certificate packet's `block_height` comes from the ANCHOR, not the proof row (SCRUM-3953)
 
@@ -808,7 +820,6 @@ that **nothing changed**, because the dialog stays open and the key's expiry is 
 rather than adding to it: without the current value on screen, "30 days" on a key with eleven months
 left is indistinguishable from an extension.
 
-
 ## PR #2782 — bind certificate metadata to one block
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.
@@ -982,3 +993,15 @@ hash, while `MerkleProofEntrySchema` requires 64-hex, so a corrupt stored
 `proof_path` throws at package build. That now surfaces as
 `RECORD_DETAIL_LABELS.PROOF_PACKAGE_CORRUPT` and is logged with the record id,
 rather than being swallowed into the generic retry message.
+
+## 2026-09-26 — AGENT_LABELS review P2: no assumed state in suspend/resume failure copy (PR #3093)
+
+`SUSPEND_FAILED` / `RESUME_FAILED` no longer say "it is still active/suspended"
+— a lost response can follow a committed mutation, so the client cannot know
+that from a failed request alone (§1.5). They are now the generic fallback
+only. Six new keys carry the three-way readback outcome
+`AgentsSettings.tsx`'s `actionFailureMessage` picks from
+(`SUSPEND_FAILED_CONFIRMED_ACTIVE`, `SUSPEND_SUCCEEDED_DESPITE_ERROR`,
+`SUSPEND_RESULT_UNCONFIRMED`, and the `RESUME_*` mirrors), plus
+`REVOKE_RESULT_UNCONFIRMED`. See `hooks/agents.md` for where the readback
+(`AgentActionError.observedStatus`) comes from.
