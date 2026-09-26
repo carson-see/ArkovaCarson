@@ -19,6 +19,43 @@ reads as "cursor stale" to a user). `grant_exceeds_requested` is worded as the s
 condition it is — TRUE in prod today for the one connected org, whose Google account carries ~32
 granted scopes — not softened into an internal "scope" finding.
 
+## 2026-09-25 — SPEC-AGENTS-UI: `useAgents.ts` (new) — the missing ComputeID agent-management frontend
+
+ComputeID / agent passports (`services/worker/src/api/v1/agents.ts`,
+`agents-computeid.ts`) shipped with a full backend and zero frontend — an org
+admin could grant `agents:manage` on an API key but had no way to see which
+agents existed, their status, or revoke one except by raw curl. PR #3083
+fixed a real defect where suspending an agent did not deactivate its API
+keys; that fix is only reachable through `suspendAgent` here.
+
+`useAgents(options)` mirrors `useApiKeys.ts`'s shape exactly: React Query list
+(`GET /api/v1/agents`) plus `suspendAgent`/`resumeAgent` (PATCH
+`{status:'suspended'|'active'}`) and `revokeAgent` (DELETE), each invalidating
+the list on success and THROWING on failure (never swallowing) so the caller
+can keep its UI in the not-yet-changed state.
+
+`status: 'revoked'` is TERMINAL — the worker 409s a PATCH carrying `status`
+against an already-revoked agent. `suspendAgent`/`resumeAgent`/`revokeAgent`
+throw `AgentActionError` (carries `.status`) rather than a plain `Error`
+specifically so `src/components/agents/AgentsSettings.tsx` can distinguish
+that 409 from an ordinary failure without parsing message text, and render
+`AGENT_LABELS.REVOKED_TERMINAL_ERROR` instead of a generic one. This repo does
+not render raw `Error.message` to users (may carry server internals) — see
+the same rule already documented in `src/components/api/agents.md` for
+`useApiKeys`.
+
+`useAgentDetail(agentId, options)` is a SECOND, separate hook — `GET
+/api/v1/agents` (the list) does not join API keys, only `GET
+/api/v1/agents/:agentId` does (filtered to `is_active=true` server-side).
+It is deliberately NOT called for every row on mount; `AgentKeysPanel.tsx`
+gates it on the row being expanded, so viewing the agent list never fans out
+into an N+1 detail fetch.
+
+Scope: existing-agent management only. Registration (`POST
+/api/v1/agents`), key minting (`POST /:agentId/key`), and the ComputeID
+admission flow (`POST /api/v1/agents/computeid/admit`) are deliberately not
+covered — separate surfaces, their own security review.
+
 ## 2026-09-12 — SCRUM-5023: `useApiKeys.extendKey` sends a DURATION
 
 `extendKey(keyId, expiresInDays | null, allowShorten?)` PATCHes `{ expires_in_days: n }`, or
@@ -287,6 +324,15 @@ This additive wrapper is deliberately route-org scoped and never consults profil
 ## 2026-09-14 — SCRUM-5145 signup resend API
 
 Email/password confirmation resend uses `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })` through `useAuth.resendSignUpConfirmation`. Keep `/auth/callback` identical to the initial signup and return Auth errors so callers do not report an unconfirmed delivery.
+## 2026-09-21 — useProfileMediaUpload (PR #3033 review)
+
+One hook owns both media upload surfaces (SettingsPage, OrgProfilePage). It
+always resets the file input, including on an early return; it emits exactly
+one success toast (row-update callers pass `{ silentSuccess: true }` to
+`updateOrganization` so the generic "Organization updated" does not double up);
+and it exposes ONE `busy` flag so every input on a surface disables on the same
+condition. `canUpload` carries the AAL2 gate. Do not reintroduce a per-page
+copy of this flow.
 
 ## 2026-09-21 — useBulkAnchors carries recipient-link outcomes (PR #3034)
 
@@ -309,3 +355,24 @@ active, and emits `recipient_name` only alongside an email (the worker's schema
 rejects name-without-email for the whole request). The hook knows its scope but
 NOT the caller's org ROLE, so a plain org member is still left to the server,
 which anchors the rows and reports the refusal per row.
+
+## 2026-09-26 — useAgents review P2: detail-cache invalidation + observed-status readback (PR #3093)
+
+`invalidate()` used to touch only the `queryKeys.agents(userId)` list key.
+With a `AgentKeysPanel` row expanded (`useAgentDetail`, separate
+`queryKeys.agentDetail(agentId)` key), suspend/resume/revoke left that cache
+entry stale — the keys panel kept showing pre-mutation status/keys.
+`invalidate()` now takes an optional `agentId` and invalidates both keys;
+`suspendAgent` / `resumeAgent` / `revokeAgent` pass it on every outcome,
+success or failure.
+
+On failure, a lost response can follow a committed mutation, so the hook no
+longer lets the caller assume the pre-mutation state still holds. It reads
+the agent back (`readObservedStatus`, a forced `staleTime: 0` fetch — never
+throws, resolves `null` on its own failure) and attaches the result to the
+re-thrown `AgentActionError.observedStatus`: a concrete `AgentStatus` when
+the readback succeeded (which may show the mutation actually took effect
+despite the reported failure), or `null` when the readback itself also
+failed. `undefined` (the default) means no readback was attempted. Deleted
+`refresh` — it was byte-identical to `invalidate` and unused outside this
+file.

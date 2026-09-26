@@ -399,6 +399,21 @@ describe('usePublicMemberProfile (SCRUM-1788)', () => {
     expect(result.current.profile?.organizations[0].display_name).toBe('Test University');
   });
 
+  it('unwraps the v2 member RPC envelope including opaque media paths', async () => {
+    mockRpc.mockResolvedValue({ data: [{ get_public_member_profile_v2: {
+      public_id: 'mem_v2', display_name: 'Member', avatar_url: null,
+      avatar_storage_path: 'users/mem_v2/avatar/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png',
+      banner_storage_path: null, bio: null, social_links: null,
+      created_at: '2026-01-15', organizations: [],
+    } }], error: null });
+    const { result } = renderHook(() => usePublicMemberProfile());
+
+    await act(async () => { await result.current.fetchProfile('mem_v2'); });
+
+    expect(result.current.profile?.public_id).toBe('mem_v2');
+    expect(result.current.profile?.avatar_storage_path).toContain('/avatar/');
+  });
+
   it('privacy gate: RPC returns error for non-public profiles', async () => {
     mockRpc.mockResolvedValue({
       data: [{ get_public_member_profile: { error: 'Profile not found' } }],
@@ -474,5 +489,77 @@ describe('useOrgSubtree (SCRUM-1788)', () => {
 
     expect(result.current.error).toBe('Org not found');
     expect(result.current.subtree).toBeNull();
+  });
+});
+
+// ─── D7 (PR #3033 review, pass 1): shape-validation REJECTION paths and the
+// stale-response discard were the two untested branches in these hooks. A
+// malformed or mismatched RPC payload must never become `profile` — the pages
+// render it unguarded — and a slow first fetch must not overwrite a newer one.
+describe('public profile hooks — rejection and staleness (D7)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it.each([
+    ['a null payload', null],
+    ['a payload for a different org', { org_id: 'other-org', display_name: 'Elsewhere' }],
+    ['a payload with a non-string display_name', { org_id: 'org-1', display_name: 42 }],
+  ])('useOrgProfile rejects %s without setting a profile', async (_label, payload) => {
+    mockRpc.mockResolvedValue({ data: payload, error: null });
+    const { result } = renderHook(() => useOrgProfile());
+    await act(async () => { await result.current.fetchProfile('org-1'); });
+    expect(result.current.error).toBe('Organization profile response was invalid');
+    expect(result.current.profile).toBeNull();
+    expect(result.current.loading).toBe(false);
+  });
+
+  it.each([
+    ['a null payload', null],
+    ['a payload for a different member', { public_id: 'other', display_name: 'Elsewhere', organizations: [] }],
+    ['a payload whose organizations is not an array', { public_id: 'mem_1', display_name: 'Ada', organizations: null }],
+  ])('usePublicMemberProfile rejects %s without setting a profile', async (_label, payload) => {
+    mockRpc.mockResolvedValue({ data: payload, error: null });
+    const { result } = renderHook(() => usePublicMemberProfile());
+    await act(async () => { await result.current.fetchProfile('mem_1'); });
+    expect(result.current.error).toBe('Profile response was invalid');
+    expect(result.current.profile).toBeNull();
+  });
+
+  it('useOrgProfile discards a slow first response in favour of the newer fetch', async () => {
+    let releaseFirst: (value: unknown) => void = () => {};
+    mockRpc
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve; }))
+      .mockResolvedValueOnce({ data: { org_id: 'org-2', display_name: 'Second Org', public_members: [], sub_organizations: [] }, error: null });
+
+    const { result } = renderHook(() => useOrgProfile());
+    let first!: Promise<void>;
+    act(() => { first = result.current.fetchProfile('org-1'); });
+    await act(async () => { await result.current.fetchProfile('org-2'); });
+    expect(result.current.profile?.display_name).toBe('Second Org');
+
+    await act(async () => {
+      releaseFirst({ data: { org_id: 'org-1', display_name: 'First Org', public_members: [], sub_organizations: [] }, error: null });
+      await first;
+    });
+    // The superseded generation neither replaces the profile nor clears loading
+    // out from under the newer fetch.
+    expect(result.current.profile?.display_name).toBe('Second Org');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('useOrgProfile discards a superseded RPC ERROR too', async () => {
+    let releaseFirst: (value: unknown) => void = () => {};
+    mockRpc
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve; }))
+      .mockResolvedValueOnce({ data: { org_id: 'org-2', display_name: 'Second Org', public_members: [], sub_organizations: [] }, error: null });
+    const { result } = renderHook(() => useOrgProfile());
+    let first!: Promise<void>;
+    act(() => { first = result.current.fetchProfile('org-1'); });
+    await act(async () => { await result.current.fetchProfile('org-2'); });
+    await act(async () => {
+      releaseFirst({ data: null, error: { message: 'stale failure' } });
+      await first;
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.profile?.display_name).toBe('Second Org');
   });
 });

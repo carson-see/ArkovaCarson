@@ -554,7 +554,9 @@ async function supersedeConnectorAnchor(
   // A transport error can follow a committed transaction (same posture as the
   // atomic materialize RPC below) — never compensate by assuming it failed.
   if (error) return { outcome: 'lost_lease' };
-  const parsedId = z.string().uuid().safeParse(data);
+  // RPC result is a Postgres uuid read back from the DB: shape-only validation
+  // (FD-15 / BUG-2026-08-12-003), never strict RFC .uuid() here.
+  const parsedId = dbUuid('supersede_anchor result').safeParse(data);
   if (!parsedId.success) return { outcome: 'lost_lease' };
   const newAnchorId = parsedId.data;
 
@@ -580,6 +582,73 @@ async function supersedeConnectorAnchor(
 }
 
 /**
+ * Founder decision 2026-09-25 — connector document-update supersession.
+ * Returns a terminal outcome when the artifact supersedes a live prior anchor
+ * (or must fail closed), and `null` when the normal materialization path
+ * should proceed: source not enabled, no prior anchor, or identical fingerprint.
+ */
+async function maybeSupersedePriorAnchor(
+  row: ConnectorArtifactRow,
+  deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
+): Promise<MaterializationOutcome | null> {
+  if (!SUPERSESSION_ENABLED_SOURCES.has(row.source)) return null;
+  // Founder decision 2026-09-25 — connector document-update supersession.
+  // Gated to `SUPERSESSION_ENABLED_SOURCES` (google_drive only; see that
+  // const's comment for why DocuSign is excluded). A fresh lookup on EVERY
+  // call (never cached across retries) is what makes this replay-safe: if a
+  // supersede committed but the link-back below lost its lease, a retry's
+  // lookup finds the ALREADY-CREATED child as the new head with a MATCHING
+  // fingerprint and falls through to the normal (idempotent, unique-index
+  // reuse) path instead of superseding twice.
+  const prior = await findPriorConnectorAnchorForSupersession({
+    db: deps.db,
+    orgId: row.org_id,
+    source: row.source,
+    externalRef: row.external_ref,
+  });
+  if (prior && prior.fingerprint !== row.fingerprint_sha256) {
+    if (prior.status === 'REVOKED') {
+      // Fail closed (see the `prior_anchor_revoked` MaterializationOutcome
+      // doc comment): never call supersede_anchor on a REVOKED head, never
+      // mutate it, never mint an independent replacement automatically.
+      return { outcome: 'prior_anchor_revoked' };
+    }
+    // SCRUM-5290 / DS-04: `userId` above may be a MEMBER owner — DS-04 exists
+    // precisely so an ordinary, non-admin member can own their own personal
+    // connector connection. But `supersede_anchor` (migration 0367) hard-
+    // requires `caller_profile.role = 'ORG_ADMIN'` and raises otherwise, and
+    // that raise is indistinguishable from a transient failure at this layer.
+    // The row would be reaped back to `queued` every 15 minutes and retry
+    // forever, so every update to a non-admin member's connected document
+    // would be permanently, silently un-supersede-able.
+    //
+    // The supersede call therefore resolves its OWN org-admin actor. The
+    // anchor's ownership is unaffected: `supersede_anchor` inherits `user_id`
+    // from the prior anchor, so the member keeps their record.
+    const supersedeActorId = await resolveOrgActorUserId(deps, row.org_id);
+    if (!supersedeActorId) {
+      // No org-admin actor resolvable: do NOT fall through to a plain insert,
+      // which would silently reintroduce the duplicate-anchor defect this
+      // change exists to remove. Fail closed and leave the row for retry.
+      defaultLogger.warn(
+        { artifactId: row.id, orgId: row.org_id },
+        'connector supersession: no org-admin actor resolvable; leaving artifact queued',
+      );
+      return { outcome: 'lost_lease' as const };
+    }
+    return supersedeConnectorAnchor(row, prior.id, supersedeActorId, deps);
+  }
+  // No prior anchor (first-ever version of this file), or the fingerprint
+  // is unchanged (identical content re-delivered) — fall through to the
+  // normal path below unchanged. An identical fingerprint is handled for
+  // free by the (user_id, fingerprint) unique-index reuse the atomic RPC
+  // already performs: no new anchor, no supersession, `created: false`.
+
+
+  return null;
+}
+
+/**
  * Default materializer: atomically publish and link a PENDING anchor from the artifact's
  * server-computed fingerprint (§1.6A — fingerprint only, never bytes). The
  * anchor schema requires `user_id` (resolved to an org owner/admin actor) and
@@ -601,59 +670,10 @@ export async function defaultMaterializeAnchor(
   // member_integrations row, and exact org membership before publication.
   const userId = memberOwnerId ?? await resolveOrgActorUserId(deps, row.org_id);
 
-  // Founder decision 2026-09-25 — connector document-update supersession.
-  // Gated to `SUPERSESSION_ENABLED_SOURCES` (google_drive only; see that
-  // const's comment for why DocuSign is excluded). A fresh lookup on EVERY
-  // call (never cached across retries) is what makes this replay-safe: if a
-  // supersede committed but the link-back below lost its lease, a retry's
-  // lookup finds the ALREADY-CREATED child as the new head with a MATCHING
-  // fingerprint and falls through to the normal (idempotent, unique-index
-  // reuse) path instead of superseding twice.
-  if (SUPERSESSION_ENABLED_SOURCES.has(row.source)) {
-    const prior = await findPriorConnectorAnchorForSupersession({
-      db: deps.db,
-      orgId: row.org_id,
-      source: row.source,
-      externalRef: row.external_ref,
-    });
-    if (prior && prior.fingerprint !== row.fingerprint_sha256) {
-      if (prior.status === 'REVOKED') {
-        // Fail closed (see the `prior_anchor_revoked` MaterializationOutcome
-        // doc comment): never call supersede_anchor on a REVOKED head, never
-        // mutate it, never mint an independent replacement automatically.
-        return { outcome: 'prior_anchor_revoked' };
-      }
-      // SCRUM-5290 / DS-04: `userId` above may be a MEMBER owner — DS-04 exists
-      // precisely so an ordinary, non-admin member can own their own personal
-      // connector connection. But `supersede_anchor` (migration 0367) hard-
-      // requires `caller_profile.role = 'ORG_ADMIN'` and raises otherwise, and
-      // that raise is indistinguishable from a transient failure at this layer.
-      // The row would be reaped back to `queued` every 15 minutes and retry
-      // forever, so every update to a non-admin member's connected document
-      // would be permanently, silently un-supersede-able.
-      //
-      // The supersede call therefore resolves its OWN org-admin actor. The
-      // anchor's ownership is unaffected: `supersede_anchor` inherits `user_id`
-      // from the prior anchor, so the member keeps their record.
-      const supersedeActorId = await resolveOrgActorUserId(deps, row.org_id);
-      if (!supersedeActorId) {
-        // No org-admin actor resolvable: do NOT fall through to a plain insert,
-        // which would silently reintroduce the duplicate-anchor defect this
-        // change exists to remove. Fail closed and leave the row for retry.
-        defaultLogger.warn(
-          { artifactId: row.id, orgId: row.org_id },
-          'connector supersession: no org-admin actor resolvable; leaving artifact queued',
-        );
-        return { outcome: 'lost_lease' as const };
-      }
-      return supersedeConnectorAnchor(row, prior.id, supersedeActorId, deps);
-    }
-    // No prior anchor (first-ever version of this file), or the fingerprint
-    // is unchanged (identical content re-delivered) — fall through to the
-    // normal path below unchanged. An identical fingerprint is handled for
-    // free by the (user_id, fingerprint) unique-index reuse the atomic RPC
-    // already performs: no new anchor, no supersession, `created: false`.
-  }
+  // Founder decision 2026-09-25 — connector document-update supersession
+  // (see maybeSupersedePriorAnchor for the replay-safety and actor rules).
+  const superseded = await maybeSupersedePriorAnchor(row, deps);
+  if (superseded) return superseded;
 
   // SCRUM-2904 envelope-level guard: if the declared-hash rules path already
   // created a live anchor for this same envelope (flag-flip-mid-flight race:

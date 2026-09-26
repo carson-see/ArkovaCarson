@@ -311,7 +311,13 @@ export const ProfileUpdateSchema = z.object({
     .max(2048, 'Avatar URL must be 2048 characters or less')
     .optional()
     .nullable(),
-});
+  avatar_storage_path: z.string().regex(/^users\/[A-Za-z0-9_-]{3,128}\/avatar\/[0-9a-f-]{36}\.png$/).optional().nullable(),
+  banner_storage_path: z.string().regex(/^users\/[A-Za-z0-9_-]{3,128}\/banner\/[0-9a-f-]{36}\.png$/).optional().nullable(),
+  bio: z.string().max(500).optional().nullable(),
+  social_links: z.record(z.string(), z.string()).optional().nullable(),
+  is_public_profile: z.boolean().optional(),
+  disclaimer_accepted_at: z.string().datetime().optional().nullable(),
+}).strict();
 
 export type ProfileUpdate = z.infer<typeof ProfileUpdateSchema>;
 
@@ -504,6 +510,8 @@ export const OrganizationUpdateSchema = z.object({
   linkedin_url: safeUrlSchema,
   twitter_url: safeUrlSchema,
   logo_url: safeUrlSchema,
+  logo_storage_path: z.string().regex(/^organizations\/[A-Za-z0-9_-]{3,128}\/logo\/[0-9a-f-]{36}\.png$/).optional().nullable(),
+  banner_storage_path: z.string().regex(/^organizations\/[A-Za-z0-9_-]{3,128}\/banner\/[0-9a-f-]{36}\.png$/).optional().nullable(),
   location: z.string().max(255).optional().nullable(),
   founded_date: z.string().optional().nullable(),
   org_type: z.string().optional().nullable(),

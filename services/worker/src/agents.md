@@ -5,7 +5,20 @@ Keep the mount-order regression in `index.test.ts` when changing either layer.
 
 PR #2904 review: `memory-leaks.test.ts` explicitly supplies the disabled fanout config while importing actual delivery/lifecycle cleanup. The suite remains independent of configured-worker credentials.
 
+_Last updated: 2026-09-21 (SCRUM-5287/SCRUM-2903/SCRUM-2330: `config.ts` gains `googleDriveOauthClientId`/`googleDriveOauthClientSecret` — the new `arkova-connectors` OAuth client pair for the drive.readonly cutover, alongside the legacy `googleOauthClientId`/`googleOauthClientSecret`)_
 _Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_
+
+## 2026-09-21 SCRUM-5287/SCRUM-2903/SCRUM-2330 — `config.ts` gains the new Drive OAuth client pair
+
+See `integrations/oauth/agents.md`'s 2026-09-21 entry for the full drive.readonly scope-cutover
+story. This file's piece: `config.ts` now accepts `GOOGLE_DRIVE_OAUTH_CLIENT_ID`/
+`GOOGLE_DRIVE_OAUTH_CLIENT_SECRET` (the NEW `arkova-connectors` OAuth client — not provisioned as of
+this PR) as an ALTERNATIVE to the legacy `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` pair
+for the production `ENABLE_DRIVE_OAUTH=true` boot guard (either complete pair satisfies it). A
+SEPARATE, unconditional (not `NODE_ENV`-gated) check rejects a half-set new pair (id without secret,
+or vice versa) in any environment — `requireClient()` in `oauth/drive.ts` only ever reads the pair as
+a whole, so a half-set pair would otherwise either silently fall back to the legacy client or throw
+at first use instead of failing loudly at boot.
 
 ## 2026-09-13 SCRUM-3888 — origin guard for the public Cloud Run origin
 

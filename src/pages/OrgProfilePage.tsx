@@ -36,7 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, CONNECTORS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, PROFILE_MEDIA_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS, CONNECTORS_LABELS, PENDING_INVITATIONS_LABELS, PROFILE_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
@@ -47,6 +47,10 @@ import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDoc
 import { AdobeSignConnectorCard, adobeSignErrorCopy } from '@/components/integrations/AdobeSignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
+import { ProfileMediaImage, useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
+import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
+import { publicMirrorPathFromUrl, type PublicMirror } from '@/lib/profileMedia';
+import { sessionHasAal2 } from '@/lib/mfaSessionKey';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
@@ -81,6 +85,41 @@ const TAB_TRIGGER_CLASS =
   'rounded-none border-b-2 border-transparent data-[state=active]:border-primary ' +
   'data-[state=active]:bg-transparent px-3 md:px-4 py-3 text-sm font-medium whitespace-nowrap';
 
+/**
+ * D1 — organization brand media stays PUBLICLY addressable.
+ *
+ * Organizations have no visibility toggle, and OpenGraph / schema.org consumers
+ * are out-of-band crawlers that cannot exchange an opaque path for a 30 s
+ * signed URL. So a logo upload writes BOTH the private CAS object (in-app
+ * rendering, ownership-checked) and a public `org-logos` object, and commits
+ * `logo_url` next to `logo_storage_path` in ONE update — the two can never
+ * disagree. The banner has no crawler surface and is private only.
+ */
+export const ORG_PUBLIC_LOGO_BUCKET = 'org-logos';
+
+export function orgBrandUpdates(kind: ProfileMediaKind, path: string, publicUrl?: string) {
+  return kind === 'logo'
+    ? { logo_storage_path: path, ...(publicUrl ? { logo_url: publicUrl } : {}) }
+    : { banner_storage_path: path };
+}
+
+export function orgBrandPublicMirror(
+  kind: ProfileMediaKind,
+  orgId: string | null | undefined,
+  currentLogoUrl: string | null | undefined,
+): PublicMirror | undefined {
+  // The org-logos policies (migration 0108) match (storage.foldername(name))[1]
+  // against org_members.org_id::text, so the prefix is the internal org id —
+  // the same id this page's own URL already carries.
+  if (kind !== 'logo' || !orgId) return undefined;
+  const ownerPrefix = `${orgId}/`;
+  return {
+    bucket: ORG_PUBLIC_LOGO_BUCKET,
+    ownerPrefix,
+    previousPath: publicMirrorPathFromUrl(currentLogoUrl, ORG_PUBLIC_LOGO_BUCKET, ownerPrefix) ?? null,
+  };
+}
+
 export function OrgProfilePage() {
   const { orgId } = useParams<{ orgId: string }>();
   return <OrgProfilePageInner key={orgId ?? 'no-org'} />;
@@ -90,7 +129,7 @@ function OrgProfilePageInner() {
   const navigate = useNavigate();
   const { orgId } = useParams<{ orgId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const platformAdmin = isPlatformAdmin(profile);
   const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null, platformAdmin);
@@ -232,7 +271,6 @@ function OrgProfilePageInner() {
   const [orgSaved, setOrgSaved] = useState(false);
 
   // Logo upload state
-  const [logoUploading, setLogoUploading] = useState(false);
 
   // Sub-org affiliation state
   const [parentOrgName, setParentOrgName] = useState<string | null>(null);
@@ -364,56 +402,31 @@ function OrgProfilePageInner() {
     setOrgSettingsInit(true);
   }
 
-  // Logo upload handler
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !orgId) return;
-
-    // Validate file
-    const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
-    const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      toast.error('Please upload a PNG, JPG, or WebP image.');
-      return;
-    }
-    if (file.size > MAX_SIZE) {
-      toast.error('Logo must be under 2 MB.');
-      return;
-    }
-
-    setLogoUploading(true);
-    const ext = file.name.split('.').pop() ?? 'png';
-    const path = `${orgId}/logo.${ext}`;
-
-    // Upload to storage (upsert to overwrite existing)
-    const { error: uploadError } = await supabase.storage
-      .from('org-logos')
-      .upload(path, file, { upsert: true, contentType: file.type });
-
-    if (uploadError) {
-      toast.error(ORG_LOGO_LABELS.UPLOAD_FAILED);
-      setLogoUploading(false);
-      return;
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage.from('org-logos').getPublicUrl(path);
-    const logoUrl = urlData?.publicUrl;
-
-    if (logoUrl) {
-      // Update org record with logo_url
-      await updateOrganization({ logo_url: logoUrl });
-      toast.success(ORG_LOGO_LABELS.UPLOAD_SUCCESS);
-    }
-
-    setLogoUploading(false);
-    // Reset the input so re-selecting the same file triggers onChange
-    e.target.value = '';
-  };
+  const brandField = (kind: ProfileMediaKind) => kind === 'logo' ? 'logo_storage_path' as const : 'banner_storage_path' as const;
+  const brandMedia = useProfileMediaUpload({
+    scope: 'organizations',
+    scopeId: organization?.public_id ?? null,
+    ownerId: orgId ?? null,
+    externallyBusy: orgUpdating,
+    previousPathFor: (kind) => organization?.[brandField(kind)] ?? null,
+    publicMirrorFor: useCallback(
+      (kind: ProfileMediaKind) => orgBrandPublicMirror(kind, orgId, (organization as Record<string, unknown> | null)?.logo_url as string | null),
+      [orgId, organization],
+    ),
+    commit: useCallback((kind: ProfileMediaKind, path: string, previousPath: string | null, publicUrl?: string) => {
+      const field = kind === 'logo' ? 'logo_storage_path' as const : 'banner_storage_path' as const;
+      return updateOrganization(orgBrandUpdates(kind, path, publicUrl), { field, expected: previousPath }, { silentSuccess: true });
+    }, [updateOrganization]),
+    successMessage: (kind) => kind === 'logo' ? ORG_LOGO_LABELS.UPLOAD_SUCCESS : PROFILE_MEDIA_LABELS.ORG_BANNER_UPDATED,
+    // `can_write_profile_media` requires an AAL2 session — disable rather than
+    // let the write fail with an RLS rejection the user cannot act on.
+    canUpload: sessionHasAal2(session?.access_token ?? null, user?.id ?? null),
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
+  const resolvedOrgLogoUrl = useProfileMediaUrl(organization?.logo_storage_path, orgLogoUrl);
   const orgFoundedDisplay = getOrganizationFoundedDisplay(organization);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(profile);
 
@@ -587,8 +600,8 @@ function OrgProfilePageInner() {
           <div className="-mt-14 mb-3 flex items-end justify-between">
             <div className="relative group">
               <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border-4 border-background bg-card shadow-xl overflow-hidden">
-                {orgLogoUrl ? (
-                  <img src={orgLogoUrl} alt={organization?.display_name ? `${organization.display_name} organization logo` : 'Organization logo'} className="h-full w-full object-cover" loading="lazy" decoding="async" width={112} height={112} />
+                {resolvedOrgLogoUrl ? (
+                  <img src={resolvedOrgLogoUrl} referrerPolicy="no-referrer" alt={organization?.display_name ? `${organization.display_name} organization logo` : 'Organization logo'} className="h-full w-full object-cover" loading="lazy" decoding="async" width={112} height={112} />
                 ) : (
                   <Building2 className="h-14 w-14 text-primary" />
                 )}
@@ -596,9 +609,9 @@ function OrgProfilePageInner() {
               {isAdmin && (
                 <label
                   className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                  aria-label={orgLogoUrl ? ORG_LOGO_LABELS.CHANGE_LOGO : ORG_LOGO_LABELS.UPLOAD_LOGO}
+                  aria-label={resolvedOrgLogoUrl ? ORG_LOGO_LABELS.CHANGE_LOGO : ORG_LOGO_LABELS.UPLOAD_LOGO}
                 >
-                  {logoUploading ? (
+                  {brandMedia.uploading === 'logo' ? (
                     <Loader2 className="h-6 w-6 animate-spin text-white" />
                   ) : (
                     <Camera className="h-6 w-6 text-white" />
@@ -607,8 +620,8 @@ function OrgProfilePageInner() {
                     type="file"
                     className="sr-only"
                     accept="image/png,image/jpeg,image/webp"
-                    onChange={handleLogoUpload}
-                    disabled={logoUploading}
+                    onChange={(event) => { void brandMedia.onInputChange('logo')(event); }}
+                    disabled={brandMedia.busy}
                   />
                 </label>
               )}
@@ -1147,6 +1160,14 @@ function OrgProfilePageInner() {
                   onChange={(e) => { setOrgFoundedDate(e.target.value); setOrgSaved(false); }}
                   disabled={orgUpdating}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="org-banner">{PROFILE_MEDIA_LABELS.ORG_BANNER}</Label>
+                <ProfileMediaImage storagePath={organization?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_ORG_BANNER} className="h-32 w-full rounded-lg object-cover" />
+                <Input id="org-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={brandMedia.busy} onChange={(event) => { void brandMedia.onInputChange('banner')(event); }} />
+                <p className="text-xs text-muted-foreground">{PROFILE_MEDIA_LABELS.ORG_BANNER_HINT}</p>
+                {brandMedia.blocked && <p className="text-xs text-muted-foreground">{PROFILE_MEDIA_LABELS.MFA_REQUIRED}</p>}
               </div>
 
               <Button

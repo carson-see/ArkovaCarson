@@ -9,12 +9,23 @@
  *   4. files.get(parents, name) for the folder-path resolver
  *
  * Every function takes a fetch impl so tests stub without touching the
- * real network. Scopes are intentionally limited to Drive file access,
- * Drive Activity read-only visibility, and the non-sensitive userinfo.email
- * identity scope (see DRIVE_DEFAULT_SCOPES); the consent URL never sets
- * `include_granted_scopes`, so a connect cannot inherit unrelated scopes
- * previously granted to the OAuth client. Refresh tokens are stored by the
- * connector service in Secret Manager, not Postgres.
+ * real network. Scopes are `drive.readonly` + the non-sensitive
+ * userinfo.email identity scope (see DRIVE_DEFAULT_SCOPES — 2026-09-21 CTO
+ * decision, SCRUM-5287/SCRUM-2903/SCRUM-2330; see that constant's doc
+ * comment for why the previous `drive.file` + `drive.metadata.readonly` +
+ * `drive.activity.readonly` combination could not actually deliver what the
+ * connector promises). The consent URL never sets `include_granted_scopes`,
+ * so a connect cannot inherit unrelated scopes previously granted to the
+ * OAuth client. Refresh tokens are stored by the connector service in
+ * Secret Manager, not Postgres.
+ *
+ * OAuth CLIENT selection (SCRUM-5287 follow-up): this module supports TWO
+ * client credential pairs — see `requireClient()`'s doc comment for why
+ * (short version: `GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET`, a NEW dedicated
+ * `arkova-connectors` GCP OAuth client, is preferred when configured;
+ * `GOOGLE_OAUTH_CLIENT_ID/SECRET`, the original shared client, is the
+ * fallback and is REQUIRED for refreshing any row connected before the
+ * cutover — a refresh token is bound to the client that issued it).
  *
  * Constitution refs:
  *   - 1.4: no hardcoded secrets; client ID + secret from env.
@@ -30,64 +41,90 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 
 /**
  * SECURITY — complete Google scope allowlist (FULLSOAK 2026-08 finding,
- * shared-resource register #9). Scope ↔ runtime consumer:
+ * shared-resource register #9; SCRUM-5287/SCRUM-2903/SCRUM-2330 cutover).
  *
- *   - drive.file: files.get / files.export / changes.* / channels.stop —
- *     every Drive API call in this module.
- *   - drive.activity.readonly: Drive Activity read-only visibility (the
- *     connector's declared surface; no direct Activity API caller yet).
- *   - drive.metadata.readonly (Connectors page — SPEC-CONNECTORS §2.1,
- *     "Option A"): metadata-only, cannot read file bytes. Minimum scope that
- *     makes `listChildFolders()` below return anything for an org connecting
- *     for the first time — `drive.file` alone cannot enumerate pre-existing
- *     folders (it only sees files the app created or the user handed it via
- *     the Google Picker). This is the security review that constant's own
- *     comment asks for — reviewed by the release session's /codereview pass
- *     on this PR. Widening a scope does NOT widen an existing refresh
- *     token — every connection made BEFORE this change must re-consent
- *     before the folder picker will work for it; the endpoint in
- *     `api/v1/integrations/drive-folders.ts` fails closed
- *     (`insufficient_drive_scope`) rather than silently returning `[]` for a
- *     stale grant. CTO verified on prod (read-only, 2026-09-13) that the
- *     Arkova org's own google_drive grant already includes
- *     `auth/drive` + `drive.file`, so the picker works for that org today;
- *     every OTHER org's existing connection needs the re-consent above.
+ * HISTORY (why this changed): the connector was originally requested as
+ * `drive.file` + `drive.metadata.readonly` + `drive.activity.readonly` +
+ * `userinfo.email`. The 2026-09-21 independent review (see the CORRECTION
+ * this comment used to carry, preserved in git history / SCRUM-2903) found
+ * that combination could never deliver what Arkova's product promises
+ * ("connect a folder; every file added or updated there is fingerprinted"):
  *
- *     CORRECTION (2026-09-21, independent review, SCRUM-2903 fields-mask PR
- *     follow-up — read this before trusting the paragraph above for a NEW
- *     connection): `drive.file` per-file access is granted ONLY for a file
- *     the app itself created, OR a file the user explicitly selected through
- *     Google's REAL Picker UI
- *     (https://developers.google.com/workspace/drive/picker/guides/overview)
- *     — NOT merely "a file listed via drive.metadata.readonly." Arkova's
- *     Connectors-page folder browser (`DriveFolderPicker` /
- *     `api/v1/integrations/drive-folders.ts`, this scope's actual
- *     consumer) is a CUSTOM component built on `files.list` over
- *     `drive.metadata.readonly` — it is not, and does not load, Google's
- *     Picker widget. Selecting a folder through it does NOT grant
- *     `drive.file` per-file access to that folder's contents. Practical
- *     effect: for a newly-connected org whose only grant is this scope set,
- *     `fetchDriveFileBytes()` (the byte-fetch this scope was believed to
- *     cover) will 403 (`appNotAuthorizedToFile` / `insufficientFilePermissions`
- *     / similar) on an ordinary file the folder browser showed as watchable.
- *     The Arkova org's own grant working today (verified 2026-09-13, cited
- *     above) is because that grant ALSO includes the broad `auth/drive`
- *     scope from an earlier, wider consent — not because this scope set is
- *     sufficient on its own. This PR makes that 403 LOUD and specific (see
- *     `fetchDriveFileBytes`'s doc comment and `connector-health.ts`'s
- *     `file_access_not_granted` reason) rather than fixing the scope here —
- *     the scope decision (real Picker integration vs. widening
- *     `DRIVE_DEFAULT_SCOPES`) is being made separately.
+ *   - `drive.file` grants per-file access ONLY for a file the app itself
+ *     created, or one the user explicitly selected through Google's REAL
+ *     Picker widget
+ *     (https://developers.google.com/workspace/drive/picker/guides/overview).
+ *     Arkova's Connectors-page folder browser (`DriveFolderPicker` /
+ *     `api/v1/integrations/drive-folders.ts`) is a CUSTOM `files.list`
+ *     component, not the Picker — so a file another person later added to a
+ *     watched folder is invisible to `drive.file` and 403s on byte fetch.
+ *   - `drive.metadata.readonly` and `drive.activity.readonly` are already
+ *     Google RESTRICTED scopes (subject to the same verification/CASA
+ *     review as a broader scope), so the old combination paid the
+ *     restricted-scope cost without the read access the product needs.
+ *
+ * CTO decision (2026-09-21): request exactly `drive.readonly` +
+ * `userinfo.email`, confirmed against Google's own REST reference as
+ * sufficient for every Drive API call this module makes —
+ * https://developers.google.com/workspace/drive/api/reference/rest/v3/files/get
+ * (files.get, incl. `alt=media` byte fetch),
+ * https://developers.google.com/workspace/drive/api/reference/rest/v3/files/export
+ * (files.export, Workspace-native doc rendering),
+ * https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list
+ * (files.list — `listChildFolders`'s folder browser),
+ * https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/list
+ * (changes.list),
+ * https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/watch
+ * (changes.watch), and
+ * https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/getStartPageToken
+ * (changes.getStartPageToken) each list `drive.readonly` in their accepted-
+ * scopes table. `channels.stop` and `drives.get` (shared-drive display name)
+ * are not scope-gated beyond "the same OAuth client/token that created the
+ * resource," so they are unaffected by this narrowing.
+ *
+ * Scope ↔ runtime consumer, current set:
+ *
+ *   - drive.readonly: every Drive API call in this module — metadata,
+ *     folder listing, changes feed, AND file byte reads (fixing the
+ *     `drive.file` gap above; this scope is still RESTRICTED, so Google
+ *     verification runs for the new `arkova-connectors` OAuth client in
+ *     parallel with this PR — see the PR body for what a human must do).
  *   - userinfo.email: the callback's account-identity lookup
  *     (drive-oauth.ts fetchGoogleIdentity → oauth2/v3/userinfo). Without an
  *     identity scope that endpoint 401s and account_id degrades to a
  *     constant, collapsing the org_integrations (org_id, provider,
  *     account_id) upsert key. Non-sensitive; returns sub + email only.
  *
+ * Widening a scope does NOT widen an existing refresh token — every
+ * connection made BEFORE this cutover must re-consent before folder
+ * browsing of files it didn't create, or byte fetch of files it didn't
+ * create, will work. See `DRIVE_LEGACY_REQUESTED_SCOPES`,
+ * `isDriveLegacyGrant()`, and connector-health.ts's
+ * `reconnect_required_scope_change` reason for how an existing row is
+ * classified and surfaced, and `requireClient()`'s doc comment for how its
+ * refresh token keeps working against the client that actually issued it.
+ *
  * Do NOT add scopes here without a security review — this list is exactly
  * what a leaked refresh token can reach.
  */
 export const DRIVE_DEFAULT_SCOPES = [
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/userinfo.email',
+];
+
+/**
+ * The scope set Arkova requested for Drive BEFORE the 2026-09-21
+ * drive.readonly cutover (SCRUM-5287/SCRUM-2903/SCRUM-2330). An existing
+ * `org_integrations` row whose stored grant is (a subset of) exactly this
+ * set is NOT an over-grant security finding — `driveGrantExcessScopes`
+ * treats it as within-bounds — but it IS a connection that needs re-consent:
+ * folder browsing and file-byte fetches for anything the app didn't create
+ * will keep 403ing under this set (see `DRIVE_DEFAULT_SCOPES`'s doc comment
+ * for why). Exported so `isDriveLegacyGrant`, connector-health.ts, and the
+ * refresh-token client-selection logic in `drive-changes-runner.ts` all
+ * classify a stored `scope` string against the exact same set.
+ */
+export const DRIVE_LEGACY_REQUESTED_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/drive.activity.readonly',
   'https://www.googleapis.com/auth/drive.metadata.readonly',
@@ -112,12 +149,41 @@ const DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES = new Set(['openid']);
  * is already never sent (see `buildAuthorizationUrl`'s doc comment), which
  * stops a NEW consent from inheriting old scopes going forward — this is
  * the other half: verifying the grant Google actually returned doesn't
- * exceed `DRIVE_DEFAULT_SCOPES` before persisting it at all.
+ * exceed what THIS flow requested before persisting it at all.
  *
- * Returns the excess scope NAMES (empty array = grant is within bounds).
- * Never logs/returns anything else from the scope string — scope names are
- * public OAuth constants, not secrets, but the token itself never flows
- * through this function.
+ * TWO DIFFERENT USES NEED TWO DIFFERENT BOUNDS (independent review,
+ * 2026-09-22, fix-round after the drive.readonly cutover — do not
+ * reunify these without re-reading this comment):
+ *
+ *   1. **Acceptance at OAuth callback** (drive-oauth.ts, persist-time): the
+ *      question is "did Google return MORE than THIS authorize request
+ *      asked for?" `buildAuthorizationUrl` always requests
+ *      `DRIVE_DEFAULT_SCOPES` (the CURRENT set) — regardless of which OAuth
+ *      client generation issues the grant during the cutover window — so
+ *      the acceptance bound must be `DRIVE_DEFAULT_SCOPES` ALONE. Using the
+ *      union here REOPENS the exact hole this guard exists to close: a
+ *      brand-new connect through the still-shared OLD client, whose Google
+ *      account carries a residual `drive.file` grant from an unrelated
+ *      prior consent (the FULLSOAK 2026-08 mechanism, cited above), would
+ *      return `drive.readonly + userinfo.email + drive.file` — a superset
+ *      of what was requested, but `drive.file` sits inside
+ *      `DRIVE_LEGACY_REQUESTED_SCOPES`, so a union-based check would let it
+ *      through with no refusal and no audit event. `driveGrantExcessScopes`
+ *      below is this narrow, acceptance-time function.
+ *   2. **Classifying an EXISTING, already-persisted row** (connector-health.ts):
+ *      the question is "does this row need a security-finding banner, or
+ *      just a reconnect prompt?" An existing row legitimately connected
+ *      under the pre-cutover request (`DRIVE_LEGACY_REQUESTED_SCOPES`) is
+ *      history, not an attack — that needs the UNION so it reads
+ *      `reconnect_required_scope_change` (see `isDriveLegacyGrant`), not
+ *      `grant_exceeds_requested`. `driveExistingGrantExcessScopes` below is
+ *      this wider, classification-time function. NEVER use it to decide
+ *      whether to PERSIST a brand-new grant.
+ *
+ * Both return the excess scope NAMES (empty array = grant is within
+ * bounds). Neither logs/returns anything else from the scope string — scope
+ * names are public OAuth constants, not secrets, but the token itself never
+ * flows through either function.
  */
 /**
  * Google's token-exchange response echoes SOME well-known OIDC scopes back
@@ -132,14 +198,72 @@ const DRIVE_GRANT_SCOPE_ALIASES: Record<string, string> = {
   profile: 'https://www.googleapis.com/auth/userinfo.profile',
 };
 
-export function driveGrantExcessScopes(grantedScope: string | null | undefined): string[] {
+/** Split + normalize a Google-returned/-stored space-delimited scope string. */
+function normalizeGrantedScopes(grantedScope: string | null | undefined): string[] {
   if (!grantedScope) return [];
-  const requested = new Set(DRIVE_DEFAULT_SCOPES);
   return grantedScope
     .split(/\s+/)
     .filter(Boolean)
-    .map((scope) => DRIVE_GRANT_SCOPE_ALIASES[scope] ?? scope)
+    .map((scope) => DRIVE_GRANT_SCOPE_ALIASES[scope] ?? scope);
+}
+
+/**
+ * ACCEPTANCE-TIME check — use at OAuth callback, before persisting a brand
+ * new grant. Compares against `DRIVE_DEFAULT_SCOPES` (what THIS flow
+ * actually requested) alone, plus the always-allowed OIDC extras. See the
+ * doc comment above for why this must stay narrow — DO NOT widen this to
+ * the union with `DRIVE_LEGACY_REQUESTED_SCOPES`; use
+ * {@link driveExistingGrantExcessScopes} for classifying an existing row
+ * instead.
+ */
+export function driveGrantExcessScopes(grantedScope: string | null | undefined): string[] {
+  const requested = new Set(DRIVE_DEFAULT_SCOPES);
+  return normalizeGrantedScopes(grantedScope)
     .filter((scope) => !requested.has(scope) && !DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
+}
+
+/**
+ * CLASSIFICATION-TIME check — use ONLY to classify an EXISTING,
+ * already-persisted `org_integrations.scope` (connector-health.ts). Compares
+ * against the UNION of `DRIVE_DEFAULT_SCOPES` and
+ * `DRIVE_LEGACY_REQUESTED_SCOPES`, because a row holding exactly the
+ * pre-cutover set is legitimate history, not an attack — see the doc
+ * comment above {@link driveGrantExcessScopes} for the full rationale and
+ * why the two functions must NOT be unified. NEVER use this to decide
+ * whether to persist a brand-new grant at OAuth callback time.
+ */
+export function driveExistingGrantExcessScopes(grantedScope: string | null | undefined): string[] {
+  const requested = new Set([...DRIVE_DEFAULT_SCOPES, ...DRIVE_LEGACY_REQUESTED_SCOPES]);
+  return normalizeGrantedScopes(grantedScope)
+    .filter((scope) => !requested.has(scope) && !DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
+}
+
+/**
+ * True when `grantedScope` is within the OLD (pre-2026-09-21) requested set
+ * but NOT within the CURRENT `DRIVE_DEFAULT_SCOPES` — an existing connection
+ * that needs re-consent before folder browsing / file-byte fetches for
+ * anything the app didn't create will work again (see
+ * `DRIVE_LEGACY_REQUESTED_SCOPES`'s doc comment). Consumed by
+ * connector-health.ts (`reconnect_required_scope_change`) and
+ * `drive-changes-runner.ts` (which OAuth client a refresh token must be sent
+ * to — see `requireClient`'s doc comment).
+ *
+ * A grant that is already a subset of the NEW set returns `false` (nothing
+ * to reconnect). A grant that exceeds BOTH sets ALSO returns `false` here —
+ * `driveExistingGrantExcessScopes` already flags that as the higher-severity
+ * `grant_exceeds_requested` finding, and the two are mutually exclusive by
+ * construction (see connector-health.ts's `classify()` precedence).
+ */
+export function isDriveLegacyGrant(grantedScope: string | null | undefined): boolean {
+  const scopes = normalizeGrantedScopes(grantedScope);
+  if (scopes.length === 0) return false;
+  const newSet = new Set(DRIVE_DEFAULT_SCOPES);
+  const isWithinNewSet = scopes.every(
+    (scope) => newSet.has(scope) || DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope),
+  );
+  if (isWithinNewSet) return false;
+  const oldSet = new Set(DRIVE_LEGACY_REQUESTED_SCOPES);
+  return scopes.every((scope) => oldSet.has(scope) || DRIVE_GRANT_ALWAYS_ALLOWED_EXTRA_SCOPES.has(scope));
 }
 
 /**
@@ -147,6 +271,12 @@ export function driveGrantExcessScopes(grantedScope: string | null | undefined):
  * `drive.file` is deliberately NOT in this set — it cannot enumerate a user's
  * pre-existing folders, so a connection carrying only that scope must be
  * reported as `insufficient_drive_scope`, never silently return `[]`.
+ * `drive.readonly` (the current `DRIVE_DEFAULT_SCOPES` request — confirmed
+ * against Google's `files.list` REST reference, see the doc comment on
+ * `DRIVE_DEFAULT_SCOPES`) already covers every NEW connection;
+ * `drive.metadata.readonly` and `drive` remain listed so a pre-cutover
+ * legacy grant or the known prod broad-`drive` row keep working without
+ * forcing an immediate re-consent just to browse folders.
  */
 export const DRIVE_FOLDER_LISTING_SCOPES = [
   'https://www.googleapis.com/auth/drive',
@@ -214,12 +344,28 @@ export class DriveApiError extends Error {
    * `isInvalidPageTokenError`.
    */
   pageTokenInvalid?: true;
-  constructor(msg: string, status: number, detail?: string, pageTokenInvalid?: true) {
+  /**
+   * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+   * OAuth2 `error` code from a TOKEN-ENDPOINT error response (e.g.
+   * `invalid_grant`, `unauthorized_client`, `invalid_client`) — the
+   * standard field Google's `oauth2.googleapis.com/token` returns on a 4xx.
+   * Only ever set by `refreshAccessToken`'s non-ok branch, from the SAME
+   * already-read, already-bounded JSON that populates `detail` — this is
+   * not a second body read and does not reopen any §1.6A concern (the
+   * token endpoint never returns document bytes). Lets
+   * `drive-changes-runner.ts`'s `loadDriveAccessToken` distinguish "this
+   * refresh token was sent to the wrong OAuth client" (retryable with the
+   * other client generation) from every other refresh failure (network,
+   * revoked grant, rate limit, …).
+   */
+  oauthError?: string;
+  constructor(msg: string, status: number, detail?: string, pageTokenInvalid?: true, oauthError?: string) {
     super(msg);
     this.name = 'DriveApiError';
     this.status = status;
     if (detail !== undefined) this.detail = detail;
     if (pageTokenInvalid) this.pageTokenInvalid = true;
+    if (oauthError !== undefined) this.oauthError = oauthError;
   }
 }
 
@@ -279,6 +425,36 @@ export function isInvalidPageTokenError(json: unknown): boolean {
     return false;
   });
 }
+
+/**
+ * SCRUM-5287 follow-up (2026-09-22, CRITICAL finding): OAuth2 token-endpoint
+ * error codes that mean "this refresh token was presented to the WRONG
+ * OAuth client" — https://www.rfc-editor.org/rfc/rfc6749#section-5.2 defines
+ * `invalid_grant` and `invalid_client`; `unauthorized_client` is Google's
+ * own addition for this same family. Distinct from every OTHER token-
+ * endpoint failure (network, revoked grant by the USER, malformed request),
+ * which must NOT trigger the generation-retry in `loadDriveAccessToken` —
+ * retrying an actually-revoked grant against a different client cannot
+ * succeed and would just double the latency of an already-failed refresh.
+ */
+export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_CODES = new Set([
+  'invalid_grant',
+  'unauthorized_client',
+  'invalid_client',
+]);
+
+/**
+ * Shared message prefix for the durable, bounded signal `loadDriveAccessToken`
+ * writes to `org_integrations.last_renewal_error` when a refresh exhausts
+ * every OAuth client it can try (see `drive-changes-runner.ts`). Exported
+ * from this dependency-free module — not `drive-changes-runner.ts`, which
+ * pulls in `jobs/run-lease.ts` and other heavier transitive deps — so
+ * `connector-health.ts` can import just the string constant to recognize
+ * the signal without adding that weight (see that folder's agents.md,
+ * 2026-09-21 entry, for why a `connector-health.ts` → `drive-changes-runner.ts`
+ * import was avoided once before).
+ */
+export const DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX = 'Drive OAuth client mismatch';
 
 /**
  * Deadline for every Drive API response-body read (F-D0-5,
@@ -455,15 +631,161 @@ async function extractDriveFileErrorReason(res: {
   }
 }
 
-function requireClient(env: NodeJS.ProcessEnv): { clientId: string; clientSecret: string } {
+/**
+ * Which OAuth client's credentials a call should use.
+ *
+ *   - `'current'` (default): the pair new consent (buildAuthorizationUrl,
+ *     exchangeCode) and a NOT-yet-legacy refresh use. Prefers the NEW
+ *     dedicated `arkova-connectors` client (`GOOGLE_DRIVE_OAUTH_CLIENT_ID/
+ *     SECRET`) when BOTH are configured; falls back to the original shared
+ *     client (`GOOGLE_OAUTH_CLIENT_ID/SECRET`) when either is unset — never
+ *     a half-migrated state (config.ts's cross-field guard rejects a
+ *     half-set new pair at boot).
+ *   - `'legacy'`: ALWAYS the original shared client, regardless of whether
+ *     the new pair is configured. See `refreshAccessToken`'s doc comment for
+ *     why a caller would ever ask for this.
+ */
+type DriveOAuthClientGeneration = 'current' | 'legacy';
+
+/**
+ * SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover): resolves which
+ * OAuth client credentials to use for a given call.
+ *
+ * WHY TWO CLIENTS CAN EXIST: `drive.readonly` is a Google RESTRICTED scope.
+ * Requesting it from the EXISTING shared `GOOGLE_OAUTH_CLIENT_ID` (which
+ * also serves DocuSign-adjacent and other historical consents — see the
+ * 32-scope prod row this file's `driveGrantExcessScopes` guards against)
+ * would put that whole client through Google's restricted-scope
+ * verification, and any verification finding would block every OTHER
+ * integration riding that client too. The CTO decision was a NEW, narrowly-
+ * scoped `arkova-connectors` GCP project + OAuth client requesting ONLY
+ * `drive.readonly` + `userinfo.email`, verified independently. Until that
+ * client's Secret Manager values exist (`google-drive-oauth-client-id` /
+ * `google-drive-oauth-client-secret` — NOT provisioned as of this PR; see
+ * the PR body), `requireClient('current')` transparently falls back to the
+ * original shared client so Drive connect keeps working exactly as before.
+ *
+ * WHY A REFRESH TOKEN CANNOT JUST FOLLOW THE NEW CLIENT: a Google OAuth
+ * refresh token is bound to the (Google account, OAuth client) pair that
+ * issued it — https://developers.google.com/identity/protocols/oauth2#5.-refresh-the-access-token,-if-necessary.
+ * Sending a refresh token minted under the OLD client to the token endpoint
+ * with the NEW client's `client_id` fails with `invalid_grant`; there is no
+ * migration path for a refresh token itself. Every row connected before the
+ * cutover must therefore keep refreshing against the OLD client for as long
+ * as it remains configured — callers pass `'legacy'` for those rows (see
+ * `drive-changes-runner.ts`'s `loadDriveAccessToken`, which classifies via
+ * `isDriveLegacyGrant(tokens.scope)`) and are surfaced as
+ * `reconnect_required_scope_change` until the org re-consents under the new
+ * client, which mints a fresh refresh token bound to it.
+ *
+ * `clientIdHint` (independent review, LOW finding — start/callback client
+ * pinning): when provided, OVERRIDES `generation` entirely and resolves by
+ * MATCHING the hint against the configured pairs — see `exchangeCode`'s doc
+ * comment for why a caller would pass this.
+ */
+function requireClient(
+  env: NodeJS.ProcessEnv,
+  generation: DriveOAuthClientGeneration = 'current',
+  clientIdHint?: string,
+): { clientId: string; clientSecret: string } {
+  if (clientIdHint) {
+    if (env.GOOGLE_DRIVE_OAUTH_CLIENT_ID && clientIdHint === env.GOOGLE_DRIVE_OAUTH_CLIENT_ID) {
+      const clientSecret = env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+      if (!clientSecret) {
+        throw new DriveConfigError('GOOGLE_DRIVE_OAUTH_CLIENT_SECRET not set — required alongside GOOGLE_DRIVE_OAUTH_CLIENT_ID.');
+      }
+      return { clientId: clientIdHint, clientSecret };
+    }
+    if (env.GOOGLE_OAUTH_CLIENT_ID && clientIdHint === env.GOOGLE_OAUTH_CLIENT_ID) {
+      const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
+      if (!clientSecret) {
+        throw new DriveConfigError('GOOGLE_OAUTH_CLIENT_SECRET not set — required alongside GOOGLE_OAUTH_CLIENT_ID.');
+      }
+      return { clientId: clientIdHint, clientSecret };
+    }
+    // The hint (captured at /oauth/start, before Google consent) matches
+    // NEITHER pair configured right now — a genuine client rotation
+    // happened mid-flow, not just "the new pair got configured." Fail
+    // loud and specific rather than silently falling through to whichever
+    // client `generation` would otherwise resolve — that would send the
+    // authorization code to a DIFFERENT client than the one that issued
+    // it, which Google rejects anyway, just with a less diagnosable error.
+    throw new DriveConfigError(
+      `Drive OAuth client configuration changed between /start and /callback (expected client_id `
+      + `${clientIdHint}, but neither the configured legacy nor new pair matches) — the consent flow must be retried.`,
+    );
+  }
+  if (generation === 'legacy') {
+    const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      throw new DriveConfigError(
+        'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not set — required to refresh a '
+        + 'Drive connection from before the drive.readonly cutover (SCRUM-5287).',
+      );
+    }
+    return { clientId, clientSecret };
+  }
+
+  const newClientId = env.GOOGLE_DRIVE_OAUTH_CLIENT_ID;
+  const newClientSecret = env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+  if (newClientId && newClientSecret) {
+    return { clientId: newClientId, clientSecret: newClientSecret };
+  }
+
   const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     throw new DriveConfigError(
-      'GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not set — provision in Secret Manager before connecting Drive.',
+      'Neither GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET nor GOOGLE_OAUTH_CLIENT_ID/SECRET are set — '
+      + 'provision one complete pair in Secret Manager before connecting Drive.',
     );
   }
   return { clientId, clientSecret };
+}
+
+/**
+ * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): resolves
+ * which OAuth client GENERATION a known `client_id` corresponds to, by
+ * matching it against the CURRENTLY CONFIGURED pairs — not by guessing from
+ * scope strings. This is the authoritative half of the client-identity fix:
+ * `org_integrations.account_label` now records the `client_id` that actually
+ * issued a row's tokens (`drive-oauth.ts`'s callback — see
+ * `drive-account-label.ts`'s `oauth_client_id` field), and
+ * `drive-changes-runner.ts`'s `loadDriveAccessToken` calls this function to
+ * turn that stored, PUBLIC (non-secret — it rides in the authorize URL)
+ * client_id back into a `DriveOAuthClientGeneration` before refreshing.
+ *
+ * Returns `undefined` when `clientId` matches NEITHER configured pair (a
+ * pair was rotated to a third id after the row connected, or the id was
+ * simply never one of Arkova's two known Drive clients) — callers must have
+ * their own fallback for that case; this function does not guess.
+ */
+export function resolveDriveClientGeneration(
+  clientId: string,
+  env: NodeJS.ProcessEnv,
+): DriveOAuthClientGeneration | undefined {
+  if (env.GOOGLE_DRIVE_OAUTH_CLIENT_ID && clientId === env.GOOGLE_DRIVE_OAUTH_CLIENT_ID) return 'current';
+  if (env.GOOGLE_OAUTH_CLIENT_ID && clientId === env.GOOGLE_OAUTH_CLIENT_ID) return 'legacy';
+  return undefined;
+}
+
+/**
+ * Independent review 2026-09-22 (LOW finding — start/callback client
+ * pinning): `buildAuthorizationUrl` resolves `requireClient('current')`
+ * internally to build the consent URL. `drive-oauth.ts`'s `/oauth/start`
+ * handler calls THIS separately, right after, to capture the SAME resolved
+ * `client_id` and embed it in the signed `state` payload — deterministic
+ * given the same `env` and no I/O between the two calls within one request,
+ * so this is guaranteed to match what just went into the URL. `/oauth/
+ * callback` then passes it back as `exchangeCode`'s `clientIdHint`, so a
+ * config flip inside the 10-minute state TTL (e.g. an operator provisions
+ * `GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET` mid-flow) cannot cause the code
+ * exchange to be attempted against a DIFFERENT client than the one that
+ * issued the authorization code.
+ */
+export function resolveDriveOAuthClientId(env: NodeJS.ProcessEnv): string {
+  return requireClient(env, 'current').clientId;
 }
 
 /**
@@ -499,15 +821,35 @@ export function buildAuthorizationUrl(args: {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-/** Exchange an authorization_code for tokens. */
+/**
+ * Exchange an authorization_code for tokens.
+ *
+ * Returns `clientId` alongside Google's own response fields (SCRUM-5287
+ * follow-up, CRITICAL finding) — the caller (`drive-oauth.ts`'s callback)
+ * persists it into `account_label.oauth_client_id` so a LATER refresh
+ * (`drive-changes-runner.ts`'s `loadDriveAccessToken`) knows, authoritatively
+ * rather than by guessing from the scope string, which client actually
+ * issued this row's refresh token. `clientId` is public (it rides in the
+ * authorize URL) — persisting it is not a secret exposure.
+ *
+ * `clientIdHint` (independent review, LOW finding — start/callback client
+ * pinning): pass the `client_id` captured at `/oauth/start` time
+ * (`resolveDriveOAuthClientId`, via the signed `state` payload) so this
+ * exchange uses the SAME client that built the authorize URL and therefore
+ * issued `args.code`, even if config changed in between. Omitted, this
+ * falls back to re-resolving `'current'` live from `env` — the ONLY
+ * behavior before this fix, kept as the default for callers (dead-code
+ * `googleDrive.ts`) that have no state payload to carry a hint in.
+ */
 export async function exchangeCode(args: {
   code: string;
   redirectUri: string;
+  clientIdHint?: string;
   deps?: DriveClientDeps;
-}): Promise<z.infer<typeof OAuthTokenResponse>> {
+}): Promise<z.infer<typeof OAuthTokenResponse> & { clientId: string }> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const { clientId, clientSecret } = requireClient(env);
+  const { clientId, clientSecret } = requireClient(env, 'current', args.clientIdHint);
 
   const body = new URLSearchParams({
     code: args.code,
@@ -527,17 +869,33 @@ export async function exchangeCode(args: {
     // Non-document path: Google token endpoint returns safe OAuth error JSON.
     throw new DriveApiError('Drive token exchange failed', res.status, boundedErrorDetail(json));
   }
-  return OAuthTokenResponse.parse(json);
+  return { ...OAuthTokenResponse.parse(json), clientId };
 }
 
-/** Refresh an access token using a long-lived refresh_token. */
+/**
+ * Refresh an access token using a long-lived refresh_token.
+ *
+ * `clientGeneration` (default `'current'`) selects which OAuth client
+ * credentials are sent — see `requireClient`'s doc comment for the full
+ * rationale. Pass `'legacy'` for a refresh token minted before the
+ * 2026-09-21 drive.readonly cutover (a row classified by
+ * `isDriveLegacyGrant(storedScope)`); sending it to the wrong client fails
+ * at Google with `invalid_grant`.
+ *
+ * Returns `clientId` alongside Google's own response fields (SCRUM-5287
+ * follow-up, CRITICAL finding) — the client actually used, so a caller that
+ * resolved `clientGeneration` heuristically (or via a retry) can persist the
+ * now-known-correct id back to `account_label.oauth_client_id` without
+ * re-deriving it. Public, not a secret.
+ */
 export async function refreshAccessToken(args: {
   refreshToken: string;
+  clientGeneration?: DriveOAuthClientGeneration;
   deps?: DriveClientDeps;
-}): Promise<z.infer<typeof OAuthTokenResponse>> {
+}): Promise<z.infer<typeof OAuthTokenResponse> & { clientId: string }> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const { clientId, clientSecret } = requireClient(env);
+  const { clientId, clientSecret } = requireClient(env, args.clientGeneration ?? 'current');
 
   const body = new URLSearchParams({
     refresh_token: args.refreshToken,
@@ -553,10 +911,20 @@ export async function refreshAccessToken(args: {
   });
   const json = await readDriveJson(res, 'Drive token refresh');
   if (!res.ok) {
-    // Non-document path: Google token refresh returns safe OAuth error JSON.
-    throw new DriveApiError('Drive token refresh failed', res.status, boundedErrorDetail(json));
+    // Non-document path: Google token refresh returns safe OAuth error JSON,
+    // standard shape `{ error: 'invalid_grant', error_description: '...' }`
+    // per RFC 6749 §5.2 — read the SAME already-parsed json that
+    // boundedErrorDetail below scrubs; not a second/raw body read.
+    const oauthErrorCode = (json as { error?: unknown } | null)?.error;
+    throw new DriveApiError(
+      'Drive token refresh failed',
+      res.status,
+      boundedErrorDetail(json),
+      undefined,
+      typeof oauthErrorCode === 'string' ? oauthErrorCode : undefined,
+    );
   }
-  return OAuthTokenResponse.parse(json);
+  return { ...OAuthTokenResponse.parse(json), clientId };
 }
 
 /**

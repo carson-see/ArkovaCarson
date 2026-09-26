@@ -13,6 +13,25 @@ reasonText }` (via `describeConnectorHealthReason`) or anything else (`unknown`,
 surfacing pass; Docusign is not yet wired to this (component/hook both support it — left for a
 follow-up).
 
+## 2026-09-25 SPEC-AGENTS-UI — `AgentsSettingsPage.tsx` (new), `/settings/agents`
+
+Thin pass-through, structured identically to `ApiKeySettingsPage.tsx`: gates
+`useAgents({ enabled })` on org membership (individual-tier users see
+`OrgRequiredCard` — `data-testid="agents-org-required"` — instead of the
+management UI, mirroring the `api-keys-org-required` precedent) and hands
+list/loading/error/mutations straight to
+`src/components/agents/AgentsSettings.tsx` with zero page-level logic. See
+`src/components/agents/agents.md` for what the component itself does.
+
+This closes the reachability gap for ComputeID / agent passports
+(`services/worker/src/api/v1/agents.ts`): the backend existed with no linked
+frontend page, so an org admin could not see, suspend, or revoke an agent
+except by raw curl — including the PR #3083 suspend-key-deactivation fix,
+which had no UI path to trigger it at all before this page. Wired into
+`src/App.tsx` (`ROUTES.SETTINGS_AGENTS`), the `SettingsPage.tsx` org-admin
+card (link, not sidebar — same convention as Webhooks/Referrals/Credential
+Templates), and `Breadcrumbs.tsx`.
+
 ## UAT-22 invitation read mode (2026-09-14)
 
 OrgProfilePage forwards its verified `platformAdmin` mode to the invitation-list hook, matching organization metadata and the existing create-invitation path. The page regression checks that selected-org invitation reads receive that mode. Failed list reads show a visible invitation-section alert using curated copy; raw worker or database errors are never rendered.
@@ -203,7 +222,6 @@ controls still carry a `sourceKey`). `title`/`aria-label` are unchanged —
 this is additive, not a replacement. `button.tsx` itself is untouched; fixing
 `disabled:pointer-events-none` there is a bigger, cross-page decision (it
 affects every disabled button in the app) that was out of scope here.
-
 
 ## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
 
@@ -887,7 +905,6 @@ for the hook, as it already is for create/revoke/delete. `ApiKeySettingsPage.tes
 hook, so a new hook member must be added to that mock or the page renders an `undefined` handler that
 only fails when a user clicks.
 
-
 ## PR #2782 — proof download block identity
 
 RecordDetailPage passes `chain_block_hash` to `sourceProofInput` and `blockHash` to the audit report builder so both can bind the height and timestamp to the proof's block. Omitting either silently loses that comparison. The page callback regression uses the real proof reader and packet builder with matching and mismatched database rows; a mismatched proof is withheld from the certificate.
@@ -928,6 +945,15 @@ The public gateway serves the machine-readable reference at `/api/docs/spec.json
 
 `OrgProfilePage` is the route-org shell: it passes the route org to Secure Document, registry, queue, and the additive `useOrgProfileFolders` wrapper. It renders safe HTTPS-only organization social links and composes folder filtering/management into Home. `AnchorQueuePage` carries `org_id` through list/run/resolve, queries the exact membership role, clears tenant-bound state on route changes, and ignores stale responses. Never fall back from a route org to the profile/active org.
 The queue scope key includes authenticated user and effective organization, so primary-organization changes also invalidate list requests and clear rows. An explicit empty or malformed `org_id` is visibly denied rather than falling back.
+## 2026-09-21 — UAT-14 brand media on OrgProfilePage (PR #3033 review)
+
+`orgBrandUpdates` / `orgBrandPublicMirror` are exported and unit-tested: the
+logo commit carries `logo_url` AND `logo_storage_path` in one update, and the
+public mirror is keyed on the INTERNAL org id because migration 0108's
+`org-logos` policies match `(storage.foldername(name))[1]` against
+`org_members.org_id::text`. A `public_id`-keyed public path is denied. Both
+upload surfaces disable their inputs and show `PROFILE_MEDIA_LABELS.MFA_REQUIRED`
+on an AAL1 session.
 
 ## 2026-09-25 — PROOF-06: RecordDetailPage's two proof downloads are now symmetric
 

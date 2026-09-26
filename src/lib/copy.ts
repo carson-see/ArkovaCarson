@@ -825,6 +825,72 @@ export const API_KEY_LABELS = {
 } as const;
 
 // =============================================================================
+// AGENTS (SPEC-AGENTS-UI) — ComputeID / agent passport management
+// =============================================================================
+
+export const AGENT_LABELS = {
+  PAGE_TITLE: 'Agents',
+  PAGE_DESCRIPTION: 'Manage the agents and automated integrations registered to your organisation.',
+  NO_AGENTS: 'No agents registered yet. Agents are registered through the Verification API.',
+  FETCH_ERROR: 'Unable to load agents. Please refresh and try again.',
+  STATUS_ACTIVE: 'Active',
+  STATUS_SUSPENDED: 'Suspended',
+  STATUS_REVOKED: 'Revoked',
+  SUSPEND: 'Suspend',
+  RESUME: 'Resume',
+  REVOKE: 'Revoke',
+  // review P2 (SPEC-AGENTS-UI): a lost response can follow a committed
+  // mutation, so these generic fallbacks no longer assert a state the
+  // client cannot actually know ("it is still active/suspended"). The hook
+  // always reads the agent back after a failure; AGENTS_SETTINGS picks one
+  // of the *_CONFIRMED_* / *_SUCCEEDED_DESPITE_ERROR / *_RESULT_UNCONFIRMED
+  // strings below from that readback. These bare *_FAILED strings are only
+  // the fallback for an error that carries no readback at all.
+  SUSPEND_FAILED: 'Failed to suspend this agent. Please try again.',
+  RESUME_FAILED: 'Failed to resume this agent. Please try again.',
+  REVOKE_FAILED: 'Failed to revoke this agent. Please try again.',
+  SUSPEND_FAILED_CONFIRMED_ACTIVE: 'Failed to suspend this agent — a refresh confirms it is still active. Please try again.',
+  SUSPEND_SUCCEEDED_DESPITE_ERROR: 'The suspend request reported an error, but a refresh confirms this agent is now suspended.',
+  SUSPEND_RESULT_UNCONFIRMED: 'Failed to suspend this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  RESUME_FAILED_CONFIRMED_SUSPENDED: 'Failed to resume this agent — a refresh confirms it is still suspended. Please try again.',
+  RESUME_SUCCEEDED_DESPITE_ERROR: 'The resume request reported an error, but a refresh confirms this agent is now active.',
+  RESUME_RESULT_UNCONFIRMED: 'Failed to resume this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  REVOKE_RESULT_UNCONFIRMED: 'Failed to revoke this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  // SCRUM-agents-ui: the worker's 409 for a PATCH against an already-revoked
+  // agent (revocation is terminal). Surfaced as its own curated string rather
+  // than the server's raw error text, matching this repo's rule against
+  // rendering raw Error.message (may carry server internals).
+  REVOKED_TERMINAL_ERROR: 'This agent has already been revoked. Revocation is terminal — a revoked agent cannot be reactivated. Register a new agent if it needs access again.',
+  CONFIRM_REVOKE_TITLE: 'Revoke this agent?',
+  // Names the #3083 fix explicitly: suspending/revoking an agent deactivates
+  // its keys, so the confirmation must say so rather than imply the agent
+  // record alone is affected.
+  CONFIRM_REVOKE_BODY: 'Revoking an agent is permanent and cannot be undone. It immediately deactivates every active API key issued to this agent. Register a new agent if it needs access again.',
+  CONFIRM_REVOKE_CANCEL: 'Cancel',
+  CONFIRM_REVOKE_CONFIRM: 'Yes, revoke permanently',
+  SUSPEND_HINT: 'Suspending deactivates this agent’s active API keys. Resuming restores them.',
+  REVOKED_NOTE: 'Revoked — revocation is terminal. No further status changes are possible.',
+  CREATED_LABEL: 'Registered',
+  VIEW_KEYS: 'View API keys',
+  HIDE_KEYS: 'Hide API keys',
+  KEYS_LOADING: 'Loading API keys…',
+  KEYS_ERROR: 'Unable to load this agent’s API keys.',
+  KEYS_EMPTY: 'No active API keys for this agent.',
+  ORG_REQUIRED_TITLE: 'Agents require an organisation',
+  ORG_REQUIRED_BODY: 'Agents are registered per organisation. Create or join one to manage agent access.',
+  ORG_REQUIRED_CTA: 'Create organisation',
+} as const;
+
+/** Mirrors `VALID_AGENT_TYPES` in services/worker/src/api/v1/agents.ts. */
+export const AGENT_TYPE_LABELS = {
+  llm_agent: 'AI Agent',
+  ats_integration: 'ATS Integration',
+  hr_platform: 'HR Platform',
+  compliance_tool: 'Compliance Tool',
+  custom: 'Custom Integration',
+} as const;
+
+// =============================================================================
 // ENTITLEMENTS / QUOTA
 // =============================================================================
 
@@ -1653,6 +1719,7 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_CREDENTIAL_TEMPLATES: 'Document Templates',
   BREADCRUMB_WEBHOOKS: 'Webhooks',
   BREADCRUMB_API_KEYS: 'API Keys',
+  BREADCRUMB_AGENTS: 'Agents',
   BREADCRUMB_REFERRALS: 'Referrals',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
@@ -1852,6 +1919,8 @@ export const SETTINGS_PAGE_LABELS = {
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
+  AGENTS: 'Agents',
+  AGENTS_DESC: 'View, suspend, or revoke registered agents',
   REFERRALS: 'Referrals',
   REFERRALS_DESC: 'Share your referral code and see who joined through it',
   TEMPLATES_EMPTY_TITLE: 'No templates yet',
@@ -1924,6 +1993,12 @@ export const CONNECTIONS_LABELS = {
   DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
+  // SCRUM-5287/SCRUM-2903/SCRUM-2330 (2026-09-21 drive.readonly cutover):
+  // replaces the former "least-privilege Drive access" claim, which implied
+  // per-file access (drive.file) — the actual grant is read-only access to
+  // the connected account's Drive, used only for the folders the customer
+  // chooses. Task 6 privacy/claims accuracy pass.
+  DRIVE_CONNECT_PROMPT: 'Authorize Arkova with read-only access to Google Drive. Only the folders you choose are watched, and each file is read once to generate a fingerprint, then discarded.',
 } as const;
 
 // =============================================================================
@@ -3420,6 +3495,34 @@ export const ORG_LOGO_LABELS = {
   LOGO_HINT: 'PNG or JPG, max 2 MB',
   UPLOAD_FAILED: 'Failed to upload logo. Please try again.',
   UPLOAD_SUCCESS: 'Logo updated successfully.',
+} as const;
+
+export const PROFILE_MEDIA_LABELS = {
+  SECTION_TITLE: 'Profile images',
+  SECTION_DESCRIPTION: 'Upload a profile photo and banner. Images appear publicly only while Public Profile is enabled.',
+  PROFILE_PHOTO: 'Profile photo',
+  PROFILE_BANNER: 'Profile banner',
+  CURRENT_PROFILE: 'Current profile',
+  CURRENT_PROFILE_BANNER: 'Current profile banner',
+  ORG_BANNER: 'Organization banner',
+  CURRENT_ORG_BANNER: 'Current organization banner',
+  ORG_BANNER_HINT: 'PNG, JPG, or WebP, up to 2 MB. Visible on the public organization page.',
+  ORG_BANNER_UPDATED: 'Organization banner updated.',
+  PROFILE_PHOTO_UPDATED: 'Profile photo updated.',
+  PROFILE_BANNER_UPDATED: 'Profile banner updated.',
+  UPLOAD_FAILED: 'Image upload failed.',
+  MFA_REQUIRED: 'Set up two-factor authentication to upload images.',
+  UPLOADING_PROFILE_PHOTO: 'Uploading profile photo…',
+  UPLOADING_PROFILE_BANNER: 'Uploading profile banner…',
+  TOO_LARGE: 'Image must be 2 MB or smaller.',
+  TYPE_MISMATCH: 'Choose a PNG, JPG, or WebP image whose file contents match its type.',
+  UNSUPPORTED_BROWSER: 'This browser cannot safely decode profile images.',
+  DECODE_FAILED: 'Choose a complete, decodable PNG, JPG, or WebP image.',
+  DIMENSIONS_INVALID: 'Image dimensions must be between 1 and 4096 pixels per side.',
+  SANITIZE_FAILED: 'Image could not be sanitized.',
+  SANITIZED_TOO_LARGE: 'Sanitized image must be 2 MB or smaller.',
+  METADATA_UPDATE_FAILED: 'Image metadata update failed.',
+  CLEANUP_WARNING: 'The image was updated, but an older stored copy could not be removed. Please try again later.',
 } as const;
 
 export const TERM_REPLACEMENTS: Record<string, string> = {

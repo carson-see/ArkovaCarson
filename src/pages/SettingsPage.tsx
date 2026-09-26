@@ -9,11 +9,11 @@
 import { useState, useCallback } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Gift } from 'lucide-react';
+import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Gift, Bot, Camera } from 'lucide-react';
 import { LinkedinIcon as Linkedin, GithubIcon as Github, TwitterIcon as Twitter } from '@/components/shared/SocialIcons';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
+import { SETTINGS_PAGE_LABELS, PROFILE_MEDIA_LABELS } from '@/lib/copy';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,9 +33,12 @@ import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
 import { parseSocialLinksForWrite, pickSocialLinks } from '@/lib/socialLinks';
+import { ProfileMediaImage } from '@/components/shared/ProfileMediaImage';
+import { useProfileMediaUpload, type ProfileMediaKind } from '@/hooks/useProfileMediaUpload';
+import { sessionHasAal2 } from '@/lib/mfaSessionKey';
 
 export function SettingsPage() {
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const { profile, loading: profileLoading, updating, updateProfile, refreshProfile } = useProfile();
 
   const [fullName, setFullName] = useState('');
@@ -119,6 +122,23 @@ export function SettingsPage() {
   const handleTogglePublicProfile = useCallback(async (checked: boolean) => {
     await updateProfile({ is_public_profile: checked });
   }, [updateProfile]);
+
+  const mediaField = (kind: ProfileMediaKind) => kind === 'avatar' ? 'avatar_storage_path' as const : 'banner_storage_path' as const;
+  const media = useProfileMediaUpload({
+    scope: 'users',
+    scopeId: profile?.public_id ?? null,
+    ownerId: user?.id ?? null,
+    previousPathFor: (kind) => profile?.[mediaField(kind)] ?? null,
+    commit: useCallback((kind: ProfileMediaKind, path: string, previousPath: string | null) => {
+      const field = kind === 'avatar' ? 'avatar_storage_path' as const : 'banner_storage_path' as const;
+      return updateProfile({ [field]: path }, { field, expected: previousPath });
+    }, [updateProfile]),
+    successMessage: (kind) => kind === 'avatar' ? PROFILE_MEDIA_LABELS.PROFILE_PHOTO_UPDATED : PROFILE_MEDIA_LABELS.PROFILE_BANNER_UPDATED,
+    // The storage write policy requires an AAL2 session; at AAL1 the input is
+    // disabled rather than failing with an RLS rejection nobody can act on.
+    canUpload: sessionHasAal2(session?.access_token ?? null, user?.id ?? null),
+  });
+  const mediaUploading = media.uploading;
 
   return (
     <AppShell
@@ -216,6 +236,26 @@ export function SettingsPage() {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Camera className="h-5 w-5" />{PROFILE_MEDIA_LABELS.SECTION_TITLE}</CardTitle>
+            <CardDescription>{PROFILE_MEDIA_LABELS.SECTION_DESCRIPTION}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex items-center gap-4">
+              <ProfileMediaImage storagePath={profile?.avatar_storage_path} fallbackUrl={profile?.avatar_url} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE} className="h-20 w-20 rounded-full object-cover" />
+              <div className="flex-1 space-y-2"><Label htmlFor="profile-avatar">{PROFILE_MEDIA_LABELS.PROFILE_PHOTO}</Label><Input id="profile-avatar" type="file" accept="image/png,image/jpeg,image/webp" disabled={media.busy} onChange={(event) => { void media.onInputChange('avatar')(event); }} /></div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-banner">{PROFILE_MEDIA_LABELS.PROFILE_BANNER}</Label>
+              <ProfileMediaImage storagePath={profile?.banner_storage_path} alt={PROFILE_MEDIA_LABELS.CURRENT_PROFILE_BANNER} className="h-28 w-full rounded-lg object-cover" />
+              <Input id="profile-banner" type="file" accept="image/png,image/jpeg,image/webp" disabled={media.busy} onChange={(event) => { void media.onInputChange('banner')(event); }} />
+            </div>
+            {media.blocked && <p className="text-sm text-muted-foreground">{PROFILE_MEDIA_LABELS.MFA_REQUIRED}</p>}
+            {mediaUploading && <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />{mediaUploading === 'avatar' ? PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_PHOTO : PROFILE_MEDIA_LABELS.UPLOADING_PROFILE_BANNER}</p>}
           </CardContent>
         </Card>
 
@@ -497,6 +537,22 @@ export function SettingsPage() {
                   <div>
                     <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.API_KEYS}</p>
                     <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.API_KEYS_DESC}</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              {/* SPEC-AGENTS-UI — ComputeID / agent passport management. The
+                  backend (services/worker/src/api/v1/agents.ts) shipped with
+                  no reachable frontend; this is the only in-product link. */}
+              <Link
+                to={ROUTES.SETTINGS_AGENTS}
+                className="flex items-center justify-between rounded-lg px-3 py-3 hover:bg-muted transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Bot className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.AGENTS}</p>
+                    <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.AGENTS_DESC}</p>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />

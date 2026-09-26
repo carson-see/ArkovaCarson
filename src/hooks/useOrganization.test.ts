@@ -192,4 +192,55 @@ describe('useOrganization', () => {
       }),
     );
   });
+
+  it.each([
+    ['logo_storage_path' as const, null, 'is'],
+    ['banner_storage_path' as const, 'organizations/org-public/banner/old.png', 'eq'],
+  ])('applies the organization media CAS for %s', async (field, expected, method) => {
+    const mockOrg = { id: 'org-1', public_id: 'org-public', display_name: 'Test Corp', domain: 'test.com' };
+    const chain = { eq: vi.fn(), is: vi.fn(), select: vi.fn() };
+    chain.eq.mockReturnValue(chain);
+    chain.is.mockReturnValue(chain);
+    chain.select.mockResolvedValue({ data: [], error: null });
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: mockOrg, error: null }) }) }),
+      update: vi.fn().mockReturnValue(chain),
+    });
+    const { useOrganization } = await import('./useOrganization');
+    const { result } = renderHook(() => useOrganization('org-1'), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.organization?.id).toBe('org-1'));
+    await act(async () => { await result.current.updateOrganization(
+      { [field]: `organizations/org-public/${field.startsWith('logo') ? 'logo' : 'banner'}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png` },
+      { field, expected },
+    ); });
+    expect(chain[method as 'is' | 'eq']).toHaveBeenCalledWith(field, expected);
+  });
+
+  // The media upload surface owns its own success message; without this the
+  // user saw TWO toasts for one action ("Organization updated" plus "Logo
+  // updated successfully"). PR #3033 review, pass 4.
+  it.each([
+    [undefined, 1],
+    [{ silentSuccess: true }, 0],
+  ])('suppresses the generic success toast when the caller owns the message (%o)', async (options, expectedToasts) => {
+    const { toast } = await import('sonner');
+    const mockOrg = { id: 'org-1', public_id: 'org-public', display_name: 'Test Corp' };
+    const chain = { eq: vi.fn(), is: vi.fn(), select: vi.fn() };
+    chain.eq.mockReturnValue(chain);
+    chain.is.mockReturnValue(chain);
+    chain.select.mockResolvedValue({ data: [{ id: 'org-1' }], error: null });
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: mockOrg, error: null }) }) }),
+      update: vi.fn().mockReturnValue(chain),
+    });
+    const { useOrganization } = await import('./useOrganization');
+    const { result } = renderHook(() => useOrganization('org-1'), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.organization?.id).toBe('org-1'));
+    let updated = false;
+    await act(async () => {
+      updated = await result.current.updateOrganization({ display_name: 'New Corp' }, undefined, options);
+    });
+    expect(updated).toBe(true);
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(expectedToasts);
+  });
 });
