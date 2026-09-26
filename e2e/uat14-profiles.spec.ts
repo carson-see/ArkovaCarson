@@ -28,11 +28,21 @@ const PUBLIC_USER = 'person-public';
 const PUBLIC_ORG = 'org-public';
 const onePixelPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
+/** Unsigned JWT whose payload satisfies `sessionHasAal2` for the fixture user. */
+function aal2Token(userId: string): string {
+  const b64url = (v: string) => Buffer.from(v).toString('base64url');
+  return `${b64url(JSON.stringify({ alg: 'none', typ: 'JWT' }))}.${b64url(JSON.stringify({ sub: userId, aal: 'aal2', role: 'authenticated' }))}.`;
+}
+
 async function openEditor(page: import('@playwright/test').Page, view: 'settings' | 'org-editor') {
   const profileModule = `const profile={id:'${USER}',public_id:'${PUBLIC_USER}',org_id:'${ORG}',role:'ORG_ADMIN',full_name:'Ada Editor',bio:'',social_links:{},avatar_url:null,avatar_storage_path:'users/${PUBLIC_USER}/avatar/current.png',banner_storage_path:null,is_public_profile:true,is_platform_admin:false,status:'ACTIVE'};export const ProfileProvider=({children})=>children;export const useProfile=()=>({profile,loading:false,updating:false,refreshProfile:async()=>{},updateProfile:async patch=>{await fetch('/__uat14/profile',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});return true}});`;
   const organizationModule = `const organization={id:'${ORG}',public_id:'${PUBLIC_ORG}',display_name:'Analytical Society',legal_name:'Analytical Society LLC',domain:'analytical.example',verification_status:'VERIFIED',description:'Editor fixture',website_url:'https://analytical.example',linkedin_url:null,twitter_url:null,created_at:'2026-01-01',logo_url:null,logo_storage_path:'organizations/${PUBLIC_ORG}/logo/current.png',banner_storage_path:'organizations/${PUBLIC_ORG}/banner/current.png'};export const useOrganization=()=>({organization,loading:false,updating:false,updateOrganization:async patch=>{await fetch('/__uat14/org',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});return true}});`;
   const modules: Record<string, string> = {
-    '/src/hooks/useAuth.ts': `export const AuthProvider=({children})=>children;export const useAuth=()=>({user:{id:'${USER}',email:'ada@example.test'},signOut:async()=>{}});`,
+    // The upload inputs are gated on `sessionHasAal2(session.access_token, user.id)`
+    // (src/lib/mfaSessionKey.ts: sub === user.id && aal === 'aal2' && role ===
+    // 'authenticated'). It only decodes the payload, never verifies a signature,
+    // so an unsigned token with those three claims is enough for the fixture.
+    '/src/hooks/useAuth.ts': `export const AuthProvider=({children})=>children;export const useAuth=()=>({user:{id:'${USER}',email:'ada@example.test'},session:{access_token:'${aal2Token(USER)}'},signOut:async()=>{}});`,
     '/src/hooks/useProfile.ts': profileModule,
     '/src/hooks/useOrganization.ts': organizationModule,
     '/src/components/layout/index.ts': `import React from'/node_modules/.vite/deps/react.js';export const AppShell=({children})=>React.createElement('main',null,children);`,
