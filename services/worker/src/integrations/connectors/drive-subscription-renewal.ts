@@ -342,6 +342,10 @@ export async function renewDriveSubscriptions(args: {
           email: label?.email ?? null,
           channel_token: newChannelToken,
           resource_id: created.resourceId,
+          // SCRUM-5287 follow-up: PRESERVE, never derive. A channel renewal
+          // does not re-issue OAuth tokens — the client that originally
+          // issued this row's refresh token is unchanged by this write.
+          oauth_client_id: label?.oauth_client_id ?? null,
         });
         // BUG 2026-09-13 — null-cursor bootstrap. A cursor that EXISTS is
         // never included in this update (the key stays absent, so no future

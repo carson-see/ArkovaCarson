@@ -73,7 +73,12 @@ describe('Drive webhook address registration', () => {
       if (url === 'https://oauth2.googleapis.com/token') {
         return new Response(JSON.stringify({
           access_token: 't', expires_in: 3600, refresh_token: 'r',
-          scope: 'https://www.googleapis.com/auth/drive.file', token_type: 'Bearer',
+          // Current (post drive.readonly-cutover) scope — a legacy-only
+          // scope here is now correctly refused by driveGrantExcessScopes
+          // (2026-09-22 fix-round), which would short-circuit this test
+          // before createChangesWatch ever runs.
+          scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email',
+          token_type: 'Bearer',
         }), { status: 200 });
       }
       if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {

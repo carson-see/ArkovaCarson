@@ -28,6 +28,19 @@ export interface DriveAccountLabel {
   email: string | null;
   channel_token: string | null;
   resource_id: string | null;
+  /**
+   * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): the
+   * OAuth `client_id` that actually issued this row's refresh token —
+   * written once at connect time by `drive-oauth.ts`'s callback from
+   * `exchangeCode`'s return value. Public (it rides in the authorize URL,
+   * never a secret) — safe to store alongside `email`. `null` for a row
+   * connected before this field existed; `drive-changes-runner.ts`'s
+   * `loadDriveAccessToken` falls back to the scope-string heuristic
+   * (`isDriveLegacyGrant`) ONLY for those pre-existing rows, and logs that
+   * fallback. Authoritative once present — a stored client_id is never
+   * re-derived from the scope string.
+   */
+  oauth_client_id: string | null;
 }
 
 /**
@@ -51,6 +64,7 @@ export function parseDriveAccountLabel(raw: string | null | undefined): DriveAcc
     email: typeof obj.email === 'string' ? obj.email : null,
     channel_token: typeof obj.channel_token === 'string' ? obj.channel_token : null,
     resource_id: typeof obj.resource_id === 'string' ? obj.resource_id : null,
+    oauth_client_id: typeof obj.oauth_client_id === 'string' ? obj.oauth_client_id : null,
   };
 }
 

@@ -141,9 +141,19 @@ function makeFakeDb() {
               updates[recordedIndex] = { table, patch, eqs: [...eqs] };
             }
           };
-          const makeThenable = (): Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown } => {
-            const p = Promise.resolve({ error: null }) as Promise<{ error: null }> & { eq?: unknown; select?: unknown };
+          const makeThenable = (): Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; is: (col: string, val: unknown) => unknown; select: (cols: string) => unknown } => {
+            const p = Promise.resolve({ error: null }) as Promise<{ error: null }> & { eq?: unknown; is?: unknown; select?: unknown };
             (p as { eq: (col: string, val: unknown) => unknown }).eq = (col: string, val: unknown) => {
+              eqs.push([col, val]);
+              recordOrUpdate();
+              return makeThenable();
+            };
+            // `.is()` is the Postgrest-idiomatic null-equality filter (used
+            // for the account_label CAS guard below, since `.eq('col',
+            // null)` doesn't translate the way `.eq('col', 'string')`
+            // does) — recorded into the SAME `eqs` array as `.eq()` so
+            // existing assertions against `eqColumns` still see it.
+            (p as { is: (col: string, val: unknown) => unknown }).is = (col: string, val: unknown) => {
               eqs.push([col, val]);
               recordOrUpdate();
               return makeThenable();
@@ -151,7 +161,7 @@ function makeFakeDb() {
             (p as { select: (cols: string) => unknown }).select = (_cols: string) => ({
               maybeSingle: () => Promise.resolve({ data: { id: 'updated' }, error: null }),
             });
-            return p as Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown };
+            return p as Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; is: (col: string, val: unknown) => unknown; select: (cols: string) => unknown };
           };
           return makeThenable();
         },
@@ -185,13 +195,27 @@ function makeFakeDb() {
           };
           return chain;
         },
-        select: (_cols: string) => ({
-          eq: (_c: string, _v: unknown) => ({
-            eq: (_c2: string, _v2: unknown) => ({
-              eq: (_c3: string, _v3: unknown) => Promise.resolve({ data: [], error: null }),
+        select: (cols: string) => {
+          // SCRUM-5287 follow-up: loadDriveAccessToken now reads
+          // `account_label` (single `.eq().maybeSingle()`, client-identity
+          // resolution) BEFORE a refresh. Distinct shape from the 3x `.eq()`
+          // array-returning chain `loadWatchedFolderIds` uses — dispatch on
+          // `cols` since both go through this same fake `select`.
+          if (cols === 'account_label') {
+            return {
+              eq: (_c: string, _v: unknown) => ({
+                maybeSingle: () => Promise.resolve({ data: { account_label: null }, error: null }),
+              }),
+            };
+          }
+          return {
+            eq: (_c: string, _v: unknown) => ({
+              eq: (_c2: string, _v2: unknown) => ({
+                eq: (_c3: string, _v3: unknown) => Promise.resolve({ data: [], error: null }),
+              }),
             }),
-          }),
-        }),
+          };
+        },
       }),
       rpc: vi.fn(async (_name: string, _args: unknown) => ({ data: 'evt-1', error: null })),
     },
@@ -320,6 +344,479 @@ describe('loadDriveAccessToken', () => {
   });
 });
 
+// SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): client
+// identity is resolved AUTHORITATIVELY from `account_label.oauth_client_id`
+// when present, with the scope-string heuristic (isDriveLegacyGrant) only as
+// a fallback for rows connected before that field existed. Plus the
+// defense-in-depth retry + self-heal + oauth_client_mismatch surfacing.
+describe('loadDriveAccessToken — OAuth client identity resolution (SCRUM-5287 follow-up)', () => {
+  // Per-test-customizable fake: `accountLabel` seeds the SELECT response,
+  // `refreshResponses` is consumed in order by successive fetch calls
+  // (supports the retry-once scenario — two responses).
+  function makeIdentityFakeDb(args: {
+    accountLabel: Record<string, unknown> | null;
+    updates: Array<Record<string, unknown>>;
+  }) {
+    const { accountLabel, updates } = args;
+    return {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const chain = {
+            eq: (_c: string, _v: unknown) => chain,
+            is: (_c: string, _v: unknown) => chain,
+            select: (_c: string) => ({
+              maybeSingle: () => {
+                updates.push(patch);
+                return Promise.resolve({ data: { id: 'updated' }, error: null });
+              },
+            }),
+            // A plain `.update(patch).eq(...)` awaited directly (the
+            // oauth_client_mismatch last_renewal_error write has no
+            // `.select().maybeSingle()` tail).
+            then: (resolve: (v: { error: null }) => void) => {
+              updates.push(patch);
+              resolve({ error: null });
+            },
+          };
+          return chain;
+        },
+        select: (cols: string) => ({
+          eq: (_c: string, _v: unknown) => ({
+            maybeSingle: () => {
+              if (cols === 'account_label') {
+                return Promise.resolve({
+                  data: { account_label: accountLabel ? JSON.stringify(accountLabel) : null },
+                  error: null,
+                });
+              }
+              return Promise.resolve({ data: null, error: null });
+            },
+          }),
+        }),
+      }),
+      rpc: vi.fn(),
+    };
+  }
+
+  function fetchImplSequence(responses: Array<{ ok: boolean; json: () => Promise<unknown> }>) {
+    let call = 0;
+    return vi.fn(async (_url: string, _init?: RequestInit) => {
+      const res = responses[Math.min(call, responses.length - 1)];
+      call++;
+      return res;
+    });
+  }
+
+  const integrationBase = (): DriveIntegrationRow => ({
+    id: INT,
+    org_id: ORG,
+    encrypted_tokens: Buffer.from(`ct:${JSON.stringify({ ...EXPIRED_TOKENS, scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email' })}`, 'utf8'),
+    token_kms_key_id: KEY,
+    last_page_token: 'pt-1',
+  });
+
+  it('a stored oauth_client_id matching the NEW pair resolves "current" authoritatively — regardless of scope', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID = 'new-id';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET = 'new-secret';
+    try {
+      const updates: Array<Record<string, unknown>> = [];
+      const db = makeIdentityFakeDb({ accountLabel: { email: null, channel_token: null, resource_id: null, oauth_client_id: 'new-id' }, updates });
+      const fakeFetch = fetchImplSequence([{
+        ok: true,
+        json: async () => ({ access_token: 'at-new', expires_in: 3599, token_type: 'Bearer' }),
+      }]);
+      const result = await loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      });
+      expect(result.accessToken).toBe('at-new');
+      const sentBody = new URLSearchParams((fakeFetch.mock.calls[0]?.[1] as RequestInit)?.body as string);
+      expect(sentBody.get('client_id')).toBe('new-id');
+      // Already authoritative — no self-heal write needed (account_label
+      // omitted from the patch, or unchanged if present).
+      const patch = updates[0] as { account_label?: string };
+      if (patch.account_label) {
+        expect(JSON.parse(patch.account_label).oauth_client_id).toBe('new-id');
+      }
+    } finally {
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID;
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+    }
+  });
+
+  it('a stored oauth_client_id matching the LEGACY pair resolves "legacy" authoritatively — even though the scope LOOKS current (the R-hybrid trap)', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID = 'new-id';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET = 'new-secret';
+    try {
+      const updates: Array<Record<string, unknown>> = [];
+      // R-hybrid: scope is the CURRENT set (drive.readonly), but the token
+      // was actually issued by the OLD client before the new pair existed.
+      const db = makeIdentityFakeDb({ accountLabel: { email: null, channel_token: null, resource_id: null, oauth_client_id: 'legacy-id' }, updates });
+      const fakeFetch = fetchImplSequence([{
+        ok: true,
+        json: async () => ({ access_token: 'at-legacy', expires_in: 3599, token_type: 'Bearer' }),
+      }]);
+      const result = await loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      });
+      expect(result.accessToken).toBe('at-legacy');
+      const sentBody = new URLSearchParams((fakeFetch.mock.calls[0]?.[1] as RequestInit)?.body as string);
+      // Without the stored id, the scope heuristic would have picked
+      // 'current' -> 'new-id' here, and Google would reject it. The stored
+      // id makes this deterministic instead.
+      expect(sentBody.get('client_id')).toBe('legacy-id');
+    } finally {
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID;
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+    }
+  });
+
+  it('no stored oauth_client_id (pre-cutover row) falls back to the scope heuristic and self-heals on success', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    const updates: Array<Record<string, unknown>> = [];
+    const db = makeIdentityFakeDb({ accountLabel: null, updates });
+    const fakeFetch = fetchImplSequence([{
+      ok: true,
+      json: async () => ({ access_token: 'at-fallback', expires_in: 3599, token_type: 'Bearer' }),
+    }]);
+    const result = await loadDriveAccessToken(integrationBase(), {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms: fakeKms(),
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+    });
+    expect(result.accessToken).toBe('at-fallback');
+    // Self-heal: the successful client is now known and persisted.
+    const patch = updates[0] as { account_label: string };
+    expect(JSON.parse(patch.account_label).oauth_client_id).toBe('legacy-id');
+  });
+
+  it('retries ONCE with "legacy" when a "current" refresh fails with an OAuth client-mismatch code, and self-heals', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID = 'new-id';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET = 'new-secret';
+    try {
+      const updates: Array<Record<string, unknown>> = [];
+      // No stored id -> heuristic picks 'current' (scope looks current) ->
+      // resolves to the NEW pair -> Google rejects (token was really
+      // issued by the old client) -> retry with 'legacy' succeeds.
+      const db = makeIdentityFakeDb({ accountLabel: null, updates });
+      const fakeFetch = fetchImplSequence([
+        { ok: false, json: async () => ({ error: 'invalid_grant', error_description: 'Bad Request' }) },
+        { ok: true, json: async () => ({ access_token: 'at-retried', expires_in: 3599, token_type: 'Bearer' }) },
+      ]);
+      const result = await loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      });
+      expect(result.accessToken).toBe('at-retried');
+      expect(fakeFetch).toHaveBeenCalledTimes(2);
+      const firstBody = new URLSearchParams((fakeFetch.mock.calls[0]?.[1] as RequestInit)?.body as string);
+      const secondBody = new URLSearchParams((fakeFetch.mock.calls[1]?.[1] as RequestInit)?.body as string);
+      expect(firstBody.get('client_id')).toBe('new-id');
+      expect(secondBody.get('client_id')).toBe('legacy-id');
+      // Self-heal: the row now durably knows it belongs to the legacy client.
+      const patch = updates[0] as { account_label: string };
+      expect(JSON.parse(patch.account_label).oauth_client_id).toBe('legacy-id');
+    } finally {
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID;
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+    }
+  });
+
+  it('does NOT retry when a non-mismatch error occurs (e.g. a 5xx) — rethrows immediately', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    const updates: Array<Record<string, unknown>> = [];
+    const db = makeIdentityFakeDb({ accountLabel: null, updates });
+    const fakeFetch = fetchImplSequence([
+      { ok: false, json: async () => ({ error: 'server_error' }) },
+    ]);
+    await expect(
+      loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      }),
+    ).rejects.toMatchObject({ name: 'DriveApiError' });
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry when the starting generation is already "legacy" — nothing to retry toward', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    const updates: Array<Record<string, unknown>> = [];
+    // Stored id matches the legacy pair -> authoritative 'legacy' start.
+    const db = makeIdentityFakeDb({ accountLabel: { email: null, channel_token: null, resource_id: null, oauth_client_id: 'legacy-id' }, updates });
+    const fakeFetch = fetchImplSequence([
+      { ok: false, json: async () => ({ error: 'invalid_grant' }) },
+    ]);
+    await expect(
+      loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      }),
+    ).rejects.toMatchObject({ name: 'DriveApiError' });
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('when BOTH generations fail with a mismatch code, throws DriveRunnerError("oauth_client_mismatch") and persists a distinct last_renewal_error', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID = 'new-id';
+    process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET = 'new-secret';
+    try {
+      const updates: Array<Record<string, unknown>> = [];
+      const db = makeIdentityFakeDb({ accountLabel: null, updates });
+      const fakeFetch = fetchImplSequence([
+        { ok: false, json: async () => ({ error: 'invalid_grant' }) },
+        { ok: false, json: async () => ({ error: 'unauthorized_client' }) },
+      ]);
+      await expect(
+        loadDriveAccessToken(integrationBase(), {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          db: db as any,
+          kms: fakeKms(),
+          drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+        }),
+      ).rejects.toMatchObject({ name: 'DriveRunnerError', code: 'oauth_client_mismatch' });
+      expect(fakeFetch).toHaveBeenCalledTimes(2);
+      const mismatchWrite = updates.find((u) => typeof u.last_renewal_error === 'string');
+      expect(mismatchWrite).toBeDefined();
+      expect(mismatchWrite?.last_renewal_error as string).toContain('Drive OAuth client mismatch');
+    } finally {
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID;
+      delete process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET;
+    }
+  });
+
+  it('a stored oauth_client_id matching NEITHER configured pair falls back to the scope heuristic (rotation edge case)', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'legacy-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'legacy-secret';
+    const updates: Array<Record<string, unknown>> = [];
+    const db = makeIdentityFakeDb({ accountLabel: { email: null, channel_token: null, resource_id: null, oauth_client_id: 'some-rotated-away-id' }, updates });
+    const fakeFetch = fetchImplSequence([
+      { ok: true, json: async () => ({ access_token: 'at-rotated-fallback', expires_in: 3599, token_type: 'Bearer' }) },
+    ]);
+    const result = await loadDriveAccessToken(integrationBase(), {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms: fakeKms(),
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+    });
+    expect(result.accessToken).toBe('at-rotated-fallback');
+    const sentBody = new URLSearchParams((fakeFetch.mock.calls[0]?.[1] as RequestInit)?.body as string);
+    expect(sentBody.get('client_id')).toBe('legacy-id');
+  });
+});
+
+// Independently-reviewed P1 + P2 on PR #3069 (feat/drive-readonly-scope),
+// reproduced against head 13e44db0d before the fix landed:
+//   P1 — `loadDriveAccessToken`'s `account_label` SELECT discarded its
+//        `error`, so a transient read failure was indistinguishable from a
+//        legitimately unlabeled (pre-cutover) row. If the subsequent token
+//        refresh then succeeded, the self-heal write overwrote the row's
+//        `email` / `channel_token` / `resource_id` with null — even though
+//        the read merely failed, not the row being absent. The webhook
+//        receiver (`api/v1/webhooks/drive.ts`) rejects a null
+//        `channel_token` with 401 `integration_missing_channel_token`, so a
+//        transient SELECT error became a PERMANENT notification failure.
+//   P2 — the CAS write that persists the refreshed tokens also serializes
+//        the self-healed `account_label`, but was conditioned only on
+//        `encrypted_tokens` — a concurrent watch-renewal write (which
+//        independently rewrites the WHOLE `account_label` blob) landing
+//        between this function's account_label SELECT and its UPDATE could
+//        have its fresh channel credential clobbered by this call's stale
+//        copy.
+describe('loadDriveAccessToken — account_label read-error handling (P1) and label CAS race (P2)', () => {
+  function makeAccountLabelFakeDb(args: {
+    labelSelectResult: { data: { account_label: string | null } | null; error: { message?: string } | null };
+    updates: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }>;
+    updateResult?: { data: { id: string } | null; error: { message?: string } | null };
+  }) {
+    const { labelSelectResult, updates, updateResult = { data: { id: 'updated' }, error: null } } = args;
+    return {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            is: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            select: (_c: string) => ({
+              maybeSingle: () => {
+                updates.push({ patch, predicates: [...predicates] });
+                return Promise.resolve(updateResult);
+              },
+            }),
+          };
+          return chain;
+        },
+        select: (cols: string) => ({
+          eq: (_c: string, _v: unknown) => ({
+            maybeSingle: () => {
+              if (cols === 'account_label') {
+                return Promise.resolve(labelSelectResult);
+              }
+              return Promise.resolve({ data: null, error: null });
+            },
+          }),
+        }),
+      }),
+      rpc: vi.fn(),
+    };
+  }
+
+  const integrationBase = (): DriveIntegrationRow => ({
+    id: INT,
+    org_id: ORG,
+    encrypted_tokens: Buffer.from(`ct:${JSON.stringify(EXPIRED_TOKENS)}`, 'utf8'),
+    token_kms_key_id: KEY,
+    last_page_token: 'pt-1',
+  });
+
+  it('P1: a failed account_label SELECT aborts BEFORE refresh/write — reproduced against PR #3069 head 13e44db0d', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const updates: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }> = [];
+    const db = makeAccountLabelFakeDb({
+      labelSelectResult: { data: null, error: { message: 'read timeout' } },
+      updates,
+    });
+    const fakeFetch = vi.fn();
+    await expect(
+      loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      }),
+    ).rejects.toMatchObject({ name: 'DriveRunnerError', code: 'account_label_read_failed' });
+    // The bug: a failed read used to fall through and behave exactly like
+    // "no label" — refreshing, then self-healing with a null-filled label.
+    // The fix must abort before either happens: no Google refresh call, no
+    // DB write at all.
+    expect(fakeFetch).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it('P2: the self-heal write guards account_label on the value actually read, so a concurrent renewal write causes a CAS miss instead of being silently clobbered', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const existingLabel = { email: 'org@example.com', channel_token: 'tok-precious', resource_id: 'res-1', oauth_client_id: null };
+    const rawLabel = JSON.stringify(existingLabel);
+    const winnerTokens = {
+      access_token: 'access-winner',
+      refresh_token: 'refresh-winner',
+      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+    };
+    const winnerCiphertext = `\\x${Buffer.from(`ct:${JSON.stringify(winnerTokens)}`, 'utf8').toString('hex')}`;
+    const updates: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }> = [];
+    let casReadCalls = 0;
+    // Self-contained fake (mirrors the CAS-lost regression test's shape
+    // below): the account_label SELECT returns the existing label; the
+    // UPDATE always reports a CAS miss (`data: null`) — simulating a
+    // concurrent watch-renewal write that already changed `account_label`
+    // since this call's SELECT, so the guard predicate this UPDATE adds no
+    // longer matches any row; the post-miss re-read returns the "winner"'s
+    // ciphertext.
+    const db = {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            is: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            select: (_c: string) => ({
+              maybeSingle: () => {
+                updates.push({ patch, predicates: [...predicates] });
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+          return chain;
+        },
+        select: (cols: string) => ({
+          eq: (_c: string, _v: unknown) => ({
+            maybeSingle: () => {
+              if (cols === 'account_label') {
+                return Promise.resolve({ data: { account_label: rawLabel }, error: null });
+              }
+              casReadCalls++;
+              return Promise.resolve({
+                data: { encrypted_tokens: winnerCiphertext, token_kms_key_id: KEY },
+                error: null,
+              });
+            },
+          }),
+        }),
+      }),
+      rpc: vi.fn(),
+    };
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'at-loser', expires_in: 3599, token_type: 'Bearer' }),
+    });
+    const result = await loadDriveAccessToken(integrationBase(), {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms: fakeKms(),
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+    });
+    // CAS lost -> trust the winner; no throw, no second refresh burned
+    // against Google, and — the actual regression — no silent overwrite of
+    // the label the winner (or a renewal) just wrote.
+    expect(result.accessToken).toBe('access-winner');
+    expect(result.refreshed).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(casReadCalls).toBe(1);
+    expect(updates).toHaveLength(1);
+    // The write DID preserve the label fields it read (self-heal is
+    // additive, not destructive) ...
+    const patch = updates[0].patch as { account_label: string };
+    expect(JSON.parse(patch.account_label)).toMatchObject({
+      email: 'org@example.com',
+      channel_token: 'tok-precious',
+      resource_id: 'res-1',
+    });
+    // ... but the fix REQUIRES the write to also condition on account_label
+    // being byte-identical to what was read, at the exact value read —
+    // that predicate is what turned the concurrent write into a safe CAS
+    // miss instead of a silent overwrite.
+    const predicateColumns = updates[0].predicates.map(([c]) => c);
+    expect(predicateColumns).toContain('account_label');
+    const labelPredicate = updates[0].predicates.find(([c]) => c === 'account_label');
+    expect(labelPredicate?.[1]).toBe(rawLabel);
+  });
+});
+
 describe('loadWatchedFolderIds', () => {
   it('unions legacy folder_id + drive_folders[] across all enabled WORKSPACE_FILE_MODIFIED rules', async () => {
     const fakeData = [
@@ -414,6 +911,7 @@ describe('loadDriveAccessToken — CAS-lost regression', () => {
           // but not the .eq('encrypted_tokens') filter — another writer mutated it first".
           const chain = {
             eq: (_c: string, _v: unknown) => chain,
+            is: (_c: string, _v: unknown) => chain,
             select: (_c: string) => ({
               maybeSingle: () => {
                 casUpdateCalls++;
@@ -423,9 +921,18 @@ describe('loadDriveAccessToken — CAS-lost regression', () => {
           };
           return chain;
         },
-        select: (_cols: string) => ({
+        select: (cols: string) => ({
           eq: (_c: string, _v: unknown) => ({
             maybeSingle: () => {
+              // SCRUM-5287 follow-up: loadDriveAccessToken now ALSO reads
+              // `account_label` (client-identity resolution) BEFORE
+              // attempting a refresh — distinct from the CAS-lost re-read
+              // this test pins, which selects encrypted_tokens/token_kms_key_id
+              // AFTER a lost CAS write. Only the latter counts as a
+              // "CAS read" for this test's assertion.
+              if (cols === 'account_label') {
+                return Promise.resolve({ data: { account_label: null }, error: null });
+              }
               casReadCalls++;
               return Promise.resolve({
                 data: { encrypted_tokens: winnerCiphertext, token_kms_key_id: KEY },

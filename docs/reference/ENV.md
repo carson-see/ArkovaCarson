@@ -656,8 +656,40 @@ COMPUTEID_API_KEY=
 # OAuth 2.0 client credentials from the GCP Console OAuth app. The
 # redirect URI registered in the OAuth app must match exactly the
 # worker's callback route (https://<worker>/api/v1/integrations/google_drive/oauth/callback).
+# Legacy shared client. The ONLY valid client for refreshing a token issued
+# before the 2026-09-21 drive.readonly cutover (SCRUM-5287/SCRUM-2903/SCRUM-2330)
+# — a refresh token is bound to the client that issued it. See
+# GOOGLE_DRIVE_OAUTH_CLIENT_ID below and docs/runbooks/integrations/drive.md's
+# "Two OAuth clients" section.
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
+
+# NEW dedicated `arkova-connectors` GCP project + OAuth client (2026-09-21
+# cutover), requesting ONLY drive.readonly + userinfo.email — kept separate
+# from the legacy client above so Google's restricted-scope verification on
+# drive.readonly doesn't gate every OTHER integration riding the shared
+# client. NOT PROVISIONED YET as of the PR that added these two vars — a
+# human must create the GCP project/OAuth client and set these before they
+# take effect. Must be set TOGETHER (config.ts rejects a half-set pair in
+# any environment); when either is unset the worker falls back to
+# GOOGLE_OAUTH_CLIENT_ID/SECRET unconditionally. See requireClient() in
+# services/worker/src/integrations/oauth/drive.ts for the full selection
+# logic.
+#
+# NO MANUAL BACKFILL NEEDED when provisioning this pair (2026-09-22
+# fix-round, independent review CRITICAL finding). Each org_integrations
+# row records which client actually issued its refresh token
+# (account_label.oauth_client_id, written at connect time) and refreshes
+# against THAT client authoritatively — never a live guess from the
+# current config. A row connected before this field existed (or whose
+# stored id no longer matches either configured pair) falls back to a
+# scope-string heuristic on its next refresh and self-heals the stored id
+# on success; if a refresh fails specifically because it was sent to the
+# wrong client, the worker retries once against the other configured pair
+# and self-heals on that success too. Do NOT hand-edit account_label to
+# "fix" this — see drive-changes-runner.ts's loadDriveAccessToken.
+GOOGLE_DRIVE_OAUTH_CLIENT_ID=
+GOOGLE_DRIVE_OAUTH_CLIENT_SECRET=
 
 # Optional project override for the token Secret Manager backend. Defaults to
 # the worker's GCP project when unset.

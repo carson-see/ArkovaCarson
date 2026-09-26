@@ -18,7 +18,11 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
 import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
-import { driveGrantExcessScopes } from '../integrations/oauth/drive.js';
+import {
+  driveExistingGrantExcessScopes,
+  isDriveLegacyGrant,
+  DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX,
+} from '../integrations/oauth/drive.js';
 import { DRIVE_FILE_CHANGED_JOB_TYPE } from '../integrations/connectors/drive-artifact-producer.js';
 import { driveFolderIds } from '../integrations/connectors/drive-folder-bindings.js';
 import { scanAllPages, PageScanError } from '../utils/postgrest-filter.js';
@@ -38,6 +42,21 @@ export type HealthReason =
   // over-permissioned live grant is a standing security exposure, not an
   // operational degradation.
   | 'grant_exceeds_requested'
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): a Drive
+  // token refresh failed under BOTH configured OAuth clients with a
+  // client-mismatch code (invalid_grant/unauthorized_client/invalid_client)
+  // — `drive-changes-runner.ts`'s `loadDriveAccessToken` writes a
+  // distinctly-prefixed `last_renewal_error`
+  // (`DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX`) after exhausting its
+  // retry-once-with-the-other-client mitigation. NOT a confidentiality
+  // finding (both clients are Arkova's own) — this is an availability
+  // signal: the integration cannot refresh at all, which would otherwise
+  // surface only as a generic `subscription_expiry` (same underlying
+  // column) or, worse, a delayed, unexplained `cursor_stale` 6h later.
+  // Ranked directly below `grant_exceeds_requested` (a security finding
+  // still outranks it) and above the generic `subscription_expiry` it
+  // would otherwise be misread as — see `classify()`.
+  | 'oauth_client_mismatch'
   | 'subscription_expiry'
   // P0-2 (2026-09-14 hardening audit): a stuck/410 Drive changes cursor —
   // the exact condition that hid the #2903 class of bug. Distinct from
@@ -90,6 +109,26 @@ export type HealthReason =
   // first. See `DRIVE_CHANGES_GAP_LOOKBACK_MS` for the bounded lookback
   // window and `DRIVE_HEALTH_PRIORITY` for the exact ranking.
   | 'changes_gap'
+  // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): this
+  // connection's stored `scope` is exactly (a subset of) the scope set
+  // Arkova requested BEFORE the cutover (`DRIVE_LEGACY_REQUESTED_SCOPES` —
+  // drive.file + drive.metadata.readonly + drive.activity.readonly +
+  // userinfo.email) and is NOT within the current `DRIVE_DEFAULT_SCOPES`
+  // (drive.readonly + userinfo.email). This is deliberately NOT the
+  // `grant_exceeds_requested` security finding above — it is a legitimate
+  // historical grant that simply predates the request Arkova now makes
+  // (`isDriveLegacyGrant` in oauth/drive.ts draws that line). It is,
+  // however, the ROOT CAUSE of most `file_access_not_granted` symptoms an
+  // org on this grant will see (`drive.file` only covers files the app
+  // created or the user picked through Google's real Picker — see
+  // oauth/drive.ts's doc comment on `DRIVE_DEFAULT_SCOPES`), so it is
+  // checked, and ranked, ABOVE `file_access_not_granted` below — the admin
+  // view should name the actual, fixable cause (reconnect) rather than the
+  // downstream symptom. It does NOT rank above `changes_gap` or the
+  // currently-broken-connector signals: this grant still lists changes
+  // (drive.metadata.readonly is retained), so those are independent,
+  // more urgent failures when they co-occur.
+  | 'reconnect_required_scope_change'
   // P0-2: the `google_drive.file_changed` job_queue drain has failed/dead
   // rows — the document-fetch half of the pipeline that
   // organization_rule_executions cannot see (rule dispatch and document
@@ -228,9 +267,11 @@ interface IntegrationRow {
   // string Google actually granted at connect time, persisted verbatim by
   // drive-oauth.ts's callback. Selected for every provider but only ACTED
   // on for google_drive, in classify() — checked against
-  // `driveGrantExcessScopes` so an EXISTING over-scoped row (the callback
-  // guard only protects NEW connections going forward) is still visible in
-  // the admin view.
+  // `driveExistingGrantExcessScopes` (the UNION-bound classifier — an
+  // EXISTING row legitimately carrying the pre-cutover scope set is not an
+  // over-grant; see that function's doc comment) so an EXISTING over-scoped
+  // row (the callback guard only protects NEW connections going forward) is
+  // still visible in the admin view.
   scope: string | null;
 }
 
@@ -425,15 +466,32 @@ export function hasDriveChangesNeverSucceeded(
 }
 
 /**
- * SCRUM-5287 (P1 security, fix-round item 5): `driveGrantExcessScopes`
+ * SCRUM-5287 (P1 security, fix-round item 5): `driveExistingGrantExcessScopes`
  * returns `[]` for "within bounds" — this adapts that to `undefined` so
  * `DriveHealthSignals.grantExceedsRequested` reads as a clean "is there a
  * finding at all" check (`if (driveSignals?.grantExceedsRequested)`)
- * without every caller re-checking `.length > 0`.
+ * without every caller re-checking `.length > 0`. Deliberately uses the
+ * UNION-bound classifier, not the narrower `driveGrantExcessScopes` (that
+ * one is for OAuth-callback acceptance of a BRAND NEW grant, not for
+ * classifying an existing row — see its doc comment in oauth/drive.ts).
  */
 function excessScopesOrUndefined(storedScope: string | null): string[] | undefined {
-  const excess = driveGrantExcessScopes(storedScope);
+  const excess = driveExistingGrantExcessScopes(storedScope);
   return excess.length > 0 ? excess : undefined;
+}
+
+/**
+ * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): recognizes
+ * `loadDriveAccessToken`'s distinctly-prefixed `last_renewal_error` (see
+ * `DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX`'s doc comment in oauth/drive.ts
+ * for why the constant lives there, not in drive-changes-runner.ts).
+ * Returns the message itself when it matches (already bounded — no token,
+ * no scope value, just a fixed prefix + an OAuth error CODE), `undefined`
+ * otherwise so `driveSignals.oauthClientMismatch` reads as a clean
+ * "is there a finding" check.
+ */
+function oauthClientMismatchOrUndefined(lastRenewalError: string | null): string | undefined {
+  return lastRenewalError?.startsWith(DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX) ? lastRenewalError : undefined;
 }
 
 /**
@@ -542,13 +600,32 @@ interface DriveHealthSignals {
   fileAccessDeniedCount: number;
   /**
    * SCRUM-5287 (P1 security, fix-round item 5): non-empty array of excess
-   * scope names (`driveGrantExcessScopes(integration.scope)`) when the
-   * stored grant exceeds `DRIVE_DEFAULT_SCOPES`; `undefined` when it does
-   * not. No false-positive guard needed here (unlike cursorStale/
-   * neverSucceeded) — an over-grant is a real finding regardless of
-   * whether any rule is enabled.
+   * scope names (`driveExistingGrantExcessScopes(integration.scope)`) when
+   * the stored grant exceeds `DRIVE_DEFAULT_SCOPES` ∪
+   * `DRIVE_LEGACY_REQUESTED_SCOPES`; `undefined` when it does not. No
+   * false-positive guard needed here (unlike cursorStale/neverSucceeded) —
+   * an over-grant is a real finding regardless of whether any rule is
+   * enabled.
    */
   grantExceedsRequested?: string[];
+  /**
+   * SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): true
+   * when `isDriveLegacyGrant(integration.scope)` — the stored grant is
+   * (a subset of) the PRE-cutover requested set and not within the current
+   * one. Mutually exclusive with `grantExceedsRequested` by construction
+   * (see `isDriveLegacyGrant`'s doc comment in oauth/drive.ts).
+   */
+  legacyGrant?: boolean;
+  /**
+   * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): set to
+   * the bounded `last_renewal_error` STRING when it carries the
+   * `DRIVE_OAUTH_CLIENT_MISMATCH_ERROR_PREFIX` prefix `loadDriveAccessToken`
+   * writes after exhausting its retry-once mitigation; `undefined`
+   * otherwise. No false-positive guard needed (like `grantExceedsRequested`)
+   * — this is a real, current-as-of-last-attempt failure regardless of
+   * whether any rule is enabled.
+   */
+  oauthClientMismatch?: string;
   /**
    * Round-2 fix (item 2): set when a `drive_changes_cursor_gap` audit_events
    * row exists for this integration within `DRIVE_CHANGES_GAP_LOOKBACK_MS`.
@@ -573,6 +650,19 @@ function classifyDriveSecurityException(driveSignals: DriveHealthSignals | undef
       state: 'degraded',
       reason: 'grant_exceeds_requested',
       lastError: `Granted OAuth scope exceeds what this connection requested: ${driveSignals.grantExceedsRequested.join(', ')}`,
+    };
+  }
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): checked
+  // BEFORE the generic subscription_expiry check in `classify` — both read
+  // `last_renewal_error`, but a client-mismatch failure is a MORE SPECIFIC,
+  // more actionable diagnosis of that same column than "the subscription
+  // needs renewal." Only computed for google_drive, same scoping as the
+  // check above (driveSignals is undefined for every other connector).
+  if (driveSignals?.oauthClientMismatch) {
+    return {
+      state: 'degraded',
+      reason: 'oauth_client_mismatch',
+      lastError: driveSignals.oauthClientMismatch,
     };
   }
   return null;
@@ -623,6 +713,20 @@ function classifyDriveOperationalIssue(driveSignals: DriveHealthSignals | undefi
       state: 'degraded',
       reason: 'changes_gap',
       lastError: `Drive changes were missed ${bounds} — a cursor re-bootstrap could not recover them (Drive does not allow enumerating a window after the token expires)`,
+    };
+  }
+  // SCRUM-5287 follow-up (2026-09-21 cutover, task 2): checked BEFORE
+  // `file_access_not_granted` — a legacy (pre-cutover) grant is the actual,
+  // fixable CAUSE of most file_access_not_granted symptoms an org on it
+  // will see; the admin view should name that, not the downstream symptom.
+  // See the `reconnect_required_scope_change` HealthReason doc comment for
+  // the full precedence rationale.
+  if (driveSignals?.legacyGrant) {
+    return {
+      state: 'degraded',
+      reason: 'reconnect_required_scope_change',
+      lastError: 'This connection was authorized under a scope set Arkova no longer requests. '
+        + 'Reconnect Google Drive to grant read access so file fetches and full folder browsing keep working.',
     };
   }
   // Fix-round item 6: checked BEFORE the generic fetch_job_failures below —
@@ -692,12 +796,25 @@ function classify(
 // failure precedence across accounts; a healthy/revoked row must not hide an
 // active account's failure. Equal reasons use newest connection then stable ID.
 const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
-  grant_exceeds_requested: 8, subscription_expiry: 7, changes_list_never_succeeded: 6, cursor_stale: 5,
+  grant_exceeds_requested: 10,
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): below the
+  // security finding above, but ABOVE subscription_expiry — both read
+  // last_renewal_error, and a client-mismatch failure is the more specific,
+  // more actionable diagnosis of that same column. See both HealthReason
+  // doc comments.
+  oauth_client_mismatch: 9,
+  subscription_expiry: 8, changes_list_never_succeeded: 7, cursor_stale: 6,
   // Round-2 fix (item 2): changes_gap sits BELOW every currently-broken-
   // connector signal above (a gap is a past, already-recovered-from event)
   // but ABOVE the retryable fetch-failure signals below (lost data outranks
   // a fetch that can simply be retried) — see the HealthReason doc comment.
-  changes_gap: 4,
+  changes_gap: 5,
+  // SCRUM-5287 follow-up (2026-09-21 cutover, task 2): below changes_gap
+  // (this grant still lists changes; a gap is an independent, more urgent
+  // failure when it co-occurs) but ABOVE file_access_not_granted (a legacy
+  // grant is that symptom's actual cause) — see both HealthReason doc
+  // comments.
+  reconnect_required_scope_change: 4,
   file_access_not_granted: 3, fetch_job_failures: 2, processing_failure: 1,
   vendor_auth_revoked: 0, none: 0,
 };
@@ -848,14 +965,16 @@ export async function handleConnectorHealth(
   // `processDriveFileChangedJob`'s error path already writes `err.message`
   // verbatim into it via the shared job-queue failure handler.
   //
-  // SonarCloud typescript:S5850 (fixed): `/^Drive file access denied|export
-  // size limit/i` binds as `(^Drive file access denied)|(export size
-  // limit)` — the second alternative carried no `^`, so it matched
-  // "export size limit" ANYWHERE in last_error, counting any unrelated
-  // failure that merely mentioned the phrase mid-string. Both real
-  // messages (`DriveFileAccessError` / `DriveExportSizeLimitError` in
-  // oauth/drive.ts) are fixed, known prefixes, so both alternatives are
-  // now anchored inside a single non-capturing group.
+  // The alternation is grouped and BOTH branches are prefix-anchored
+  // (SonarCloud typescript:S5850 — an ungrouped `^A|B` binds `^` to `A`
+  // only, so `B` used to match "export size limit" ANYWHERE in the
+  // string, misclassifying any unrelated last_error that happened to
+  // mention that phrase mid-sentence as file_access_not_granted). The
+  // trailing `\b` after "denied" matches `origin/main`'s independent fix
+  // of the same S5850 finding byte-for-byte — this PR's branch is 31
+  // commits behind main and still carried the pre-fix regex; kept
+  // identical here (rather than a merely-equivalent variant) so a future
+  // rebase of this branch onto main produces no conflict on this line.
   const DRIVE_FILE_ACCESS_DENIED_ERROR_PATTERN =
     /^(?:Drive file access denied\b|Drive file export exceeds Google's export size limit)/i;
   const driveFileAccessDeniedCount = driveFetchFailureRows.filter(
@@ -912,6 +1031,8 @@ export async function handleConnectorHealth(
         fetchJobFailureCount: driveFetchJobFailureCount,
         fileAccessDeniedCount: driveFileAccessDeniedCount,
         grantExceedsRequested: excessScopesOrUndefined(integration.scope),
+        legacyGrant: isDriveLegacyGrant(integration.scope),
+        oauthClientMismatch: oauthClientMismatchOrUndefined(integration.last_renewal_error),
         gap: driveGapByIntegrationId.get(integration.id),
       }
       : undefined;
@@ -929,6 +1050,8 @@ export async function handleConnectorHealth(
             fetchJobFailureCount: driveFetchJobFailureCount,
             fileAccessDeniedCount: driveFileAccessDeniedCount,
             grantExceedsRequested: excessScopesOrUndefined(row.scope),
+            legacyGrant: isDriveLegacyGrant(row.scope),
+            oauthClientMismatch: oauthClientMismatchOrUndefined(row.last_renewal_error),
             gap: driveGapByIntegrationId.get(row.id),
           }),
         };

@@ -1993,6 +1993,12 @@ export const CONNECTIONS_LABELS = {
   DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
+  // SCRUM-5287/SCRUM-2903/SCRUM-2330 (2026-09-21 drive.readonly cutover):
+  // replaces the former "least-privilege Drive access" claim, which implied
+  // per-file access (drive.file) — the actual grant is read-only access to
+  // the connected account's Drive, used only for the folders the customer
+  // chooses. Task 6 privacy/claims accuracy pass.
+  DRIVE_CONNECT_PROMPT: 'Authorize Arkova with read-only access to Google Drive. Only the folders you choose are watched, and each file is read once to generate a fingerprint, then discarded.',
 } as const;
 
 // =============================================================================
