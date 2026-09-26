@@ -720,3 +720,54 @@ The canonical create RPC can now return `contractual_quota_exceeded` after its
 transactional final-slot decision. `v1/anchor-submit.ts` maps it back to the
 existing partner-facing 402 `quota_exhausted` problem response. The distinct
 `quota_exceeded` result remains the tier daily limit and keeps its 429 response.
+
+## 2026-09-25 — `rules-crud.ts` wires eager Drive-folder mirroring (feat/mirror-connected-drive-folders)
+
+`handleCreateRule` and `handleUpdateRule` now fire (unawaited, non-fatal —
+`mirrorDriveFoldersForRuleWrite`) a call into
+`integrations/connectors/drive-folder-mirror.ts`'s `mirrorConnectedDriveFolders`
+whenever the write is the Connectors page's own `WORKSPACE_FILE_MODIFIED` +
+`connector-google_drive`-tagged rule AND the resulting `trigger_config`
+carries a non-empty `drive_folders[]`. On PATCH, `trigger_type` is immutable
+and not in the patch body, so `validatePatchAgainstCurrent` was extended to
+also return `currentTriggerType` / `currentActionConfig` from the SAME
+current-row read it already does — no extra query. Guarded to fire only when
+THIS patch actually resends `trigger_config` (a bare `{enabled:true}` toggle
+or a plain rename never re-derives or re-mirrors). See
+`connectors/agents.md`'s matching entry for the mirror module itself — why
+it's eager instead of only the existing lazy anchor-time path (0462), why it
+does NOT use the `folder_api_*` RPCs, and the nesting decision flagged for
+founder sign-off. Zero risk to existing tests: no rule fixture anywhere in
+`rules-crud.test.ts` had a non-empty `drive_folders[]` before this change, so
+the new guard never fired for them; a new "Drive folder mirror wiring"
+describe block covers the call-through and no-call cases directly (the
+DB-touching `mirrorConnectedDriveFolders` call itself is stubbed there — its
+own idempotency/race/tenant-isolation behavior is proven in
+`drive-folder-mirror.test.ts`).
+
+## 2026-09-26 — review P2: the mirror is now AWAITED, not fire-and-forget (PR #3086)
+
+The entry above is now stale on one point: "fire (unawaited, non-fatal)" was
+the review finding, not the fix. `handleCreateRule` / `handleUpdateRule` now
+`await mirrorDriveFoldersForRuleWrite(...)` **before** sending the response,
+and fold its result into the body as `drive_folder_mirror` (omitted entirely
+when mirroring didn't apply to this rule at all — a plain DocuSign rule's
+response is unchanged). Rationale: the old shape sent the response, THEN
+started the mirror — a worker restart or transient DB failure mid-mirror
+left an enabled rule with no folders and no trace of the attempt, and for a
+connected folder with zero documents ever arriving, migration 0462's lazy
+path never fires either, so nothing would create it until an admin happened
+to re-save the rule. Awaiting is bounded (the folder picker caps connected
+folders at three, PR #3084) and still non-fatal — `mirrorDriveFoldersForRuleWrite`
+never throws, converting any exception into a per-folder `outcome: 'error'`
+entry instead, so a mirror failure can never turn an already-successful rule
+save into a 500. Proven in `rules-crud.test.ts`'s "review P2" tests by
+holding the mirror's promise open with `mockImplementationOnce` and asserting
+`res.json` has NOT been called until it resolves.
+
+Also: `loadActiveDriveConnection` (in `drive-folder-mirror.ts`) now
+distinguishes a genuine DB error looking up the org's active connection from
+"the org has never connected Drive" — the former returns `outcome: 'error'`
+(retryable — the next save should try again), the latter stays
+`'skipped_no_connection'` (a legitimate terminal state; retrying changes
+nothing until the org connects). See `connectors/agents.md`'s matching entry.
