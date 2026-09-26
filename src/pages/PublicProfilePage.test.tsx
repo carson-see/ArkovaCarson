@@ -5,7 +5,7 @@
  * already in the table.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { PublicProfilePage } from './PublicProfilePage';
 import type { PublicMemberProfile } from '@/hooks/usePublicSearch';
@@ -74,5 +74,6 @@ describe('PublicProfilePage social links', () => {
     expect(hrefs).toContain('https://linkedin.com/in/ada');
     expect(hrefs).toContain('https://ada.example/page');
     expect(hrefs).toContain('https://x.com/ada_l');
+    expect(screen.getByLabelText('Profile QR code').querySelector('svg')).toBeTruthy();
   });
 });

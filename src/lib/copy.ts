@@ -3497,6 +3497,34 @@ export const ORG_LOGO_LABELS = {
   UPLOAD_SUCCESS: 'Logo updated successfully.',
 } as const;
 
+export const PROFILE_MEDIA_LABELS = {
+  SECTION_TITLE: 'Profile images',
+  SECTION_DESCRIPTION: 'Upload a profile photo and banner. Images appear publicly only while Public Profile is enabled.',
+  PROFILE_PHOTO: 'Profile photo',
+  PROFILE_BANNER: 'Profile banner',
+  CURRENT_PROFILE: 'Current profile',
+  CURRENT_PROFILE_BANNER: 'Current profile banner',
+  ORG_BANNER: 'Organization banner',
+  CURRENT_ORG_BANNER: 'Current organization banner',
+  ORG_BANNER_HINT: 'PNG, JPG, or WebP, up to 2 MB. Visible on the public organization page.',
+  ORG_BANNER_UPDATED: 'Organization banner updated.',
+  PROFILE_PHOTO_UPDATED: 'Profile photo updated.',
+  PROFILE_BANNER_UPDATED: 'Profile banner updated.',
+  UPLOAD_FAILED: 'Image upload failed.',
+  MFA_REQUIRED: 'Set up two-factor authentication to upload images.',
+  UPLOADING_PROFILE_PHOTO: 'Uploading profile photo…',
+  UPLOADING_PROFILE_BANNER: 'Uploading profile banner…',
+  TOO_LARGE: 'Image must be 2 MB or smaller.',
+  TYPE_MISMATCH: 'Choose a PNG, JPG, or WebP image whose file contents match its type.',
+  UNSUPPORTED_BROWSER: 'This browser cannot safely decode profile images.',
+  DECODE_FAILED: 'Choose a complete, decodable PNG, JPG, or WebP image.',
+  DIMENSIONS_INVALID: 'Image dimensions must be between 1 and 4096 pixels per side.',
+  SANITIZE_FAILED: 'Image could not be sanitized.',
+  SANITIZED_TOO_LARGE: 'Sanitized image must be 2 MB or smaller.',
+  METADATA_UPDATE_FAILED: 'Image metadata update failed.',
+  CLEANUP_WARNING: 'The image was updated, but an older stored copy could not be removed. Please try again later.',
+} as const;
+
 export const TERM_REPLACEMENTS: Record<string, string> = {
   wallet: 'vault',
   gas: '(remove or rephrase)',

@@ -645,9 +645,23 @@ instant/queue keyboard actionability, purchase/admin guidance, and durable
 NEEDS_CREDIT/HELD recovery states at 1280px and 375px. Its isolated fixture mocks
 only account and network boundaries; submissions are captured at the worker HTTP
 boundary and rearm must reuse the original fingerprint.
+## 2026-09-19 — UAT-14 profile fixture
+
+`uat14-profiles.spec.ts` renders the real public member, public organization,
+Settings media editor, and organization brand editor at 1280/375. Editor probes
+use Chromium's real decoder/canvas path and assert scoped PNG upload plus pointer
+payloads, malformed-image rejection, and privacy controls. Auth, RPC, Storage,
+and signed-media boundaries remain mocked; screenshots do not prove hosted
+Storage signing, expiry, or Auth policy behavior.
 
 UAT-23 spreadsheet layout evidence covers 1280×800, 375×812, 1280×480, and 375×480 through the standalone no-seed fixture. Its `org-review` context keeps the selected organization equal to the mocked profile organization so the lower review evidence can exercise both private tag partitions without claiming child-organization authorization. The bottom-scrolled desktop/mobile captures show public description, user and organization tags, explicit queue/instant actions, and the one-credit-per-row disclosure; they remain layout/control evidence, not hosted Auth, database, or email-delivery proof.
 ## 2026-09-14 — SCRUM-5145 email confirmation browser regressions
 
 `uat17-email-confirmation.spec.ts` drives the actual SignUpForm, useAuth, EmailConfirmation and AuthCallbackPage through the development-only fixture at1280/375. Auth signup/resend HTTP responses are simulated; the tests assert one signup, dedicated password-free resend, truthful outcomes, idle-time cooldown reset, long-address containment and actionable expired links. They use empty storageState and do not need seeded sessions. Run locally with `npx playwright test --config=e2e/uat17-email-confirmation.config.ts`; the dedicated config owns port5197 and uses placeholder local Auth configuration. The spec also runs in the ordinary CI Chromium project. Screenshots are Playwright attachments. This proves browser behavior, not real SMTP, server expiry, organization association or MFA; the isolated hosted driver and actual browser UAT cover those release gates.
 UAT-17's standalone email fixture also renders the production add-existing-member dialog and checks native click/Enter actionability and viewport fit at 1280px and 375px; its unauthenticated failure is a browser-control/layout assertion, not worker authorization proof.
+## 2026-09-21 — uat14-profiles screenshots (PR #3033 review)
+
+`uat14-profiles.spec.ts` writes screenshots to `test-results/uat14-screenshots`
+(gitignored) so a local run does not dirty the tree. Set `UAT14_EVIDENCE_DIR`
+to capture into the tracked evidence folder when refreshing UAT evidence
+deliberately.
