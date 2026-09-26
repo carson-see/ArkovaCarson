@@ -141,9 +141,19 @@ function makeFakeDb() {
               updates[recordedIndex] = { table, patch, eqs: [...eqs] };
             }
           };
-          const makeThenable = (): Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown } => {
-            const p = Promise.resolve({ error: null }) as Promise<{ error: null }> & { eq?: unknown; select?: unknown };
+          const makeThenable = (): Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; is: (col: string, val: unknown) => unknown; select: (cols: string) => unknown } => {
+            const p = Promise.resolve({ error: null }) as Promise<{ error: null }> & { eq?: unknown; is?: unknown; select?: unknown };
             (p as { eq: (col: string, val: unknown) => unknown }).eq = (col: string, val: unknown) => {
+              eqs.push([col, val]);
+              recordOrUpdate();
+              return makeThenable();
+            };
+            // `.is()` is the Postgrest-idiomatic null-equality filter (used
+            // for the account_label CAS guard below, since `.eq('col',
+            // null)` doesn't translate the way `.eq('col', 'string')`
+            // does) — recorded into the SAME `eqs` array as `.eq()` so
+            // existing assertions against `eqColumns` still see it.
+            (p as { is: (col: string, val: unknown) => unknown }).is = (col: string, val: unknown) => {
               eqs.push([col, val]);
               recordOrUpdate();
               return makeThenable();
@@ -151,7 +161,7 @@ function makeFakeDb() {
             (p as { select: (cols: string) => unknown }).select = (_cols: string) => ({
               maybeSingle: () => Promise.resolve({ data: { id: 'updated' }, error: null }),
             });
-            return p as Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown };
+            return p as Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; is: (col: string, val: unknown) => unknown; select: (cols: string) => unknown };
           };
           return makeThenable();
         },
@@ -353,6 +363,7 @@ describe('loadDriveAccessToken — OAuth client identity resolution (SCRUM-5287 
         update: (patch: Record<string, unknown>) => {
           const chain = {
             eq: (_c: string, _v: unknown) => chain,
+            is: (_c: string, _v: unknown) => chain,
             select: (_c: string) => ({
               maybeSingle: () => {
                 updates.push(patch);
@@ -615,6 +626,197 @@ describe('loadDriveAccessToken — OAuth client identity resolution (SCRUM-5287 
   });
 });
 
+// Independently-reviewed P1 + P2 on PR #3069 (feat/drive-readonly-scope),
+// reproduced against head 13e44db0d before the fix landed:
+//   P1 — `loadDriveAccessToken`'s `account_label` SELECT discarded its
+//        `error`, so a transient read failure was indistinguishable from a
+//        legitimately unlabeled (pre-cutover) row. If the subsequent token
+//        refresh then succeeded, the self-heal write overwrote the row's
+//        `email` / `channel_token` / `resource_id` with null — even though
+//        the read merely failed, not the row being absent. The webhook
+//        receiver (`api/v1/webhooks/drive.ts`) rejects a null
+//        `channel_token` with 401 `integration_missing_channel_token`, so a
+//        transient SELECT error became a PERMANENT notification failure.
+//   P2 — the CAS write that persists the refreshed tokens also serializes
+//        the self-healed `account_label`, but was conditioned only on
+//        `encrypted_tokens` — a concurrent watch-renewal write (which
+//        independently rewrites the WHOLE `account_label` blob) landing
+//        between this function's account_label SELECT and its UPDATE could
+//        have its fresh channel credential clobbered by this call's stale
+//        copy.
+describe('loadDriveAccessToken — account_label read-error handling (P1) and label CAS race (P2)', () => {
+  function makeAccountLabelFakeDb(args: {
+    labelSelectResult: { data: { account_label: string | null } | null; error: { message?: string } | null };
+    updates: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }>;
+    updateResult?: { data: { id: string } | null; error: { message?: string } | null };
+  }) {
+    const { labelSelectResult, updates, updateResult = { data: { id: 'updated' }, error: null } } = args;
+    return {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            is: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            select: (_c: string) => ({
+              maybeSingle: () => {
+                updates.push({ patch, predicates: [...predicates] });
+                return Promise.resolve(updateResult);
+              },
+            }),
+          };
+          return chain;
+        },
+        select: (cols: string) => ({
+          eq: (_c: string, _v: unknown) => ({
+            maybeSingle: () => {
+              if (cols === 'account_label') {
+                return Promise.resolve(labelSelectResult);
+              }
+              return Promise.resolve({ data: null, error: null });
+            },
+          }),
+        }),
+      }),
+      rpc: vi.fn(),
+    };
+  }
+
+  const integrationBase = (): DriveIntegrationRow => ({
+    id: INT,
+    org_id: ORG,
+    encrypted_tokens: Buffer.from(`ct:${JSON.stringify(EXPIRED_TOKENS)}`, 'utf8'),
+    token_kms_key_id: KEY,
+    last_page_token: 'pt-1',
+  });
+
+  it('P1: a failed account_label SELECT aborts BEFORE refresh/write — reproduced against PR #3069 head 13e44db0d', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const updates: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }> = [];
+    const db = makeAccountLabelFakeDb({
+      labelSelectResult: { data: null, error: { message: 'read timeout' } },
+      updates,
+    });
+    const fakeFetch = vi.fn();
+    await expect(
+      loadDriveAccessToken(integrationBase(), {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        db: db as any,
+        kms: fakeKms(),
+        drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      }),
+    ).rejects.toMatchObject({ name: 'DriveRunnerError', code: 'account_label_read_failed' });
+    // The bug: a failed read used to fall through and behave exactly like
+    // "no label" — refreshing, then self-healing with a null-filled label.
+    // The fix must abort before either happens: no Google refresh call, no
+    // DB write at all.
+    expect(fakeFetch).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it('P2: the self-heal write guards account_label on the value actually read, so a concurrent renewal write causes a CAS miss instead of being silently clobbered', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const existingLabel = { email: 'org@example.com', channel_token: 'tok-precious', resource_id: 'res-1', oauth_client_id: null };
+    const rawLabel = JSON.stringify(existingLabel);
+    const winnerTokens = {
+      access_token: 'access-winner',
+      refresh_token: 'refresh-winner',
+      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+    };
+    const winnerCiphertext = `\\x${Buffer.from(`ct:${JSON.stringify(winnerTokens)}`, 'utf8').toString('hex')}`;
+    const updates: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }> = [];
+    let casReadCalls = 0;
+    // Self-contained fake (mirrors the CAS-lost regression test's shape
+    // below): the account_label SELECT returns the existing label; the
+    // UPDATE always reports a CAS miss (`data: null`) — simulating a
+    // concurrent watch-renewal write that already changed `account_label`
+    // since this call's SELECT, so the guard predicate this UPDATE adds no
+    // longer matches any row; the post-miss re-read returns the "winner"'s
+    // ciphertext.
+    const db = {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            is: (c: string, v: unknown) => {
+              predicates.push([c, v]);
+              return chain;
+            },
+            select: (_c: string) => ({
+              maybeSingle: () => {
+                updates.push({ patch, predicates: [...predicates] });
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+          return chain;
+        },
+        select: (cols: string) => ({
+          eq: (_c: string, _v: unknown) => ({
+            maybeSingle: () => {
+              if (cols === 'account_label') {
+                return Promise.resolve({ data: { account_label: rawLabel }, error: null });
+              }
+              casReadCalls++;
+              return Promise.resolve({
+                data: { encrypted_tokens: winnerCiphertext, token_kms_key_id: KEY },
+                error: null,
+              });
+            },
+          }),
+        }),
+      }),
+      rpc: vi.fn(),
+    };
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'at-loser', expires_in: 3599, token_type: 'Bearer' }),
+    });
+    const result = await loadDriveAccessToken(integrationBase(), {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms: fakeKms(),
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+    });
+    // CAS lost -> trust the winner; no throw, no second refresh burned
+    // against Google, and — the actual regression — no silent overwrite of
+    // the label the winner (or a renewal) just wrote.
+    expect(result.accessToken).toBe('access-winner');
+    expect(result.refreshed).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(casReadCalls).toBe(1);
+    expect(updates).toHaveLength(1);
+    // The write DID preserve the label fields it read (self-heal is
+    // additive, not destructive) ...
+    const patch = updates[0].patch as { account_label: string };
+    expect(JSON.parse(patch.account_label)).toMatchObject({
+      email: 'org@example.com',
+      channel_token: 'tok-precious',
+      resource_id: 'res-1',
+    });
+    // ... but the fix REQUIRES the write to also condition on account_label
+    // being byte-identical to what was read, at the exact value read —
+    // that predicate is what turned the concurrent write into a safe CAS
+    // miss instead of a silent overwrite.
+    const predicateColumns = updates[0].predicates.map(([c]) => c);
+    expect(predicateColumns).toContain('account_label');
+    const labelPredicate = updates[0].predicates.find(([c]) => c === 'account_label');
+    expect(labelPredicate?.[1]).toBe(rawLabel);
+  });
+});
+
 describe('loadWatchedFolderIds', () => {
   it('unions legacy folder_id + drive_folders[] across all enabled WORKSPACE_FILE_MODIFIED rules', async () => {
     const fakeData = [
@@ -709,6 +911,7 @@ describe('loadDriveAccessToken — CAS-lost regression', () => {
           // but not the .eq('encrypted_tokens') filter — another writer mutated it first".
           const chain = {
             eq: (_c: string, _v: unknown) => chain,
+            is: (_c: string, _v: unknown) => chain,
             select: (_c: string) => ({
               maybeSingle: () => {
                 casUpdateCalls++;

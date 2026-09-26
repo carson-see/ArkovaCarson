@@ -361,12 +361,34 @@ export async function loadDriveAccessToken(
   // caller of loadDriveAccessToken is unaffected; DriveIntegrationRow itself
   // is not widened, so no other query needs to change).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- scoped by integration.id
-  const { data: labelRow } = await (deps.db as any)
+  const { data: labelRow, error: labelReadError } = await (deps.db as any)
     .from('org_integrations')
     .select('account_label')
     .eq('id', integration.id)
     .maybeSingle();
-  const storedLabel = parseDriveAccountLabel((labelRow as { account_label?: string | null } | null)?.account_label ?? null);
+  // Independently-reviewed P1: this SELECT's error was previously discarded,
+  // so a transient read failure (network blip, pooler hiccup) looked
+  // IDENTICAL to "row exists with no label" (data: null/undefined,
+  // error: null) — the pre-cutover-row case the fallback below is meant
+  // for. That made `authoritative` come back false and fed the self-heal
+  // write below, which unconditionally spreads `storedLabel ?? { email:
+  // null, channel_token: null, resource_id: null }` — nulling out a
+  // legitimate email/channel_token/resource_id that this SELECT merely
+  // failed to read, not one that was actually absent. The webhook receiver
+  // (`api/v1/webhooks/drive.ts`) then rejects the now-null channel_token
+  // with 401 `integration_missing_channel_token` on every subsequent
+  // delivery — a transient read failure becoming a permanent notification
+  // failure. Abort BEFORE the refresh/write path on a real read error;
+  // this is retryable (the caller's job/webhook retry will simply try
+  // again), unlike "no label" which is a legitimate, common steady state.
+  if (labelReadError) {
+    throw new DriveRunnerError(
+      'account_label_read_failed',
+      `failed to read account_label for integration ${integration.id} before refresh: ${(labelReadError as { message?: string }).message ?? 'unknown'}`,
+    );
+  }
+  const rawLabelValue = (labelRow as { account_label?: string | null } | null)?.account_label ?? null;
+  const storedLabel = parseDriveAccountLabel(rawLabelValue);
   const { generation: resolvedGeneration, authoritative } = resolveDriveRefreshGeneration({
     storedClientId: storedLabel?.oauth_client_id ?? null,
     storedScope: tokens.scope,
@@ -465,6 +487,7 @@ export async function loadDriveAccessToken(
   const accountLabelUpdate = !authoritative
     ? { account_label: stringifyDriveAccountLabel({ ...(storedLabel ?? { email: null, channel_token: null, resource_id: null }), oauth_client_id: refreshed.clientId }) }
     : {};
+  const willWriteAccountLabel = Object.prototype.hasOwnProperty.call(accountLabelUpdate, 'account_label');
   // CAS write — only succeeds if no other concurrent refresh has
   // already mutated `encrypted_tokens` since we read it.
   // CodeRabbit ASSERTIVE on PR #696 (8ea5dc40): distinguish DB error
@@ -473,7 +496,7 @@ export async function loadDriveAccessToken(
   // as if the refresh succeeded, turning a persistence/read failure
   // into a silent auth bug.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
-  const { data: persistedRow, error: writeError } = await (deps.db as any)
+  let casUpdate = (deps.db as any)
     .from('org_integrations')
     .update({
       encrypted_tokens: `\\x${reencrypted.ciphertext.toString('hex')}`,
@@ -482,7 +505,28 @@ export async function loadDriveAccessToken(
       ...accountLabelUpdate,
     })
     .eq('id', integration.id)
-    .eq('encrypted_tokens', prevCiphertextHex)
+    .eq('encrypted_tokens', prevCiphertextHex);
+  // P2 fix (independently reviewed, same review pass as the P1 above):
+  // refresh (here) and watch-renewal (`drive-subscription-renewal.ts`) both
+  // independently serialize the WHOLE `account_label` JSON blob. Refresh's
+  // CAS previously guarded ONLY `encrypted_tokens`, so a renewal write that
+  // lands between this function's account_label SELECT (above) and this
+  // UPDATE could already have replaced the row's channel_token/resource_id
+  // with a fresh credential; the unconditioned write below would then
+  // clobber that fresh credential with the stale copy this call read.
+  // Guard the write on account_label being BYTE-IDENTICAL to what we read —
+  // any concurrent account_label writer (renewal, or another refresher)
+  // invalidates the predicate and this call falls into the existing
+  // "CAS lost" path below instead of overwriting a label it never actually
+  // observed. Only applied when we're actually writing account_label (the
+  // self-heal path) — the authoritative path never touches the column, so
+  // it has nothing to guard.
+  if (willWriteAccountLabel) {
+    casUpdate = rawLabelValue === null
+      ? casUpdate.is('account_label', null)
+      : casUpdate.eq('account_label', rawLabelValue);
+  }
+  const { data: persistedRow, error: writeError } = await casUpdate
     .select('id')
     .maybeSingle();
 
