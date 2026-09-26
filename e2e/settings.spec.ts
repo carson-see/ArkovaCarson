@@ -66,7 +66,7 @@ test.describe('Settings', () => {
       await expect(individualPage.getByRole('heading', { name: 'Arkova Privacy' })).toBeVisible();
 
       // Public Profile toggle
-      await expect(individualPage.getByText('Public Profile')).toBeVisible();
+      await expect(individualPage.getByText('Public Profile', { exact: true })).toBeVisible();
 
       // Toggle switch should exist
       const toggle = individualPage.getByRole('switch');

@@ -17,3 +17,11 @@ SEO and structured data components for public-facing pages: Open Graph meta tags
 ## Do / Don't Rules
 - DO: Keep the JSON-LD builder pure/testable — split from rendering so SSR can reuse it
 - DO: Include verified social profiles and logo in Organization schema
+## 2026-09-21 — Org logo must stay publicly addressable (PR #3033 review)
+
+`OrgPageMeta` (og:image / twitter:image) and `OrganizationSchema` (schema.org
+`logo`) read `logo_url`, and their consumers are out-of-band crawlers: a
+short-lived signed URL is useless to them. The upload path therefore keeps
+`logo_url` populated with a stable public URL. Both test files pin this
+end-to-end from `orgBrandUpdates`; do not switch these components to a storage
+path.

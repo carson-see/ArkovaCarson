@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { OrganizationSchema, buildOrganizationSchema } from './OrganizationSchema';
+import { orgBrandUpdates } from '@/pages/OrgProfilePage';
 
 const BASE_PROFILE = {
   display_name: 'Demo Issuer Co.',
@@ -114,5 +115,12 @@ describe('<OrganizationSchema />', () => {
     expect(raw).not.toContain('<');
     expect(container.querySelectorAll('script')).toHaveLength(1);
     expect(JSON.parse(raw).description).toBe('evil</script><script>alert(1)</script>');
+  });
+
+  // D1 regression guard — see OrgPageMeta.test.tsx.
+  it('emits schema.org logo for an org whose logo came through the UAT-14 upload path', () => {
+    const PUBLIC_URL = 'https://x.supabase.co/storage/v1/object/public/org-logos/10000000-1000-4000-8000-000000000001/logo-abc.png';
+    const uploaded = { ...BASE_PROFILE, logo_url: null, ...orgBrandUpdates('logo', 'organizations/pub_demo/logo/abc.png', PUBLIC_URL) };
+    expect(buildOrganizationSchema(uploaded, ORG_PAGE_URL).logo).toBe(PUBLIC_URL);
   });
 });
