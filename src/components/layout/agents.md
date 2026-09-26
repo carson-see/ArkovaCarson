@@ -81,3 +81,10 @@ Breadcrumb label for /settings/credential-templates now "Document Templates" (vi
 `Breadcrumbs.tsx` maps `ROUTES.SETTINGS_REFERRALS` to
 Settings > `NAV_POLISH_LABELS.BREADCRUMB_REFERRALS`, alongside the existing
 API-keys / webhooks / templates settings sub-pages.
+## 2026-09-21 — Header avatar source (PR #3033 review)
+
+The top-nav avatar resolves `profile.avatar_storage_path` through
+`useProfileMediaUrl`, falling back to the legacy `avatar_url`. `HeaderProps`
+and `AppShellProps` therefore carry the optional `avatar_storage_path` field;
+callers already pass the whole profile row. A denied signature leaves the src
+undefined so the Radix initials fallback renders.

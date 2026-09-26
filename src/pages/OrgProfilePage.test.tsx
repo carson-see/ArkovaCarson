@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { OrgProfilePage, retainFailedMoveIds } from './OrgProfilePage';
+import { OrgProfilePage, orgBrandPublicMirror, orgBrandUpdates, retainFailedMoveIds } from './OrgProfilePage';
 
 const { mockInviteMember, mockRefreshInvitations, mockSupabaseEq, mockInvitationMode, platformAdminMode, invitationListState, memberRoleState } = vi.hoisted(() => ({
   mockInviteMember: vi.fn(),
@@ -38,6 +38,42 @@ let capturedOnResend:
 
 it('retains only failed selections after a partial folder move', () => {
   expect(retainFailedMoveIds(['anchor-a', 'anchor-b'], [{ anchor_id: 'anchor-b' }])).toEqual(['anchor-b']);
+});
+
+// D1 — organizations have no visibility toggle, and a 30 s signed URL cannot
+// serve an out-of-band crawler, so the logo stays PUBLICLY addressable:
+// `logo_url` and `logo_storage_path` must move together in ONE row update.
+describe('organization brand commit (D1 public mirror)', () => {
+  const ORG_ID = '10000000-1000-4000-8000-000000000001';
+  const PUBLIC_URL = `https://x.supabase.co/storage/v1/object/public/org-logos/${ORG_ID}/logo-abc.png`;
+
+  it('writes the public URL and the private path in one update for a logo', () => {
+    expect(orgBrandUpdates('logo', `organizations/pub_acme/logo/a.png`, PUBLIC_URL)).toEqual({
+      logo_storage_path: 'organizations/pub_acme/logo/a.png',
+      logo_url: PUBLIC_URL,
+    });
+  });
+
+  it('never touches logo_url for a banner upload', () => {
+    expect(orgBrandUpdates('banner', 'organizations/pub_acme/banner/a.png', undefined)).toEqual({
+      banner_storage_path: 'organizations/pub_acme/banner/a.png',
+    });
+  });
+
+  it('mirrors only the logo, into the org-uuid prefix the org-logos policy checks', () => {
+    expect(orgBrandPublicMirror('logo', ORG_ID, PUBLIC_URL)).toEqual({
+      bucket: 'org-logos',
+      ownerPrefix: `${ORG_ID}/`,
+      previousPath: `${ORG_ID}/logo-abc.png`,
+    });
+    expect(orgBrandPublicMirror('banner', ORG_ID, PUBLIC_URL)).toBeUndefined();
+    expect(orgBrandPublicMirror('logo', null, PUBLIC_URL)).toBeUndefined();
+  });
+
+  it('carries no previous public object when the stored URL is foreign or absent', () => {
+    expect(orgBrandPublicMirror('logo', ORG_ID, 'https://cdn.example/elsewhere.png')?.previousPath).toBeNull();
+    expect(orgBrandPublicMirror('logo', ORG_ID, null)?.previousPath).toBeNull();
+  });
 });
 
 vi.mock('@/hooks/useAuth', () => ({
