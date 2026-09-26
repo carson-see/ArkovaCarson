@@ -1925,3 +1925,34 @@ this block.
 - DB-first is safe because the deployed worker (`7a98c3d2f`) has zero calls to `refund_ai_credits`; it still attempts refunds as `deduct_ai_credits(…, -1)`, which 0467 refuses. 0483's changes to functions it does call are behaviour-compatible (5 s `lock_timeout` → a contended debit fails fast with `55P03`).
 - 0485's header says "worker first is the safe order". That answers a worker built against 0484's boolean result alone; no such revision was ever deployed, and migrate-before-merge (the drift gate) makes worker-first unavailable anyway. The file is immutable, so this block is the correction.
 - Not expedited ahead of its soak: unlike 0482 it closes no live exploit.
+## Recent migrations (PR #3080) — 2026-09-25 — 0486 restores the UAT-04 MFA policy on recipient_activation_deliveries (SCRUM-5265 follow-up)
+
+`0471` (UAT-23, PR #3034) created `public.recipient_activation_deliveries` with
+`ENABLE` + `FORCE ROW LEVEL SECURITY`, `REVOKE ALL FROM PUBLIC/anon/authenticated`
+and `GRANT ALL TO service_role`, but with **zero** `CREATE POLICY` statements.
+`0486` adds the canonical `mfa_verified_authenticated` RESTRICTIVE policy, byte-identical
+in predicate to the three that `0465` added for `anchor_private_tags` /
+`anchor_instant_intents` / `anchor_credit_purchases`.
+
+`0471` is immutable (already applied to prod, numeric ledger row `0471`), so this is a
+compensating migration per CLAUDE.md §1.2 — not an edit.
+
+Not a live-reachable bypass: prod shows `relrowsecurity=t`, `relforcerowsecurity=t`,
+0 policies, and `has_table_privilege` false for both `authenticated` and `anon` — the
+table is deny-all today. `0486` restores the defense-in-depth backstop the UAT-04
+ratchet exists to guarantee, so that a later `GRANT` cannot silently hand
+`authenticated` a table with no restrictive MFA predicate behind it.
+
+Because the table is service-role-only, the real regression risk of adding a
+RESTRICTIVE policy is the worker's own writes. A RESTRICTIVE policy `TO authenticated`
+does not apply to `service_role`, and `service_role` additionally holds `BYPASSRLS`;
+the soak probes assert the service_role write path explicitly rather than assuming it.
+
+Unblocks two gates that were red on every open PR: `tests/rls/uat04-mfa-enforcement.test.ts`
+(the census asserting every RLS-enabled public table carries `mfa_verified_authenticated`)
+and `scripts/ci/check-rls-policy-coverage.ts` (SCRUM-1275 / R3-2). Neither is satisfied
+by the `rls-no-policy-intentional` override label — the policy was missed, not
+intentionally omitted.
+
+This block is titled `(PR #3080)` and placed last because 3080 is the highest PR number
+in this file (CLAUDE.md §6). A later author claiming a higher PR number orders after it.

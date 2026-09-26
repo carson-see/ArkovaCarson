@@ -24,3 +24,16 @@ Main dashboard widgets: stats, profile card, credit usage, empty states, and bat
 ## Do / Don't Rules
 - DO: Use `useCredits()` hook for credit data, not direct Supabase queries
 - DO: Gate AI features behind `ENABLE_AI_EXTRACTION` flag
+
+## 2026-09-25 — the avatar "Change profile picture" control was removed
+
+`ProfileCard` rendered a hover-revealed button over the avatar, correctly
+labelled `aria-label="Change profile picture"`, whose `onClick` body was an empty
+`// TODO: avatar upload`. Nothing in the product writes `profiles.avatar_url` —
+there is no upload control and no settings field; `useProfile.updateProfile`
+merely accepts the column. So it was a fully accessible affordance for a feature
+that does not exist, and it shipped on every user's dashboard.
+
+Removed rather than faked. `ProfileCard.test.tsx` now asserts the control is
+absent. **If avatar upload ships, replace that assertion** rather than deleting
+it — a TODO-bodied handler behind a real-looking control is the failure mode.
