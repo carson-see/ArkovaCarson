@@ -60,6 +60,11 @@ export const ROUTES = {
   SETTINGS: '/settings',
   SETTINGS_API_KEYS: '/settings/api-keys',
   SETTINGS_WEBHOOKS: '/settings/webhooks',
+  // SPEC-AGENTS-UI — ComputeID / agent passport management: the backend
+  // (services/worker/src/api/v1/agents.ts, agents-computeid.ts) shipped with
+  // no reachable frontend; org admins could not see, suspend, or revoke an
+  // agent except by raw curl.
+  SETTINGS_AGENTS: '/settings/agents',
   CREDENTIAL_TEMPLATES: '/settings/credential-templates',
   // SCRUM-5024 — partner referral code + the organizations it introduced.
   SETTINGS_REFERRALS: '/settings/referrals',

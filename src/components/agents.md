@@ -1,5 +1,47 @@
 # agents.md — components
-_Last updated: 2026-07-22_
+_Last updated: 2026-09-25_
+
+## 2026-09-25 SPEC-AGENTS-UI — new `agents/` subfolder: ComputeID agent management
+
+New subfolder, not to be confused with this file's own name. ComputeID / agent
+passports (`services/worker/src/api/v1/agents.ts`, `agents-computeid.ts`,
+migration `0448`, `machines/agentPassport.machine.ts`) shipped with zero
+reachable frontend — an org admin could grant `agents:manage` on an API key
+but had no way to see which agents existed, their status, or revoke one
+except by raw curl. PR #3083 fixed a real defect where suspending an agent
+did not deactivate its API keys; that fix is only reachable through this UI.
+
+`AgentsSettings.tsx` lists an org's agents (name, type, status, created date)
+with suspend/resume/revoke actions. `status: 'revoked'` is TERMINAL
+(the worker 409s a PATCH carrying `status` against a revoked agent) — a
+revoked agent renders NO status action buttons, by design, not an oversight.
+Revoke is destructive + confirmed via a Radix `Dialog` (keyboard-reachable:
+focus trap, Escape cancels) whose body states the actual consequence
+(deactivates every active API key on that agent), not just "this cannot be
+undone." A non-409 action failure and a 409 (terminal-revocation race) render
+distinct curated copy from `AGENT_LABELS` — never the raw thrown message.
+
+`AgentKeysPanel.tsx` shows an agent's ACTIVE API key prefixes, fetched lazily
+via `useAgentDetail` only when a row is expanded. `GET /api/v1/agents` (the
+list route) does NOT join keys — only `GET /api/v1/agents/:agentId` does — so
+eager per-row fetching would be an N+1 the list route cannot support; do not
+"simplify" this to fetch keys inline on the list response without changing
+the worker contract first.
+
+Scope: management of EXISTING agents only. Deliberately NOT built here:
+agent registration (`POST /api/v1/agents`), API key minting
+(`POST /:agentId/key`), or the ComputeID admission flow
+(`POST /api/v1/agents/computeid/admit`) — those are separate surfaces with
+their own security considerations.
+
+**Known gap, not fixed here (backend change, out of scope):** the worker's
+PATCH/DELETE handlers in `agents.ts` verify org ownership but do NOT check
+`profile.role === 'ORG_ADMIN'` — any org member with a valid session can
+suspend or revoke another agent in their org today. This UI is reachable only
+via the `SettingsPage.tsx` org-admin card link (same convention as
+`WebhookSettingsPage`/`CredentialTemplatesPage`, neither of which role-gates
+client-side either), which does not close that gap — flagged for a follow-up
+task, not fixed by this change per its no-backend-changes constraint.
 
 ## 2026-07-22 SCRUM-2914 (Founder UI findings): AI-03 confidence gate removed
 
@@ -27,6 +69,7 @@ Domain-specific React components organized by feature area. Each subfolder has a
 
 | Folder | Domain | Key Components |
 |--------|--------|----------------|
+| `agents/` | ComputeID agent management (SPEC-AGENTS-UI) | AgentsSettings, AgentKeysPanel |
 | `anchor/` | Document anchoring | SecureDocumentDialog, FileUpload, AssetDetailView |
 | `auth/` | Authentication | LoginForm, SignUpForm, AuthGuard, RouteGuard |
 | `billing/` | Payments | BillingOverview, PricingCard |

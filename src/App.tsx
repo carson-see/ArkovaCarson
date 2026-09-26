@@ -66,6 +66,7 @@ const TermsPage = lazyWithRetry(() => import('@/pages/TermsPage').then(m => ({ d
 const ThirdPartyNoticesPage = lazyWithRetry(() => import('@/pages/ThirdPartyNoticesPage').then(m => ({ default: m.ThirdPartyNoticesPage })));
 const ContactPage = lazyWithRetry(() => import('@/pages/ContactPage').then(m => ({ default: m.ContactPage })));
 const ApiKeySettingsPage = lazyWithRetry(() => import('@/pages/ApiKeySettingsPage').then(m => ({ default: m.ApiKeySettingsPage })));
+const AgentsSettingsPage = lazyWithRetry(() => import('@/pages/AgentsSettingsPage').then(m => ({ default: m.AgentsSettingsPage })));
 const EmbedVerifyPage = lazyWithRetry(() => import('@/pages/EmbedVerifyPage').then(m => ({ default: m.EmbedVerifyPage })));
 const SearchPage = lazyWithRetry(() => import('@/pages/SearchPage').then(m => ({ default: m.SearchPage })));
 const IssuerRegistryPage = lazyWithRetry(() => import('@/pages/IssuerRegistryPage').then(m => ({ default: m.IssuerRegistryPage })));
@@ -301,6 +302,7 @@ export function App() {
           <Route path={ROUTES.PROFILE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><Navigate to={ROUTES.SETTINGS} replace /></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Settings"><SettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_API_KEYS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ApiKeys"><ApiKeySettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.SETTINGS_AGENTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Agents"><AgentsSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_WEBHOOKS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Webhooks"><WebhookSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.CREDENTIAL_TEMPLATES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="CredentialTemplates"><CredentialTemplatesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_REFERRALS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Referrals"><ReferralSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
