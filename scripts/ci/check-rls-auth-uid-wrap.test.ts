@@ -153,11 +153,14 @@ describe('file-level exemptions are unchanged', () => {
     expect(findings(M('0280_rls_auth_uid_subquery_wrap.sql'), 'CREATE POLICY p ON t USING (o = auth.uid());')).toEqual([]);
   });
 
-  it('keeps the three historical file exemptions', () => {
+  it('keeps the four historical file exemptions', () => {
     expect([...SKIPPED_FILES].sort()).toEqual([
       'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql',
       'supabase/migrations/0280_rls_auth_uid_subquery_wrap.sql',
       'supabase/migrations/0398_fix_audit_events_actor_email_dropped_column.sql',
+      // 0481: applied to prod as-is on 2026-09-20 before PR #3033 merged; the
+      // compensating initplan wrap is a follow-up migration.
+      'supabase/migrations/0481_uat14_profile_brand_media.sql',
     ]);
   });
 
