@@ -1,5 +1,16 @@
 # agents.md — lib
 
+## 2026-09-25 — `CONNECTORS_LABELS` gains the connector-health reason copy
+
+New keys (`CONNECTOR_HEALTH_NEEDS_ATTENTION`, `CONNECTOR_HEALTH_UNAVAILABLE`,
+`CONNECTOR_HEALTH_REASON_*` for every backend `HealthReason`) back the SCRUM-1146 health dashboard
+now surfaced in the Connectors UI — see `src/hooks/agents.md`'s matching entry and
+`src/hooks/useConnectorHealth.ts`. Each reason is written in plain customer language, never the
+backend's machine token; `CONNECTOR_HEALTH_REASON_GRANT_EXCEEDS_REQUESTED` names the
+security-relevant condition plainly (the connected account granted MORE access than Arkova
+requested) rather than softening it into an internal "scope" finding. `npm run lint:copy` passes
+clean against these — no banned §1.3 term appears in any of them.
+
 ## 2026-09-19 — UAT-12 public-description and recovery copy
 
 `DESCRIPTION_LABELS` truthfully identifies the description as public verification
