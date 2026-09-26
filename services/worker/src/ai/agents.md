@@ -176,3 +176,100 @@ rejects overlapping org/user periods, and makes check/debit choose the oldest
 matching row deterministically. When both owner arguments are supplied, the
 established contract remains an OR across org and user; callers should normally
 send exactly one. The RPCs remain executable only by `service_role`.
+
+# Credit debits fail CLOSED — 2026-09-21 (SCRUM-4939 follow-ups, migration 0483)
+
+`deductAICredits()` **never throws**. Every failure — insufficient credits, a
+dead connection, or the SQLSTATE `55P03` lock timeout that migration 0483's
+`SET lock_timeout='5s'` now produces on a contended
+`SELECT … FOR UPDATE` — comes back as `false`. A falsy return therefore means
+exactly one thing: **nothing was charged.**
+
+- **DO** treat a falsy debit as "do not perform, or do not keep, the paid work."
+  `embeddings.ts` converts it into a throw so the existing
+  `rollbackStoredCredentialEmbeddings` path runs; previously the falsy return
+  sailed past that `catch` (which only fires on a rejected promise) and left a
+  STORED embedding nobody was billed for — a hollow success, the defect class
+  `api/v1/ai-extract.ts` closed in SCRUM-3502.
+- **DO NOT** `await deductAICredits(...)` and discard the result on any path
+  that has already rendered, stored or returned paid AI output.
+- The log line now carries the SQLSTATE (`code`), so `55P03` ("a stuck holder is
+  sitting on this org's credit row") is distinguishable from a generic DB error.
+- The refund regression 0467 caused — every `deductAICredits(org, user, -n)`
+  call returning false and refunding nothing — is FIXED in this same PR by
+  migration 0484 and the section immediately below, not merely reported. (An
+  earlier draft of this block said "known regression, reported not fixed",
+  written before the refund fix was scoped into the PR; it contradicted the very
+  next section and is corrected here rather than left to be believed.)
+
+# Refunds have their own RPC — 2026-09-21 (migrations 0484 + 0485)
+
+**Never refund with a negative debit.** `deductAICredits(org, user, -1)` was how
+this codebase returned credit until migration 0484. Migration 0467 closed
+`deduct_ai_credits` to non-positive amounts on 2026-09-19 — correctly, since a
+negative debit is an unbounded credit grant — and nothing told the three refund
+call sites, so since 0467 (prod 2026-09-19) every refund returned `false` and
+refunded nothing while looking like an ordinary failure. Failed extractions
+stayed charged. (The window is DAYS, not the "three weeks" an earlier draft of
+this line claimed — 0467 reached prod on 2026-09-19 and this PR is dated
+2026-09-21. State the dates, not a duration.)
+
+- **DO** use `refundAICredits(debit, amount)` → `public.refund_ai_credits`,
+  where `debit` is the `AICreditDebit` captured by `recordAICreditDebit()` at
+  DEBIT time. Positive amounts only, bounded by `MAX_REFUNDABLE_AMOUNT`.
+- **DO NOT** pass loose ids. Both credit RPCs select their row with an OR across
+  `org_id` and `user_id`, so a refund that supplies a different SUBSET of the
+  ids than the debit did can land on a **different `ai_credits` row** — nothing
+  detects it and both calls report success. The debit record makes that
+  unrepresentable.
+- **DO NOT** let a refund choose its own period. Since 0485 the row is scoped by
+  `coalesce(p_debited_at, now())`. Without the debit's instant, a refund that
+  crosses a month boundary — routine, since the reconcile queue retries on
+  backoff — decrements the NEW period and leaves the old one overcharged
+  forever.
+- **DO NOT** pass a non-positive amount to `deductAICredits`. It now rejects it
+  before the RPC and logs at error, so the mistake cannot recur silently.
+- **`MAX_REFUNDABLE_AMOUNT` and `MAX_RECONCILABLE_AMOUNT` are pinned equal by a
+  test that imports BOTH** (`cost-tracker.test.ts`). They were previously
+  described as pinned while the only assertion was `MAX_REFUNDABLE_AMOUNT ===
+  1000` — a literal, not a pin: raising one left the other untouched and the
+  suite green.
+- The RPC floors `used_this_month` at zero, so a refund can never mint credit
+  beyond what the period consumed. There is **no idempotency key** on a refund:
+  one that commits and whose response is lost is re-applied by the reconciler.
+  The floor is what bounds that, not an exactly-once guarantee.
+- **Read the OUTCOME, not a boolean.** 0485 returns the credits actually
+  returned, surfaced as `{ status: 'refunded' | 'clamped' | 'no_period' |
+  'rpc_failed' }`. `clamped` means the floor returned ZERO — the credit was
+  already back — and it is neither a success nor a retryable failure: complete
+  the work, log at `warn`, emit its own signal, and never count it as
+  reconciled. 0484 answered `true` here, which is how a job that moved nothing
+  logged "AI credit refund reconciled".
+- A failed refund is an **overcharge**: log it at `error` with the org/user ids,
+  raise the credit-RPC Sentry alert AND enqueue `ai_credits.reconcile_refund`
+  (`ai/credit-refund-reconciliation.ts`, shared by both extraction routes — an
+  alert is a notification, not a remedy). Never turn it into a 5xx for the end
+  user — a failed refund is an ops problem, not a request failure.
+
+# Embedding failures are classified by CODE, not by message text — 2026-09-21
+
+`EmbeddingStoreResult` is a discriminated union carrying an
+`EmbeddingFailureCode`, and `BatchReEmbedResult.errors[]` carries one per row.
+
+`api/v1/ai-embed.ts` used to pick its HTTP status with
+`result.error?.includes('credit') ? 402 : 500`. Every credit failure in
+`embeddings.ts` says "credit", so a 55P03 lock timeout or a flat RPC outage
+answered `402 insufficient_credits` — telling a customer who HAS credits to buy
+more, for a failure that is ours and retryable.
+
+- **DO** branch on `code`. `credit_debit_unavailable` / `credit_check_unavailable`
+  → **503 + `Retry-After`** and `credit_system_unavailable`, mirroring
+  `api/v1/ai-extract.ts`. `insufficient_credits` → 402, genuine exhaustion only.
+- **DO NOT** infer a failure class from a message. Provider errors on this
+  surface routinely contain the word "credential".
+- The debit block throws a typed `CreditDebitUnavailableError`, including when
+  the rollback itself fails, so the classification survives the catch that runs
+  the rollback.
+- Known and documented at both branch sites: `checkAICredits` returning null
+  still conflates "no balance row" with its own RPC failure. Narrowing that
+  changes its contract for every caller and is not done here.

@@ -16,9 +16,13 @@ import { createExtractionProvider } from '../../ai/factory.js';
 import {
   checkAICredits,
   deductAICredits,
+  refundAICredits,
+  recordAICreditDebit,
   ensureAICreditsPeriod,
   logAIUsageEvent,
+  type AICreditDebit,
 } from '../../ai/cost-tracker.js';
+import { enqueueRefundReconciliation } from '../../ai/credit-refund-reconciliation.js';
 import { captureCreditRpcFailureAlert } from '../../utils/sentry.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
@@ -316,9 +320,18 @@ router.post('/', async (req: Request, res: Response) => {
     let result: ExtractionResult;
     let degraded = false;
     let fallbackReason: string | undefined;
-    let deductedCredit = false;
+    const deductedCredit = deducted === true;
+    // S8 / S2: the ids and the instant of THIS debit, captured once. Whatever
+    // refunds it — here or, via the queue, minutes later — must address the
+    // same `ai_credits` row and the same period. See `AICreditDebit`.
+    //
+    // Captured OUTSIDE the try: it is bookkeeping about a charge that has
+    // already happened, not part of the extraction, and a throw from here must
+    // not be laundered into "the provider failed" by the catch below.
+    const debitRecord: AICreditDebit | undefined = deductedCredit
+      ? recordAICreditDebit(orgId, userId)
+      : undefined;
     try {
-      deductedCredit = deducted === true;
       result = await withLatencyBudget(
         provider.extractMetadata({
           strippedText,
@@ -333,11 +346,54 @@ router.post('/', async (req: Request, res: Response) => {
         : 'provider extraction failed';
       degraded = true;
 
-      // RISK-6: Synchronous refund on extraction failure
-      if (deductedCredit) {
-        const refunded = await deductAICredits(orgId, userId, -1);
-        if (!refunded) {
-          logger.warn({ orgId, userId }, 'Failed to refund AI credit after extraction failure');
+      // RISK-6: Synchronous refund on extraction failure.
+      //
+      // This was `deductAICredits(orgId, userId, -1)` until migration 0484.
+      // 0467 had closed `deduct_ai_credits` to non-positive amounts, so from
+      // 2026-09-19 this refunded NOTHING and every failed extraction stayed
+      // charged — the AI-credit refund regression from 0467. It now calls the
+      // dedicated `refund_ai_credits` RPC with a positive amount, addressed by
+      // the debit record (migration 0485).
+      if (deductedCredit && debitRecord) {
+        const outcome = await refundAICredits(debitRecord, 1);
+        if (outcome.status === 'clamped') {
+          // S1: the floor returned nothing because the credit was already back.
+          // Not an overcharge, so not an alert and not a reconciliation — but
+          // it is not a plain success either, so it is visible at `warn`.
+          logger.warn(
+            { orgId, userId, amount: 1 },
+            'AI credit refund after extraction failure returned ZERO credits — period floor clamped it; nothing moved',
+          );
+        } else if (outcome.status !== 'refunded') {
+          // An un-refunded debit is an overcharge, so this is `error`, not
+          // `warn`. It does NOT change the response: the caller still gets the
+          // degraded fallback. A failed refund is an ops problem.
+          logger.error(
+            { orgId, userId, amount: 1, outcome: outcome.status },
+            'AI credit refund failed after extraction failure — org remains overcharged',
+          );
+          captureCreditRpcFailureAlert({
+            rpc: 'refund_ai_credits',
+            operation: 'ai-extract.refundAICredits',
+            failMode: 'closed',
+            error: new Error('refund_ai_credits failed — org remains charged for a failed extraction'),
+            orgId,
+            userId,
+            extra: { amount: 1, outcome: outcome.status },
+          });
+          // S9: the alert is a NOTIFICATION, not a remedy. Until now this path
+          // stopped here, so a failed refund on the SINGLE extraction path was
+          // surfaced to us and never returned to the customer — while the
+          // identical failure on `ai-extract-batch.ts` was reconciled
+          // automatically through this very queue. Same failure, same queue,
+          // same helper.
+          await enqueueRefundReconciliation({
+            debit: debitRecord,
+            amount: 1,
+            reason: 'extraction_failed_refund_failed',
+            source: 'ai-extract',
+            fingerprint,
+          });
         }
       }
 

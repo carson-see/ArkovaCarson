@@ -1,6 +1,6 @@
 {
-  "_comment": "2026-09-19: added organization_referrals and referral_codes after live production pg_class read confirmed both tables with RLS and FORCE RLS enabled. This is a two-table incremental refresh, not a full catalog audit. | 2026-09-10: refreshed the complete public base-table list from live production ledger 149 after reviewed migration 0448 application. 119 tables; the sole addition versus the previous 118-table snapshot is computeid_passport_authority. Its owner is postgres and both RLS/FORCE RLS are enabled. All prior table names remain present; this records actual catalog state, not integration activation. | 2026-09-09/10: added admin_org_provisioning_requests (migration 0439) and docusign_signer_backfill_attempts (migration 0438). Both were applied to prod vzwyaatejekddvltxyye and confirmed present by a live information_schema read before this edit. feedback_local_matches_prod compares migrations against THIS snapshot, not live prod, so a migrate-before-merge apply that creates a table reds Policy Lints on the owning PR until refreshed here. | 2026-08-11: added supplementary_anchor_journal + supplementary_anchor_runs after migration 0408 (supplementary proof anchor) was applied to prod. Verified live via pg_tables on vzwyaatejekddvltxyye (ledger head 0409) before adding, and the reverse direction was checked too: zero tables present in this snapshot but absent from prod, so the refresh masks no real drift. SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `execute_sql`/`list_tables` after a known-good prod schema window. Last refreshed: 2026-08-11 — added organization_field_policies after migration 0405 (DPA Schedule 1 / clause 4.6 per-org request-field denylist) was applied to prod in the founder-authorized DPA remediation batch of 2026-08-10. Verified live against prod vzwyaatejekddvltxyye via MCP execute_sql BEFORE editing this file, not inferred from the migration or from the ledger-exemption note: pg_class shows relrowsecurity=true, relforcerowsecurity=true, 0 rows (inert on apply, no org has a policy row), and the public base-table count moved 112 -> 113, i.e. exactly this one table. Owning PR for the migration is #2066; this refresh landed via #2081, which extends the same control to the remaining five anchor-creating routes and needs the same lint green. Prior: 2026-07-27 — resynced after migration 0365 (SCRUM-2940 folders) applied to prod via MCP in-session; verified 112 base tables live. 2026-08-23: added partner_accounts after verifying live in prod (information_schema.tables + pg_class: 17 columns, relrowsecurity=true, vzwyaatejekddvltxyye) — migration 0410 was applied to prod during the migration-T3 window; the snapshot lagged the apply.",
-  "_source": "Incremental 2026-09-19T15:54Z Supabase MCP execute_sql against production vzwyaatejekddvltxyye: pg_class joined pg_namespace confirmed public.organization_referrals and public.referral_codes, relrowsecurity=true and relforcerowsecurity=true for both. Prior full snapshot: Supabase Management API /v1/projects/vzwyaatejekddvltxyye/database/query/read-only at 2026-09-10T21:55:21.798552+00:00; BEGIN READ ONLY; information_schema.tables public BASE TABLE list; exact 149-row migration checkpoint and authority pg_class metadata independently checked. Raw readback SHA256 161671d7b595e2c3174b4f6287c012c53d7c91b5019c0ade6aefb7738e9e88c8. Prior provenance: Supabase Management API read-only SQL (POST /v1/projects/vzwyaatejekddvltxyye/database/query) on 2026-07-06: SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' (110 rows); ledger head verified numeric 0353; drive_watch_state + connector_artifact presence confirmed via to_regclass on the same project. Prior: supabase MCP execute_sql(project_id=vzwyaatejekddvltxyye) on 2026-06-29 (108 rows; ledger head 0348; connector_artifact absence confirmed via to_regclass('public.connector_artifact') IS NULL). Prior provenance: MCP list_tables on 2026-04-27 + delta-verified 2026-05-04; reconciled to pg_dump baseline on 2026-05-05; microsoft_graph_webhook_nonces / organization_queue_run_state / organization_queue_runs verified via Supabase Management API read-only SQL on 2026-05-06; org_credit_deductions verified via Supabase Management API read-only SQL on 2026-05-30.",
+  "_comment": "2026-09-25: FULL catalog reconcile against live prod vzwyaatejekddvltxyye (ledger numeric head 0482). pg_class x pg_namespace, relkind='r', nspname='public' -> 125 base tables, md5(string_agg(relname,',' ORDER BY relname))=b44bae5827bd4b6223e3bbbed83b2b67, and count(*) FILTER (WHERE NOT relrowsecurity)=0 / FILTER (WHERE NOT relforcerowsecurity)=0, i.e. every one has RLS AND FORCE RLS. Snapshot held 121 and was short exactly four, each verified live before being added: anchor_credit_purchases, anchor_instant_intents, anchor_private_tags (migration 0461) and recipient_activation_deliveries (migration 0471) - all four ledger rows present in prod and all four .sql files on main. The first three were carried in _known_drift.in_migrations_only as 'created by unapplied migration 0461'; 0461 has since been applied, so those entries were stale and are removed rather than left to mask a future drift. Reverse direction checked in the same pass: ZERO tables in this snapshot but absent from prod, so this refresh masks no drift. Also dropped in_prod_only entries admin_org_provisioning_requests and docusign_signer_backfill_attempts - migrations 0439 and 0438 are now both on origin/main and in the prod ledger. Root cause this fixes: the stale snapshot reds Policy Lints (feedback_local_matches_prod) on EVERY open PR, because the rule scans all of supabase/migrations against this file rather than live prod - it was failing #3033, #3053 and #3069 identically for a defect none of them introduced. | 2026-09-19: added organization_referrals and referral_codes after live production pg_class read confirmed both tables with RLS and FORCE RLS enabled. This is a two-table incremental refresh, not a full catalog audit. | 2026-09-10: refreshed the complete public base-table list from live production ledger 149 after reviewed migration 0448 application. 119 tables; the sole addition versus the previous 118-table snapshot is computeid_passport_authority. Its owner is postgres and both RLS/FORCE RLS are enabled. All prior table names remain present; this records actual catalog state, not integration activation. | 2026-09-09/10: added admin_org_provisioning_requests (migration 0439) and docusign_signer_backfill_attempts (migration 0438). Both were applied to prod vzwyaatejekddvltxyye and confirmed present by a live information_schema read before this edit. feedback_local_matches_prod compares migrations against THIS snapshot, not live prod, so a migrate-before-merge apply that creates a table reds Policy Lints on the owning PR until refreshed here. | 2026-08-11: added supplementary_anchor_journal + supplementary_anchor_runs after migration 0408 (supplementary proof anchor) was applied to prod. Verified live via pg_tables on vzwyaatejekddvltxyye (ledger head 0409) before adding, and the reverse direction was checked too: zero tables present in this snapshot but absent from prod, so the refresh masks no real drift. SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `execute_sql`/`list_tables` after a known-good prod schema window. Last refreshed: 2026-08-11 — added organization_field_policies after migration 0405 (DPA Schedule 1 / clause 4.6 per-org request-field denylist) was applied to prod in the founder-authorized DPA remediation batch of 2026-08-10. Verified live against prod vzwyaatejekddvltxyye via MCP execute_sql BEFORE editing this file, not inferred from the migration or from the ledger-exemption note: pg_class shows relrowsecurity=true, relforcerowsecurity=true, 0 rows (inert on apply, no org has a policy row), and the public base-table count moved 112 -> 113, i.e. exactly this one table. Owning PR for the migration is #2066; this refresh landed via #2081, which extends the same control to the remaining five anchor-creating routes and needs the same lint green. Prior: 2026-07-27 — resynced after migration 0365 (SCRUM-2940 folders) applied to prod via MCP in-session; verified 112 base tables live. 2026-08-23: added partner_accounts after verifying live in prod (information_schema.tables + pg_class: 17 columns, relrowsecurity=true, vzwyaatejekddvltxyye) — migration 0410 was applied to prod during the migration-T3 window; the snapshot lagged the apply.",
+  "_source": "Full reconcile 2026-09-25 Supabase MCP execute_sql against production vzwyaatejekddvltxyye: SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class JOIN pg_namespace ON nspname='public' AND relkind='r'; 125 rows, digest b44bae5827bd4b6223e3bbbed83b2b67, zero tables lacking RLS or FORCE RLS; ledger head 0482 confirmed in the same session. | Incremental 2026-09-19T15:54Z Supabase MCP execute_sql against production vzwyaatejekddvltxyye: pg_class joined pg_namespace confirmed public.organization_referrals and public.referral_codes, relrowsecurity=true and relforcerowsecurity=true for both. Prior full snapshot: Supabase Management API /v1/projects/vzwyaatejekddvltxyye/database/query/read-only at 2026-09-10T21:55:21.798552+00:00; BEGIN READ ONLY; information_schema.tables public BASE TABLE list; exact 149-row migration checkpoint and authority pg_class metadata independently checked. Raw readback SHA256 161671d7b595e2c3174b4f6287c012c53d7c91b5019c0ade6aefb7738e9e88c8. Prior provenance: Supabase Management API read-only SQL (POST /v1/projects/vzwyaatejekddvltxyye/database/query) on 2026-07-06: SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' (110 rows); ledger head verified numeric 0353; drive_watch_state + connector_artifact presence confirmed via to_regclass on the same project. Prior: supabase MCP execute_sql(project_id=vzwyaatejekddvltxyye) on 2026-06-29 (108 rows; ledger head 0348; connector_artifact absence confirmed via to_regclass('public.connector_artifact') IS NULL). Prior provenance: MCP list_tables on 2026-04-27 + delta-verified 2026-05-04; reconciled to pg_dump baseline on 2026-05-05; microsoft_graph_webhook_nonces / organization_queue_run_state / organization_queue_runs verified via Supabase Management API read-only SQL on 2026-05-06; org_credit_deductions verified via Supabase Management API read-only SQL on 2026-05-30.",
   "tables": [
     {
       "name": "admin_org_provisioning_requests",
@@ -28,6 +28,18 @@
     },
     {
       "name": "anchor_chain_index",
+      "schema": "public"
+    },
+    {
+      "name": "anchor_credit_purchases",
+      "schema": "public"
+    },
+    {
+      "name": "anchor_instant_intents",
+      "schema": "public"
+    },
+    {
+      "name": "anchor_private_tags",
       "schema": "public"
     },
     {
@@ -379,6 +391,10 @@
       "schema": "public"
     },
     {
+      "name": "recipient_activation_deliveries",
+      "schema": "public"
+    },
+    {
       "name": "reconciliation_reports",
       "schema": "public"
     },
@@ -504,18 +520,6 @@
       {
         "name": "webhook_idempotency",
         "reason": "created in 0116, dropped out-of-band — verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
-      },
-      {
-        "name": "anchor_credit_purchases",
-        "reason": "created by unapplied migration 0461 in PR #2966; held behind corrected-head T3 qualification and production migration approval"
-      },
-      {
-        "name": "anchor_instant_intents",
-        "reason": "created by unapplied migration 0461 in PR #2966; held behind corrected-head T3 qualification and production migration approval"
-      },
-      {
-        "name": "anchor_private_tags",
-        "reason": "created by unapplied migration 0461 in PR #2966; held behind corrected-head T3 qualification and production migration approval"
       }
     ],
     "in_prod_only": [
@@ -530,14 +534,6 @@
       {
         "name": "stats_cache",
         "reason": "created in prod out-of-band; needs a backfill migration to capture in source — tracked separately"
-      },
-      {
-        "name": "admin_org_provisioning_requests",
-        "reason": "2026-09-10T14:06:25Z: migrate-before-merge window for migration 0439 (PR #2571), absent from main. Read-only verification on prod vzwyaatejekddvltxyye confirmed this table with RLS and FORCE RLS enabled and numeric ledger row 0439. Remove this entry when PR #2571 lands its migration; this records table/ledger presence, not complete apply validation."
-      },
-      {
-        "name": "docusign_signer_backfill_attempts",
-        "reason": "2026-09-10T14:06:25Z: migrate-before-merge window for migration 0438 (PR #2565), absent from main. Read-only verification on prod vzwyaatejekddvltxyye confirmed this table with RLS and FORCE RLS enabled and numeric ledger row 0438. Remove this entry when PR #2565 lands its migration; this records table/ledger presence, not complete apply validation."
       }
     ]
   }

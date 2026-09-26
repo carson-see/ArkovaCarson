@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS } from '@/lib/copy';
-import { ConnectorCardStatusRow } from '../integrations/ConnectorCardStatusRow';
+import { ConnectorCardStatusRow, type ConnectorHealthDisplay } from '../integrations/ConnectorCardStatusRow';
 
 /**
  * Worker connect-denial `code` → user-facing copy (§1.3: all user-visible
@@ -39,6 +39,13 @@ const DRIVE_DENIAL_COPY: Record<string, string> = {
 
 interface DriveConnectorCardProps {
   orgId: string;
+  /**
+   * SCRUM-1146 health surface — resolved by the caller's single
+   * `useConnectorHealth()` call (ConnectorsPage) via `getHealth('google_drive')`
+   * + `describeConnectorHealthReason`, and passed down rather than re-fetched
+   * per card. Omit to render exactly as before (no health row).
+   */
+  health?: ConnectorHealthDisplay;
 }
 
 interface DriveConnection {
@@ -52,7 +59,7 @@ interface DriveConnection {
   last_token_advanced_at: string | null;
 }
 
-export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
+export function DriveConnectorCard({ orgId, health }: DriveConnectorCardProps) {
   const [connection, setConnection] = useState<DriveConnection | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -206,6 +213,7 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
           actionLoading={actionLoading}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
+          health={health}
         >
           <p className="mt-1 max-w-md text-xs text-muted-foreground">
             {connected

@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ConnectorCardStatusRow } from './ConnectorCardStatusRow';
-import { CONNECTIONS_LABELS } from '@/lib/copy';
+import { CONNECTIONS_LABELS, CONNECTORS_LABELS } from '@/lib/copy';
 
 const onConnect = vi.fn();
 const onDisconnect = vi.fn();
@@ -99,5 +99,66 @@ describe('ConnectorCardStatusRow', () => {
     renderRow({ connected: true, children: <p>Account: signer@example.test</p> });
 
     expect(screen.getByText('Account: signer@example.test')).toBeInTheDocument();
+  });
+
+  // Connector health surface (closes the gap behind the #3054 Drive incident —
+  // services/worker/src/api/connector-health.ts computed `degraded` states
+  // for months with no UI reading them).
+  describe('health prop', () => {
+    it('renders nothing extra for a healthy connector — the existing connected state is unchanged', () => {
+      renderRow({ connected: true });
+
+      expect(screen.queryByText(CONNECTORS_LABELS.CONNECTOR_HEALTH_NEEDS_ATTENTION)).not.toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('renders nothing extra when health is explicitly passed as connected/no reason', () => {
+      renderRow({ connected: true, health: { kind: 'connected' } });
+
+      expect(screen.queryByText(CONNECTORS_LABELS.CONNECTOR_HEALTH_NEEDS_ATTENTION)).not.toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('renders a degraded row with its reason, not color-only — an accessible status role announces it', () => {
+      renderRow({
+        connected: true,
+        health: { kind: 'degraded', reasonText: 'This connector has stopped picking up new file changes.' },
+      });
+
+      const status = screen.getByRole('status');
+      expect(status).toHaveTextContent(CONNECTORS_LABELS.CONNECTOR_HEALTH_NEEDS_ATTENTION);
+      expect(status).toHaveTextContent('This connector has stopped picking up new file changes.');
+    });
+
+    it('renders the grant_exceeds_requested reason without crashing (TRUE in prod for the one connected org)', () => {
+      renderRow({
+        connected: true,
+        health: {
+          kind: 'degraded',
+          reasonText: CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_GRANT_EXCEEDS_REQUESTED,
+        },
+      });
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_GRANT_EXCEEDS_REQUESTED,
+      );
+    });
+
+    it('renders an "unavailable" status — never a healthy claim — when health could not be determined', () => {
+      renderRow({ connected: true, health: { kind: 'unknown' } });
+
+      const status = screen.getByRole('status');
+      expect(status).toHaveTextContent(CONNECTORS_LABELS.CONNECTOR_HEALTH_UNAVAILABLE);
+      expect(status).not.toHaveTextContent(CONNECTORS_LABELS.CONNECTOR_HEALTH_NEEDS_ATTENTION);
+    });
+
+    it('does not render a health row for a disconnected connector even if a stale degraded prop is passed', () => {
+      renderRow({
+        connected: false,
+        health: { kind: 'degraded', reasonText: 'stale reason from before disconnect' },
+      });
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
   });
 });

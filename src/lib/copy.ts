@@ -2001,6 +2001,35 @@ export const CONNECTORS_LABELS = {
   CONNECTOR_MANAGED_BADGE: 'Managed in Rules',
   DOCUSIGN_ENVELOPES_HEADING: 'Envelopes',
   DOCUSIGN_ENVELOPES_DESC: 'All completed envelopes from this account.',
+
+  // Connector health surface (closes the gap behind the #3054 Drive incident —
+  // services/worker/src/api/connector-health.ts computed this for months with
+  // no UI reading it). Every reason is written in plain customer language,
+  // never the machine `HealthReason` token, per §1.3/§1.5.
+  CONNECTOR_HEALTH_NEEDS_ATTENTION: 'Needs attention',
+  CONNECTOR_HEALTH_UNAVAILABLE: 'Health status unavailable right now. Try refreshing the page.',
+  CONNECTOR_HEALTH_REASON_VENDOR_AUTH_REVOKED:
+    'Access was removed on the connected account. Reconnect to restore this connector.',
+  // Security-relevant, not merely operational: the connected account granted
+  // MORE access than Arkova asked for. Ranked top-priority server-side for
+  // the same reason this copy names it plainly rather than softening it.
+  CONNECTOR_HEALTH_REASON_GRANT_EXCEEDS_REQUESTED:
+    'The connected account granted broader access than Arkova requested. Reconnect and grant only the access this connector needs.',
+  CONNECTOR_HEALTH_REASON_SUBSCRIPTION_EXPIRY:
+    'This connector could not renew its ability to receive updates. Reconnect to restore it.',
+  CONNECTOR_HEALTH_REASON_CURSOR_STALE:
+    'This connector has stopped picking up new file changes. Reconnect, or contact support if this continues.',
+  CONNECTOR_HEALTH_REASON_CHANGES_LIST_NEVER_SUCCEEDED:
+    'This connector has never successfully checked for file changes since it was connected. Reconnect to restore it.',
+  CONNECTOR_HEALTH_REASON_FILE_ACCESS_NOT_GRANTED:
+    'Some files could not be retrieved because access to them was not granted. Reconnect to grant access, or check the file was shared correctly.',
+  CONNECTOR_HEALTH_REASON_CHANGES_GAP:
+    'Some file changes were missed during a recent interruption and could not be recovered. New changes are being picked up normally.',
+  CONNECTOR_HEALTH_REASON_FETCH_JOB_FAILURES:
+    'Some files could not be retrieved. Arkova will keep retrying automatically.',
+  CONNECTOR_HEALTH_REASON_PROCESSING_FAILURE:
+    'The most recent document from this connector could not be processed.',
+  CONNECTOR_HEALTH_REASON_GENERIC: 'This connector needs attention. Reconnect, or contact support if this continues.',
 } as const;
 
 // =============================================================================
@@ -3098,6 +3127,13 @@ export const FINGERPRINT_TOOLTIP = {
 } as const;
 
 export const RECORD_DETAIL_LABELS = {
+  // PROOF-06: a malformed stored proof is a PERMANENT defect, so it must not be
+  // reported with the retry wording used for transient failures. Telling someone
+  // to "try again" on data that will never parse is a false statement about the
+  // system's state.
+  PROOF_PACKAGE_FAILED: 'Could not build the proof package. Please try again.',
+  PROOF_PACKAGE_CORRUPT:
+    'This record\'s stored proof could not be read, so no package was produced. Contact support with the record ID — retrying will not help.',
   FINGERPRINT_COPY_ARIA: 'Copy document fingerprint',
   FINGERPRINT_COPIED_ARIA: 'Document fingerprint copied',
   // Rename toasts (founder-reported honesty fix, 2026-08-17): previously

@@ -394,8 +394,20 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
       resolve(REPO, ".github/workflows/publish-python-sdk.yml"),
       "utf8",
     );
-    for (const workflow of [pythonJob(), publish]) {
-      expect(workflow).toContain("astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4");
+    const job = pythonJob();
+    // Pin PARITY, not a literal pin — the actual invariant is that ci.yml and
+    // publish-python-sdk.yml stay on the *same* astral-sh/setup-uv commit, so a
+    // Dependabot bump that moves both files together must stay green. Hardcoding
+    // the SHA here would make every legitimate bump a false failure.
+    const setupUvPin = /astral-sh\/setup-uv@([a-f0-9]{40})/u;
+    const jobPin = setupUvPin.exec(job)?.[1];
+    const publishPin = setupUvPin.exec(publish)?.[1];
+    expect(jobPin, "ci.yml's python-sdk-tests job must pin astral-sh/setup-uv").toBeDefined();
+    expect(
+      publishPin,
+      "publish-python-sdk.yml must pin the SAME astral-sh/setup-uv commit as ci.yml",
+    ).toBe(jobPin);
+    for (const workflow of [job, publish]) {
       expect(workflow).toMatch(/version:\s*["']0\.10\.3["']/u);
       expect(workflow).toMatch(/cache-dependency-glob:\s*packages\/arkova-py\/uv\.lock/u);
       expect(workflow).toMatch(/uv sync --locked --all-extras --python 3\.12 --no-install-project --no-build/u);

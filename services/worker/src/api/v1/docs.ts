@@ -888,10 +888,13 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '201': { description: 'Embedding generated and stored' },
           '401': { $ref: '#/components/responses/Unauthorized' },
-          '402': { description: 'Insufficient AI credits', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          // 402 is now reserved for GENUINE exhaustion. A credit RPC that did
+          // not answer (55P03 lock timeout, outage) is a 503 below — it used to
+          // be reported here, which told a customer who HAS credits to buy more.
+          '402': { description: 'Insufficient AI credits (`insufficient_credits`) — the org\'s metered balance is exhausted', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           // pentest-prep: this prefix passes through aiExtractionGate()
           // (ENABLE_AI_EXTRACTION) at the router.ts mount — was missing 503.
-          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+          '503': { $ref: '#/components/responses/AiCreditSystemUnavailable' },
         },
       },
     },
@@ -937,8 +940,11 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          // A batch that failed ENTIRELY for one credit reason carries that
+          // reason's status; a PARTIAL failure stays a 200 with per-row codes.
+          '402': { description: 'Insufficient AI credits (`insufficient_credits`) — the whole batch was refused, nothing charged', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '403': { $ref: '#/components/responses/Forbidden' },
-          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+          '503': { $ref: '#/components/responses/AiCreditSystemUnavailable' },
         },
       },
     },
@@ -3454,6 +3460,24 @@ export const openApiSpec: Record<string, any> = {
       },
       ServiceUnavailable: {
         description: 'API not enabled (feature flag off)',
+        content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
+      },
+      // SCRUM-4939 B1. The AI routes' 503 now has two causes and the caller
+      // handles them the same way (retry), so they share one response — but
+      // the credit one is documented explicitly rather than hidden behind
+      // "feature flag off", because it is the status that replaced a WRONG
+      // 402 on a contended or unavailable credit RPC.
+      AiCreditSystemUnavailable: {
+        description:
+          'Either the API is not enabled (feature flag off), or AI credit accounting could not be confirmed '
+          + '(`credit_system_unavailable`: the credit RPC was contended or unavailable). Nothing was charged and no '
+          + 'embedding was kept. Retryable — honour the `Retry-After` header.',
+        headers: {
+          'Retry-After': {
+            description: 'Seconds to wait before retrying (credit-system case only).',
+            schema: { type: 'integer' },
+          },
+        },
         content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
       },
     },
