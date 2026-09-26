@@ -1,3 +1,40 @@
+## 2026-09-25 — SPEC-AGENTS-UI: `useAgents.ts` (new) — the missing ComputeID agent-management frontend
+
+ComputeID / agent passports (`services/worker/src/api/v1/agents.ts`,
+`agents-computeid.ts`) shipped with a full backend and zero frontend — an org
+admin could grant `agents:manage` on an API key but had no way to see which
+agents existed, their status, or revoke one except by raw curl. PR #3083
+fixed a real defect where suspending an agent did not deactivate its API
+keys; that fix is only reachable through `suspendAgent` here.
+
+`useAgents(options)` mirrors `useApiKeys.ts`'s shape exactly: React Query list
+(`GET /api/v1/agents`) plus `suspendAgent`/`resumeAgent` (PATCH
+`{status:'suspended'|'active'}`) and `revokeAgent` (DELETE), each invalidating
+the list on success and THROWING on failure (never swallowing) so the caller
+can keep its UI in the not-yet-changed state.
+
+`status: 'revoked'` is TERMINAL — the worker 409s a PATCH carrying `status`
+against an already-revoked agent. `suspendAgent`/`resumeAgent`/`revokeAgent`
+throw `AgentActionError` (carries `.status`) rather than a plain `Error`
+specifically so `src/components/agents/AgentsSettings.tsx` can distinguish
+that 409 from an ordinary failure without parsing message text, and render
+`AGENT_LABELS.REVOKED_TERMINAL_ERROR` instead of a generic one. This repo does
+not render raw `Error.message` to users (may carry server internals) — see
+the same rule already documented in `src/components/api/agents.md` for
+`useApiKeys`.
+
+`useAgentDetail(agentId, options)` is a SECOND, separate hook — `GET
+/api/v1/agents` (the list) does not join API keys, only `GET
+/api/v1/agents/:agentId` does (filtered to `is_active=true` server-side).
+It is deliberately NOT called for every row on mount; `AgentKeysPanel.tsx`
+gates it on the row being expanded, so viewing the agent list never fans out
+into an N+1 detail fetch.
+
+Scope: existing-agent management only. Registration (`POST
+/api/v1/agents`), key minting (`POST /:agentId/key`), and the ComputeID
+admission flow (`POST /api/v1/agents/computeid/admit`) are deliberately not
+covered — separate surfaces, their own security review.
+
 ## 2026-09-12 — SCRUM-5023: `useApiKeys.extendKey` sends a DURATION
 
 `extendKey(keyId, expiresInDays | null, allowShorten?)` PATCHes `{ expires_in_days: n }`, or

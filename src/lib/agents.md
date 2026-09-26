@@ -1,5 +1,20 @@
 # agents.md — lib
 
+## 2026-09-25 SPEC-AGENTS-UI — `ROUTES.SETTINGS_AGENTS`, `AGENT_LABELS`, `queryKeys.agents`/`agentDetail`
+
+New named route `/settings/agents` (`routes.ts`), the ComputeID agent
+management surface — see `src/components/agents/agents.md` and
+`src/pages/agents.md` for the full writeup. `AGENT_LABELS` /
+`AGENT_TYPE_LABELS` (`copy.ts`) are §1.3-clean: no banned terms, and
+`REVOKED_TERMINAL_ERROR` is the ONE curated string every 409
+terminal-revocation surfaces to instead of the server's raw error text.
+`NAV_POLISH_LABELS.BREADCRUMB_AGENTS` and `SETTINGS_PAGE_LABELS.AGENTS` /
+`AGENTS_DESC` follow the existing Webhooks/API-Keys/Referrals pattern
+exactly. `queryClient.ts` gained `queryKeys.agents(userId)` (the list) and
+`queryKeys.agentDetail(agentId)` (the lazy per-agent key fetch) — the latter
+is keyed by agent, not by user, since its data (one agent's active API keys)
+has no per-viewer variance.
+
 ## 2026-09-19 — UAT-12 public-description and recovery copy
 
 `DESCRIPTION_LABELS` truthfully identifies the description as public verification
