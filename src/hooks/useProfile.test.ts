@@ -286,4 +286,64 @@ describe('useProfile', () => {
 
     expect(updated).toBe(false);
   });
+
+  it('treats an RLS-silent zero-row profile update as a failed pointer commit', async () => {
+    const user = { id: '11111111-1111-4111-8111-111111111111', email: 'owner@example.test' };
+    setupSession(user);
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const updateEq = vi.fn();
+    const updateChain = {
+      eq: updateEq,
+      is: vi.fn(),
+      select: vi.fn().mockReturnValue({ maybeSingle }),
+    };
+    updateEq.mockReturnValue(updateChain);
+    updateChain.is.mockReturnValue(updateChain);
+    const profileBuilder = {
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: {
+            ...user, role: 'INDIVIDUAL', requires_manual_review: false,
+          }, error: null }),
+        }),
+      }),
+      update: vi.fn().mockReturnValue(updateChain),
+    };
+    mockFrom.mockReturnValue(profileBuilder);
+    const { result } = await renderWithProvider();
+    await waitFor(() => expect(result.current.profile?.id).toBe(user.id));
+
+    let updated = true;
+    await act(async () => {
+      updated = await result.current.updateProfile(
+        { avatar_storage_path: 'users/person-public/avatar/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png' },
+        { field: 'avatar_storage_path', expected: 'users/person-public/avatar/old.png' },
+      );
+    });
+
+    expect(updated).toBe(false);
+    expect(maybeSingle).toHaveBeenCalledTimes(1);
+    expect(updateEq).toHaveBeenCalledWith('avatar_storage_path', 'users/person-public/avatar/old.png');
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('uses IS NULL for a first profile-media pointer CAS', async () => {
+    const user = { id: '11111111-1111-4111-8111-111111111111', email: 'owner@example.test' };
+    setupSession(user);
+    const chain = { eq: vi.fn(), is: vi.fn(), select: vi.fn() };
+    chain.eq.mockReturnValue(chain);
+    chain.is.mockReturnValue(chain);
+    chain.select.mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) });
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { ...user, role: 'INDIVIDUAL', requires_manual_review: false }, error: null }) }) }),
+      update: vi.fn().mockReturnValue(chain),
+    });
+    const { result } = await renderWithProvider();
+    await waitFor(() => expect(result.current.profile?.id).toBe(user.id));
+    await act(async () => { await result.current.updateProfile(
+      { banner_storage_path: 'users/person-public/banner/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png' },
+      { field: 'banner_storage_path', expected: null },
+    ); });
+    expect(chain.is).toHaveBeenCalledWith('banner_storage_path', null);
+  });
 });

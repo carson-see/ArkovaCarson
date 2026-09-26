@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+
+const createSignedUrl = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/supabase', () => ({ supabase: { storage: { from: () => ({ createSignedUrl }) } } }));
 import { MemoryRouter } from 'react-router-dom';
 import { ProfileCard } from './ProfileCard';
 import type { Database } from '@/types/database.types';
@@ -11,6 +14,8 @@ const baseProfile = {
   email: 'verified@example.test',
   full_name: 'Verified User',
   avatar_url: null,
+  avatar_storage_path: null,
+  banner_storage_path: null,
   role: 'ORG_ADMIN',
   role_set_at: null,
   org_id: 'org-1',
@@ -99,6 +104,43 @@ describe('ProfileCard', () => {
     expect(container.querySelector('a[aria-label="Twitter profile"]')?.getAttribute('href')).toBe(
       'https://x.com/ada_l',
     );
+  });
+
+  // D2 — UAT-14 uploads write `avatar_storage_path`, not `avatar_url`. Every
+  // site that renders an avatar must resolve the storage path, or a user's new
+  // photo silently does not appear.
+  describe('avatar sourced from the private bucket', () => {
+    beforeEach(() => { createSignedUrl.mockReset(); });
+
+    it('renders the signed URL for an avatar that only has a storage path', async () => {
+      createSignedUrl.mockResolvedValue({ data: { signedUrl: 'https://signed.example/avatar' }, error: null });
+      render(
+        <MemoryRouter>
+          <ProfileCard
+            profile={{ ...baseProfile, avatar_url: null, avatar_storage_path: 'users/profile_public_1/avatar/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png' }}
+            organization={{ id: 'org-1', display_name: 'Verified Org' }}
+            onTogglePrivacy={vi.fn()}
+          />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByRole('img', { name: 'Verified User' })).toHaveAttribute('src', 'https://signed.example/avatar'));
+    });
+
+    it('degrades to initials when signing is denied', async () => {
+      createSignedUrl.mockResolvedValue({ data: null, error: { message: 'denied' } });
+      render(
+        <MemoryRouter>
+          <ProfileCard
+            profile={{ ...baseProfile, avatar_url: null, avatar_storage_path: 'users/profile_public_1/avatar/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png' }}
+            organization={{ id: 'org-1', display_name: 'Verified Org' }}
+            onTogglePrivacy={vi.fn()}
+          />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(createSignedUrl).toHaveBeenCalled());
+      expect(screen.queryByRole('img', { name: 'Verified User' })).not.toBeInTheDocument();
+      expect(screen.getByText('VU')).toBeInTheDocument();
+    });
   });
 
   // The avatar carried a hover-revealed "Change profile picture" button whose
