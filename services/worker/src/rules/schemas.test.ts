@@ -86,6 +86,83 @@ describe('TriggerConfig discriminator', () => {
     expect(parsed.config.drive_folders).toHaveLength(2);
   });
 
+  // Spec ("Google Drive Expected Behavior"): "they should be able to connect up
+  // to three of those folders". The server is the authority — the picker's
+  // client-side cap is a courtesy, not a control.
+  it('accepts exactly three Drive folder bindings', () => {
+    const parsed = TriggerConfig.parse({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      config: {
+        vendors: ['google_drive'],
+        drive_folders: [
+          { type: 'drive_folder', folder_id: 'folder-a' },
+          { type: 'drive_folder', folder_id: 'folder-b' },
+          { type: 'drive_folder', folder_id: 'folder-c' },
+        ],
+      },
+    });
+    if (parsed.trigger_type !== 'WORKSPACE_FILE_MODIFIED') throw new Error('narrow');
+    expect(parsed.config.drive_folders).toHaveLength(3);
+  });
+
+  it('rejects a fourth Drive folder binding', () => {
+    expect(() =>
+      TriggerConfig.parse({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        config: {
+          vendors: ['google_drive'],
+          drive_folders: [
+            { type: 'drive_folder', folder_id: 'folder-a' },
+            { type: 'drive_folder', folder_id: 'folder-b' },
+            { type: 'drive_folder', folder_id: 'folder-c' },
+            { type: 'drive_folder', folder_id: 'folder-d' },
+          ],
+        },
+      }),
+    ).toThrow();
+  });
+
+  // The two binding shapes are MERGED by every consumer (`driveFolderIds()` in
+  // integrations/connectors/drive-folder-bindings.ts and
+  // `readDriveFolderBindings()` in rules/evaluator.ts both read `folder_id` AND
+  // `drive_folders[]`), so bounding only the array's length leaves the real
+  // limit at four. The UI never writes the singular shape; a direct API caller
+  // can.
+  it('rejects the legacy folder_id plus three drive_folders (four in total)', () => {
+    expect(() =>
+      TriggerConfig.parse({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        config: {
+          vendors: ['google_drive'],
+          type: 'drive_folder',
+          folder_id: 'legacy-folder',
+          drive_folders: [
+            { type: 'drive_folder', folder_id: 'folder-a' },
+            { type: 'drive_folder', folder_id: 'folder-b' },
+            { type: 'drive_folder', folder_id: 'folder-c' },
+          ],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('accepts the legacy folder_id plus two drive_folders (three in total)', () => {
+    const parsed = TriggerConfig.parse({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      config: {
+        vendors: ['google_drive'],
+        type: 'drive_folder',
+        folder_id: 'legacy-folder',
+        drive_folders: [
+          { type: 'drive_folder', folder_id: 'folder-a' },
+          { type: 'drive_folder', folder_id: 'folder-b' },
+        ],
+      },
+    });
+    if (parsed.trigger_type !== 'WORKSPACE_FILE_MODIFIED') throw new Error('narrow');
+    expect(parsed.config.drive_folders).toHaveLength(2);
+  });
+
   it('rejects a Drive folder binding without folder_id', () => {
     expect(() =>
       TriggerConfig.parse({
