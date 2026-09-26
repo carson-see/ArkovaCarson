@@ -1,9 +1,36 @@
 /**
  * Attestation Expiry Monitoring (ATT-08)
  *
- * Checks for attestations approaching expiry (30 days, 7 days, on expiry).
- * Fires webhook events: attestation.expiring, attestation.expired
- * Runs daily via cron.
+ * Checks for attestations approaching expiry (30 days, 7 days) and flips
+ * status to EXPIRED once `expires_at` has passed. Runs daily via cron
+ * (`POST /check-attestation-expiry`).
+ *
+ * SCRUM-webhook-event-divergence: this job used to ALSO queue
+ * `attestation.expiring` / `attestation.expired` webhook events by inserting
+ * directly into a `webhook_events` table. That table does not exist anywhere
+ * in `supabase/migrations` or the generated `database.types.ts` — every
+ * insert failed at runtime (`relation "public.webhook_events" does not
+ * exist`), so the events were never queued, let alone delivered. Neither
+ * event type was ever registered in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` either
+ * (`services/worker/src/webhooks/payload-schemas.ts`), so no org could have
+ * subscribed to them even if the insert had succeeded.
+ *
+ * Worse, the ordering guarantee the old code carried — "insert webhooks
+ * BEFORE updating status; skip the status update if the insert fails" —
+ * meant that for every attestation with an `attester_org_id`, the daily
+ * insert-into-nonexistent-table failure silently blocked the `EXPIRED` status
+ * transition forever. This job likely never actually expired an
+ * org-attributed attestation in any environment where the table was absent.
+ *
+ * Removed entirely rather than fixed forward: nothing subscribes, nothing
+ * consumes a `webhook_events` table, and no UI/docs ever promised either
+ * event (confirmed by full-repo search before this change). If attestation
+ * expiry webhooks are wanted later, they should be added as a real,
+ * `dispatchWebhookEvent` call site with a registered payload schema — see
+ * `webhooks/compliance.ts` for the pattern — not resurrected here.
+ * `check-webhook-event-emission-registration.ts` now fails CI if a future
+ * emitter repeats this pattern (queues an event type absent from the
+ * canonical map).
  */
 
 import { db } from '../utils/db.js';
@@ -12,14 +39,12 @@ import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
-const CHUNK_SIZE = 100;
 
 interface ExpiryResult {
   checked: number;
   expiring_30d: number;
   expiring_7d: number;
   newly_expired: number;
-  webhooks_queued: number;
 }
 
 export async function checkAttestationExpiry(): Promise<ExpiryResult> {
@@ -28,18 +53,17 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
     expiring_30d: 0,
     expiring_7d: 0,
     newly_expired: 0,
-    webhooks_queued: 0,
   };
 
   try {
     const now = new Date();
-    const _in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // Find ACTIVE attestations expiring within 30 days
+    // Find ACTIVE attestations expiring within 30 days (counters only — no
+    // webhook is fired for this job; see file header).
     const { data: expiringAttestations, error } = await dbAny
       .from('attestations')
-      .select('id, public_id, attestation_type, subject_identifier, attester_name, attester_org_id, expires_at, status')
+      .select('id, expires_at')
       .eq('status', 'ACTIVE')
       .not('expires_at', 'is', null)
       .lte('expires_at', in30Days.toISOString())
@@ -52,50 +76,23 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
 
     result.checked = expiringAttestations?.length ?? 0;
 
-    // SCRUM-1296: Collect webhook events for bulk insert instead of per-row inserts
-    const webhookInserts: Array<{
-      org_id: string;
-      event_type: string;
-      payload: Record<string, unknown>;
-    }> = [];
-
     for (const att of (expiringAttestations ?? [])) {
       const expiresAt = new Date(att.expires_at);
       const daysUntilExpiry = Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
 
-      let eventType: string | null = null;
-
-      if (daysUntilExpiry <= 0) {
-        result.newly_expired++;
-        eventType = 'attestation.expired';
-      } else if (daysUntilExpiry <= 7) {
+      if (daysUntilExpiry <= 7) {
         result.expiring_7d++;
-        eventType = 'attestation.expiring';
       } else if (daysUntilExpiry <= 30) {
         result.expiring_30d++;
-        eventType = 'attestation.expiring';
-      }
-
-      if (eventType && att.attester_org_id) {
-        webhookInserts.push({
-          org_id: att.attester_org_id,
-          event_type: eventType,
-          payload: {
-            public_id: att.public_id,
-            attestation_type: att.attestation_type,
-            subject_identifier: att.subject_identifier,
-            attester_name: att.attester_name,
-            expires_at: att.expires_at,
-            days_until_expiry: daysUntilExpiry,
-          },
-        });
       }
     }
 
     // Also find attestations that just expired (status still ACTIVE but expires_at < now)
+    // and flip them to EXPIRED. Unconditional now — there is no webhook side
+    // channel to gate on (see file header).
     const { data: justExpired, error: expiredError } = await dbAny
       .from('attestations')
-      .select('id, public_id, attestation_type, subject_identifier, attester_name, attester_org_id, expires_at')
+      .select('id')
       .eq('status', 'ACTIVE')
       .not('expires_at', 'is', null)
       .lt('expires_at', now.toISOString());
@@ -103,95 +100,16 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
     if (!expiredError && justExpired?.length) {
       result.newly_expired += justExpired.length;
 
-      // Collect expired webhook events for bulk insert
-      for (const att of justExpired) {
-        if (att.attester_org_id) {
-          webhookInserts.push({
-            org_id: att.attester_org_id,
-            event_type: 'attestation.expired',
-            payload: {
-              public_id: att.public_id,
-              attestation_type: att.attestation_type,
-              subject_identifier: att.subject_identifier,
-              attester_name: att.attester_name,
-              expires_at: att.expires_at,
-            },
-          });
-        }
-      }
+      // Bulk status update in chunks of `POSTGREST_IN_FILTER_CHUNK` or smaller.
+      const expiredIds = justExpired.map((att: { id: string }) => att.id);
+      for (const { values: chunk } of chunkForInFilter(expiredIds)) {
+        const { error: bulkUpdateErr } = await dbAny
+          .from('attestations')
+          .update({ status: 'EXPIRED' })
+          .in('id', chunk);
 
-      // SCRUM-1296 BUG FIX: Insert webhooks BEFORE updating status.
-      // If webhook insert fails, attestations stay ACTIVE and will be retried
-      // next tick. Previously, status was updated first — if webhook insert
-      // then failed, those events were permanently lost (cron queries status = 'ACTIVE').
-
-      // Bulk insert webhooks in chunks. NOTE this is a request-BODY batch, not
-      // an `.in()` filter — it has no URL budget, so `CHUNK_SIZE` is the right
-      // tool here. The `.in()` status updates below use `chunkForInFilter`.
-      if (webhookInserts.length > 0) {
-        let webhooksFailed = false;
-        for (let i = 0; i < webhookInserts.length; i += CHUNK_SIZE) {
-          const chunk = webhookInserts.slice(i, i + CHUNK_SIZE);
-          const { error: insertErr } = await dbAny
-            .from('webhook_events')
-            .insert(chunk);
-
-          if (insertErr) {
-            logger.warn({ error: insertErr, count: chunk.length }, 'Failed to bulk-insert expiry webhooks chunk');
-            webhooksFailed = true;
-            break;
-          } else {
-            result.webhooks_queued += chunk.length;
-          }
-        }
-
-        // Only update status to EXPIRED if webhooks were persisted successfully.
-        // This ensures no webhook events are permanently lost.
-        if (webhooksFailed) {
-          logger.warn(
-            { count: justExpired.length },
-            'Skipping status update to EXPIRED — webhook insert failed, will retry next tick',
-          );
-        } else {
-          // Bulk status update in chunks of 100
-          const expiredIds = justExpired.map((att: { id: string }) => att.id);
-          for (const { values: chunk } of chunkForInFilter(expiredIds)) {
-            const { error: bulkUpdateErr } = await dbAny
-              .from('attestations')
-              .update({ status: 'EXPIRED' })
-              .in('id', chunk);
-
-            if (bulkUpdateErr) {
-              logger.error({ error: bulkUpdateErr, count: chunk.length }, 'Failed to bulk-update expired attestations chunk');
-            }
-          }
-        }
-      } else {
-        // No webhooks to insert but still need to mark as expired
-        const expiredIds = justExpired.map((att: { id: string }) => att.id);
-        for (const { values: chunk } of chunkForInFilter(expiredIds)) {
-          const { error: bulkUpdateErr } = await dbAny
-            .from('attestations')
-            .update({ status: 'EXPIRED' })
-            .in('id', chunk);
-
-          if (bulkUpdateErr) {
-            logger.error({ error: bulkUpdateErr, count: chunk.length }, 'Failed to bulk-update expired attestations chunk');
-          }
-        }
-      }
-    } else if (webhookInserts.length > 0) {
-      // Expiring (but not yet expired) webhook events — insert in chunks
-      for (let i = 0; i < webhookInserts.length; i += CHUNK_SIZE) {
-        const chunk = webhookInserts.slice(i, i + CHUNK_SIZE);
-        const { error: insertErr } = await dbAny
-          .from('webhook_events')
-          .insert(chunk);
-
-        if (insertErr) {
-          logger.warn({ error: insertErr, count: chunk.length }, 'Failed to bulk-insert expiry webhooks chunk');
-        } else {
-          result.webhooks_queued += chunk.length;
+        if (bulkUpdateErr) {
+          logger.error({ error: bulkUpdateErr, count: chunk.length }, 'Failed to bulk-update expired attestations chunk');
         }
       }
     }

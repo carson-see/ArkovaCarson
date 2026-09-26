@@ -2049,3 +2049,42 @@ this module is the allow-listed owner of lease-row access, so lease primitives
 belong here, not in an allow-list exception for the caller. Semantics are pinned
 in `__tests__/run-lease.test.ts` ("dirty marker"): unconditional set without
 holding the lease, read-and-clear exactly once, fail-soft on store errors.
+
+## 2026-09-25 — `attestationExpiry.ts` no longer queues (nonexistent) webhook events
+
+**Corrects the two stale mentions above** (the `.in()`-chunking note referencing this file's
+"`.insert()` webhook loop", and the N+1-cleanup table row "Webhooks collected then
+bulk-inserted BEFORE status update"): both described code that has been removed, not a rule
+to keep following.
+
+`checkAttestationExpiry` used to build `attestation.expiring` / `attestation.expired` webhook
+event rows and bulk-insert them into a table called `webhook_events` — which does not exist
+anywhere in `supabase/migrations` or the generated `database.types.ts`. Every insert failed at
+runtime. Worse: the SCRUM-1296 ordering fix ("insert webhooks BEFORE updating status; skip the
+status update if the insert fails, so a failed webhook never silently loses an event") meant
+that for every attestation carrying an `attester_org_id`, that permanent insert failure also
+permanently skipped the `EXPIRED` status transition. This job most likely never actually
+expired an org-attributed attestation in any environment where the table was absent — which,
+per `supabase/migrations` and `database.types.ts`, is everywhere.
+
+Neither event type was ever registered in `webhooks/payload-schemas.ts`'s
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` either, so no org could have subscribed even if the insert had
+worked. No UI, docs, or SDK type ever referenced either event (confirmed by full-repo search).
+
+**Fix:** removed the webhook-queuing code path entirely (the `webhookInserts` array, both
+`.from('webhook_events').insert(...)` call sites, and the `webhooksFailed` gate). The status
+update to `EXPIRED` now runs unconditionally for every newly-expired, currently-ACTIVE
+attestation — there is no longer a side channel to lose. `ExpiryResult` drops the
+`webhooks_queued` field (it always read 0 in any real environment). `n-plus-one-cleanup.test.ts`'s
+"attestationExpiry bulk operations" describe block was rewritten to match: it no longer asserts
+on `webhook_events`/`webhooks_queued`, and gained an explicit assertion that the status update
+runs even though nothing gates it now.
+
+If attestation expiry webhooks are wanted later, add a real `dispatchWebhookEvent` call site
+with a registered schema (see `webhooks/compliance.ts` for the pattern this job should have
+followed originally) — do not resurrect the direct-table-insert shape.
+
+`scripts/ci/check-webhook-event-emission-registration.ts` (new, `scripts/ci/agents.md`) now
+fails CI if a future emitter anywhere in `services/worker/src` queues an event type absent from
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` — confirmed, before this fix landed, to flag exactly
+`attestation.expiring` and `attestation.expired` against this file.

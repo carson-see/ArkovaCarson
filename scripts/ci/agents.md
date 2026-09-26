@@ -1062,3 +1062,52 @@ edit files #3035 was already touching without risking a merge conflict. If this
 guard is still passing with those 7 entries present well after #3035 has merged,
 the merge did not do what it was supposed to — check `packages/sdk/src/client.ts`
 directly rather than trusting a stale allowlist entry.
+
+## 2026-09-25 — `check-webhook-event-emission-registration.ts` (new): the other half of registration drift
+
+`check-webhook-event-registration-drift.ts` (2026-08-23, above) treats
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` as ground truth and checks that every OTHER surface mirrors its
+keys. It has a blind spot by construction: it cannot notice a NEW emitter that queues an event
+type the map has never heard of, because there is nothing in the map to compare against — from
+that check's point of view the id does not exist anywhere it looks.
+
+This is that other half, found and fixed together with a live instance of exactly the bug it
+guards against: `jobs/attestationExpiry.ts` was inserting `attestation.expiring` /
+`attestation.expired` rows directly into a `webhook_events` table that does not exist anywhere
+in `supabase/migrations` (every insert failed at runtime, and for the `.expired` case that
+failure silently blocked the attestation's own status transition — see `jobs/agents.md`'s
+2026-09-25 entry), and the orphaned, never-imported `signatures/compliance/complianceEvents.ts`
+was constructing `compliance.certificate_expired` for an unvalidated direct insert into
+`webhook_delivery_logs` (see `signatures/compliance/agents.md`'s 2026-09-25 entry — that file
+was deleted, not fixed forward, since it had zero production callers).
+
+**Mechanism:** scans every non-test `.ts` file under `services/worker/src` for event-type ids
+that are genuinely QUEUED — a literal second argument to `dispatchWebhookEvent(...)` (window-scanned
+so a multi-line call is still caught), or an `event_type` field (literal, or a local variable
+resolved back to its literal assignment in the same file — this is what catches the
+attestationExpiry.ts shape, where the literal is assigned several lines before the object that
+uses it) on an insert into `webhook_delivery_logs` or `webhook_events`. Compares the resulting
+set against `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`'s keys (same region-regex extraction the sibling
+script uses) and fails on anything missing.
+
+**Deliberate, explicit exclusion — not a looser pattern:** `test.ping` and `webhook.verification`
+(`api/v1/webhooks.ts`, `api/v1/webhooks-self-service.ts`) are real literal `event_type` values
+written into `webhook_delivery_logs`, but they are operator-triggered synthetic pings sent by a
+direct `fetch()` call, never routed through `dispatchWebhookEvent`/`validateWebhookPayload`, and
+never a subscribable `events` value. Listed by name in `KNOWN_NON_SUBSCRIBABLE_EMISSIONS` —
+same ratchet discipline as `LEGACY_UNREGISTERED_EVENT_TYPES` in `payload-schemas.ts`: adding to
+it must be a deliberate, reviewed edit, never something a scan absorbs on its own. A quick
+whole-tree literal scan without this exclusion was measured to false-positive on exactly these
+two strings before the file-scoped/exclusion-list design was settled on.
+
+**No workflow wiring**, same reasoning as the sibling script: `check-webhook-event-emission-registration.test.ts`
+runs the checker against the real repo tree (plus a synthetic fixture reproducing the
+attestationExpiry.ts/complianceEvents.ts shapes, so the guard's own test does not depend on the
+bug staying in the tree to keep passing) and is picked up by the root vitest `scripts/**` glob
+inside the required `Tests` job. Confirmed RED before the fix: running it against the pre-fix
+tree reported exactly `attestation.expiring` / `attestation.expired`
+(`services/worker/src/jobs/attestationExpiry.ts`) and `compliance.certificate_expired`
+(the now-deleted `signatures/compliance/complianceEvents.ts` — see that folder's `agents.md`)
+— and correctly did NOT flag `compliance.score_degraded`, which turned out to have no real
+emit call site anywhere (a type-union member and a test assertion, nothing else) — a fact this
+checker's own extractor is what established, not the original bug report.
