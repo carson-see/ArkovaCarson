@@ -7,6 +7,8 @@
 
 import { z } from 'zod';
 
+import type { ProofPacket } from './generateAuditReport';
+
 // Zod v4 enforces RFC 4122 version+variant bits in z.string().uuid().
 // Seed/test UUIDs (e.g. 44444444-0000-0000-0000-000000000001) use zeroed
 // version/variant fields. Accept any 8-4-4-4-12 hex UUID here so proof
@@ -20,10 +22,59 @@ const uuidLenient = z.string().regex(
 // =============================================================================
 
 /**
+ * `{ hash, position }` — the sibling entry shape shared by BOTH inclusion
+ * branches. Never `string[]`: a bare hash list drops the side each sibling is
+ * folded on, which is exactly the information an offline verifier needs to
+ * recompute a root. See the same warning in `buildProofPacket`.
+ */
+const MerkleProofEntrySchema = z.object({
+  hash: z.string().regex(/^[a-f0-9]{64}$/i),
+  position: z.enum(['left', 'right']),
+});
+
+/**
+ * The CANONICAL machine-readable proof bundle — field-for-field the packet that
+ * PROOF-05 (SCRUM-2338) emits on `GET /api/v1/verify/:id/proof`, that the
+ * PROOF-07 reference CLI parses, and that the PDF certificate embeds via
+ * `buildProofPacket`. Mirrored here so the JSON export carries the SAME
+ * artifact rather than a second, weaker shape.
+ */
+const ProofBundleSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/i),
+  merkle_root: z.string().nullable(),
+  /** Layer-1 APP-tree branch, in stored orientation. */
+  merkle_proof: z.array(MerkleProofEntrySchema).nullable(),
+  merkle_index: z.number().nullable(),
+  /** Arms the CVE-2012-2459 duplicate-leaf guard together with merkle_index. */
+  leaf_count: z.number().nullable(),
+  tx_id: z.string().nullable(),
+  block_height: z.number().nullable(),
+  block_hash: z.string().nullable(),
+  /** Raw 80-byte header as 160-hex — binds merkle_root to the block. */
+  block_header: z.string().nullable(),
+  /** "ARKV"+root commitment as plain hex. */
+  op_return_payload: z.string().nullable(),
+  proof_schema_version: z.number(),
+  block_timestamp: z.string().nullable(),
+  /**
+   * Layer-2 BITCOIN-tree branch (migration 0427). NOT interchangeable with
+   * `merkle_proof`: byte-reversed hex folded with Bitcoin's positional rule.
+   */
+  tx_inclusion_branch: z.array(MerkleProofEntrySchema).nullable(),
+  tx_block_index: z.number().nullable(),
+  signature: z
+    .object({ alg: z.string(), signing_key_id: z.string() })
+    .nullable(),
+});
+
+/**
  * Schema for exported proof package
+ *
+ * `1.1` adds `proof_bundle` (additive). Historical `1.0` files still validate:
+ * the field is optional and the version is accepted as a union.
  */
 export const ProofPackageSchema = z.object({
-  version: z.literal('1.0'),
+  version: z.union([z.literal('1.0'), z.literal('1.1')]),
   generated_at: z.string().datetime(),
 
   // Document info
@@ -57,6 +108,20 @@ export const ProofPackageSchema = z.object({
       proof_path: z.array(z.string()).nullable(),
     })
     .nullable(),
+
+  // Canonical, independently-verifiable bundle (added in 1.1). The humanized
+  // `proof` above is retained for back-compat but is NOT sufficient on its own:
+  // its `proof_path` is a bare hash list with no sibling positions.
+  proof_bundle: ProofBundleSchema.nullable().optional(),
+
+  // Whether every field needed to run EVERY offline check was sourced. False
+  // means the bundle is present and inspectable but at least one guard cannot
+  // be run — today that is `leaf_count`, which arms the CVE-2012-2459
+  // duplicate-leaf check for a batch member. The PDF certificate has carried
+  // this since PROOF-04 (it swaps in different prose); the JSON carried it only
+  // as a transient toast, so once dismissed the file was indistinguishable from
+  // a fully-verifiable proof. §1.5: state what is measured.
+  proof_bundle_complete: z.boolean().nullable().optional(),
 
   // Metadata
   metadata: z.object({
@@ -109,7 +174,9 @@ function toIsoDateTime(value: string): string {
  */
 export function generateProofPackage(
   anchor: AnchorData,
-  proof?: ProofData
+  proof?: ProofData,
+  proofBundle?: ProofPacket | null,
+  proofBundleComplete?: boolean
 ): ProofPackage {
   const hasNetworkReceipt =
     anchor.status === 'SECURED' &&
@@ -118,7 +185,7 @@ export function generateProofPackage(
     Boolean(anchor.chain_timestamp);
 
   const proofPackage: ProofPackage = {
-    version: '1.0',
+    version: '1.1',
     generated_at: new Date().toISOString(),
 
     document: {
@@ -150,6 +217,15 @@ export function generateProofPackage(
         }
       : null,
 
+    // The verifiable artifact. `null` when the record has no servable branch
+    // (proof_availability `root_only`) — stated as null rather than omitted so a
+    // consumer can tell "no proof stored" from "older export format".
+    proof_bundle: proofBundle ?? null,
+
+    // Only meaningful when a bundle exists; null otherwise so a consumer cannot
+    // read "complete: false" as a statement about a record that has no proof.
+    proof_bundle_complete: proofBundle ? (proofBundleComplete ?? false) : null,
+
     metadata: {
       created_at: toIsoDateTime(anchor.created_at),
       user_id: anchor.user_id,
@@ -163,6 +239,13 @@ export function generateProofPackage(
       proof_path: 'The cryptographic path from this document\'s fingerprint to the verification tree root.',
       observed_time: 'The timestamp when the network confirmed this record.',
       block_height: 'The position in the network\'s permanent record chain where this proof was stored.',
+      proof_bundle: 'The machine-readable proof, in the same format the verification API and the reference verifier use. This is the field an independent tool checks.',
+      merkle_proof: 'Each sibling fingerprint on the path to the verification tree root, with the side it is combined on. Both parts are required to recompute the root.',
+      leaf_count: 'How many documents were grouped into this verification tree. Used to reject a malformed proof that reuses a duplicated entry.',
+      block_header: 'The raw 80-byte header of the permanent network record holding this proof. Recomputing its fingerprint shows the verification tree root was committed to that record.',
+      op_return_payload: 'The exact bytes Arkova committed to the network for this group of documents.',
+      tx_inclusion_branch: 'The sibling path showing this anchor receipt is contained in the permanent network record identified by the header above.',
+      proof_bundle_complete: 'True when every field needed to run all offline checks was available. If false, the proof is still shown for inspection but at least one check cannot be completed.',
     },
   };
 

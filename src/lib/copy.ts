@@ -3092,6 +3092,13 @@ export const FINGERPRINT_TOOLTIP = {
 } as const;
 
 export const RECORD_DETAIL_LABELS = {
+  // PROOF-06: a malformed stored proof is a PERMANENT defect, so it must not be
+  // reported with the retry wording used for transient failures. Telling someone
+  // to "try again" on data that will never parse is a false statement about the
+  // system's state.
+  PROOF_PACKAGE_FAILED: 'Could not build the proof package. Please try again.',
+  PROOF_PACKAGE_CORRUPT:
+    'This record\'s stored proof could not be read, so no package was produced. Contact support with the record ID — retrying will not help.',
   FINGERPRINT_COPY_ARIA: 'Copy document fingerprint',
   FINGERPRINT_COPIED_ARIA: 'Document fingerprint copied',
   // Rename toasts (founder-reported honesty fix, 2026-08-17): previously
