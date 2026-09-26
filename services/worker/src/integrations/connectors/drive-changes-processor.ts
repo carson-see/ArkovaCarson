@@ -328,13 +328,21 @@ const FOLDER_PATH_RESOLUTION_CONCURRENCY = 8;
  * has to infer the answer from the string's prefix (a caller that parsed
  * `mtime:` out of the id would be re-deriving a fact the producer already
  * knew, and would silently misread any future id shape).
+ *
+ * PR-1 connector-adapter contract (`connector-adapter.ts` /
+ * `google-drive-adapter.ts`): exported (previously module-private) so
+ * `GoogleDriveAdapter.listChanges` can reuse this EXACT fallback chain when
+ * mapping a `DriveChangesListEntry` to the vendor-neutral `SourceVersionRef`,
+ * rather than re-implementing (and risking drift from) Drive's own revision
+ * semantics in a second place. Zero behavior change to this file — the
+ * function body and every existing call site are untouched.
  */
-interface ResolvedDriveRevision {
+export interface ResolvedDriveRevision {
   revisionId: string;
   kind: DriveRevisionKind;
 }
 
-function resolveRevision(change: DriveChangesListEntry): ResolvedDriveRevision | null {
+export function resolveRevision(change: DriveChangesListEntry): ResolvedDriveRevision | null {
   const headRev = change.file?.headRevisionId;
   if (headRev) return { revisionId: headRev, kind: 'head_revision' };
   const mtime = change.file?.modifiedTime;

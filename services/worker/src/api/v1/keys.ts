@@ -68,6 +68,13 @@ export const CreateKeySchema = z.object({
   access_purpose: z.string().max(500).optional(),
 });
 
+/**
+ * Reason prefixes reserved for machine-written revocation markers. Automated
+ * reactivation paths match on these exact strings, so a caller must never be
+ * able to write one. See the refine on `UpdateKeySchema` below.
+ */
+export const RESERVED_REVOCATION_PREFIXES = ['admin:', 'computeid:'] as const;
+
 /** Zod schema for key update */
 export const UpdateKeySchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -105,6 +112,25 @@ export const UpdateKeySchema = z.object({
   (d) => d.revocation_reason === undefined || d.is_active === false,
   {
     message: 'revocation_reason is only accepted when is_active is false',
+    path: ['revocation_reason'],
+  },
+).refine(
+  // SCRUM-5290: `revocation_reason` is free text, but two prefixes are RESERVED
+  // as machine markers that automated resume paths match on:
+  //   'admin:…'     — org-admin agent suspension (api/v1/agents.ts)
+  //   'computeid:…' — migration 0448's apply_computeid_agent_transition
+  // Those paths restore a key by matching its reason string. If a caller could
+  // revoke a key FOR CAUSE under one of these exact values, a later agent
+  // suspend/resume cycle would silently resurrect it — turning a one-way
+  // for-cause revocation into a reversible one. Revocation here is documented
+  // as one-way ("Issue a new key instead"), so the marker namespace is closed
+  // at the input boundary rather than trusted downstream.
+  (d) =>
+    d.revocation_reason === undefined ||
+    !RESERVED_REVOCATION_PREFIXES.some((p) => d.revocation_reason!.startsWith(p)),
+  {
+    message:
+      'revocation_reason may not start with a reserved marker prefix (admin:, computeid:)',
     path: ['revocation_reason'],
   },
 ).refine(

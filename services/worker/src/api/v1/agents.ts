@@ -42,10 +42,32 @@ export function toPublicAgent<T extends Record<string, unknown>>(row: T | null |
 }
 
 /** Helper: get caller's org_id or return 403 */
-async function getCallerOrgId(userId: string, res: Response): Promise<string | null> {
+/**
+ * Resolve the caller's org, optionally requiring ORG_ADMIN.
+ *
+ * `role` was always selected here and never checked, so every caller got
+ * member-level authorization. Agent REGISTRATION has been admin-only since
+ * migration 0158, but the lifecycle routes were not — meaning any ordinary org
+ * member could suspend or revoke an agent.
+ *
+ * That was survivable only while suspension was decorative. Now that a suspend
+ * actually deactivates the agent's API keys, an unprivileged member can disable
+ * the organisation's agents, and `DELETE` is terminal and unrecoverable. So the
+ * mutating lifecycle routes pass `requireAdmin`. Reads stay member-visible:
+ * seeing which agents exist is not a privileged action.
+ */
+async function getCallerOrgId(
+  userId: string,
+  res: Response,
+  opts: { requireAdmin?: boolean } = {},
+): Promise<string | null> {
   const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
   if (!profile?.org_id) {
     res.status(403).json({ error: 'Organization membership required' });
+    return null;
+  }
+  if (opts.requireAdmin && profile.role !== 'ORG_ADMIN') {
+    res.status(403).json({ error: 'Only organization admins can change an agent\'s status' });
     return null;
   }
   return profile.org_id;
@@ -211,6 +233,61 @@ router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response)
   }
 });
 
+/**
+ * Marks keys deactivated by an ORG-ADMIN suspension. Distinct from the
+ * 'computeid:…' markers migration 0448 writes, so the two resume paths cannot
+ * restore each other's keys.
+ */
+const ADMIN_SUSPEND_REASON = 'admin:agent.suspended';
+
+/**
+ * Flip every key belonging to one agent on or off. Returns the error (or null).
+ *
+ * Deactivation matches only currently-live keys; reactivation matches only keys
+ * THIS path deactivated, via `revocation_reason = ADMIN_SUSPEND_REASON`. That
+ * marker is reserved at the input boundary — `UpdateKeySchema` in `keys.ts`
+ * refuses a caller-supplied `revocation_reason` using a reserved prefix — so an
+ * admin cannot revoke a key for cause under this exact string and have a later
+ * agent resume resurrect it. Without that guard the marker is attacker-writable
+ * free text and the resume branch becomes an escalation.
+ *
+ * Both writes are scoped by `org_id` AND `agent_id`, per the DELETE handler's
+ * defense-in-depth rule against an `agent_id` collision reaching another tenant.
+ */
+async function setAgentKeysActive(
+  agentId: string,
+  orgId: string,
+  active: boolean,
+): Promise<unknown | null> {
+  // Both chains are built inline rather than through a hoisted builder: the
+  // `arkova/missing-org-filter` lint traces the tenant scope syntactically from
+  // the table selector, and a variable hides it. The SCRUM-1277 contract test
+  // also scans this file's SOURCE TEXT for table selectors, so naming the
+  // selector literally in a comment makes it read prose as a query — keep the
+  // literal out of comments here.
+  if (active) {
+    const { error } = await dbAny
+      .from('api_keys')
+      .update({ is_active: true, revoked_at: null, revocation_reason: null })
+      .eq('org_id', orgId)
+      .eq('agent_id', agentId)
+      .eq('is_active', false)
+      .eq('revocation_reason', ADMIN_SUSPEND_REASON);
+    return error ?? null;
+  }
+  const { error } = await dbAny
+    .from('api_keys')
+    .update({
+      is_active: false,
+      revoked_at: new Date().toISOString(),
+      revocation_reason: ADMIN_SUSPEND_REASON,
+    })
+    .eq('org_id', orgId)
+    .eq('agent_id', agentId)
+    .eq('is_active', true);
+  return error ?? null;
+}
+
 // ─── PATCH /api/v1/agents/:agentId — Update agent ───────────────
 
 router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
@@ -225,7 +302,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
   }
 
   try {
-    const orgId = await getCallerOrgId(userId, res);
+    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
     if (!orgId) return;
 
     // Verify ownership before updating
@@ -245,6 +322,37 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
       updates.suspended_at = new Date().toISOString();
     }
 
+    // SCRUM-5290: a status change is INERT unless the keys move with it. The
+    // auth path reads only `api_keys` (middleware/apiKeyAuth.ts selects
+    // is_active / revoked_at / expires_at and never joins `agents`), so before
+    // this an org admin could suspend an agent and its key kept authenticating.
+    //
+    // ORDER IS THE DESIGN. These are two round-trips, not one transaction, so a
+    // crash between them is reachable. The order is chosen so that the write
+    // which RESTRICTS access always commits first and the intermediate state
+    // fails CLOSED:
+    //   suspend: keys off -> status suspended   (crash => dead keys, stale
+    //            'active' status: the agent cannot act, an admin retries)
+    //   resume:  status active -> keys on       (crash => active status, dead
+    //            keys: the agent still cannot act, an admin retries)
+    // The reverse order for either would leave a suspended agent holding a LIVE
+    // key, which is the exact defect this change exists to remove.
+    //
+    // Full atomicity needs a SECURITY DEFINER function doing both writes under a
+    // row lock, the way migration 0448's `apply_computeid_agent_transition`
+    // does. That is a migration (T3) and is tracked as follow-up; this ordering
+    // makes the residual window safe rather than merely narrower.
+    if (parsed.data.status === 'suspended') {
+      const keyError = await setAgentKeysActive(agentId, orgId, false);
+      if (keyError) {
+        logger.error({ agentId, error: keyError }, 'Agent key deactivation failed; status left unchanged');
+        res.status(500).json({
+          error: 'Could not deactivate the agent API keys — the agent was NOT suspended; retry',
+        });
+        return;
+      }
+    }
+
     const { data: agent, error } = await dbAny
       .from('agents')
       .update(updates)
@@ -260,6 +368,17 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
     if (error || !agent) {
       res.status(404).json({ error: 'Agent not found or update failed' });
       return;
+    }
+
+    if (parsed.data.status === 'active') {
+      const keyError = await setAgentKeysActive(agentId, orgId, true);
+      if (keyError) {
+        logger.error({ agentId, error: keyError }, 'Agent reactivated but key restoration failed');
+        res.status(500).json({
+          error: 'Agent is active but its API keys could not be restored — retry, or mint a new key',
+        });
+        return;
+      }
     }
 
     void recordAuditEvent({
@@ -288,7 +407,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
   const { agentId } = req.params;
 
   try {
-    const orgId = await getCallerOrgId(userId, res);
+    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
     if (!orgId) return;
 
     // Verify ownership before revoking
@@ -346,8 +465,9 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
   if (!hmacSecret) { res.status(500).json({ error: 'HMAC secret not configured' }); return; }
 
   try {
-    // Verify caller owns the agent's org
-    const orgId = await getCallerOrgId(userId, res);
+    // Minting a working credential is at least as privileged as suspending
+    // or revoking one (both admin-only below) — so this is too.
+    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
     if (!orgId) return;
 
     const { data: agent, error: agentError } = await dbAny
