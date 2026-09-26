@@ -1899,7 +1899,7 @@ loser (CLAUDE.md §6).
 
 | Prefix | File | Ticket | Applied? | Notes |
 |---|---|---|---|---|
-| `0482` | `0482_scrum5280_org_domain_verification_guard.sql` | SCRUM-5280 / SCRUM-5282 | NO — file only. Not applied to production, staging, or any shared rig. | Compensating security migration. **(A)** `protect_org_tenancy_fields()` is replaced, 0429's body verbatim plus a service_role-only guard over `domain_verified`, `domain_verification_method`, `domain_verified_at`, `verification_status`, `domain_verification_token` and `domain_verification_token_expires_at`; a real (normalized, NULL-safe) `domain` change by a non-service_role caller demotes the verification instead of raising, because `domain` is a legitimate `EditableOrgFields` column. The token pair is guarded beyond the ticket's four columns because `POST /api/v1/orgs/confirm-domain` treats the stored token as the only secret, so writing it is writing `domain_verified` one hop later. The trigger is **not** recreated: `trg_protect_org_tenancy_fields` is already `BEFORE UPDATE ... FOR EACH ROW` with no column list, so no AccessExclusiveLock is taken on the `organizations` hot table. **(B)** `add_existing_org_member(uuid,uuid,text,text)` is replaced byte-identically to 0470 minus the third authorization branch (`profiles.org_id = p_org_id AND profiles.role = 'ORG_ADMIN'`) — the stale-role fallback 0477 removed from the queue RPC for the same reason. Same signature, argument names and return shape, so the deployed worker route is unaffected. **(C)** SCRUM-5282: `EXECUTE` on the 3-argument `resolve_anchor_queue_by_public_id(text,text,text)` is revoked from `PUBLIC`, `anon` and `authenticated`. Zero callers on `origin/main` (`queue-resolution.ts` passes `p_caller_user_id` and resolves to 0477's 4-arg overload); the function is kept, not dropped, per CLAUDE.md §6 overload churn. Both `CREATE OR REPLACE`s reissue `REVOKE ALL ... FROM PUBLIC, anon, authenticated` plus the correct `GRANT`, because Supabase re-triggers `ALTER DEFAULT PRIVILEGES` on every replace (0364/0377/0378/0388/0406). `SET LOCAL lock_timeout = '5s'`, `SET search_path` preserved on both SECURITY DEFINER functions, `NOTIFY pgrst, 'reload schema'`. Number derived 2026-09-21 after `git fetch origin`: `origin/main`'s numeric head is `0480`; a scan of every remote branch for `04[789]0`–`04[789]9` prefixes found `0470 0471 0473 0474 0475 0476 0477 0480 0481` and nothing at or above `0482`; no `agents.md` reservation claims it. `0478`/`0479` read as unclaimed in that scan and were deliberately skipped rather than back-filled. A re-scan after the commit found an UNPUSHED sibling session holding `0483_scrum4939_credit_rpc_followups.sql` (SCRUM-4939) in a local worktree — not visible to any remote-branch or `agents.md` scan, which is exactly the blind spot that produces collisions. `0482` is claimed by this entry alone. **Next author claims `0484` — re-derive, do not trust this line, and check sibling worktrees as well as remote branches.** |
+| `0482` | `0482_scrum5280_org_domain_verification_guard.sql` | SCRUM-5280 / SCRUM-5282 | NO — file only. Not applied to production, staging, or any shared rig. | Compensating security migration. **(A)** `protect_org_tenancy_fields()` is replaced, 0429's body verbatim plus a service_role-only guard over `domain_verified`, `domain_verification_method`, `domain_verified_at`, `verification_status`, `domain_verification_token` and `domain_verification_token_expires_at`; a real (normalized, NULL-safe) `domain` change by a non-service_role caller demotes the verification instead of raising, because `domain` is a legitimate `EditableOrgFields` column. The token pair is guarded beyond the ticket's four columns because `POST /api/v1/orgs/confirm-domain` treats the stored token as the only secret, so writing it is writing `domain_verified` one hop later. The trigger is **not** recreated: `trg_protect_org_tenancy_fields` is already `BEFORE UPDATE ... FOR EACH ROW` with no column list, so no AccessExclusiveLock is taken on the `organizations` hot table. **(B)** `add_existing_org_member(uuid,uuid,text,text)` is replaced byte-identically to 0470 minus the third authorization branch (`profiles.org_id = p_org_id AND profiles.role = 'ORG_ADMIN'`) — the stale-role fallback 0477 removed from the queue RPC for the same reason. Same signature, argument names and return shape, so the deployed worker route is unaffected. **(C)** SCRUM-5282: `EXECUTE` on the 3-argument `resolve_anchor_queue_by_public_id(text,text,text)` is revoked from `PUBLIC`, `anon` and `authenticated`. Zero callers on `origin/main` (`queue-resolution.ts` passes `p_caller_user_id` and resolves to 0477's 4-arg overload); the function is kept, not dropped, per CLAUDE.md §6 overload churn. Both `CREATE OR REPLACE`s reissue `REVOKE ALL ... FROM PUBLIC, anon, authenticated` plus the correct `GRANT`, because Supabase re-triggers `ALTER DEFAULT PRIVILEGES` on every replace (0364/0377/0378/0388/0406). `SET LOCAL lock_timeout = '5s'`, `SET search_path` preserved on both SECURITY DEFINER functions, `NOTIFY pgrst, 'reload schema'`. Number derived 2026-09-21 after `git fetch origin`: `origin/main`'s numeric head is `0480`; a scan of every remote branch for `04[789]0`–`04[789]9` prefixes found `0470 0471 0473 0474 0475 0476 0477 0480 0481` and nothing at or above `0482`; no `agents.md` reservation claims it. `0478`/`0479` read as unclaimed in that scan and were deliberately skipped rather than back-filled. A re-scan after the commit found an UNPUSHED sibling session holding `0483_scrum4939_credit_rpc_followups.sql` (SCRUM-4939) in a local worktree — not visible to any remote-branch or `agents.md` scan, which is exactly the blind spot that produces collisions. `0482` is claimed by this entry alone. **Next author claims `0487` — re-derive, do not trust this line, and check sibling worktrees as well as remote branches.** |
 
 Proof: `tests/rls/scrum-5280-org-domain-verification-guard.test.ts` (nine cases,
 four of them positive controls) against a native loopback replay of the baseline
@@ -1984,5 +1984,87 @@ and `scripts/ci/check-rls-policy-coverage.ts` (SCRUM-1275 / R3-2). Neither is sa
 by the `rls-no-policy-intentional` override label — the policy was missed, not
 intentionally omitted.
 
-This block is titled `(PR #3080)` and placed last because 3080 is the highest PR number
-in this file (CLAUDE.md §6). A later author claiming a higher PR number orders after it.
+This block was titled `(PR #3080)` and placed last because 3080 was the highest PR number
+in this file at the time (CLAUDE.md §6). A later author claiming a higher PR number orders
+after it — see the `(PR #3088)` block immediately below.
+
+## Recent migrations (PR #3088 — fix/docusign-content-addressed-revision)
+
+| # | File | Ticket | Applied? | Summary |
+|---|---|---|---|---|
+| `0487` | `0487_docusign_content_addressed_external_revision_backfill.sql` | (no Jira ticket cited by this task) | RESERVED — file-only, **NOT applied to prod, staging, or any rig.** | Compensating data-only migration. Backfills `connector_artifact.external_revision = fingerprint_sha256 WHERE source = 'docusign' AND external_revision IS NULL`, paired with the same-PR code fix (both DocuSign `enqueue_connector_artifact` call sites — `services/worker/src/jobs/docusign-envelope-completed.ts` and `services/worker/src/api/v1/webhooks/docusign.ts` — now write `p_external_revision` = the fingerprint instead of `null`). Investigation basis: prod `connector_artifact` had `external_revision` populated on 8/8 `google_drive` rows and 0/27 `docusign` rows, degenerating the mig-0343 dedupe key `(org_id, source, external_ref, COALESCE(external_revision,''))` from per-version to per-envelope for the whole source. DocuSign Connect's envelope-completed payload (`DocusignEnvelopeCompleted`, `integrations/connectors/schemas.ts`) has no native revision token (no `documentIdGuid`/`statusChangedDateTime`/ETag) and a completed envelope has no DocuSign-native "new version" concept — an amendment is a new envelope — so `fingerprint_sha256` is content-addressed identity, the only per-version handle this vendor gives us; precedent is Drive's own synthetic-revision fallback (`DRIVE_REVISION_KINDS`, `drive-artifact-producer.ts`) for the same "source has no native revision" shape. Backfill is mandatory, not optional: without it, a genuine post-fix event for one of the 27 pre-existing envelopes would compute a dedupe key that no longer matches its own existing row (`COALESCE(NULL,'')` = `''` ≠ the new fingerprint value), producing a spurious duplicate for an artifact that should have deduped. Safe by construction: `fingerprint_sha256` is `NOT NULL` with a 64-lowercase-hex `CHECK` on every existing row (mig 0343), so the backfill invents nothing and cannot violate the unique index — every `docusign` row already has at most one row per `(org_id, source, external_ref)` pre-migration (enforced by the index while `external_revision` was uniformly `NULL`), and this statement changes only the 4th key component's value, not `org_id`/`external_ref`, so post-backfill distinctness follows from pre-backfill distinctness. Idempotent (`WHERE external_revision IS NULL`). Real `-- ROLLBACK:` in the file header (unlike most data-only migrations in this table, the pre-migration state — uniformly `NULL` — is exactly recoverable, so rollback restores it precisely rather than being a "no rollback, restore from backup" note). Tier T3 (`supabase/migrations/` + the connector-artifact dedupe key anchor materialization keys off). No schema change: no `database.types.ts` delta, no `NOTIFY pgrst`. Number derived 2026-09-25 after `git fetch origin`: `origin/main`'s numeric head is `0482`; the highest number this file's own most recent entry (the `0482` row above) records is its explicitly-stated reservation of `0483` for an unpushed sibling-worktree session (`0483_scrum4939_credit_rpc_followups.sql`, not visible via remote-branch or `agents.md` scan) with the instruction "next author claims `0487`" — followed here. A filesystem check of every other worktree under `.claude/worktrees/` at derivation time found no `048[3-9]`/`049x`-prefixed file checked out anywhere, so that `0483` reservation could not be independently re-confirmed against a live file, only against its own prior entry's text; `0487` is claimed by this entry alone. **Next author claims `0488` — re-derive, do not trust this line, and check sibling worktrees as well as remote branches.** NOT applied to any environment — ordering per CLAUDE.md §0 rule 10 / `.claude/hooks/check-prod-migration-apply.sh` requires this prefix to land on `origin/main` (or be added to `scripts/ci/snapshots/ledger-numeric-exemptions.json`) before any `apply_migration` against a prod-linked ref is permitted. |
+
+Test coverage lands in the same PR, not this migration (data-only, no
+schema to exercise): `services/worker/src/jobs/docusign-envelope-completed.test.ts`
+and `services/worker/src/api/v1/webhooks/docusign.test.ts` cover the paired code
+change (external_revision = fingerprint on both DocuSign enqueue call sites,
+two different documents for one envelope producing distinct dedupe keys, and
+a same-envelope-same-fingerprint replay dedupe-ing to one row). No hosted
+Supabase project was touched to validate this migration; the safety argument
+above is a static proof from the mig-0343 schema, not a rehearsed run.
+
+### Review-response addendum (P1 + P2, this same PR #3088, still `0487` unapplied)
+
+**P1 — sibling-provenance arbitration (fixed).** Content addressing gives the
+outbound (measured) and inbound (declared) producers DIFFERENT dedupe-key
+slots for the SAME envelope — pre-fix, both wrote `external_revision: null`,
+so the two collapsed onto ONE row and the existing F1 conflict/audit/heal
+path (in `docusign-envelope-completed.ts`'s `enqueueSignedDocument`) could
+observe the collision via its own read-back. Post-fix, that read-back always
+sees only its OWN just-written row, so F1 alone stopped detecting the
+conflict — a genuinely SEPARATE sibling row could persist unreconciled and
+independently drain into its own anchor. Both call sites now ALSO look up any
+same-envelope row under a DIFFERENT `external_revision` and route it through
+the same measured-beats-declared precedence + `audit_events` trail: outbound
+retires (`status='skipped'`) an eligible inbound-declared sibling
+(`reconcileDeclaredSibling` in `docusign-envelope-completed.ts`); inbound
+retires ITSELF the moment it finds a pre-existing verified-outbound sibling,
+never the outbound row (`enqueueInboundDeclaredHashArtifact` in
+`webhooks/docusign.ts`). `status='skipped'` — not a fingerprint/
+`external_revision` rewrite — is pulled out of
+`connector-artifact-drain.ts`'s `DRAINABLE_STATUSES` (`['pending','queued']`)
+without touching the retired row's dedupe-key identity. TDD: a new "F2"
+describe block in `docusign-envelope-completed.test.ts` builds a REAL
+in-memory `connector_artifact` store enforcing the actual
+`(org_id, source, external_ref, COALESCE(external_revision,''))` unique key
+(the prior mock always handed back whatever row a test configured,
+regardless of the key actually written, which is what hid this regression)
+and drives the real `enqueueSignedDocument` against it both orderings;
+confirmed red against the unfixed head (inbound sibling stayed `'pending'`,
+no audit row), green after the fix.
+
+**P2 — `0487`'s documented `-- ROLLBACK:` (addressed here, not in the .sql
+file).** The originally-drafted rollback —
+`UPDATE connector_artifact SET external_revision = NULL WHERE source='docusign' AND external_revision = fingerprint_sha256`
+— claimed the `AND external_revision = fingerprint_sha256` guard made it
+cohort-specific ("only reverts rows this migration itself set"). That claim
+is FALSE once the P1-fixed code is live: BOTH producers now set
+`external_revision = fingerprint_sha256` for every NEW docusign row too (that
+IS content-addressed identity, the whole point of this PR), so the predicate
+matches every docusign row, backfilled or brand-new, indistinguishably.
+Running that statement post-deploy would NULL every docusign row's
+`external_revision`, collapsing the dedupe key back to per-envelope for the
+WHOLE source — reintroducing the exact bug this migration and its paired
+code fix exist to close. No column distinguishes "backfilled by `0487`" from
+"written by the new code path" after the fact, and adding one is a schema
+change this data-only migration deliberately avoids, so there is no fixed
+statement that is both cohort-specific and safe to author in advance; a real
+reversal needs an id-scoped `UPDATE ... WHERE id = ANY(:snapshot_ids)` built
+from a row-id snapshot taken immediately BEFORE `0487` is applied (see the
+migration-procedure skill), never the blanket predicate.
+
+**Why this note lives here and not in `0487`'s own file:**
+`.claude/hooks/check-constitution-on-edit.sh`'s never-modify-an-existing-
+migration rule (CLAUDE.md §1.2) is a blanket, file-existence-based BLOCK with
+no carve-out for a migration that is merely unapplied-and-still-on-branch —
+it denied an Edit/Write to `0487_docusign_content_addressed_external_revision_backfill.sql`
+outright, even though `0487` is independently confirmed applied nowhere
+(absent from `scripts/ci/snapshots/ledger-numeric-exemptions.json`'s
+`exemptPrefixes`, absent from `origin/main`, and the file's own header
+already says so). Routing around a PreToolUse hook via a tool it does not
+intercept would defeat its purpose, so the correction lands here instead,
+where every reader of this migration's history sees it. **If a future
+session CAN legitimately edit `0487`'s `-- ROLLBACK:` comment in place
+(e.g. a fresh worktree/session where the hook's on-disk check does not
+apply, or an explicit operator override) before this PR merges, do so and
+delete this addendum — the corrected text is spelled out above verbatim.**
