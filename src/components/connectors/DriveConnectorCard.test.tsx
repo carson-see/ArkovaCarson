@@ -292,6 +292,101 @@ describe('DriveConnectorCard', () => {
     });
   });
 
+  // Connector health surface (SCRUM-1146 dashboard, previously read by no UI —
+  // see this incident's own gap in services/worker/src/api/connector-health.ts
+  // and src/components/connectors/agents.md). `health` is a pass-through prop
+  // — the fetch itself lives in ConnectorsPage's single `useConnectorHealth()`
+  // call, not per-card, so these tests exercise the render contract directly.
+  describe('health prop (SCRUM-1146 surface)', () => {
+    it('renders unchanged when health is healthy — no degraded/unknown row appears', async () => {
+      orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+
+      render(<DriveConnectorCard orgId={ORG_ID} health={{ kind: 'connected' }} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('renders cursor_stale as a degraded, accessible status row', async () => {
+      orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+
+      render(
+        <DriveConnectorCard
+          orgId={ORG_ID}
+          health={{ kind: 'degraded', reasonText: 'This connector has stopped picking up new file changes.' }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(
+          'This connector has stopped picking up new file changes.',
+        );
+      });
+    });
+
+    it('renders changes_list_never_succeeded as degraded', async () => {
+      orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+
+      render(
+        <DriveConnectorCard
+          orgId={ORG_ID}
+          health={{
+            kind: 'degraded',
+            reasonText: 'This connector has never successfully checked for file changes since it was connected.',
+          }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent('never successfully checked');
+      });
+    });
+
+    // TRUE in prod today for the one connected org (~32 granted scopes) — must
+    // render correctly, not crash.
+    it('renders grant_exceeds_requested as degraded without crashing', async () => {
+      orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+
+      render(
+        <DriveConnectorCard
+          orgId={ORG_ID}
+          health={{
+            kind: 'degraded',
+            reasonText: 'The connected account granted broader access than Arkova requested.',
+          }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent('broader access than Arkova requested');
+      });
+    });
+
+    it('renders the unknown state, not a healthy claim, when the health request failed or returned nothing', async () => {
+      orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+
+      render(<DriveConnectorCard orgId={ORG_ID} health={{ kind: 'unknown' }} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('status')).not.toHaveTextContent('Needs attention');
+    });
+
+    it('omitting health entirely does not break the page (defaults to no health row)', async () => {
+      orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
+
+      render(<DriveConnectorCard orgId={ORG_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+  });
+
   /**
    * FD-D1 / FD-D3. The worker's denial `code` is the specific reason; the
    * `error` field beside it is a generic "Not eligible to connect Google
