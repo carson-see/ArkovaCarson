@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS, DOCUMENTS_PAGE_LABELS } from '@/lib/copy';
 import { NotificationBell } from './NotificationBell';
+import { useProfileMediaUrl } from '@/components/shared/ProfileMediaImage';
 
 /** Map pathname to a display title for the header */
 const PAGE_TITLES: Record<string, string> = {
@@ -70,6 +71,8 @@ interface HeaderProps {
   profile?: {
     full_name?: string | null;
     avatar_url?: string | null;
+    /** UAT-14 private-bucket object; `avatar_url` is the legacy fallback. */
+    avatar_storage_path?: string | null;
   } | null;
   profileLoading?: boolean;
   onSignOut: () => void;
@@ -79,6 +82,10 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
   const location = useLocation();
   const navigate = useNavigate();
   const displayName = profile?.full_name || user?.email || 'User';
+  // D2: uploads write avatar_storage_path (private bucket). This is the user's
+  // OWN avatar, so the signed URL resolves for them; a denial leaves
+  // `avatarSrc` undefined and Radix shows the initials fallback.
+  const avatarSrc = useProfileMediaUrl(profile?.avatar_storage_path, profile?.avatar_url);
   const initials = getInitials(displayName);
   const pageTitle = getPageTitle(location.pathname);
 
@@ -107,7 +114,7 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
             ) : (
               <>
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={profile?.avatar_url || undefined} alt={`${displayName} profile photo`} />
+                  <AvatarImage src={avatarSrc || undefined} referrerPolicy="no-referrer" alt={`${displayName} profile photo`} />
                   <AvatarFallback className="bg-primary/10 text-primary text-xs">
                     {initials}
                   </AvatarFallback>
