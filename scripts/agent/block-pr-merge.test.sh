@@ -614,6 +614,41 @@ else
 fi
 rm -rf "$shim_dir" "$out_f" "${out_f}.rc"
 
+# Founder-directive bypass (2026-09-26). The hook mirrors the CI gate: with
+# SOAK_GATE_DISABLED=true AND an explicit `## Soak waiver` heading in the
+# body it allows; either half alone still denies.
+run_bypass_case() {
+  local label="$1" var_value="$2" body_text="$3" expect="$4"
+  local d; d=$(mktemp -d)
+  cat >"${d}/gh" <<GHEOF
+#!/bin/bash
+if [[ "\$1" == "variable" ]]; then printf '%s\n' '${var_value}'; exit 0; fi
+if [[ "\$1" == "pr" && "\$2" == "view" ]]; then printf '%s' '${body_text}'; exit 0; fi
+exit 1
+GHEOF
+  chmod +x "${d}/gh"
+  local out; out=$(payload 'gh pr ready 123' | PATH="${d}:${PATH}" bash "$STAGING_HOOK" 2>/dev/null)
+  rm -rf "$d"
+  local got="allow"
+  /usr/bin/grep -q '"permissionDecision": "deny"' <<<"$out" && got="deny"
+  if [[ "$got" == "$expect" ]]; then
+    echo "  PASS  bypass: ${label} -> ${expect}"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  bypass: ${label} expected ${expect}, got ${got}"
+    FAIL=$((FAIL + 1))
+  fi
+}
+run_bypass_case "var=true + waiver heading"      "true"  "## Summary
+x
+## Soak waiver — founder directive 2026-09-26
+no soak" "allow"
+run_bypass_case "var=false + waiver heading"     "false" "## Soak waiver — founder directive 2026-09-26
+no soak" "deny"
+run_bypass_case "var=true, no waiver heading"    "true"  "## Summary
+plain body" "deny"
+run_bypass_case "var=true, waiver only inline"   "true"  "see the Soak waiver below (not a heading)" "deny"
+
 echo ""
 echo "--- summary ----------------------------------------------------"
 echo "PASS=${PASS} FAIL=${FAIL}"
