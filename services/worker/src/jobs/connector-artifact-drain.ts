@@ -122,6 +122,28 @@ const DRAIN_LIMIT_MAX = 200;
 /** The two pre-claim statuses a row can be drained from. */
 const DRAINABLE_STATUSES = ['pending', 'queued'] as const;
 
+/**
+ * Founder decision 2026-09-25: when a document in a connected Drive/DocuSign
+ * folder is UPDATED, the previously anchored version must stay
+ * cryptographically valid and be marked SUPERSEDED — never duplicated as an
+ * unrelated second anchor, and NEVER `REVOKED` (conflating a routine content
+ * edit with a genuine withdrawal of validity would read to an auditor exactly
+ * like a deliberate credential revocation).
+ *
+ * Sources in this set get the supersession check below; every other source
+ * keeps today's plain-insert behavior unchanged.
+ *
+ * GATED TO 'google_drive' ONLY. `connector_artifact.external_revision` is the
+ * per-source revision signal a redelivery/update is correlated on, and in
+ * prod it is populated on 8/8 `google_drive` rows but 0/27 `docusign` rows
+ * (verified via the connector_artifact table before this change) — DocuSign
+ * has no revision handle to detect "this is a newer version of the same
+ * document" from today. Widening this set to `docusign` without first wiring
+ * a revision signal for it would silently change DocuSign's (already
+ * double-anchoring) behavior in an unreviewed way — out of scope here.
+ */
+const SUPERSESSION_ENABLED_SOURCES: ReadonlySet<string> = new Set(['google_drive']);
+
 /** Shape of a connector_artifact row we read (0343 columns; not yet in head types). */
 export interface ConnectorArtifactRow {
   id: string;
@@ -145,8 +167,32 @@ export interface MaterializedAnchor {
   created: boolean;
 }
 
-/** Rejected/uncertain publication must not write a possibly newer lease. */
-export type MaterializationOutcome = MaterializedAnchor | { outcome: 'superseded' | 'lost_lease' };
+/**
+ * Rejected/uncertain publication must not write a possibly newer lease.
+ *
+ * `prior_anchor_revoked` (founder decision 2026-09-25): the document's prior
+ * anchor lineage head is already `REVOKED` — a genuine, terminal withdrawal
+ * of validity, not a routine version bump. `supersede_anchor` itself refuses
+ * to touch a REVOKED anchor (`check_violation`), and this drain deliberately
+ * never calls it in that case either: the artifact is left `processing` for
+ * the existing lease reaper / operator review rather than either resurrecting
+ * the revoked lineage or silently minting an unrelated new anchor for it.
+ */
+export type MaterializationOutcome =
+  | MaterializedAnchor
+  | { outcome: 'superseded' | 'lost_lease' | 'prior_anchor_revoked' };
+
+/**
+ * The current head of a connector document's anchor lineage, as looked up by
+ * `findPriorConnectorAnchorForSupersession`. `fingerprint` lets the caller
+ * decide "identical content, no-op" vs "genuine update, supersede" without a
+ * second round trip; `status` lets the caller fail closed on a REVOKED head.
+ */
+export interface PriorConnectorAnchor {
+  id: string;
+  status: string;
+  fingerprint: string;
+}
 
 export interface DebitResult {
   success: boolean;
@@ -401,6 +447,139 @@ async function resolveOrgActorUserId(
 }
 
 /**
+ * Look up the CURRENT HEAD of a connector document's anchor lineage — i.e.
+ * the anchor with the highest `version_number` — so a later revision of the
+ * SAME document can be correlated against it.
+ *
+ * CORRELATION KEY: `(org_id, source, external_ref)` — deliberately NOT
+ * `integration_id`. This is exactly `connector_artifact`'s own dedupe/identity
+ * key (migration 0343: "Dedup/idempotency key: (org_id, source, external_ref,
+ * COALESCE(external_revision,''))", i.e. the SAME (org, source, external_ref)
+ * across different `external_revision` values IS the same logical document by
+ * the producer's own contract). `external_ref` is the connector-native id
+ * (Drive fileId) and is stable across a reconnect; `integration_id` is the
+ * per-connection row and WOULD rotate if the org re-authorizes Drive, which
+ * would silently stop supersession from finding the prior version — so it is
+ * excluded on purpose, not by oversight.
+ *
+ * Every anchor this drain ever materializes (see `AnchorInsertPayload` /
+ * `insertPayload.metadata` below) always carries both `connector_source` and
+ * `external_ref` in its `metadata`, so this is a real, always-present key —
+ * not a best-effort heuristic.
+ *
+ * A SINGLE indexed `.eq().eq()` point lookup — never `.or()` (see
+ * `findExistingEnvelopeAnchor` above for why an OR-shaped filter is a planner
+ * cost trap on the 3M+-row `anchors` table; two ANDed equalities do not have
+ * that failure mode, so one query suffices here).
+ *
+ * Deliberately does NOT exclude `REVOKED` (unlike `findExistingEnvelopeAnchor`):
+ * the caller must be able to see a REVOKED head and fail closed on it, rather
+ * than this lookup silently skipping past it to an older, already-superseded
+ * ancestor and superseding the wrong anchor.
+ */
+export async function findPriorConnectorAnchorForSupersession(args: {
+  db: Pick<ConnectorArtifactDrainDeps, 'db'>['db'];
+  orgId: string;
+  source: string;
+  externalRef: string;
+}): Promise<PriorConnectorAnchor | null> {
+  const { data, error } = await args.db
+    .from('anchors')
+    .select('id, status, fingerprint, version_number')
+    .eq('org_id', args.orgId)
+    .eq('metadata->>connector_source', args.source)
+    .eq('metadata->>external_ref', args.externalRef)
+    .is('deleted_at', null)
+    .order('version_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`prior connector anchor lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  }
+  if (!data) return null;
+  const row = data as { id?: string; status?: string; fingerprint?: string };
+  if (!row.id || !row.status || !row.fingerprint) return null;
+  return { id: row.id, status: row.status, fingerprint: row.fingerprint };
+}
+
+/**
+ * Supersede `oldAnchorId` with a fresh child anchor carrying `row`'s
+ * fingerprint, via the ALREADY-SHIPPED `supersede_anchor` 4-arg RPC (migration
+ * 0367) — never reimplemented here. That RPC, in ONE transaction: locks the
+ * old anchor, flips it to `SUPERSEDED` (never `REVOKED`), inserts the child
+ * `PENDING` anchor with `parent_anchor_id` set (a BEFORE INSERT trigger then
+ * derives `version_number = parent.version_number + 1` — see
+ * `set_anchor_version_number()` — so this drain never computes or writes
+ * either column itself), and is idempotent on `(parent_anchor_id,
+ * new_fingerprint)`: a replay with the SAME new fingerprint returns the SAME
+ * child id rather than forking the lineage or raising.
+ *
+ * `p_caller_user_id` is `callerUserId` — the SAME org owner/admin actor this
+ * module already resolves as the anchor's `user_id` (`resolveOrgActorUserId`
+ * / the DS-04 member-owner branch above). `supersede_anchor` requires the
+ * caller to be a `profiles.role = 'ORG_ADMIN'` org member (see
+ * `services/worker/src/api/agents.md`, "RPCs that read auth.uid() fail when
+ * called from the worker" / the 0367 migration header): the org CREATION flow
+ * atomically sets `org_members.role = 'owner'` AND `profiles.role =
+ * 'ORG_ADMIN'` together (baseline `create_organization`-equivalent onboarding
+ * function), and `invite_member` refuses to invite anyone else AS 'ORG_ADMIN'
+ * — so the owner this drain already resolves is, in the normal case, the
+ * SAME identity that already holds ORG_ADMIN. There is no independent human
+ * caller for an automated connector supersession, so reusing the anchor's own
+ * authoring actor is the least-surprising choice available without adding a
+ * new "system actor" concept (which would be new schema/columns — out of
+ * scope per this task's instructions).
+ *
+ * `supersede_anchor` has no notion of `connector_artifact` — it only touches
+ * `anchors`. So after it returns, THIS function does the link-back with a
+ * plain, lease-guarded UPDATE: only a row that still matches this exact
+ * claimed lease (`status='processing'` AND the captured `updated_at`) may be
+ * marked `materialized` + linked, mirroring the freshness guard
+ * `materialize_connector_artifact_anchor` applies internally in SQL. A stale
+ * match (0 rows) reports `lost_lease`, same posture as the atomic RPC path
+ * below — never a compensating write.
+ */
+async function supersedeConnectorAnchor(
+  row: ConnectorArtifactRow,
+  oldAnchorId: string,
+  callerUserId: string,
+  deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
+): Promise<MaterializationOutcome> {
+  const { data, error } = await callRpc<string>(deps.db as Parameters<typeof callRpc>[0], 'supersede_anchor', {
+    old_anchor_id: oldAnchorId,
+    new_fingerprint: row.fingerprint_sha256,
+    reason: 'Connector document update (google_drive revision)',
+    p_caller_user_id: callerUserId,
+  });
+  // A transport error can follow a committed transaction (same posture as the
+  // atomic materialize RPC below) — never compensate by assuming it failed.
+  if (error) return { outcome: 'lost_lease' };
+  const parsedId = z.string().uuid().safeParse(data);
+  if (!parsedId.success) return { outcome: 'lost_lease' };
+  const newAnchorId = parsedId.data;
+
+  const { data: linkedRow, error: linkError } = await deps.db
+    .from('connector_artifact')
+    .update({ status: 'materialized', anchor_id: newAnchorId, updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .eq('org_id', row.org_id)
+    .eq('status', 'processing')
+    .eq('updated_at', row.updated_at)
+    .select('id')
+    .maybeSingle();
+  if (linkError || !linkedRow) return { outcome: 'lost_lease' };
+
+  const { data: anchorRow } = await deps.db
+    .from('anchors')
+    .select('public_id')
+    .eq('id', newAnchorId)
+    .maybeSingle();
+  const publicId = (anchorRow as { public_id?: string } | null)?.public_id ?? null;
+
+  return { outcome: 'linked', anchorId: newAnchorId, anchorPublicId: publicId, created: true };
+}
+
+/**
  * Default materializer: atomically publish and link a PENDING anchor from the artifact's
  * server-computed fingerprint (§1.6A — fingerprint only, never bytes). The
  * anchor schema requires `user_id` (resolved to an org owner/admin actor) and
@@ -421,6 +600,60 @@ export async function defaultMaterializeAnchor(
   // Migration 0462 rechecks that ownership against the locked artifact, active
   // member_integrations row, and exact org membership before publication.
   const userId = memberOwnerId ?? await resolveOrgActorUserId(deps, row.org_id);
+
+  // Founder decision 2026-09-25 — connector document-update supersession.
+  // Gated to `SUPERSESSION_ENABLED_SOURCES` (google_drive only; see that
+  // const's comment for why DocuSign is excluded). A fresh lookup on EVERY
+  // call (never cached across retries) is what makes this replay-safe: if a
+  // supersede committed but the link-back below lost its lease, a retry's
+  // lookup finds the ALREADY-CREATED child as the new head with a MATCHING
+  // fingerprint and falls through to the normal (idempotent, unique-index
+  // reuse) path instead of superseding twice.
+  if (SUPERSESSION_ENABLED_SOURCES.has(row.source)) {
+    const prior = await findPriorConnectorAnchorForSupersession({
+      db: deps.db,
+      orgId: row.org_id,
+      source: row.source,
+      externalRef: row.external_ref,
+    });
+    if (prior && prior.fingerprint !== row.fingerprint_sha256) {
+      if (prior.status === 'REVOKED') {
+        // Fail closed (see the `prior_anchor_revoked` MaterializationOutcome
+        // doc comment): never call supersede_anchor on a REVOKED head, never
+        // mutate it, never mint an independent replacement automatically.
+        return { outcome: 'prior_anchor_revoked' };
+      }
+      // SCRUM-5290 / DS-04: `userId` above may be a MEMBER owner — DS-04 exists
+      // precisely so an ordinary, non-admin member can own their own personal
+      // connector connection. But `supersede_anchor` (migration 0367) hard-
+      // requires `caller_profile.role = 'ORG_ADMIN'` and raises otherwise, and
+      // that raise is indistinguishable from a transient failure at this layer.
+      // The row would be reaped back to `queued` every 15 minutes and retry
+      // forever, so every update to a non-admin member's connected document
+      // would be permanently, silently un-supersede-able.
+      //
+      // The supersede call therefore resolves its OWN org-admin actor. The
+      // anchor's ownership is unaffected: `supersede_anchor` inherits `user_id`
+      // from the prior anchor, so the member keeps their record.
+      const supersedeActorId = await resolveOrgActorUserId(deps, row.org_id);
+      if (!supersedeActorId) {
+        // No org-admin actor resolvable: do NOT fall through to a plain insert,
+        // which would silently reintroduce the duplicate-anchor defect this
+        // change exists to remove. Fail closed and leave the row for retry.
+        defaultLogger.warn(
+          { artifactId: row.id, orgId: row.org_id },
+          'connector supersession: no org-admin actor resolvable; leaving artifact queued',
+        );
+        return { outcome: 'lost_lease' as const };
+      }
+      return supersedeConnectorAnchor(row, prior.id, supersedeActorId, deps);
+    }
+    // No prior anchor (first-ever version of this file), or the fingerprint
+    // is unchanged (identical content re-delivered) — fall through to the
+    // normal path below unchanged. An identical fingerprint is handled for
+    // free by the (user_id, fingerprint) unique-index reuse the atomic RPC
+    // already performs: no new anchor, no supersession, `created: false`.
+  }
 
   // SCRUM-2904 envelope-level guard: if the declared-hash rules path already
   // created a live anchor for this same envelope (flag-flip-mid-flight race:
@@ -879,6 +1112,14 @@ async function drainOneClaimedRow(
     if (materialized.outcome !== 'linked') {
       if (materialized.outcome === 'superseded') {
         deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_snapshot_rejected' });
+      } else if (materialized.outcome === 'prior_anchor_revoked') {
+        // A deliberate, definite decision — not a transport/uncertainty case —
+        // so it gets its own alert reason rather than the generic uncertain
+        // one. No compensating status update here either (see below): the
+        // row is left `processing` for the reaper/an operator to resolve,
+        // the SAME posture as every other non-`linked` outcome, so a human
+        // notices a revoked document's update was NOT auto-anchored.
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'prior_anchor_revoked_fail_closed' });
       } else {
         deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'artifact_materialization_uncertain' });
       }

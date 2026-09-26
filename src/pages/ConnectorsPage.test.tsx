@@ -10,6 +10,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ConnectorsPage } from './ConnectorsPage';
+import { CONNECTIONS_LABELS, CONNECTORS_LABELS } from '@/lib/copy';
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -94,7 +95,18 @@ function installOrgIntegrations(fixture: OrgIntegrationsFixture) {
   });
 }
 
-function installRules(items: Array<{ id: string; trigger_type: string; enabled: boolean }>, detailById: Record<string, unknown> = {}) {
+/**
+ * Third param surfaces SCRUM-1146's `GET /api/connectors/health` response —
+ * `undefined` means "return ok:true with no `connectors` array" (the
+ * malformed-body fail-closed path `useConnectorHealth` must not choke on),
+ * a plain object/array is served verbatim, and `'error'` simulates the
+ * endpoint itself failing (503).
+ */
+function installRules(
+  items: Array<{ id: string; trigger_type: string; enabled: boolean }>,
+  detailById: Record<string, unknown> = {},
+  health: unknown | 'error' = { connectors: [] },
+) {
   workerFetch.mockImplementation(async (endpoint: string) => {
     if (endpoint === '/api/rules') {
       return { ok: true, status: 200, json: async () => ({ items }) } as Response;
@@ -103,6 +115,12 @@ function installRules(items: Array<{ id: string; trigger_type: string; enabled: 
     if (detailMatch) {
       const item = detailById[detailMatch[1]!];
       return { ok: !!item, status: item ? 200 : 404, json: async () => ({ item }) } as Response;
+    }
+    if (endpoint === '/api/connectors/health') {
+      if (health === 'error') {
+        return { ok: false, status: 503, json: async () => ({ error: 'connector_health_unavailable' }) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => health } as Response;
     }
     return { ok: true, status: 200, json: async () => ({}) } as Response;
   });
@@ -204,5 +222,78 @@ describe('ConnectorsPage', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
     const [message] = (toast.error as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(message).toContain('DocuSign connection failed: denied');
+  });
+
+  // Connector health surface (SCRUM-1146 — see this page's own useConnectorHealth
+  // wiring and the #3054 Drive incident this closes the gap behind).
+  describe('connector health surface', () => {
+    it('renders the Drive card unchanged when the health endpoint reports connected/none', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, {
+        connectors: [{ id: 'google_drive', state: 'connected', health_reason: 'none', last_error: null }],
+      });
+
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('surfaces cursor_stale from GET /api/connectors/health as a degraded, accessible status on the Drive card', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, {
+        connectors: [{
+          id: 'google_drive',
+          state: 'degraded',
+          health_reason: 'cursor_stale',
+          last_error: 'Drive changes cursor has not advanced in over 6h',
+        }],
+      });
+
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(
+          CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_CURSOR_STALE,
+        );
+      });
+    });
+
+    // TRUE in prod today for the one connected org (~32 granted scopes) —
+    // must render correctly on the real page composition, not crash it.
+    it('surfaces grant_exceeds_requested as degraded on the Drive card', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, {
+        connectors: [{
+          id: 'google_drive',
+          state: 'degraded',
+          health_reason: 'grant_exceeds_requested',
+          last_error: 'Granted OAuth scope exceeds what this connection requested: drive',
+        }],
+      });
+
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(
+          CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_GRANT_EXCEEDS_REQUESTED,
+        );
+      });
+    });
+
+    it('fails closed to an "unavailable" status — never a healthy claim — when the health endpoint 503s', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, 'error');
+
+      renderPage();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: CONNECTIONS_LABELS.DISCONNECT_BUTTON })).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(CONNECTORS_LABELS.CONNECTOR_HEALTH_UNAVAILABLE);
+      });
+      expect(screen.getByRole('status')).not.toHaveTextContent(
+        CONNECTORS_LABELS.CONNECTOR_HEALTH_NEEDS_ATTENTION,
+      );
+    });
   });
 });

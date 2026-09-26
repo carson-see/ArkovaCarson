@@ -20,7 +20,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { workerFetch } from '@/lib/workerClient';
 import { CONNECTORS_LABELS } from '@/lib/copy';
 
-export const DRIVE_FOLDER_SELECTION_CAP = 20;
+// Mirrors the worker's `drive_folders` Zod `.max(3)` in
+// services/worker/src/rules/schemas.ts. The server is the control; this keeps
+// the picker from offering a selection the save would reject.
+export const DRIVE_FOLDER_SELECTION_CAP = 3;
 
 export interface SelectedDriveFolder {
   type: 'drive_folder';

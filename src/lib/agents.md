@@ -1,5 +1,16 @@
 # agents.md — lib
 
+## 2026-09-25 — `CONNECTORS_LABELS` gains the connector-health reason copy
+
+New keys (`CONNECTOR_HEALTH_NEEDS_ATTENTION`, `CONNECTOR_HEALTH_UNAVAILABLE`,
+`CONNECTOR_HEALTH_REASON_*` for every backend `HealthReason`) back the SCRUM-1146 health dashboard
+now surfaced in the Connectors UI — see `src/hooks/agents.md`'s matching entry and
+`src/hooks/useConnectorHealth.ts`. Each reason is written in plain customer language, never the
+backend's machine token; `CONNECTOR_HEALTH_REASON_GRANT_EXCEEDS_REQUESTED` names the
+security-relevant condition plainly (the connected account granted MORE access than Arkova
+requested) rather than softening it into an internal "scope" finding. `npm run lint:copy` passes
+clean against these — no banned §1.3 term appears in any of them.
+
 ## 2026-09-25 SPEC-AGENTS-UI — `ROUTES.SETTINGS_AGENTS`, `AGENT_LABELS`, `queryKeys.agents`/`agentDetail`
 
 New named route `/settings/agents` (`routes.ts`), the ComputeID agent
@@ -117,7 +128,6 @@ Also promoted here in the same change: `LOAD_ERROR_TITLE` / `LOAD_ERROR_DESC` / 
 which had been sitting in a local `SUB_ORG_STATE_COPY` constant in `ManageSubOrgs.tsx` since
 `copy.ts` was locked under a concurrent PR. The note there said to promote them the next time this
 file was touched; that has now happened and the local constant is gone.
-
 
 ## PR #2637 MFA assurance identity (2026-09-05)
 
@@ -308,9 +318,7 @@ inline). §1.3 clean.
 
 The signup copy now describes securing and verifying records. `BETA_GATE_LABELS` and the unused `ENV.BETA_INVITE_CODE` projection are retired; account registration does not consume a beta code. This does not change organization invitation tokens or any API authentication contract.
 
-
 _Last updated: 2026-08-29_
-
 
 ## 2026-09-02 — the certificate packet's `block_height` comes from the ANCHOR, not the proof row (SCRUM-3953)
 
@@ -812,7 +820,6 @@ that **nothing changed**, because the dialog stays open and the key's expiry is 
 rather than adding to it: without the current value on screen, "30 days" on a key with eleven months
 left is indistinguishable from an extension.
 
-
 ## PR #2782 — bind certificate metadata to one block
 
 `proofBlockMetadata.ts` is shared by the database proof reader and certificate builder. Confirmed anchor height/time can replace proof metadata only after matching both block hashes. A known mismatch withholds the packet; an unknown identity retains only the proof row's existing metadata and does not establish a fresh measurement. Height values must be nonnegative safe integers. RecordDetailPage supplies the anchor hash to both readers. Regression tests cover mismatches, absent identities, case-normalized matches and the actual page callback. The finite TLA model and interpreter contract cover selection semantics; they do not prove Bitcoin consensus, stored-data accuracy or snapshot freshness.
@@ -943,6 +950,49 @@ Classification lives here, not in `copy.ts`: the copy layer stays copy.
 ## 2026-09-21 — SCRUM-5285 org-verification superseded copy
 
 `ORG_VERIFICATION_LABELS` carries the two 409 `verification_superseded` messages for `components/org/OrgVerification.tsx`. Both must keep telling the user to START AGAIN rather than to retry: the worker's compare-and-swap makes the refusal permanent for that code, so "try again" would be false. API error codes stay literals in the handlers — only user-visible strings live here.
+
+## 2026-09-25 — PROOF-06: the JSON proof package carries the canonical bundle
+
+`proofPackage.ts` exports schema version **1.1**. The addition is `proof_bundle`
+— the SAME canonical packet `buildProofPacket` embeds in the PDF certificate,
+`GET /api/v1/verify/:id/proof` emits, and `e2e/public-proof-gate.spec.ts`
+already downloads verbatim. The schema accepts `'1.0' | '1.1'` so files exported
+before this still validate; `proof_bundle` is optional for the same reason, and
+is emitted as explicit `null` (not omitted) so a consumer can distinguish "no
+proof stored" from "older export format".
+
+**Do not reintroduce a flattened branch.** The legacy `proof.proof_path` is
+`string[]` — bare hashes with no sibling side — and is retained only for
+back-compat. It is NOT sufficient to recompute a root, so it must never be the
+only branch in the file; it is now derived from `proof_bundle.merkle_proof` so
+the two cannot disagree. Sibling positions live in `proof_bundle.merkle_proof`
+and `proof_bundle.tx_inclusion_branch`, which are `{hash, position}[]`.
+
+Glossary values are user-visible copy and are subject to §1.3 — "block" and
+"hash" are banned there. Mirror the existing `block_height` entry's phrasing
+("permanent network record", "fingerprint"). The glossary KEYS are machine field
+names and stay as-is.
+
+### Completeness is a FIELD, not a toast (2026-09-25 follow-up)
+
+`proof_bundle_complete` was added after review found the JSON persisted no record
+of an incomplete proof. `buildProofPacket` still returns a full-looking packet
+when `sourceProofInput` reports `complete: false` (a batch member whose
+`leaf_count` could not be counted, which is what arms the CVE-2012-2459
+duplicate-leaf guard). The only signal was a transient toast, so once dismissed
+the downloaded file was indistinguishable from a fully-verifiable proof — the
+§1.5 failure this work exists to prevent, in the opposite direction from the
+original bug. The PDF certificate has carried this signal since PROOF-04.
+
+It is `null` — not `false` — when there is no bundle, because `false` would read
+as a claim about a proof that does not exist.
+
+**A malformed stored branch is permanent, and must not say "try again".** The
+entry type-guards in `sourceProofInput`/`generateAuditReport` accept any string
+hash, while `MerkleProofEntrySchema` requires 64-hex, so a corrupt stored
+`proof_path` throws at package build. That now surfaces as
+`RECORD_DETAIL_LABELS.PROOF_PACKAGE_CORRUPT` and is logged with the record id,
+rather than being swallowed into the generic retry message.
 
 ## 2026-09-26 — AGENT_LABELS review P2: no assumed state in suspend/resume failure copy (PR #3093)
 

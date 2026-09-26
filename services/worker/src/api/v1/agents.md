@@ -125,7 +125,31 @@ and remains the only way this route now 503s.
 
 Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and clamped to `PASSPORT_AGENT_SCOPE_ALLOWLIST` (`verify`, `verify:batch`, `anchor:write`/`write:anchors`, `anchor:read`, `read:records`, `read:search`) — never a management scope; unknown scope names are a 400 (`z.enum(API_KEY_SCOPES)`). Keys are minted through `agent-keys.ts::mintAgentKey` so passport-minted keys emit `AGENT_KEY_CREATED` like every other agent key. The raw key is returned once; if the key insert fails the freshly inserted agent row is deleted so no unkeyed binding is left behind. The API-key HMAC secret comes from `config.apiKeyHmacSecret`, NOT `req.hmacSecret` — that field is attached only by the JWT `requireAuth` this mount omits (a review-found bug that would have 500'd every real admission). Admission also refuses (`409 passport_revoked`) when a REVOKED binding for the passport exists in the org and the receipt was not provably issued after the revocation, so a captured receipt cannot resurrect a revoked passport.
 
-`PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. Known, NOT fixed here: `PATCH {status:'suspended'}` records a suspension without deactivating keys (the auth path reads only `api_keys.is_active`), so org-side suspension is decorative today.
+`PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. **Fixed 2026-09-25 (SCRUM-5290):** `PATCH {status:'suspended'}` now deactivates the agent's active keys, and `{status:'active'}` restores them — the auth path reads only `api_keys`, so a status change alone was inert and org-side suspension was decorative. Reactivation matches `revocation_reason = 'admin:agent.suspended'`, a marker deliberately distinct from 0448's `computeid:…` values: an org admin resuming an agent must never revive a key ComputeID suspended. A key-write failure returns 500 rather than reporting a suspension that did not take effect. See `agents-suspend-keys.test.ts`.
+
+**Order is the design, because these are two round-trips and not one transaction.**
+The write that RESTRICTS access commits first, so the crash window fails CLOSED:
+suspend does `keys off -> status suspended` (a crash leaves dead keys and a stale
+`active` status: the agent cannot act, a retry finishes the job); resume does
+`status active -> keys on` (a crash leaves an active status with dead keys: still
+cannot act). Reversing either would leave a suspended agent holding a LIVE key —
+the exact defect this closes. Full atomicity needs a SECURITY DEFINER function
+doing both writes under a row lock, the way 0448 does; that is a migration (T3)
+and is deliberate follow-up, not an oversight.
+
+**The marker namespace is closed at the input boundary.** `revocation_reason` on
+`PATCH /api/v1/keys/:keyId` is otherwise free text, so an admin could have
+revoked a key FOR CAUSE under the literal string `admin:agent.suspended` and had
+a later resume resurrect it — turning a revocation that `keys.ts` documents as
+one-way into a reversible one. `UpdateKeySchema` now rejects any
+`revocation_reason` starting with a reserved prefix (`RESERVED_REVOCATION_PREFIXES`
+= `admin:`, `computeid:`). If you add a machine marker, add its prefix there too.
+
+**Not modelled in TLA.** `machines/agentPassport.machine.ts` models the
+ComputeID-driven `passport.suspended`/`passport.reinstated` transitions, not this
+admin PATCH path, so `suspendedHasNoKey` is asserted here by unit tests and
+ordering, NOT proven. Extending the machine with an admin actor would let TLC
+explore the two-write interleaving directly.
 ## 2026-08-30 R3 — `/verify/:publicId/proof` reports a tri-state `verdict` beside `verified`
 
 - `verify-proof.ts` emits additive `verdict` (`valid` | `invalid` | `unverifiable`) + `verdict_note` on the 200 body. **`verified` is byte-unchanged and NOT deprecated** — §1.8 additive only. Vocabulary, note text and the mapping live in ONE place: `services/worker/src/constants/proofVerdict.ts` (read its `agents.md` entry before touching any of this).
@@ -801,7 +825,8 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 
 - `ai-extract-batch.ts` (`POST /api/v1/ai/extract-batch`) moved from an UP-FRONT batch debit + failure-only refund to **per-item debit/refund inside `parallelMap`** (parity with the single path `ai-extract.ts`). Batch-level double-accounting is now structurally impossible.
 - **No free batch:** the per-row debit runs BEFORE the provider call. When the org has a finite credit balance (`checkAICredits` returned non-null) and the per-row `deductAICredits(...,1)` returns falsy, that row is skipped with `{ success:false, error:'insufficient_credits' }` and the provider is NOT called. The old "log `'…deduction failed — proceeding'` and extract anyway" free-extraction path is gone. An up-front 402 still rejects the whole batch when `hasCredits === false` (cheap guard), but the per-row debit is the authoritative gate.
-- **Only successes stay charged:** each failed/timed-out row refunds **its own** single credit (`deductAICredits(...,-1)`) — there is no blanket `-failedCount` batch refund that could credit work never paid for. Cached rows and unmetered-beta rows (balance null) are never debited, so they are never refunded.
+- **Only successes stay charged:** each failed/timed-out row refunds **its own** single credit — there is no blanket `-failedCount` batch refund that could credit work never paid for. Cached rows and unmetered-beta rows (balance null) are never debited, so they are never refunded.
+  - **2026-09-21 correction (migration 0484).** That refund was written as `deductAICredits(...,-1)`, and migration 0467 closed `deduct_ai_credits` to non-positive amounts on 2026-09-19. From then until 0484 every per-row refund here returned `false` and refunded **nothing**: failed and timed-out rows stayed charged, and so did the single path in `ai-extract.ts`. The refund is now `refundAICredits(orgId, userId, 1)` → `public.refund_ai_credits`, a dedicated service_role-only RPC that takes the same row lock as the debit and floors `used_this_month` at zero. `deductAICredits` rejects a non-positive amount outright, so this cannot recur silently. A failed refund is logged at `error` with the org/user ids before the reconciliation job is enqueued, and never changes the HTTP response.
 - **No swallowed refund:** if a per-row refund fails after a successful debit, the code enqueues an `ai_credits.reconcile_refund` job via `submitJob` (`AI_CREDIT_RECONCILE_JOB_TYPE`, payload = `{orgId,userId,amount,reason,fingerprint,source}`, metadata-only, no row text) instead of `.catch(()=>{})`. A lost refund is an overcharge — it is surfaced, not dropped.
 - **Fingerprint cache (EFF-1 parity):** each row checks `ai_usage_events` by `fingerprint` (same query as the single path) and, on hit, returns `provider:'cache'` with no debit and no provider call → batch retries are idempotent and don't re-charge already-extracted rows. Successful extractions now write `result_json` into the usage event so they populate the cache.
 - **Per-row latency budget:** `BATCH_ROW_LATENCY_BUDGET_MS` (`config.aiBatchRowLatencyBudgetMs`, env `AI_BATCH_ROW_LATENCY_BUDGET_MS`, default 8000, clamped 1000–30000) bounds each provider call; a timeout is treated as a failed+refunded row, not a charge. Sourced via typed config (SCRUM-1258), not an ad-hoc `process.env` read.
@@ -1832,6 +1857,39 @@ skips that org-only quota, and HTTP must not pre-increment or compensate usage a
 
 Approve/revoke, credit transfer and offboard events emit once inside the shared successful cores, covering session and API-key callers. Approve/revoke requires its audit write before emission. Offboard waits for0460's single transaction and uses its returned locked balances; it never re-reads or reclaims credits in HTTP. Idempotent retries emit offboard completion without repeating a reclaim or suspension. Public response shapes are unchanged.
 
+## 2026-09-21 — AI credit failures: 402 is for the CUSTOMER, 503 is for US (SCRUM-4939)
+
+`ai-embed.ts` chose its status with `result.error?.includes('credit') ? 402 : 500`.
+Every credit failure in `ai/embeddings.ts` says "credit", so a 55P03 lock
+timeout on `deduct_ai_credits` or a plain RPC outage answered
+`402 insufficient_credits` — telling a customer who HAS credits to go buy more,
+for a failure that is ours and retryable. Provider errors mentioning
+"credential" matched the same substring from the other direction.
+
+**Never classify a failure by its message text on these routes.** The embedding
+result carries a typed `EmbeddingFailureCode`; both `/ai/embed` and
+`/ai/embed/batch` branch on it. `credit_debit_unavailable` /
+`credit_check_unavailable` → **503 + `Retry-After`**, body
+`credit_system_unavailable` — the reasoning `ai-extract.ts` already carried.
+`insufficient_credits` → 402, genuine exhaustion only. A batch that failed
+ENTIRELY for one credit reason takes that reason's status; a PARTIAL failure
+stays 200 with the per-row codes, because no single status describes it. Both
+are documented additively in `docs.ts`.
+
+**Both extraction routes now enqueue `ai_credits.reconcile_refund` when a refund
+fails after a successful debit.** `ai-extract.ts` previously raised the
+credit-RPC Sentry alert and stopped there — an alert is a notification, not a
+remedy, so an overcharge on the SINGLE path was surfaced to us and never
+returned to the customer, while the identical failure on the batch path was
+reconciled automatically. The producer lives in
+`ai/credit-refund-reconciliation.ts` and is shared.
+
+**Refunds address the DEBIT, not the moment of refunding.** Both routes capture
+an `AICreditDebit` (`recordAICreditDebit()`) when the debit succeeds and pass it
+to `refundAICredits` and to the queue: both credit RPCs select their row with an
+OR across `org_id`/`user_id`, and since migration 0485 the period is scoped by
+`coalesce(p_debited_at, now())`. A refund that returns ZERO credits (the 0485
+`clamped` outcome) is logged at `warn` and is NOT reconciled — nothing is owed.
 ## 2026-09-21 — Import response: additive recipient-link statuses (PR #3034)
 
 `ANCHOR_IMPORT_RESPONSE` publishes two new per-row `status` values
@@ -1863,3 +1921,34 @@ Proven by `machines/orgDomainVerification.machine.ts`, which found window 2 and 
 - **"No trigger demotes it" is wrong for production.** Migration `0482` (on prod 2026-09-21) demotes `domain_verified` and clears the pending token on a non-service_role domain change. See `machines/agents.md` for what that does and does not close.
 - **Added in the same round (test-first, 5 red → 62/62):** the grant is also compare-and-swapped on `ein_tax_id` (it decides `verification_status = 'VERIFIED'` and is NOT one of 0482's guarded columns) — `.is('ein_tax_id', null)` when no EIN was read, never `.eq(..., null)`; a pending token with a NULL or unparseable expiry is refused (it used to never expire); the 6-digit code is compared with `crypto.timingSafeEqual`, a length mismatch being an ordinary wrong code.
 - **NOT fixed here, and it dominates the residual risk:** `confirm-domain` has no per-token attempt limit. A wrong code neither counts nor burns the token; the only throttle is 60 req/min per IP, and the prod origin is reachable directly. The attacker in this threat model is the org admin, who sets `domain = victim.com` and grinds the code. Ticketed separately — do not describe `domain_verified` as sound until a counter burns the token after N failures.
+
+## 2026-09-25 — suspend/revoke are ORG_ADMIN-only (they were not)
+
+`getCallerOrgId` always SELECTed `role` and never checked it, so every lifecycle
+route ran at member level. Agent REGISTRATION has been admin-only since
+migration 0158; `PATCH /:agentId` (suspend/resume) and `DELETE /:agentId`
+(revoke, terminal) were not.
+
+That was survivable only while suspension was decorative. The same change that
+made suspension actually deactivate an agent's API keys turned this into a
+denial-of-service any ordinary org member could perform against the
+organisation's agents — and `DELETE` is unrecoverable. The fix that closed one
+hole widened another; both are closed here.
+
+`getCallerOrgId(userId, res, { requireAdmin: true })` now gates PATCH and DELETE.
+**Reads stay member-visible** — seeing which agents exist is not privileged.
+
+**Closed, same class, same PR branch:** `POST /:agentId/key` mints a key for an
+existing agent and was NOT admin-gated — flagged above as "STILL OPEN", now
+fixed. Minting a working credential is at least as privileged as suspending
+one, and registration being admin-only (migration 0158) made the asymmetry
+indefensible: any ordinary org member could mint a live key for any agent in
+the org. `getCallerOrgId(userId, res, { requireAdmin: true })` now gates this
+route too, reusing the same helper as PATCH/DELETE — no second authorization
+path. Regression-pinned in `agents-key-mint-admin.test.ts` (non-admin 403 with
+no key insert; ORG_ADMIN still succeeds).
+
+**Do not name a table selector literally in a comment in this file.** The
+SCRUM-1277 contract test (`agents-org-scope.test.ts`) scans this file's SOURCE
+TEXT for selectors and will read prose as a query.
+
