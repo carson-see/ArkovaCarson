@@ -31,6 +31,7 @@ import {
   exchangeCode,
   stopDriveChannel,
   driveGrantExcessScopes,
+  resolveDriveOAuthClientId,
   // revokeOAuthToken intentionally NOT imported — see SCRUM-1237 / AUDIT-0424-12
   type DriveClientDeps,
 } from '../../../integrations/oauth/drive.js';
@@ -48,7 +49,7 @@ import {
   type DriveConnectDenyReason,
   type DriveEligibilityDb,
 } from '../../../integrations/connectors/drive-connect-eligibility.js';
-import { parseDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
+import { parseDriveAccountLabel, stringifyDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,6 +73,20 @@ interface StatePayload {
   nonce: string;
   returnTo: string;
   iat: number;
+  /**
+   * Independent review 2026-09-22 (LOW finding — start/callback client
+   * pinning): the `client_id` `buildAuthorizationUrl` actually used to build
+   * THIS consent URL (captured via `resolveDriveOAuthClientId`, deterministic
+   * given the same env). Passed back to `exchangeCode` as `clientIdHint` at
+   * `/oauth/callback` so a config change inside the 10-minute state TTL
+   * (e.g. an operator provisions `GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET`
+   * mid-flow) cannot make the callback re-resolve `'current'` to a
+   * DIFFERENT client than the one Google actually issued the code to.
+   * Optional so a state signed by a pre-fix deploy (in-flight across a
+   * redeploy, within the 10-minute TTL) degrades gracefully to the old
+   * re-resolve-live behavior instead of failing closed.
+   */
+  oauthClientId?: string;
 }
 
 const Provider = 'google_drive' as const;
@@ -365,12 +380,20 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
     try {
       const returnTo = sanitizeReturnTo(parsed.data.return_to, orgId, deps);
       const redirectUri = buildRedirectUri(req);
+      // Independent review 2026-09-22 (LOW finding): capture the client_id
+      // that WILL be used to build the authorize URL below, and pin it into
+      // the signed state so /oauth/callback uses the SAME client even if
+      // config changes inside the 10-minute state TTL. Deterministic given
+      // the same env and no I/O in between — this is not a second live
+      // resolution racing the one inside buildAuthorizationUrl.
+      const oauthClientId = resolveDriveOAuthClientId(deps.env ?? process.env);
       const state = signState({
         orgId,
         userId,
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
+        oauthClientId,
       }, stateSecret);
       const authorizationUrl = buildAuthorizationUrl({
         redirectUri,
@@ -454,9 +477,14 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
 
     try {
       const driveDeps: DriveClientDeps = { env: deps.env, fetchImpl: deps.fetchImpl };
+      // Independent review 2026-09-22 (LOW finding): pin the exchange to
+      // the SAME client /oauth/start used to build the authorize URL —
+      // payload.oauthClientId is absent only for a state signed before this
+      // fix (graceful degrade to the old re-resolve-live behavior).
       const tokens = await exchangeCode({
         code,
         redirectUri: buildRedirectUri(req),
+        clientIdHint: payload.oauthClientId,
         deps: driveDeps,
       });
 
@@ -470,6 +498,13 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       // response even though `include_granted_scopes` is never sent. Refuse
       // BEFORE any further call uses this token, and before anything is
       // persisted — an over-scoped token must never reach Postgres.
+      //
+      // Independent review 2026-09-22: this MUST stay `driveGrantExcessScopes`
+      // (bounded to `DRIVE_DEFAULT_SCOPES` alone), never the wider
+      // `driveExistingGrantExcessScopes` (which also tolerates
+      // `DRIVE_LEGACY_REQUESTED_SCOPES` — correct for classifying an EXISTING
+      // row in connector-health.ts, but would let a fresh over-grant carrying
+      // e.g. `drive.file` through unrefused here, reopening this exact hole).
       const excessScopes = driveGrantExcessScopes(tokens.scope);
       if (excessScopes.length > 0) {
         logger.error(
@@ -546,12 +581,22 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           last_renewal_error: 'changes.watch registration failed during OAuth callback',
         };
 
-      const accountLabelJson = JSON.stringify({
+      const accountLabelJson = stringifyDriveAccountLabel({
         email: identity.accountLabel,
         // GH #1836: random secret, not the org UUID. Never returned by any
         // API response — see connector-health.ts's sanitizeAccountLabel.
         channel_token: channelToken,
         resource_id: subscription?.resourceId ?? null,
+        // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding):
+        // the client_id that actually issued THIS refresh token — public
+        // (rides in the authorize URL), not a secret. Lets a later refresh
+        // (drive-changes-runner.ts's loadDriveAccessToken) resolve the
+        // correct OAuth client generation authoritatively via
+        // resolveDriveClientGeneration, instead of guessing from the scope
+        // string (the mechanism the independent review's CRITICAL finding
+        // showed can misclassify a row the moment the new client pair is
+        // configured).
+        oauth_client_id: tokens.clientId,
       });
 
       const { data: integration, error: upsertError } = await db
