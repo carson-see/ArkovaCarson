@@ -49,6 +49,11 @@ export const queryKeys = {
   folders: (userId: string, orgId?: string | null) => ['folders', userId, orgId ?? 'none'] as const,
   apiKeys: (userId: string) => ['apiKeys', userId] as const,
   apiUsage: (userId: string) => ['apiUsage', userId] as const,
+  // ComputeID / agent passport management (SPEC-AGENTS-UI): org's registered
+  // agents, and a single agent's detail (incl. active API key prefixes),
+  // fetched lazily only when a row is expanded — see src/hooks/useAgents.ts.
+  agents: (userId: string) => ['agents', userId] as const,
+  agentDetail: (agentId: string) => ['agentDetail', agentId] as const,
   platformStats: () => ['platformStats'] as const,
   // QUEUE-01 / SCRUM-2894 — consumer secure-queue (own) vs org secure-queue
   // (admin, org-wide). Distinct scope keys so the two views cache separately.

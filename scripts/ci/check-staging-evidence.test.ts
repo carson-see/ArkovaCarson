@@ -2576,7 +2576,8 @@ describe('check-staging-evidence', () => {
         expect(note).toMatch(/SOAK GATE BYPASSED/);
         expect(note).toMatch(/founder directive 2026-08-01/i);
         expect(note).toMatch(/founder directive\s+2026-09-09/i);
-        expect(note).toMatch(/re-enable before the post-pentest consolidated soak/i);
+        expect(note).toMatch(/founder directive\s+2026-09-26/i);
+        expect(note).toMatch(/2026-10-03T00:00:00Z/);
         expect(note).toMatch(/SOAK_GATE_DISABLED/);
       });
 
@@ -2593,7 +2594,7 @@ describe('check-staging-evidence', () => {
         const r = check({
           ...failingArgs,
           soakGateDisabled: true,
-          nowMs: Date.parse('2026-09-12T00:00:01Z'),
+          nowMs: Date.parse('2026-10-03T00:00:01Z'),
         });
         expect(r.ok).toBe(false);
         expect(r.notes.join(' ')).toMatch(/bypass window closed/i);
@@ -2604,7 +2605,7 @@ describe('check-staging-evidence', () => {
         const r = check({
           ...failingArgs,
           soakGateDisabled: true,
-          nowMs: Date.parse('2026-09-11T23:59:59Z'),
+          nowMs: Date.parse('2026-10-02T23:59:59Z'),
         });
         expect(r.ok).toBe(true);
         expect(r.notes.join(' ')).toMatch(/SOAK GATE BYPASSED/);

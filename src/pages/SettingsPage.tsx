@@ -9,7 +9,7 @@
 import { useState, useCallback } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Gift, Camera } from 'lucide-react';
+import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Gift, Bot, Camera } from 'lucide-react';
 import { LinkedinIcon as Linkedin, GithubIcon as Github, TwitterIcon as Twitter } from '@/components/shared/SocialIcons';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -537,6 +537,22 @@ export function SettingsPage() {
                   <div>
                     <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.API_KEYS}</p>
                     <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.API_KEYS_DESC}</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              {/* SPEC-AGENTS-UI — ComputeID / agent passport management. The
+                  backend (services/worker/src/api/v1/agents.ts) shipped with
+                  no reachable frontend; this is the only in-product link. */}
+              <Link
+                to={ROUTES.SETTINGS_AGENTS}
+                className="flex items-center justify-between rounded-lg px-3 py-3 hover:bg-muted transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Bot className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.AGENTS}</p>
+                    <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.AGENTS_DESC}</p>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />

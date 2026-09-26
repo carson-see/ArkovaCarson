@@ -2,6 +2,15 @@
 _Last updated: 2026-07-21_
 _Last updated: 2026-07-28_
 _Last updated: 2026-08-03_
+_Last updated: 2026-09-25_
+
+## 2026-09-25 SPEC-AGENTS-UI — Breadcrumbs: `/settings/agents`
+
+`Breadcrumbs.tsx` maps `ROUTES.SETTINGS_AGENTS` to Settings >
+`NAV_POLISH_LABELS.BREADCRUMB_AGENTS`, alongside the existing API-keys /
+webhooks / templates / referrals settings sub-pages. Not added to
+`Sidebar.tsx`'s Account section — reached from the `SettingsPage.tsx`
+org-admin card link only, same as Webhooks/Referrals/Credential Templates.
 
 ## What This Folder Contains
 App-level layout components: shell, sidebar, header, breadcrumbs, error boundaries, and branding.

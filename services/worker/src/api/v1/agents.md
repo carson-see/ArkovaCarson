@@ -125,7 +125,31 @@ and remains the only way this route now 503s.
 
 Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and clamped to `PASSPORT_AGENT_SCOPE_ALLOWLIST` (`verify`, `verify:batch`, `anchor:write`/`write:anchors`, `anchor:read`, `read:records`, `read:search`) — never a management scope; unknown scope names are a 400 (`z.enum(API_KEY_SCOPES)`). Keys are minted through `agent-keys.ts::mintAgentKey` so passport-minted keys emit `AGENT_KEY_CREATED` like every other agent key. The raw key is returned once; if the key insert fails the freshly inserted agent row is deleted so no unkeyed binding is left behind. The API-key HMAC secret comes from `config.apiKeyHmacSecret`, NOT `req.hmacSecret` — that field is attached only by the JWT `requireAuth` this mount omits (a review-found bug that would have 500'd every real admission). Admission also refuses (`409 passport_revoked`) when a REVOKED binding for the passport exists in the org and the receipt was not provably issued after the revocation, so a captured receipt cannot resurrect a revoked passport.
 
-`PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. Known, NOT fixed here: `PATCH {status:'suspended'}` records a suspension without deactivating keys (the auth path reads only `api_keys.is_active`), so org-side suspension is decorative today.
+`PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. **Fixed 2026-09-25 (SCRUM-5290):** `PATCH {status:'suspended'}` now deactivates the agent's active keys, and `{status:'active'}` restores them — the auth path reads only `api_keys`, so a status change alone was inert and org-side suspension was decorative. Reactivation matches `revocation_reason = 'admin:agent.suspended'`, a marker deliberately distinct from 0448's `computeid:…` values: an org admin resuming an agent must never revive a key ComputeID suspended. A key-write failure returns 500 rather than reporting a suspension that did not take effect. See `agents-suspend-keys.test.ts`.
+
+**Order is the design, because these are two round-trips and not one transaction.**
+The write that RESTRICTS access commits first, so the crash window fails CLOSED:
+suspend does `keys off -> status suspended` (a crash leaves dead keys and a stale
+`active` status: the agent cannot act, a retry finishes the job); resume does
+`status active -> keys on` (a crash leaves an active status with dead keys: still
+cannot act). Reversing either would leave a suspended agent holding a LIVE key —
+the exact defect this closes. Full atomicity needs a SECURITY DEFINER function
+doing both writes under a row lock, the way 0448 does; that is a migration (T3)
+and is deliberate follow-up, not an oversight.
+
+**The marker namespace is closed at the input boundary.** `revocation_reason` on
+`PATCH /api/v1/keys/:keyId` is otherwise free text, so an admin could have
+revoked a key FOR CAUSE under the literal string `admin:agent.suspended` and had
+a later resume resurrect it — turning a revocation that `keys.ts` documents as
+one-way into a reversible one. `UpdateKeySchema` now rejects any
+`revocation_reason` starting with a reserved prefix (`RESERVED_REVOCATION_PREFIXES`
+= `admin:`, `computeid:`). If you add a machine marker, add its prefix there too.
+
+**Not modelled in TLA.** `machines/agentPassport.machine.ts` models the
+ComputeID-driven `passport.suspended`/`passport.reinstated` transitions, not this
+admin PATCH path, so `suspendedHasNoKey` is asserted here by unit tests and
+ordering, NOT proven. Extending the machine with an admin actor would let TLC
+explore the two-write interleaving directly.
 ## 2026-08-30 R3 — `/verify/:publicId/proof` reports a tri-state `verdict` beside `verified`
 
 - `verify-proof.ts` emits additive `verdict` (`valid` | `invalid` | `unverifiable`) + `verdict_note` on the 200 body. **`verified` is byte-unchanged and NOT deprecated** — §1.8 additive only. Vocabulary, note text and the mapping live in ONE place: `services/worker/src/constants/proofVerdict.ts` (read its `agents.md` entry before touching any of this).
@@ -1897,3 +1921,34 @@ Proven by `machines/orgDomainVerification.machine.ts`, which found window 2 and 
 - **"No trigger demotes it" is wrong for production.** Migration `0482` (on prod 2026-09-21) demotes `domain_verified` and clears the pending token on a non-service_role domain change. See `machines/agents.md` for what that does and does not close.
 - **Added in the same round (test-first, 5 red → 62/62):** the grant is also compare-and-swapped on `ein_tax_id` (it decides `verification_status = 'VERIFIED'` and is NOT one of 0482's guarded columns) — `.is('ein_tax_id', null)` when no EIN was read, never `.eq(..., null)`; a pending token with a NULL or unparseable expiry is refused (it used to never expire); the 6-digit code is compared with `crypto.timingSafeEqual`, a length mismatch being an ordinary wrong code.
 - **NOT fixed here, and it dominates the residual risk:** `confirm-domain` has no per-token attempt limit. A wrong code neither counts nor burns the token; the only throttle is 60 req/min per IP, and the prod origin is reachable directly. The attacker in this threat model is the org admin, who sets `domain = victim.com` and grinds the code. Ticketed separately — do not describe `domain_verified` as sound until a counter burns the token after N failures.
+
+## 2026-09-25 — suspend/revoke are ORG_ADMIN-only (they were not)
+
+`getCallerOrgId` always SELECTed `role` and never checked it, so every lifecycle
+route ran at member level. Agent REGISTRATION has been admin-only since
+migration 0158; `PATCH /:agentId` (suspend/resume) and `DELETE /:agentId`
+(revoke, terminal) were not.
+
+That was survivable only while suspension was decorative. The same change that
+made suspension actually deactivate an agent's API keys turned this into a
+denial-of-service any ordinary org member could perform against the
+organisation's agents — and `DELETE` is unrecoverable. The fix that closed one
+hole widened another; both are closed here.
+
+`getCallerOrgId(userId, res, { requireAdmin: true })` now gates PATCH and DELETE.
+**Reads stay member-visible** — seeing which agents exist is not privileged.
+
+**Closed, same class, same PR branch:** `POST /:agentId/key` mints a key for an
+existing agent and was NOT admin-gated — flagged above as "STILL OPEN", now
+fixed. Minting a working credential is at least as privileged as suspending
+one, and registration being admin-only (migration 0158) made the asymmetry
+indefensible: any ordinary org member could mint a live key for any agent in
+the org. `getCallerOrgId(userId, res, { requireAdmin: true })` now gates this
+route too, reusing the same helper as PATCH/DELETE — no second authorization
+path. Regression-pinned in `agents-key-mint-admin.test.ts` (non-admin 403 with
+no key insert; ORG_ADMIN still succeeds).
+
+**Do not name a table selector literally in a comment in this file.** The
+SCRUM-1277 contract test (`agents-org-scope.test.ts`) scans this file's SOURCE
+TEXT for selectors and will read prose as a query.
+
