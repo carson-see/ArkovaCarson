@@ -181,6 +181,22 @@ if [[ "$has_section" == "true" ]] && [[ "$has_tier" == "true" ]]; then
   exit 0
 fi
 
+# Founder-directive bypass (mirrors scripts/ci/check-staging-evidence.ts).
+# When the repository variable SOAK_GATE_DISABLED is "true" the CI gate
+# short-circuits to a pass without reading any evidence, so demanding an
+# evidence block here would only make an agent invent one. The hook lets the
+# command through ONLY when the body ALSO carries an explicit `## Soak waiver`
+# heading: the PR has to say, in its own words, that no soak was performed.
+# The variable alone does not unlock it; the waiver alone does not unlock it.
+# The window itself (SOAK_GATE_BYPASS_EXPIRES_AT) is enforced by the CI gate,
+# not here — after expiry the gate reds the PR and Mergify will not merge it.
+if printf '%s' "$body" | grep -qiE '^##[[:space:]]+Soak[[:space:]]+waiver([^[:alnum:]]|$)'; then
+  soak_gate_disabled=$(bounded_gh variable get SOAK_GATE_DISABLED 2>/dev/null || true)
+  if [[ "$soak_gate_disabled" == "true" ]]; then
+    exit 0
+  fi
+fi
+
 # Block with structured reason.
 missing=()
 [[ "$has_section" != "true" ]] && missing+=('## Staging Soak Evidence section')
