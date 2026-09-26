@@ -2258,3 +2258,71 @@ this module is the allow-listed owner of lease-row access, so lease primitives
 belong here, not in an allow-list exception for the caller. Semantics are pinned
 in `__tests__/run-lease.test.ts` ("dirty marker"): unconditional set without
 holding the lease, read-and-clear exactly once, fail-soft on store errors.
+
+## 2026-09-25 — `attestationExpiry.ts` no longer queues (nonexistent) webhook events
+
+**Corrects the two stale mentions above** (the `.in()`-chunking note referencing this file's
+"`.insert()` webhook loop", and the N+1-cleanup table row "Webhooks collected then
+bulk-inserted BEFORE status update"): both described code that has been removed, not a rule
+to keep following.
+
+`checkAttestationExpiry` used to build `attestation.expiring` / `attestation.expired` webhook
+event rows and bulk-insert them into a table called `webhook_events` — which does not exist
+anywhere in `supabase/migrations` or the generated `database.types.ts`. Every insert failed at
+runtime. Worse: the SCRUM-1296 ordering fix ("insert webhooks BEFORE updating status; skip the
+status update if the insert fails, so a failed webhook never silently loses an event") meant
+that for every attestation carrying an `attester_org_id`, that permanent insert failure also
+permanently skipped the `EXPIRED` status transition. This job most likely never actually
+expired an org-attributed attestation in any environment where the table was absent — which,
+per `supabase/migrations` and `database.types.ts`, is everywhere.
+
+Neither event type was ever registered in `webhooks/payload-schemas.ts`'s
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` either, so no org could have subscribed even if the insert had
+worked. No UI, docs, or SDK type ever referenced either event (confirmed by full-repo search).
+
+**Fix:** removed the webhook-queuing code path entirely (the `webhookInserts` array, both
+`.from('webhook_events').insert(...)` call sites, and the `webhooksFailed` gate). The status
+update to `EXPIRED` now runs unconditionally for every newly-expired, currently-ACTIVE
+attestation — there is no longer a side channel to lose. `ExpiryResult` drops the
+`webhooks_queued` field (it always read 0 in any real environment). `n-plus-one-cleanup.test.ts`'s
+"attestationExpiry bulk operations" describe block was rewritten to match: it no longer asserts
+on `webhook_events`/`webhooks_queued`, and gained an explicit assertion that the status update
+runs even though nothing gates it now.
+
+If attestation expiry webhooks are wanted later, add a real `dispatchWebhookEvent` call site
+with a registered schema (see `webhooks/compliance.ts` for the pattern this job should have
+followed originally) — do not resurrect the direct-table-insert shape.
+
+`scripts/ci/check-webhook-event-emission-registration.ts` (new, `scripts/ci/agents.md`) now
+fails CI if a future emitter anywhere in `services/worker/src` queues an event type absent from
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` — confirmed, before this fix landed, to flag exactly
+`attestation.expiring` and `attestation.expired` against this file.
+
+## 2026-09-26 — `attestationExpiry.ts`: P2 review follow-up, gate the bulk UPDATE on ACTIVE and count what it actually touched
+
+Review on PR #3091 (the same PR that removed the dead webhook-queuing path above) found the bulk
+EXPIRED transition itself had two bugs, independent of the webhook removal:
+
+1. **`newly_expired` counted attempted candidates, not successful updates.** The code did
+   `result.newly_expired += justExpired.length` from the SELECT that found candidates, before the
+   UPDATE loop even ran — so a chunk whose UPDATE errored (logged, but not otherwise handled) was
+   still reported as expired, and the returned `ExpiryResult` overstated what actually happened.
+2. **The UPDATE had no `status = 'ACTIVE'` guard of its own.** It was keyed only on `.in('id',
+   chunk)`. The SELECT and the UPDATE are not atomic — a row a concurrent process moved off ACTIVE
+   (e.g. to REVOKED) in the gap between the two would be silently clobbered back to EXPIRED by this
+   job, overwriting a status change from RIGHT UNDER the ID unconditionally.
+
+**Fix:** the UPDATE now carries its own `.eq('status', 'ACTIVE')` before `.in('id', chunk)`, and
+appends `.select('id')`; `newly_expired` is incremented per chunk by `updated?.length ?? 0` (the
+rows the UPDATE actually returned), not by the SELECT candidate count. A chunk whose UPDATE errors
+now `continue`s (still logged) without incrementing the counter at all.
+
+**New test file:** `attestationExpiry.test.ts` did not exist before this fix — the only prior
+coverage was indirect, through `n-plus-one-cleanup.test.ts`'s "attestationExpiry bulk operations"
+describe block (chunking/webhook-removal focused) and `routes/cron.test.ts` (route wiring). TDD:
+wrote the new file first, confirmed 3 of 4 cases RED against the pre-fix code (partial-update
+undercount, the missing `eq('status', 'ACTIVE')` gate, and error-chunk overcounting), then fixed
+and confirmed GREEN. `n-plus-one-cleanup.test.ts`'s two bulk-update tests needed their mocked
+UPDATE result updated to return the rows it "touched" (`{ data: [...ids], error: null }` instead
+of `{ data: null, error: null }`) to match the new counting semantics — the assertions themselves
+(`newly_expired` values, single-bulk-call shape) are unchanged, only the mock's realism.
