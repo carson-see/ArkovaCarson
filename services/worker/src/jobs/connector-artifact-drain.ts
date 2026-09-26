@@ -554,7 +554,9 @@ async function supersedeConnectorAnchor(
   // A transport error can follow a committed transaction (same posture as the
   // atomic materialize RPC below) — never compensate by assuming it failed.
   if (error) return { outcome: 'lost_lease' };
-  const parsedId = z.string().uuid().safeParse(data);
+  // RPC result is a Postgres uuid read back from the DB: shape-only validation
+  // (FD-15 / BUG-2026-08-12-003), never strict RFC .uuid() here.
+  const parsedId = dbUuid('supersede_anchor result').safeParse(data);
   if (!parsedId.success) return { outcome: 'lost_lease' };
   const newAnchorId = parsedId.data;
 
