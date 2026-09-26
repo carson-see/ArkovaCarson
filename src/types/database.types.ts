@@ -8662,6 +8662,10 @@ export type Database = {
         Args: { p_anchor_id: string; p_org_id: string; p_user_id: string }
         Returns: Json
       }
+      revoke_agent_and_keys: {
+        Args: { p_actor_id: string; p_agent_id: string; p_org_id: string }
+        Returns: Json
+      }
       revoke_anchor: {
         Args: { anchor_id: string; reason?: string }
         Returns: undefined

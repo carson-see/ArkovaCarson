@@ -10,6 +10,16 @@ full committed-ledger generation remains a CI/staging release check.
 
 Shared TypeScript type definitions for the worker service.
 
+## 2026-09-26 — SCRUM-5300 / migration 0488 manual RPC delta
+
+`public.revoke_agent_and_keys(uuid, uuid, uuid) -> jsonb` was inserted manually
+in generator alphabetical order with arguments `p_actor_id`, `p_agent_id`, and
+`p_org_id`. The same four-line entry is mirrored in
+`src/types/database.types.ts`. This was a bounded signature addition from the
+reviewed SQL; Docker was unavailable, so no full `supabase gen types --local`
+regeneration or full-schema compatibility claim is made. Regenerate after 0488
+is applied to an isolated complete local schema and review any broader drift.
+
 ## 2026-08-30 — org_integrations.webhook_id (manual patch, not a live regen)
 
 Migration `0426` (file-only, unapplied) adds `public.org_integrations.webhook_id text`; hand-patched
