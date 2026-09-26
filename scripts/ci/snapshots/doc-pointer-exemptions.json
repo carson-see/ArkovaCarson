@@ -9,7 +9,7 @@
     {
       "doc": "scripts/ci/agents.md",
       "path": "services/worker/.sonarcloud.properties",
-      "reason": "Negative example, same sentence as src/lib/sonar-project.properties — a path the root-anchored carve-out regex must keep rejecting."
+      "reason": "Negative example, same sentence as src/lib/sonar-project.properties \u2014 a path the root-anchored carve-out regex must keep rejecting."
     },
     {
       "doc": "scripts/ci/agents.md",
@@ -34,12 +34,17 @@
     {
       "doc": "docs/api/agents.md",
       "path": "docs/partners/docusign-integration-guide.html",
-      "reason": "SCRUM-3906 task instructions named this file as needing a search-availability update. It is untracked scratch work in another session's working directory only (confirmed via git status at task start) — it does not exist on main or in any PR branch. The pointer documents that it was checked for and found absent, not a promise it exists."
+      "reason": "SCRUM-3906 task instructions named this file as needing a search-availability update. It is untracked scratch work in another session's working directory only (confirmed via git status at task start) \u2014 it does not exist on main or in any PR branch. The pointer documents that it was checked for and found absent, not a promise it exists."
     },
     {
       "doc": "docs/api/agents.md",
       "path": "docs/partners/hakichain-integration-guide.html",
-      "reason": "Same as docusign-integration-guide.html above — named by the SCRUM-3906 task instructions, confirmed untracked/absent from main via git status, not created by this PR."
+      "reason": "Same as docusign-integration-guide.html above \u2014 named by the SCRUM-3906 task instructions, confirmed untracked/absent from main via git status, not created by this PR."
+    },
+    {
+      "doc": "services/worker/scripts/agents.md",
+      "path": "services/worker/src/integrations/connectors/drive-folder-mirror.ts",
+      "reason": "PR #3086 (feat/mirror-connected-drive-folders) is still a draft, unmerged branch based off an earlier main. The pr3086-drive-folder-mirror-driver.ts entry documents, by name, that this file does NOT exist on the driver's own branch (feat/t2-soak-drivers, based on origin/main) and that the driver therefore reimplements the reviewed loop shape locally instead of importing it \u2014 the pointer is the whole point of that sentence, not a promise the file is here."
     }
   ]
 }

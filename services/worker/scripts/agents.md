@@ -4,6 +4,65 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 
 ## Soak drivers
 
+- `pr3083-agent-suspend-keys-driver.ts` (+ `.test.ts`) — admission driver for PR #3083
+  (`fix/agent-suspend-deactivates-keys`, T2). `scripts/staging/provision-isolated-rig.sh` DEFAULTS
+  `driver_path` to `pr1408-chain-resilience-driver.ts` — using that default for this PR's soak would
+  drive zero of the changed behavior. Set
+  `STAGING_DRIVER_PATH=services/worker/scripts/pr3083-agent-suspend-keys-driver.ts` before
+  provisioning. Drives 5 named assertions against `api/v1/agents.ts`'s `setAgentKeysActive` (suspend
+  deactivates keys BEFORE the agent row flips, resume restores them AFTER) and `api/v1/keys.ts`'s
+  reserved `admin:`/`computeid:` revocation-reason prefixes: a suspended agent's key is rejected (401)
+  by a real authenticated endpoint (`POST /api/v1/oracle/verify`), a resumed agent's key authenticates
+  again, a single zero-retry read immediately after the suspend response already shows the key
+  deactivated (the nearest real substitute for the literal two-round-trip race — see the driver's own
+  SCOPING NOTE for why the literal race is structurally unobservable from outside), a key already
+  revoked FOR CAUSE under a `computeid:` marker is NEVER revived by an unrelated admin resume
+  (NEGATIVE CONTROL), and a bare rename never touches keys. `--live` needs `--target-url` plus
+  `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY` (fixtures — one org, one
+  ORG_ADMIN owner — are seeded/reused idempotently, keyed on the `pr3083-soak` prefix; the anon key
+  signs the fixture user in for a real Supabase JWT bearer token, since `/api/v1/agents` is
+  JWT-authenticated, not API-key-authenticated); default mode is `self-test`, whose rows are
+  `evidenceForSoak: false` and must never be cited as soak evidence.
+
+- `pr3084-drive-folder-cap-driver.ts` (+ `.test.ts`) — admission driver for PR #3084
+  (`fix/drive-folder-cap-three`, T2). Same `STAGING_DRIVER_PATH` override requirement as above —
+  set it to `services/worker/scripts/pr3084-drive-folder-cap-driver.ts`. Drives 4 named assertions
+  against `rules/schemas.ts`'s `TriggerConfigWorkspaceFileModified` `superRefine`, all through the REAL
+  `POST /admin/rules` HTTP API (never by importing the Zod schema directly — a direct API caller is
+  exactly who the cap exists to stop): exactly 3 `drive_folders` (array shape) is accepted, 4 is
+  rejected, the legacy `folder_id` + 3 array entries (4 bound total) is rejected (THE ACTUAL DEFECT the
+  PR closes — an array-only `.max()` never sees the legacy shape at all), and `folder_id` + 2 array
+  entries (3 bound total) is accepted (proving the fix bounds the TOTAL rather than banning the legacy
+  shape outright). Fixture rules use a bare `AUTO_ANCHOR` action with no `tag`, so PR #3086's connector
+  mirroring/adopt-vs-create race check never fires for them. `--live` needs `--target-url` plus
+  `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`; default mode is `self-test`.
+
+- `pr3086-drive-folder-mirror-driver.ts` (+ `.test.ts`) — admission driver for PR #3086
+  (`feat/mirror-connected-drive-folders`, T2). Same override requirement — set
+  `STAGING_DRIVER_PATH=services/worker/scripts/pr3086-drive-folder-mirror-driver.ts`. Drives 4 named
+  assertions against the new eager mirror wired into `POST`/`PATCH /admin/rules`: saving a
+  connector-managed (`action_config.tag='connector-google_drive'`) Drive rule with 2 `drive_folders`
+  eventually mirrors exactly 2 `public.folders` rows (polled — mirroring is fire-and-forget); a re-save
+  with the same folders creates no additional rows and no id churn (idempotent, reusing migration
+  0462's unique index); the SAME `connector_source_id` connected under a SECOND, independent org
+  mirrors into its OWN distinct row (tenant isolation, fails closed on any collision); and the
+  review-added per-folder isolation (one folder's thrown exception must not suppress the others).
+  - **Assertion 4 is NOT a live-rig probe and does NOT import PR #3086's production module.** This
+    driver's own branch (`feat/t2-soak-drivers`) is based on `origin/main`, which does not contain
+    `services/worker/src/integrations/connectors/drive-folder-mirror.ts` — that file exists only on
+    PR #3086's own still-draft branch. Importing it would fail both typecheck and `tsx` invocation.
+    Assertion 4 instead drives a LOCAL REIMPLEMENTATION (`driverMirrorFolders`, transcribed from the
+    reviewed source at commit `3156a1e28`) of the exact per-item try/catch loop shape against a
+    fault-injecting fake `upsertOne` — the same "reimplement locally, don't import the target PR's
+    src" pattern `pr1408-chain-resilience-driver.ts` already uses. Re-diff it against the real
+    `mirrorConnectedDriveFolders` loop body if PR #3086's head moves. It is real, independently-failable
+    evidence for the ALGORITHM; it is not evidence that the actually-deployed rig has this shape.
+  - `--live` needs `--target-url` plus `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` /
+    `SUPABASE_ANON_KEY` (two org fixtures, `pr3086-soak-org-a` / `-org-b`, each with a seeded
+    `org_integrations` google_drive connection — seeded directly rather than via a real OAuth round
+    trip, the same idiom PR #3087's driver used for its own DS-04 bypass). Assertion 4 runs identically
+    in both `self-test` and `--live` mode since it is rig-independent either way.
+
 - `pr2525-attestation-park-driver.ts` (+ `.test.ts`) — admission driver for the PR #2525 attestation
   park. Probes `GET /api/v1/verify/attestation/:id` and asserts the one behavior that PR changes:
   404 well-formed / 400 malformed with the `ARK-ATT` routing hint, never an APPLICATION 5xx, and
