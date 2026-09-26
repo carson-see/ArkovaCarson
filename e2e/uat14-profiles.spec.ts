@@ -70,7 +70,7 @@ async function openEditor(page: import('@playwright/test').Page, view: 'settings
     '/src/components/auth/TwoFactorSetup.tsx': `export const TwoFactorSetup=()=>null;`,
     '/src/components/auth/IdentityVerification.tsx': `export const IdentityVerification=()=>null;`,
     '/src/lib/workerClient.ts': `export const WORKER_URL='';export const workerFetch=async()=>new Response(JSON.stringify({}),{status:200});`,
-    '/src/lib/supabase.ts': `export const authLinkErrorFromUrl=()=>null;export const shouldRedirectToAuthCallback=()=>false;function query(){const q={};for(const m of ['select','eq','is','order','range','or','gte','lte','in'])q[m]=()=>q;q.single=async()=>({data:{role:'owner'},error:null});q.maybeSingle=q.single;q.then=r=>r({data:[],count:0,error:null});return q}export const supabase={from:query,auth:{getSession:async()=>({data:{session:null}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}})},storage:{from:()=>({upload:async(path,blob)=>{await fetch('/__uat14/upload',{method:'POST',headers:{'x-path':path,'x-type':blob.type},body:blob});return{error:null}},remove:async()=>({error:null}),createSignedUrl:async path=>({data:{signedUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='},error:null})})}};`,
+    '/src/lib/supabase.ts': `export const authLinkErrorFromUrl=()=>null;export const shouldRedirectToAuthCallback=()=>false;function query(){const q={};for(const m of ['select','eq','is','order','range','or','gte','lte','in'])q[m]=()=>q;q.single=async()=>({data:{role:'owner'},error:null});q.maybeSingle=q.single;q.then=r=>r({data:[],count:0,error:null});return q}export const supabase={from:query,auth:{getSession:async()=>({data:{session:null}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}})},storage:{from:()=>({upload:async(path,blob)=>{await fetch('/__uat14/upload',{method:'POST',headers:{'x-path':path,'x-type':blob.type},body:blob});return{error:null}},remove:async()=>({error:null}),getPublicUrl:path=>({data:{publicUrl:'https://public.example/'+path}}),createSignedUrl:async path=>({data:{signedUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='},error:null})})}};`,
   };
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
@@ -142,11 +142,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   await expect(page.getByRole('heading', { name: 'Analytical Society' })).toBeVisible();
   await page.locator('input[type=file]').first().setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: onePixelPng });
   await expect.poll(() => orgWrites.some(write => typeof write.logo_storage_path === 'string')).toBe(true);
-  expect(uploads[0]).toMatch(new RegExp(`^organizations/${PUBLIC_ORG}/logo/.+\\.png$`));
+  // Organization media is also mirrored to the public bucket (replaceProfileMedia's
+  // publicMirror branch), so the upload log interleaves mirror paths; assert on the
+  // owned private path's shape rather than its index.
+  expect(uploads.some(path => new RegExp(`^organizations/${PUBLIC_ORG}/logo/.+\\.png$`).test(path))).toBe(true);
   await page.getByRole('tab', { name: 'Settings' }).click();
   await page.locator('#org-banner').setInputFiles({ name: 'banner.png', mimeType: 'image/png', buffer: onePixelPng });
   await expect.poll(() => orgWrites.some(write => typeof write.banner_storage_path === 'string')).toBe(true);
-  expect(uploads[1]).toMatch(new RegExp(`^organizations/${PUBLIC_ORG}/banner/.+\\.png$`));
+  expect(uploads.some(path => new RegExp(`^organizations/${PUBLIC_ORG}/banner/.+\\.png$`).test(path))).toBe(true);
   await expect(page.getByAltText('Current organization banner')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
   await page.screenshot({ path: shot(`organization-editor-${viewport.width}.png`), fullPage: true });
