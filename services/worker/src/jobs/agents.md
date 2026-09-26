@@ -1,3 +1,15 @@
+## 2026-09-26 — `supersedeConnectorAnchor` validates the RPC's returned id with `dbUuid()`, not `.uuid()` (PR #3111, SCRUM-5297)
+
+The 2026-09-25 supersession entry below shipped one strict `z.string().uuid()` on the anchor id
+that `supersede_anchor` returns. That id is Postgres-generated, and FD-15 / BUG-2026-08-12-003 is
+the rule that DB-sourced UUIDs go through `dbUuid()` (`utils/db-row-validation.ts`) because
+Postgres holds uuid values whose version/variant bits fail Zod's RFC check. On such a value the
+strict parse failed and a committed supersession was reported as `lost_lease`, leaving the
+`connector_artifact` row unlinked after the new anchor already existed. The ratchet
+`utils/external-uuid-strictness.ratchet.test.ts` pins this file and was red on `main` from #3087's
+merge until #3111. Rule for this file: every id read back from the DB or an RPC is `dbUuid(...)`;
+strict `.uuid()` is reserved for external / user-supplied input, and the ratchet enforces the split.
+
 ## 2026-09-25 — Founder decision: connector document updates SUPERSEDE, never duplicate or REVOKE
 
 `connector-artifact-drain.ts` previously did a plain `INSERT INTO anchors(...)` per drained

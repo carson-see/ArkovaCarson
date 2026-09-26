@@ -14,6 +14,10 @@
 
 ## Now
 
+### 2026-09-26T15:45Z — FD-15 ratchet red on `main` since #3087; fix is draft PR #3111 (T3, soak owed)
+
+`external-uuid-strictness.ratchet.test.ts` fails on `main` because #3087 (`19b687616`) parsed the `supersede_anchor` return id with strict `.uuid()` in `connector-artifact-drain.ts`. One-line fix to `dbUuid()` is [#3111](https://github.com/carson-see/ArkovaCarson/pull/3111), head `a348eba2e`, Jira [SCRUM-5297](https://arkova.atlassian.net/browse/SCRUM-5297), spec page 156172289, bug log BUG-2026-09-26-001. Detector says T3 (anchor pipeline), so it needs a 24 h isolated-rig soak; #3087's own rig `tjpsezcbwlhdgiyddtkt` is soaking the merged head without this fix. Until #3111 lands, every worker `Tests` run on `main` carries this one red case. No prod state claimed.
+
 ### 2026-09-26T03:20Z — external tech-lead engagement (Claude Opus 5): 90-day tech-debt audit; 4 merged, 6 soaking, ONE ordering constraint that is a security control
 
 **Read the merge-order constraint in "Do not merge out of order" below before touching #3093.**
