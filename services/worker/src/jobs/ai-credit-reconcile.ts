@@ -21,14 +21,21 @@
  *
  * WHAT THIS DOES
  *
- *   1. Re-applies the lost refund (`deductAICredits(org, user, -amount)`),
- *      which is the actual remedy — the customer gets the credit back.
+ *   1. Re-applies the lost refund (`refundAICredits(debit, amount)`), which is
+ *      the actual remedy — the customer gets the credit back. Until migration
+ *      0484 this was `deductAICredits(org, user, -amount)`, which migration
+ *      0467 had already turned into a no-op, so this last line of defence
+ *      against an overcharge reconciled nothing and dead-lettered every job it
+ *      claimed.
  *   2. On a refund that still fails, throws so `processNextJob` applies the
  *      shared exponential-backoff retry and, on the final attempt, the dead
  *      letter policy.
  *   3. On that final attempt, emits a Sentry event BEFORE throwing, so a
  *      permanently unreconciled overcharge produces an operator-visible
  *      signal rather than one more silent `dead` row.
+ *   4. Treats a CLAMPED refund (migration 0485: zero credits actually
+ *      returned) as its own terminal outcome — completed, but logged at `warn`
+ *      with a distinct Sentry message, never counted as "reconciled".
  *
  * SAFETY: this job MINTS credits. Its payload is therefore validated with Zod
  * (bounded positive integer amount, at least one of org/user) before any
@@ -40,7 +47,7 @@
 import { z } from 'zod';
 import { dbUuid } from '../utils/db-row-validation.js';
 
-import { deductAICredits } from '../ai/cost-tracker.js';
+import { refundAICredits } from '../ai/cost-tracker.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob, type Job } from '../utils/jobQueue.js';
 import { Sentry } from '../utils/sentry.js';
@@ -65,9 +72,18 @@ export const MAX_RECONCILABLE_AMOUNT = 1000;
 
 const ReconcileRefundPayloadSchema = z
   .object({
+    // S8: the ids the DEBIT used, carried verbatim. Both RPCs select their row
+    // with an OR across these two columns, so refunding with a different subset
+    // than the debit used can land on a different `ai_credits` row.
     orgId: dbUuid('orgId').nullish(),
     userId: dbUuid('userId').nullish(),
     amount: z.number().int().positive().max(MAX_RECONCILABLE_AMOUNT),
+    // S2: the instant the debit was taken, so a retry that runs after a month
+    // rollover still refunds the period the charge is actually in. OPTIONAL and
+    // nullable on purpose — jobs enqueued before this shipped carry no
+    // `debitedAt`, and the RPC falls back to `now()` for them, i.e. exactly the
+    // behaviour they were enqueued under. Backwards compatible by construction.
+    debitedAt: z.string().datetime({ offset: true }).nullish(),
     reason: z.string().max(200).nullish(),
     source: z.string().max(100).nullish(),
   })
@@ -121,34 +137,70 @@ async function reconcileOne(job: Job<unknown>): Promise<void> {
     throw new Error('ai_credit_reconcile_invalid_payload');
   }
 
-  const { orgId, userId, amount, reason, source } = parsed.data;
+  const { orgId, userId, amount, debitedAt, reason, source } = parsed.data;
   const context = {
     jobId: job.id,
     attempts: job.attempts,
     orgId: orgId ?? null,
     userId: userId ?? null,
     amount,
+    debitedAt: debitedAt ?? null,
     reason: reason ?? null,
     source: source ?? null,
   };
 
-  // A NEGATIVE deduction is the refund. Same helper (and therefore the same
-  // `deduct_ai_credits` RPC) the inline refund used, so this is a retry of the
-  // exact operation that failed, not a second, divergent code path.
-  const refunded = await deductAICredits(orgId ?? undefined, userId ?? undefined, -amount);
+  // Same helper (and therefore the same `refund_ai_credits` RPC) the inline
+  // refund used, so this is a retry of the exact operation that failed, not a
+  // second, divergent code path. `amount` is POSITIVE — the payload's Zod
+  // schema already bounds it to a positive integer <= MAX_RECONCILABLE_AMOUNT,
+  // which `refundAICredits` and the RPC independently re-check. The ids and the
+  // instant are the DEBIT's, replayed verbatim (S8 / S2).
+  const outcome = await refundAICredits(
+    { orgId: orgId ?? undefined, userId: userId ?? undefined, debitedAt: debitedAt ?? undefined },
+    amount,
+  );
 
-  if (!refunded) {
-    logger.error(context, 'AI credit refund reconciliation failed — org remains overcharged');
+  // S1. `clamped` is NOT a success and NOT a retryable failure — it is the
+  // period's floor reporting that the credit was already back, which is the
+  // expected outcome of the double refund this queue structurally permits (the
+  // operation has no idempotency key, and a refund that COMMITS and whose
+  // response is then lost is re-enqueued). Until 0485 the RPC answered `true`
+  // here and this line logged "AI credit refund reconciled" over a job that
+  // moved zero credit.
+  //
+  // The job COMPLETES: retrying cannot turn a clamp into a refund, and burning
+  // the retry budget would end in a dead-letter row that reads like an
+  // unresolved overcharge. It is logged at `warn` with the ids and given its
+  // own Sentry message so it stays countable and cannot hide inside the
+  // reconciled total.
+  if (outcome.status === 'clamped') {
+    logger.warn(
+      context,
+      'AI credit refund reconciliation returned ZERO credits — the period floor clamped it; '
+      + 'the credit was already back (likely an earlier attempt that committed). Job completed, nothing moved.',
+    );
+    Sentry.captureMessage(
+      'ai_credits.reconcile_refund clamped to zero — nothing refunded, job completed',
+      { level: 'warning', extra: context },
+    );
+    return;
+  }
+
+  if (outcome.status !== 'refunded') {
+    logger.error(
+      { ...context, outcome: outcome.status },
+      'AI credit refund reconciliation failed — org remains overcharged',
+    );
     if (isFinalAttempt(job)) {
       Sentry.captureException(
         new Error('ai_credits.reconcile_refund exhausted retries — customer remains overcharged'),
-        { extra: context },
+        { extra: { ...context, outcome: outcome.status } },
       );
     }
     throw new Error('ai_credit_refund_reconciliation_failed');
   }
 
-  logger.info(context, 'AI credit refund reconciled');
+  logger.info({ ...context, refunded: outcome.amount }, 'AI credit refund reconciled');
 }
 
 /**

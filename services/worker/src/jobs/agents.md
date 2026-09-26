@@ -2037,6 +2037,47 @@ The revocation and attestation anchoring jobs emit registered finality events
 using public resource ids and chain receipt fields only. Never restore
 `anchor_id`, `attestation_id`, or `fingerprint` to either payload.
 
+## 2026-09-21 — CORRECTION to the 2026-08-10 `ai_credits.reconcile_refund` entry (SCRUM-4939)
+
+The 2026-08-10 section (B) above says the consumer "re-applies the refund via
+the same `deductAICredits(org, user, -amount)` helper that failed inline". That
+sentence was accurate when written and is **false now**; it is corrected here
+rather than edited in place, because this file is append-only (union-merged, and
+`scripts/ci/check-agents-md-append-only.ts` treats a vanished line as a drop).
+
+`deductAICredits` is no longer a refund path at all, and has not been one since
+migration 0467 reached prod on 2026-09-19: 0467 added
+`IF p_amount IS NULL OR p_amount <= 0 … RETURN false` to `deduct_ai_credits`,
+which silently turned every refund in this repo — including this reconciler's —
+into a no-op. The reconciler therefore reconciled nothing and dead-lettered
+every job it claimed, for the entire window between 0467 and this PR.
+
+What `ai-credit-reconcile.ts` does today:
+
+- Calls **`refundAICredits(debit, amount)`** → `public.refund_ai_credits`
+  (migration 0484, re-shaped by 0485). A POSITIVE amount through a dedicated
+  RPC. `deduct_ai_credits` stays closed to non-positive amounts on purpose — a
+  negative debit is an unbounded credit grant — and `deductAICredits` now
+  rejects one in TypeScript before the RPC so the mistake cannot recur silently.
+- Passes the **debit's own ids and instant**, not the reconciler's. Both credit
+  RPCs select their row with an OR across `org_id` and `user_id`, so a refund
+  supplying a different subset of the ids can land on a different `ai_credits`
+  row; and since 0485 the period is scoped by `coalesce(p_debited_at, now())`,
+  so a retry running after a month rollover still refunds the period the charge
+  is in. The payload carries `debitedAt` (optional ISO datetime — jobs enqueued
+  before 0485 validate and run unchanged, falling back to `now()`).
+- Distinguishes a **CLAMPED** refund. 0485 returns the credits actually
+  returned; zero means the period floor had nothing left to give back (the
+  expected outcome of the double refund this queue structurally permits, since
+  the operation has no idempotency key). That is neither success nor a
+  retryable failure: the job COMPLETES, logged at `warn` with the ids and given
+  its own `Sentry.captureMessage`, and is never counted as reconciled. Under
+  0484 it answered `true` and this consumer logged "AI credit refund
+  reconciled" over a job that moved zero credit.
+- The producer side is now shared: `ai/credit-refund-reconciliation.ts` is
+  enqueued by BOTH `api/v1/ai-extract-batch.ts` and `api/v1/ai-extract.ts`. The
+  single-extraction path previously raised a Sentry alert and stopped, so an
+  overcharge there was surfaced to us and never returned to the customer.
 ## 2026-09-22 — Lease dirty marker lives here (PR #3054)
 
 `markRunLeaseDirty` / `checkAndClearRunLeaseDirty` in `run-lease.ts` are the

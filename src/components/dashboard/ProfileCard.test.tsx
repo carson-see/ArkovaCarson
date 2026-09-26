@@ -142,4 +142,24 @@ describe('ProfileCard', () => {
       expect(screen.getByText('VU')).toBeInTheDocument();
     });
   });
+
+  // The avatar carried a hover-revealed "Change profile picture" button whose
+  // onClick was an empty TODO. Nothing in the product writes `avatar_url` — no
+  // page, no upload control — so it was an accessible, correctly-labelled
+  // affordance for a feature that does not exist. Removed rather than faked.
+  // If avatar upload ships, replace this assertion with one that exercises it.
+  it('renders no avatar control while there is no way to change an avatar', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ProfileCard
+          profile={baseProfile as Profile}
+          organization={{ id: 'org-1', display_name: 'Verified Org' }}
+          onTogglePrivacy={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByLabelText('Change profile picture')).toBeNull();
+    expect(container.querySelector('button[aria-label="Change profile picture"]')).toBeNull();
+  });
 });

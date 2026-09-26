@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BadgeCheck, Globe, Lock, ExternalLink, Camera } from 'lucide-react';
+import { BadgeCheck, Globe, Lock, ExternalLink } from 'lucide-react';
 import { LinkedinIcon as Linkedin, TwitterIcon as Twitter } from '@/components/shared/SocialIcons';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -99,7 +99,7 @@ export function ProfileCard({ profile, organization, loading, onTogglePrivacy }:
       <CardContent className="p-6">
         <div className="flex flex-col sm:flex-row items-start gap-5">
           {/* Avatar */}
-          <div className="relative group shrink-0">
+          <div className="shrink-0">
             {avatarUrl ? (
               <img
                 src={avatarUrl}
@@ -112,15 +112,6 @@ export function ProfileCard({ profile, organization, loading, onTogglePrivacy }:
                 <span className="text-xl font-semibold text-[#00d4ff]">{initials}</span>
               </div>
             )}
-            <button
-              className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
-              aria-label="Change profile picture"
-              onClick={() => {
-                // TODO: avatar upload — wire to settings or in-place upload
-              }}
-            >
-              <Camera className="h-5 w-5 text-white/80" />
-            </button>
           </div>
 
           {/* Info */}
