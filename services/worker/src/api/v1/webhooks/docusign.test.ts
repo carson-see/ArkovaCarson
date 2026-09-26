@@ -102,6 +102,11 @@ function integrationLookup(data: unknown, error: unknown = null) {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     is: vi.fn().mockReturnThis(),
+    // F2 (docusign-content-addressed-revision P1 fix, 2026-09-26): `.neq()`
+    // is the sibling-provenance lookup's own filter — added here (rather
+    // than a separate helper) so this SAME shape covers that lookup too;
+    // callers that never invoke `.neq()` are unaffected.
+    neq: vi.fn().mockReturnThis(),
     then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
       Promise.resolve({ data: error ? null : rows, error }).then(resolve, reject),
   };
@@ -109,6 +114,14 @@ function integrationLookup(data: unknown, error: unknown = null) {
 
 function noInheritedMarkers() {
   return integrationLookup(null);
+}
+
+/** F2: the sibling-provenance lookup `enqueueInboundDeclaredHashArtifact` now
+ * performs after every enqueue. `rows` defaults to none (no sibling), so
+ * every pre-existing inbound test sees "nothing to reconcile" and proceeds
+ * exactly as before. */
+function siblingLookup(rows: Array<Record<string, unknown>> = [], error: unknown = null) {
+  return integrationLookup(rows, error);
 }
 
 function insertResult(error: { code: string; message?: string } | null = null) {
@@ -1303,6 +1316,10 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
     dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations (own)
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'artifact-inbound-1', error: null });
+    // F2 (docusign-content-addressed-revision P1 fix): the sibling
+    // provenance lookup this handler now runs after every enqueue. No
+    // outbound sibling exists for this envelope, so the common case.
+    dbFromMock.mockReturnValueOnce(siblingLookup());
 
     const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-inbound-1' });
     const res = await postSignedBody(body);
@@ -1335,21 +1352,20 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
     // own dedicated test coverage for the anchor-insert assertion).
   });
 
-  // F1-heal (SCRUM-3818 go-live gate): "outbound-then-inbound ordering ->
-  // inbound does not downgrade a verified row." The real outbound job
-  // (docusign-envelope-completed.ts) already won the `(org_id, source,
-  // external_ref, revision)` slot for this envelope with its real,
-  // server-measured fingerprint BEFORE this (forged or otherwise
-  // non-owning) inbound delivery arrives. `enqueue_connector_artifact`'s
-  // `ON CONFLICT DO NOTHING` means the RPC call below returns the EXISTING
-  // (real) row's id, unchanged — and this handler does nothing further with
-  // that id (see enqueueInboundDeclaredHashArtifact's call site: the
-  // returned value is awaited and discarded, never read back or written).
-  // This test pins that structurally, not just by inspection: the same
-  // `dbFromMock` call count as the "wins the race" test above (5 — no 6th
-  // call attempting to read back or update `connector_artifact`) proves this
-  // path CANNOT rewrite/downgrade whatever row already exists at that key.
-  it('outbound-then-inbound ordering: when enqueue_connector_artifact returns a PRE-EXISTING (real, outbound-owned) row id via ON CONFLICT DO NOTHING, this handler makes no further write and cannot downgrade it', async () => {
+  // F2 (docusign-content-addressed-revision P1 fix, 2026-09-26):
+  // "outbound-then-inbound ordering" used to mean "the RPC's ON CONFLICT DO
+  // NOTHING returns the EXISTING outbound row's id, so this handler never
+  // writes a 6th connector_artifact row at all" — true only while
+  // external_revision was unconditionally NULL for both directions, which
+  // collapsed both writes onto ONE dedupe-key row. Content addressing
+  // (migration 0487) gives inbound's declared hash its OWN key, so THIS
+  // call's own RPC now creates a genuinely NEW, separate row rather than
+  // returning the pre-existing outbound row's id — the sibling-provenance
+  // lookup below is what now stands in for the old ON-CONFLICT collapse:
+  // it must find that pre-existing verified-outbound sibling and retire
+  // (status='skipped') this call's OWN new row, never touching the
+  // outbound one.
+  it('outbound-then-inbound ordering: an inbound declared-hash row created AFTER a verified outbound sibling for the SAME envelope is immediately retired (status=skipped), and the outbound sibling is never touched', async () => {
     mockConfig.enableDocusignInbound = true;
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
@@ -1358,24 +1374,45 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
     dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations (own)
     dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations (own)
     dbFromMock.mockReturnValueOnce(nonceInsert());
-    // ON CONFLICT DO NOTHING: the RPC returns the id of the row that ACTUALLY
-    // won the INSERT — the real outbound job's prior write — not a new row
-    // for this (later, non-owning) inbound delivery.
-    rpcMock.mockResolvedValueOnce({ data: 'existing-outbound-artifact', error: null });
+    // Content-addressed identity: this call's OWN declared-hash key is
+    // distinct from the pre-existing outbound row's measured-fingerprint
+    // key, so the RPC creates (or returns, on redelivery) THIS call's OWN
+    // row — never the outbound one.
+    rpcMock.mockResolvedValueOnce({ data: 'artifact-inbound-2', error: null });
+    // The sibling lookup finds the real outbound job's prior, verified write
+    // — NOT marked `_direction: 'inbound'`, so this handler can prove it is
+    // the measured (trusted) row.
+    dbFromMock.mockReturnValueOnce(
+      siblingLookup([
+        {
+          id: 'existing-outbound-artifact',
+          fingerprint_sha256: 'c'.repeat(64),
+          metadata: { queue_scope: 'org' },
+          status: 'pending',
+        },
+      ]),
+    );
+    const retireQuery = {
+      update: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+        Promise.resolve({ data: null, error: null }).then(resolve, reject),
+    };
+    dbFromMock.mockReturnValueOnce(retireQuery); // retire THIS call's own row
+    dbFromMock.mockReturnValueOnce({
+      insert: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'audit-1' }, error: null }) }) }),
+    }); // audit_events
 
     const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-already-outbound-1' });
     const res = await postSignedBody(body);
 
-    // Structurally unaware it lost the race — the handler's own success
-    // response is identical either way, which is exactly the point: it never
-    // branches on "did my write actually win," so it has no path to act on a
-    // returned id that isn't its own.
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ ok: true, inbound: true });
-    // Exactly the same 5 calls as the "wins the race" test above — no read-
-    // back, no update, no 6th connector_artifact call of any kind.
-    expect(dbFromMock).toHaveBeenCalledTimes(5);
-    expect(calledWithTable(dbFromMock, 'connector_artifact')).toBe(false);
+    // Retired ITS OWN row (artifact-inbound-2) — never the outbound sibling.
+    expect(retireQuery.eq).toHaveBeenCalledWith('id', 'artifact-inbound-2');
+    expect(retireQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'skipped' }),
+    );
   });
 
   it('ambiguous/unresolvable (own-account lookup DB error) classifies inbound (fail-safe) — and orphan-drops with a DISTINCT signal, not a crash, when it also cannot resolve a usable declared hash', async () => {
@@ -1510,6 +1547,7 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
     dbFromMock.mockReturnValueOnce(integrationLookup(null));
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'artifact-cross-tenant-1', error: null });
+    dbFromMock.mockReturnValueOnce(siblingLookup()); // F2: no sibling for this envelope
 
     // acct-SUB-ORG-REAL stands in for a real DocuSign account genuinely
     // connected to SUB_ORG_ID — the attacker (posting as ORG_ID, HMAC-signed

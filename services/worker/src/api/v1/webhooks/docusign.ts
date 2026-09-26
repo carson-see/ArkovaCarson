@@ -27,6 +27,7 @@ import {
   extractDocusignSignatures,
 } from '../../../integrations/oauth/docusign-hmac.js';
 import { resolveHmacKeys, type HmacKeyEntry } from './docusign-hmac-helpers.js';
+import { truncateUtf16Safe } from '../../../utils/utf16-truncate.js';
 import {
   captureDocusignSigners,
   type DocusignCapturedSignerT,
@@ -764,6 +765,18 @@ function extractSingleDeclaredHash(event: DocusignCompletedEnvelope): string | n
  * ENABLE_DOCUSIGN_INBOUND=true and that flag off — so this never needs its
  * own runtime flag check the way the outbound job's `enqueueSignedDocument`
  * does.
+ *
+ * F2 (docusign-content-addressed-revision P1 fix, 2026-09-26): after the
+ * enqueue, this now ALSO looks up any same-envelope sibling row written
+ * under a DIFFERENT content-addressed key and, if it is a verified outbound
+ * (measured-fingerprint) row, retires THIS call's own just-written row
+ * (`status='skipped'`) rather than letting a declared hash anchor
+ * independently. See the sibling-lookup block below for the full rationale
+ * — the "outbound-then-inbound ordering ... makes no further write" guarantee
+ * this doc comment used to describe relied on external_revision being
+ * unconditionally NULL for both directions (pre migration 0487), which
+ * collapsed both writes onto the SAME dedupe-key row; content addressing
+ * removed that collapse, so this function must arbitrate explicitly instead.
  */
 async function enqueueInboundDeclaredHashArtifact(args: {
   integration: DocusignIntegrationRow;
@@ -803,7 +816,135 @@ async function enqueueInboundDeclaredHashArtifact(args: {
     throw new Error('inbound_connector_artifact_enqueue_failed');
   }
 
-  return String(data);
+  const artifactId = String(data);
+
+  // F2 (docusign-content-addressed-revision P1 fix, 2026-09-26): content
+  // addressing gives THIS declared-hash write its OWN dedupe-key slot,
+  // separate from a same-envelope OUTBOUND (measured-fingerprint) row —
+  // `enqueue_connector_artifact`'s ON CONFLICT DO NOTHING can no longer
+  // collapse the two onto one row the way it did when external_revision was
+  // unconditionally NULL for both (see the file-header comment on
+  // "outbound-then-inbound ordering" above, which described that now-stale
+  // guarantee). A declared hash must NEVER anchor independently of an
+  // already-verified outbound artifact for the same envelope — measured
+  // always outranks declared (same precedence rule as
+  // docusign-envelope-completed.ts's F1-heal) — and this direction can only
+  // ever DEFER (retire its OWN just-written row), never touch the outbound
+  // row.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- connector_artifact sibling lookup, same convention as the enqueue RPC cast above
+  const { data: siblingRows, error: siblingLookupError } = await (db.from as any)('connector_artifact')
+    .select('id, fingerprint_sha256, metadata, status')
+    .eq('org_id', args.integration.org_id)
+    .eq('source', 'docusign')
+    .eq('external_ref', args.event.envelopeId)
+    .neq('id', artifactId);
+
+  if (siblingLookupError) {
+    logger.error(
+      {
+        error: siblingLookupError,
+        integrationId: args.integration.id,
+        envelopeId: args.event.envelopeId,
+        artifactId,
+      },
+      'DocuSign inbound connector-artifact sibling provenance lookup failed — cannot rule out an unreconciled verified-outbound duplicate for this envelope',
+    );
+    throw new Error('inbound_connector_artifact_sibling_lookup_failed');
+  }
+
+  const outboundSibling = ((siblingRows ?? []) as Array<{
+    id: string;
+    fingerprint_sha256: string;
+    metadata: Record<string, unknown> | null;
+  }>).find((row) => row.metadata?._direction !== 'inbound');
+
+  if (outboundSibling) {
+    // Declared can NEVER supersede measured — retire THIS call's own row
+    // (status='skipped', pulled out of connector-artifact-drain.ts's
+    // DRAINABLE_STATUSES) and leave the outbound sibling completely
+    // untouched.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same cast convention as the sibling lookup above
+    const { error: retireError } = await (db.from as any)('connector_artifact')
+      .update({
+        status: 'skipped',
+        metadata: {
+          account_id: args.event.accountId,
+          envelope_id: args.event.envelopeId,
+          integration_id: args.integration.id,
+          _direction: 'inbound',
+          _sending_account_id: args.sendingAccountId,
+          _superseded_reason: 'declared_row_deferred_to_existing_verified_outbound_sibling',
+          _superseded_by_artifact_id: outboundSibling.id,
+          _superseded_at: new Date().toISOString(),
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', artifactId)
+      .eq('org_id', args.integration.org_id)
+      .eq('status', 'pending');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- audit_events insert, same convention as elsewhere in this codebase
+    const { error: provenanceAuditError } = await (db.from as any)('audit_events')
+      .insert({
+        event_type: 'docusign_connector_artifact_provenance_superseded',
+        event_category: 'ANCHOR',
+        target_type: 'connector_artifact',
+        target_id: artifactId,
+        org_id: args.integration.org_id,
+        details: truncateUtf16Safe(
+          JSON.stringify({
+            envelope_id: args.event.envelopeId,
+            integration_id: args.integration.id,
+            declared_fingerprint_sha256: args.declaredHash,
+            sibling_artifact_id: outboundSibling.id,
+            winner: 'verified_document_bytes',
+            reason: 'declared_row_deferred_to_existing_verified_outbound_sibling',
+          }),
+          10000,
+        ),
+      })
+      .select('id')
+      .single();
+
+    if (provenanceAuditError) {
+      logger.error(
+        {
+          error: provenanceAuditError,
+          integrationId: args.integration.id,
+          envelopeId: args.event.envelopeId,
+          artifactId,
+        },
+        'DocuSign inbound connector-artifact provenance audit_events insert failed — audit trail incomplete',
+      );
+    }
+
+    if (retireError) {
+      logger.error(
+        {
+          error: retireError,
+          integrationId: args.integration.id,
+          envelopeId: args.event.envelopeId,
+          artifactId,
+          siblingArtifactId: outboundSibling.id,
+        },
+        'DocuSign inbound connector-artifact row could NOT be retired after detecting a verified-outbound sibling — left as the loud, unresolved integrity event for operator follow-up',
+      );
+      throw new Error('inbound_connector_artifact_sibling_retire_failed');
+    }
+
+    logger.warn(
+      {
+        docusign_connector_artifact_provenance_superseded: true,
+        integrationId: args.integration.id,
+        envelopeId: args.event.envelopeId,
+        artifactId,
+        siblingArtifactId: outboundSibling.id,
+      },
+      "DocuSign inbound connector-artifact row AUTO-RETIRED (status=skipped) — a verified-outbound sibling already exists for this envelope; declared hash never supersedes measured",
+    );
+  }
+
+  return artifactId;
 }
 
 docusignWebhookRouter.post('/', async (req: Request, res: Response) => {

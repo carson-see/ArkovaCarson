@@ -1,8 +1,58 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
+_Last updated: 2026-09-26 (PR #3088 review fix P1: `enqueueInboundDeclaredHashArtifact` now retires itself against a pre-existing verified-outbound sibling)_
 _Last updated: 2026-09-25 (`docusign.ts`'s `enqueueInboundDeclaredHashArtifact` now writes a real `external_revision` — fix/docusign-content-addressed-revision)_
 _Last updated: 2026-09-21 (`drive.ts` catch block now logs `httpStatus`/`errorDetail` as structured fields — SCRUM-2903/3661/5094/2330)_
 _Last updated: 2026-09-13 (SCRUM-4514: CTO decision — no raw-body retention, no server-side replay)_
+
+## 2026-09-26 — PR #3088 review fix (P1): `enqueueInboundDeclaredHashArtifact` now retires ITSELF against a pre-existing verified-outbound sibling
+
+Follow-up to the entry directly below. Content-addressing (same-day change)
+gave this inbound declared-hash write and the outbound job's measured-
+fingerprint write DIFFERENT `enqueue_connector_artifact` dedupe-key slots for
+the SAME envelope, which silently broke the "outbound-then-inbound ordering"
+guarantee this file's docstring used to describe: pre-content-addressing,
+`external_revision` was unconditionally `null` on both sides, so `ON
+CONFLICT DO NOTHING` collapsed both writes onto ONE row and this function's
+own RPC call simply returned the pre-existing (real) row's id, unchanged —
+"this handler makes no further write and cannot downgrade it" was
+structurally true. Post-content-addressing that collapse no longer happens:
+this call's declared-hash key is now DISTINCT from the outbound row's
+measured-fingerprint key, so the RPC creates a genuinely NEW, separate row
+instead — meaning, unfixed, BOTH rows would sit there independently
+drainable, one of them backed by an unverified declared hash.
+
+Fix: after the enqueue, this function now ALSO looks up any same-envelope
+`connector_artifact` row under a DIFFERENT `external_revision`. If that
+sibling is NOT marked `_direction: 'inbound'` (i.e. it is the real,
+verified-outbound row), THIS call retires its OWN just-written row
+(`status='skipped'`, pulled out of `connector-artifact-drain.ts`'s
+`DRAINABLE_STATUSES`) and audits via `audit_events`
+(`docusign_connector_artifact_provenance_superseded`) — never touching the
+outbound sibling. Declared can never supersede measured, in either arrival
+order (mirrors the outbound job's own precedence rule — see
+`jobs/agents.md`'s matching P1 entry for the outbound-side half of this
+fix, `reconcileDeclaredSibling`). A sibling-lookup or retire-update failure
+throws (`inbound_connector_artifact_sibling_lookup_failed` /
+`_sibling_retire_failed`), which the caller's existing nonce-rollback +
+rethrow path turns into a 500 (safe DocuSign-side retry — the RPC's own
+dedupe makes re-running this function idempotent).
+
+**Correction to the entry directly below:** it claimed the "outbound-then-
+inbound ordering" test was unaffected by content-addressing because it
+"asserts on call COUNT, not on that argument." That test's PREMISE (the RPC
+returning the pre-existing outbound row's id) is what stopped being true,
+not just its assertions — it has been rewritten (see TDD note) to reflect
+the real post-content-addressing behavior described above.
+
+TDD: the rewritten test in `docusign.test.ts` (same `it` block, retitled)
+seeds a real outbound sibling row, has this call's own RPC mock return a
+NEW, different artifact id (as the real dedupe key now would), and asserts
+the retire-UPDATE targets THIS call's own id with `status: 'skipped'`,
+never the outbound sibling's id. Confirmed failing against the pre-fix
+code (0 calls to the retire query) before the fix landed. Three other
+existing inbound tests needed a `siblingLookup()` mock added for the new
+post-enqueue DB round trip (default: no sibling found, behavior unchanged).
 
 ## 2026-09-25 — fix/docusign-content-addressed-revision: `docusign.ts`'s `enqueueInboundDeclaredHashArtifact` now writes a real `external_revision`
 

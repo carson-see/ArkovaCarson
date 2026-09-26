@@ -183,6 +183,38 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       // F1-heal: override the audit_events insert performed for EVERY
       // provenance-conflict outcome (healed or refused).
       provenanceAuditResult?: { data: { id: string } | null; error: unknown };
+      // F2 (docusign-content-addressed-revision P1 fix, 2026-09-26): the
+      // sibling rows the F2 lookup (always run, after F1 either falls
+      // through with no conflict or successfully heals) finds for this
+      // envelope under a DIFFERENT content-addressed key. Defaults to `[]`
+      // (no sibling) so every pre-existing test in this describe block sees
+      // "nothing to reconcile" without needing to know F2 exists.
+      siblingRows?: Array<{
+        id: string;
+        fingerprint_sha256: string;
+        metadata: Record<string, unknown> | null;
+        anchor_id: string | null;
+        status: string;
+      }>;
+      // F2: override the error returned by the sibling LOOKUP itself
+      // (distinct from a sibling retire-update failure, covered by
+      // `siblingSupersedeResult`/`siblingSupersedeCurrent` below).
+      siblingLookupError?: unknown;
+      // F2: override the atomic conditional UPDATE that retires
+      // (status='skipped') an eligible declared/inbound sibling. Defaults to
+      // "matched" (retired) — the common case. Set `data: null` to simulate
+      // the sibling having already materialized a live anchor (or lost the
+      // retire race).
+      siblingSupersedeResult?: { data: { id: string } | null; error: unknown };
+      siblingSupersedeCurrent?: Record<string, unknown>;
+      // Test-harness-only: the mock cannot see `input.documentBytes` (it is
+      // supplied later, at `enqueueSignedDocument()` call time) to compute
+      // the REAL fingerprint the way the production code does, so it needs
+      // to be told what that call's own measured fingerprint will be in
+      // order to predict F1 conflict detection correctly for a test that
+      // hashes something other than the describe block's default
+      // SIGNED_BYTES/EXPECTED_SHA256 fixture. Defaults to EXPECTED_SHA256.
+      ownFingerprintOverride?: string;
     }
 
     function makeDb(opts: MakeDbOpts = {}) {
@@ -197,27 +229,58 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         provenanceAuditInsertCalled: boolean;
         provenanceAuditInsertedRow?: Record<string, unknown>;
         connectorArtifactFromCallCount: number;
+        siblingSupersedeCalled: boolean;
+        siblingSupersedeApplied: boolean;
+        siblingSupersedePayload?: Record<string, unknown>;
       } = {
         insertCalled: false,
         supersedeCalled: false,
         supersedeApplied: false,
         provenanceAuditInsertCalled: false,
         connectorArtifactFromCallCount: 0,
+        siblingSupersedeCalled: false,
+        siblingSupersedeApplied: false,
       };
+      // F2: a small state machine over successive `.from('connector_artifact')`
+      // calls, keyed on what the REAL code does after F1 — not a fixed call
+      // index — since whether F1-heal's own supersede-update happens at all
+      // depends on whether call #1 (the readback) detected a conflict. F1
+      // aborts (throws) before F2 ever runs whenever it detects an
+      // unresolved conflict, so a phase reserved for F2 is simply never
+      // reached in that case — no index arithmetic needed.
+      let connectorArtifactPhase: 'start' | 'f1-heal-done' | 'f2-list-done' = 'start';
+      let f1ConflictDetected = false;
       const db = {
         rpc: vi.fn((fn: string, args: Record<string, unknown>) => {
           rpcCalls.push({ fn, args });
           return Promise.resolve(opts.artifactResult ?? { data: 'artifact-1', error: null });
         }),
+        // F2 widened this mock's `from('connector_artifact')` branch with two
+        // additional return shapes (the sibling LIST query and the sibling
+        // retire-UPDATE query). A single non-overloaded `vi.fn()` callback's
+        // inferred return type is the union of every branch, which no longer
+        // structurally satisfies `DbClient.from`'s per-table overloads all at
+        // once (each overload's return type would need EVERY branch to match
+        // it) — so this one property is cast, same convention as
+        // `db as unknown as NonNullable<...>` used elsewhere in this file.
+        // Runtime shape is unchanged; this only affects what the type
+        // checker sees, and only for `.from`, not `.rpc` or anything else on
+        // `db` that individual tests assert against directly.
         from: vi.fn((table: string) => {
           if (table === 'connector_artifact') {
             state.connectorArtifactFromCallCount += 1;
-            if (state.connectorArtifactFromCallCount === 1) {
+            if (connectorArtifactPhase === 'start' && state.connectorArtifactFromCallCount === 1) {
               // FIRST call: the post-enqueue provenance read-back.
               const provenanceResult = opts.provenanceResult ?? {
                 data: { fingerprint_sha256: EXPECTED_SHA256, metadata: null },
                 error: null,
               };
+              const errored = !!provenanceResult.error || provenanceResult.data == null;
+              const ownFingerprint = opts.ownFingerprintOverride ?? EXPECTED_SHA256;
+              f1ConflictDetected =
+                !errored &&
+                (provenanceResult.data!.fingerprint_sha256 !== ownFingerprint ||
+                  provenanceResult.data!.metadata?._direction === 'inbound');
               const provenanceQuery = {
                 select: vi.fn(() => provenanceQuery),
                 eq: vi.fn(() => provenanceQuery),
@@ -233,31 +296,91 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
               };
               return provenanceQuery;
             }
-            // SECOND+ call: the F1-heal atomic conditional UPDATE, only ever
-            // reached when a conflict was detected on the first call.
-            const supersedeResult = opts.supersedeResult ?? { data: { id: 'artifact-1' }, error: null };
-            const filters: Array<[string, unknown]> = [];
-            const supersedeQuery = {
+            if (connectorArtifactPhase === 'start' && f1ConflictDetected) {
+              // SECOND call, conflict path only: the F1-heal atomic
+              // conditional UPDATE.
+              connectorArtifactPhase = 'f1-heal-done';
+              const supersedeResult = opts.supersedeResult ?? { data: { id: 'artifact-1' }, error: null };
+              const filters: Array<[string, unknown]> = [];
+              const supersedeQuery = {
+                update: vi.fn((value: Record<string, unknown>) => {
+                  state.supersedeCalled = true;
+                  state.supersedePayload = value;
+                  return supersedeQuery;
+                }),
+                eq: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
+                is: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
+                select: vi.fn(() => supersedeQuery),
+                maybeSingle: vi.fn(async () => {
+                  if (!opts.supersedeCurrent) return supersedeResult;
+                  const matches = filters.every(([key, value]) =>
+                    JSON.stringify(opts.supersedeCurrent![key]) === JSON.stringify(key === 'metadata' && typeof value === 'string' ? JSON.parse(value) : value));
+                  if (!matches) return { data: null, error: null };
+                  Object.assign(opts.supersedeCurrent, state.supersedePayload);
+                  state.supersedeApplied = true;
+                  return supersedeResult;
+                }),
+                insert: vi.fn(),
+              };
+              return supersedeQuery;
+            }
+            if (connectorArtifactPhase === 'start' || connectorArtifactPhase === 'f1-heal-done') {
+              // F2 (docusign-content-addressed-revision P1 fix): the
+              // sibling-provenance LIST lookup. Real supabase-js semantics —
+              // awaiting a filter chain directly (no `.maybeSingle()`)
+              // yields `{data: T[], error}`.
+              connectorArtifactPhase = 'f2-list-done';
+              const siblingRows = opts.siblingRows ?? [];
+              const listResult = opts.siblingLookupError
+                ? { data: null, error: opts.siblingLookupError }
+                : { data: siblingRows, error: null };
+              interface ListQuery {
+                select: (columns?: string) => ListQuery;
+                eq: (field: string, value: unknown) => ListQuery;
+                neq: (field: string, value: unknown) => ListQuery;
+                then: (
+                  resolve: (v: unknown) => void,
+                  reject: (e: unknown) => void,
+                ) => Promise<unknown>;
+              }
+              const listQuery: ListQuery = {
+                select: vi.fn(() => listQuery),
+                eq: vi.fn(() => listQuery),
+                neq: vi.fn(() => listQuery),
+                then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+                  Promise.resolve(listResult).then(resolve, reject),
+              };
+              return listQuery;
+            }
+            // F2 sibling retire UPDATE — only reached when the list lookup
+            // above returned a row eligible for auto-heal (`_direction:
+            // 'inbound'`, `anchor_id: null`).
+            const siblingRows = opts.siblingRows ?? [];
+            const siblingSupersedeResult =
+              opts.siblingSupersedeResult ?? { data: { id: siblingRows[0]?.id ?? 'sibling-1' }, error: null };
+            const siblingFilters: Array<[string, unknown]> = [];
+            const siblingSupersedeQuery = {
               update: vi.fn((value: Record<string, unknown>) => {
-                state.supersedeCalled = true;
-                state.supersedePayload = value;
-                return supersedeQuery;
+                state.siblingSupersedeCalled = true;
+                state.siblingSupersedePayload = value;
+                return siblingSupersedeQuery;
               }),
-              eq: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
-              is: vi.fn((key: string, value: unknown) => { filters.push([key, value]); return supersedeQuery; }),
-              select: vi.fn(() => supersedeQuery),
+              eq: vi.fn((key: string, value: unknown) => { siblingFilters.push([key, value]); return siblingSupersedeQuery; }),
+              is: vi.fn((key: string, value: unknown) => { siblingFilters.push([key, value]); return siblingSupersedeQuery; }),
+              select: vi.fn(() => siblingSupersedeQuery),
               maybeSingle: vi.fn(async () => {
-                if (!opts.supersedeCurrent) return supersedeResult;
-                const matches = filters.every(([key, value]) =>
-                  JSON.stringify(opts.supersedeCurrent![key]) === JSON.stringify(key === 'metadata' && typeof value === 'string' ? JSON.parse(value) : value));
+                if (!opts.siblingSupersedeCurrent) return siblingSupersedeResult;
+                const matches = siblingFilters.every(([key, value]) =>
+                  JSON.stringify((opts.siblingSupersedeCurrent as Record<string, unknown>)[key]) ===
+                    JSON.stringify(key === 'metadata' && typeof value === 'string' ? JSON.parse(value) : value));
                 if (!matches) return { data: null, error: null };
-                Object.assign(opts.supersedeCurrent, state.supersedePayload);
-                state.supersedeApplied = true;
-                return supersedeResult;
+                Object.assign(opts.siblingSupersedeCurrent, state.siblingSupersedePayload);
+                state.siblingSupersedeApplied = true;
+                return siblingSupersedeResult;
               }),
               insert: vi.fn(),
             };
-            return supersedeQuery;
+            return siblingSupersedeQuery;
           }
           if (table === 'audit_events') {
             const query = {
@@ -301,7 +424,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
             }),
           };
           return query;
-        }),
+        }) as unknown as NonNullable<DocusignEnvelopeJobRuntimeDeps['db']>['from'],
       };
       return { db, rpcCalls, state };
     }
@@ -363,6 +486,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       const { db: dbA, rpcCalls: rpcCallsA } = makeDb({
         artifactResult: { data: 'artifact-doc-a', error: null },
         provenanceResult: { data: { fingerprint_sha256: fingerprintA, metadata: null }, error: null },
+        ownFingerprintOverride: fingerprintA,
       });
       const resultA = await makeDocusignEnvelopeJobDeps({ db: dbA }).enqueueSignedDocument({
         ...SINK_INPUT,
@@ -372,6 +496,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       const { db: dbB, rpcCalls: rpcCallsB } = makeDb({
         artifactResult: { data: 'artifact-doc-b', error: null },
         provenanceResult: { data: { fingerprint_sha256: fingerprintB, metadata: null }, error: null },
+        ownFingerprintOverride: fingerprintB,
       });
       const resultB = await makeDocusignEnvelopeJobDeps({ db: dbB }).enqueueSignedDocument({
         ...SINK_INPUT,
@@ -562,12 +687,17 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
           expect.objectContaining({ docusign_connector_artifact_provenance_conflict: true }),
           expect.any(String),
         );
+        // F2 (docusign-content-addressed-revision P1 fix): the sibling
+        // lookup still runs (a 2nd connector_artifact call) — F1 having no
+        // conflict does not mean there is no OTHER-key sibling — but finds
+        // none (default `siblingRows: []`), so no retire-update follows.
+        expect(state.connectorArtifactFromCallCount).toBe(2);
+        expect(state.siblingSupersedeCalled).toBe(false);
         // No conflict at all => the F1-heal supersede UPDATE is never
         // attempted, and no provenance audit_events row is written — there
         // is nothing to heal or audit when this call's own write already won.
         expect(state.supersedeCalled).toBe(false);
         expect(state.provenanceAuditInsertCalled).toBe(false);
-        expect(state.connectorArtifactFromCallCount).toBe(1);
       });
 
       it('fails closed when the provenance read-back itself errors (never treats an unverifiable id as success)', async () => {
@@ -793,6 +923,265 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
           expect.objectContaining({ integrationId: 'integration-1', artifactId: 'forged-inbound-artifact', healed: true }),
           'DocuSign connector-artifact provenance audit_events insert failed — audit trail incomplete',
         );
+      });
+    });
+
+    describe('F2 — content-addressed dedupe key: inbound-then-outbound sibling reconciliation (P1 fix, PR #3088)', () => {
+      // A REAL in-memory connector_artifact table enforcing the ACTUAL
+      // unique-key semantics — (org_id, source, external_ref,
+      // COALESCE(external_revision, '')) — instead of a mock that hands back
+      // whatever row a test tells it to, regardless of the key the caller
+      // actually wrote. The review finding this test exists to pin: "the
+      // mock returning the inbound row regardless of the new key hides this
+      // regression" — a canned `provenanceResult` can't observe that
+      // content-addressing (migration 0487) gives inbound (declared hash)
+      // and outbound (measured fingerprint) DIFFERENT key slots, so it can't
+      // fail the way production actually fails.
+      interface FakeArtifactRow {
+        id: string;
+        org_id: string;
+        source: string;
+        external_ref: string;
+        external_revision: string | null;
+        fingerprint_sha256: string;
+        metadata: Record<string, unknown> | null;
+        anchor_id: string | null;
+        status: string;
+      }
+
+      function makeRealDedupeDb() {
+        const rows = new Map<string, FakeArtifactRow>();
+        const auditInserts: Array<Record<string, unknown>> = [];
+        let nextId = 1;
+
+        function keyFor(row: Pick<FakeArtifactRow, 'org_id' | 'source' | 'external_ref' | 'external_revision'>) {
+          return `${row.org_id}|${row.source}|${row.external_ref}|${row.external_revision ?? ''}`;
+        }
+
+        function matchRows(filters: Array<{ op: 'eq' | 'neq' | 'is'; field: string; value: unknown }>) {
+          return Array.from(rows.values()).filter((row) =>
+            filters.every((f) => {
+              const actual = (row as unknown as Record<string, unknown>)[f.field];
+              if (f.op === 'eq') return actual === f.value;
+              if (f.op === 'neq') return actual !== f.value;
+              return f.value === null ? actual === null : actual === f.value;
+            }),
+          );
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a minimal, realistic fake postgrest builder; typed loosely on purpose to mirror the real client's own duck-typed chain
+        const db: any = {
+          rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
+            expect(fn).toBe('enqueue_connector_artifact');
+            const candidate: FakeArtifactRow = {
+              id: '',
+              org_id: args.p_org_id as string,
+              source: args.p_source as string,
+              external_ref: args.p_external_ref as string,
+              external_revision: (args.p_external_revision as string | null) ?? null,
+              fingerprint_sha256: args.p_fingerprint_sha256 as string,
+              metadata: (args.p_metadata as Record<string, unknown>) ?? {},
+              anchor_id: null,
+              status: 'pending',
+            };
+            const key = keyFor(candidate);
+            for (const existing of rows.values()) {
+              // Real dedupe: ON CONFLICT DO NOTHING on
+              // (org_id, source, external_ref, COALESCE(external_revision,'')).
+              if (keyFor(existing) === key) {
+                return { data: existing.id, error: null };
+              }
+            }
+            const id = `row-${nextId++}`;
+            candidate.id = id;
+            rows.set(id, candidate);
+            return { data: id, error: null };
+          }),
+          from: vi.fn((table: string) => {
+            if (table === 'connector_artifact') {
+              const filters: Array<{ op: 'eq' | 'neq' | 'is'; field: string; value: unknown }> = [];
+              let updatePayload: Record<string, unknown> | null = null;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- self-referencing chainable query builder; loosely typed on purpose, same convention as `db` above
+              const query: any = {
+                select: () => query,
+                eq: (field: string, value: unknown) => { filters.push({ op: 'eq', field, value }); return query; },
+                neq: (field: string, value: unknown) => { filters.push({ op: 'neq', field, value }); return query; },
+                is: (field: string, value: unknown) => { filters.push({ op: 'is', field, value }); return query; },
+                update: (payload: Record<string, unknown>) => { updatePayload = payload; return query; },
+                maybeSingle: async () => {
+                  const matched = matchRows(filters);
+                  if (updatePayload) {
+                    if (matched.length !== 1) return { data: null, error: null };
+                    Object.assign(matched[0], updatePayload);
+                    return { data: { id: matched[0].id }, error: null };
+                  }
+                  if (matched.length > 1) return { data: null, error: { message: 'multiple rows for maybeSingle' } };
+                  return { data: matched[0] ? { ...matched[0] } : null, error: null };
+                },
+                then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+                  Promise.resolve({ data: matchRows(filters).map((r) => ({ ...r })), error: null }).then(resolve, reject),
+              };
+              return query;
+            }
+            if (table === 'audit_events') {
+              return {
+                insert: (value: Record<string, unknown>) => {
+                  auditInserts.push(value);
+                  return { select: () => ({ single: async () => ({ data: { id: `audit-${auditInserts.length}` }, error: null }) }) };
+                },
+              };
+            }
+            if (table === 'integration_events') {
+              return {
+                insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'ie-1' }, error: null }) }) }),
+              };
+            }
+            throw new Error(`unexpected table in F2 real-dedupe fake: ${table}`);
+          }),
+        };
+
+        return { db, rows, auditInserts };
+      }
+
+      it('REPRODUCES the P1 regression when unfixed: inbound (declared hash A) written first, then the real outbound enqueueSignedDocument (measured hash B) — must retire the inbound sibling and audit it, not silently leave it drainable', async () => {
+        const { db, rows, auditInserts } = makeRealDedupeDb();
+
+        const declaredHashA = 'a'.repeat(64);
+
+        // Seed row A exactly as the inbound webhook's own
+        // enqueueInboundDeclaredHashArtifact would have (same RPC, same
+        // argument shape) — the DECLARED hash is BOTH the dedupe-key
+        // component and the (unverified) fingerprint.
+        const { data: inboundArtifactId } = await db.rpc('enqueue_connector_artifact', {
+          p_org_id: ORG_ID,
+          p_source: 'docusign',
+          p_external_ref: 'envelope-1',
+          p_external_revision: declaredHashA,
+          p_fingerprint_sha256: declaredHashA,
+          p_byte_length: null,
+          p_source_timestamp: null,
+          p_metadata: {
+            account_id: 'acct-FOREIGN',
+            envelope_id: 'envelope-1',
+            integration_id: 'integration-1',
+            _direction: 'inbound',
+            _sending_account_id: 'acct-FOREIGN',
+          },
+        });
+        expect(rows.size).toBe(1);
+
+        // Now the REAL outbound job runs for the SAME envelope, with bytes
+        // that measure to a DIFFERENT hash (B). Content addressing means
+        // this RPC call's key — (org, docusign, envelope-1, B) — does NOT
+        // collide with row A's key — (org, docusign, envelope-1, A) — so it
+        // creates a genuinely NEW, separate row rather than reading back row
+        // A the way it would have pre-content-addressing.
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        expect(result).toEqual({ queuedId: expect.any(String) });
+        const outboundArtifactId = (result as { queuedId: string }).queuedId;
+        expect(outboundArtifactId).not.toBe(inboundArtifactId);
+        expect(rows.size).toBe(2);
+
+        // THE FIX: the inbound sibling must be retired (status='skipped') —
+        // pulled out of connector-artifact-drain.ts's DRAINABLE_STATUSES —
+        // and its dedupe-key identity (fingerprint_sha256 / external_revision)
+        // left untouched. Against the UNFIXED head this assertion fails: row
+        // A stays 'pending', still eligible for its own independent drain —
+        // exactly the silently-unreconciled sibling the review flagged.
+        const inboundRow = rows.get(inboundArtifactId as string)!;
+        expect(inboundRow.status).toBe('skipped');
+        expect(inboundRow.fingerprint_sha256).toBe(declaredHashA);
+        expect(inboundRow.external_revision).toBe(declaredHashA);
+
+        // The F1/F2 conflict/audit/heal path actually fired for this
+        // sibling — never silently ignored, per the P1 finding.
+        expect(auditInserts).toContainEqual(
+          expect.objectContaining({
+            event_type: 'docusign_connector_artifact_provenance_superseded',
+            target_type: 'connector_artifact',
+          }),
+        );
+
+        // The winning (outbound, measured) row stays fully drainable and
+        // untouched.
+        const outboundRow = rows.get(outboundArtifactId)!;
+        expect(outboundRow.status).toBe('pending');
+        expect(outboundRow.fingerprint_sha256).toBe(EXPECTED_SHA256);
+      });
+
+      it('reverse ordering: outbound (measured hash B) written first, then a same-envelope inbound declared-hash row (A) must retire ITSELF, never the outbound sibling', async () => {
+        const { db, rows } = makeRealDedupeDb();
+
+        // Seed the real outbound row first, via the SAME RPC shape
+        // enqueueSignedDocument itself uses.
+        const { data: outboundArtifactId } = await db.rpc('enqueue_connector_artifact', {
+          p_org_id: ORG_ID,
+          p_source: 'docusign',
+          p_external_ref: 'envelope-2',
+          p_external_revision: EXPECTED_SHA256,
+          p_fingerprint_sha256: EXPECTED_SHA256,
+          p_byte_length: SIGNED_BYTES.byteLength,
+          p_source_timestamp: null,
+          p_metadata: { account_id: 'account-1', envelope_id: 'envelope-2', integration_id: 'integration-1' },
+        });
+        expect(rows.size).toBe(1);
+
+        // A later inbound declared-hash write for the SAME envelope, with a
+        // DIFFERENT (declared, untrusted) hash — content addressing gives it
+        // its own key slot, so it creates its OWN new row rather than
+        // colliding with the outbound row.
+        const declaredHashA = 'a'.repeat(64);
+        const { data: inboundArtifactId } = await db.rpc('enqueue_connector_artifact', {
+          p_org_id: ORG_ID,
+          p_source: 'docusign',
+          p_external_ref: 'envelope-2',
+          p_external_revision: declaredHashA,
+          p_fingerprint_sha256: declaredHashA,
+          p_byte_length: null,
+          p_source_timestamp: null,
+          p_metadata: {
+            account_id: 'acct-FOREIGN',
+            envelope_id: 'envelope-2',
+            integration_id: 'integration-1',
+            _direction: 'inbound',
+            _sending_account_id: 'acct-FOREIGN',
+          },
+        });
+        expect(inboundArtifactId).not.toBe(outboundArtifactId);
+        expect(rows.size).toBe(2);
+
+        // This mirrors what enqueueInboundDeclaredHashArtifact's own
+        // sibling-lookup does after that RPC call — exercised directly here
+        // against the SAME real dedupe store, since that function is not
+        // exported (covered end-to-end via the webhook route in
+        // api/v1/webhooks/docusign.test.ts).
+        const siblingRows = (
+          await db
+            .from('connector_artifact')
+            .select('id, fingerprint_sha256, metadata, status')
+            .eq('org_id', ORG_ID)
+            .eq('source', 'docusign')
+            .eq('external_ref', 'envelope-2')
+            .neq('id', inboundArtifactId)
+        ).data as FakeArtifactRow[];
+        const outboundSibling = siblingRows.find((row) => row.metadata?._direction !== 'inbound');
+        expect(outboundSibling?.id).toBe(outboundArtifactId);
+
+        await db
+          .from('connector_artifact')
+          .update({ status: 'skipped' })
+          .eq('id', inboundArtifactId)
+          .eq('org_id', ORG_ID)
+          .eq('status', 'pending')
+          .maybeSingle();
+
+        // The inbound row retired itself — the outbound sibling was NEVER
+        // written to (declared can never supersede measured).
+        expect(rows.get(inboundArtifactId as string)!.status).toBe('skipped');
+        expect(rows.get(outboundArtifactId as string)!.status).toBe('pending');
+        expect(rows.get(outboundArtifactId as string)!.fingerprint_sha256).toBe(EXPECTED_SHA256);
       });
     });
 

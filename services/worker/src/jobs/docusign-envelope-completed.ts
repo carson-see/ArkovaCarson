@@ -124,6 +124,39 @@ interface ConnectorArtifactUpdateClient {
   from(table: 'connector_artifact'): DbUpdateQuery<{ id: string }>;
 }
 
+// F2 (docusign-content-addressed-revision P1 fix, 2026-09-26): content
+// addressing (migration 0487) gave inbound (declared hash) and outbound
+// (measured fingerprint) DIFFERENT dedupe-key slots for the SAME envelope —
+// (org_id, source, external_ref, COALESCE(external_revision,'')) no longer
+// collapses the two onto one row the way it did when external_revision was
+// unconditionally NULL for both. The F1 read-back above only ever inspects
+// the row THIS call's own RPC invocation returned, which under
+// content-addressing is now ALWAYS this call's own row — it can no longer
+// observe a same-envelope sibling written under the OTHER key at all. This
+// is a SEPARATE lookup for that sibling. Reached through a separate cast —
+// same convention as ConnectorArtifactRpcClient/ConnectorArtifactUpdateClient
+// above — so the existing DbClient.from('connector_artifact') mocks stay
+// valid; `.neq()` and a bare (non-`maybeSingle`) await are both real,
+// standard supabase-js query-builder behavior (awaiting a filter chain
+// directly yields `{data: T[], error}`), not invented API surface.
+interface ConnectorArtifactSiblingRow {
+  id: string;
+  fingerprint_sha256: string;
+  metadata: Record<string, unknown> | null;
+  anchor_id: string | null;
+  status: string;
+}
+
+interface DbSiblingListQuery<T> extends PromiseLike<DbQueryResult<T[]>> {
+  select(columns?: string): DbSiblingListQuery<T>;
+  eq(field: string, value: unknown): DbSiblingListQuery<T>;
+  neq(field: string, value: unknown): DbSiblingListQuery<T>;
+}
+
+interface ConnectorArtifactSiblingLookupClient {
+  from(table: 'connector_artifact'): DbSiblingListQuery<ConnectorArtifactSiblingRow>;
+}
+
 type DocusignIntegrationRow = Pick<
   OrgIntegrationRow,
   'id' | 'org_id' | 'account_id' | 'base_uri' | 'token_secret_name'
@@ -197,6 +230,173 @@ function reValidateSigners(
     }
   }
   return valid;
+}
+
+interface ReconcileDeclaredSiblingArgs {
+  db: DbClient;
+  orgId: string;
+  integrationId: string;
+  envelopeId: string;
+  verifiedFingerprint: string;
+  winningArtifactId: string;
+  sibling: ConnectorArtifactSiblingRow;
+}
+
+/**
+ * F2 sibling reconciliation (docusign-content-addressed-revision P1 fix,
+ * 2026-09-26). `sibling` is a DIFFERENT physical connector_artifact row than
+ * `winningArtifactId` — content addressing means inbound and outbound now
+ * occupy different dedupe-key slots for the same envelope, so this can no
+ * longer be resolved by rewriting one shared row the way F1-heal (above)
+ * does. Only a sibling THIS call can PROVE is declared/untrusted
+ * (`_direction: 'inbound'`) is eligible to be retired — never a bare
+ * fingerprint difference (same `autoHealLicensed` rationale as F1-heal: a
+ * mismatch against a row NOT marked inbound could be two legitimate
+ * outbound executions and is not evidence of forgery).
+ *
+ * "Retire" means `status='skipped'` — pulled out of
+ * connector-artifact-drain.ts's `DRAINABLE_STATUSES` (`['pending',
+ * 'queued']`) so it can never independently mint its own anchor — NOT a
+ * fingerprint/external_revision rewrite: that pair is the sibling's OWN
+ * dedupe-key identity and must stay stable.
+ */
+async function reconcileDeclaredSibling(args: ReconcileDeclaredSiblingArgs): Promise<void> {
+  const { db, orgId, integrationId, envelopeId, verifiedFingerprint, winningArtifactId, sibling } = args;
+  const siblingMetadata =
+    sibling.metadata && typeof sibling.metadata === 'object' ? sibling.metadata : null;
+  const wonByInboundRow = siblingMetadata?._direction === 'inbound';
+
+  logger.error(
+    {
+      docusign_connector_artifact_provenance_conflict: true,
+      integrationId,
+      envelopeId,
+      artifactId: winningArtifactId,
+      siblingArtifactId: sibling.id,
+      siblingDirection: siblingMetadata?._direction ?? null,
+    },
+    "DocuSign connector-artifact provenance conflict — a same-envelope sibling row exists under a different content-addressed key; this call's real, server-measured fingerprint never occupied that slot",
+  );
+
+  // Never licensed to touch a sibling that isn't provably declared/untrusted,
+  // and never touch one that already materialized its own anchor — same two
+  // guards as F1-heal above, adapted to a separate physical row.
+  const autoHealLicensed = wonByInboundRow && sibling.anchor_id === null;
+
+  let healed = false;
+  let supersedeError: { message?: string } | null = null;
+  if (autoHealLicensed) {
+    const supersededMetadata: Record<string, unknown> = { ...(siblingMetadata ?? {}) };
+    delete supersededMetadata._direction;
+    delete supersededMetadata._sending_account_id;
+    supersededMetadata._superseded_declared_fingerprint = sibling.fingerprint_sha256;
+    supersededMetadata._superseded_at = new Date().toISOString();
+    supersededMetadata._superseded_by_artifact_id = winningArtifactId;
+    supersededMetadata._superseded_reason =
+      'sibling_declared_inbound_row_superseded_by_verified_outbound_fetch';
+
+    const { data: supersedeRow, error } = await (db as unknown as ConnectorArtifactUpdateClient)
+      .from('connector_artifact')
+      .update({
+        status: 'skipped',
+        metadata: supersededMetadata,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sibling.id)
+      .eq('org_id', orgId)
+      .eq('status', sibling.status)
+      .is('anchor_id', null)
+      .select('id')
+      .maybeSingle();
+
+    supersedeError = error as { message?: string } | null;
+    healed = !error && supersedeRow != null;
+  }
+
+  const auditReason = !autoHealLicensed
+    ? 'sibling_fingerprint_mismatch_non_declared_row_autoheal_not_licensed'
+    : healed
+      ? 'sibling_outbound_verified_fetch_superseded_declared_row'
+      : 'sibling_declared_row_already_materialized_or_lost_retire_race';
+  const auditWinner = !autoHealLicensed
+    ? 'unresolved_non_declared_sibling'
+    : healed
+      ? 'verified_document_bytes'
+      : 'unresolved_declared_sibling';
+
+  const { error: provenanceAuditError } = await db
+    .from('audit_events')
+    .insert({
+      event_type: healed
+        ? 'docusign_connector_artifact_provenance_superseded'
+        : 'docusign_connector_artifact_provenance_conflict_unresolved',
+      event_category: 'ANCHOR',
+      target_type: 'connector_artifact',
+      target_id: winningArtifactId,
+      org_id: orgId,
+      details: truncateUtf16Safe(
+        JSON.stringify({
+          envelope_id: envelopeId,
+          integration_id: integrationId,
+          verified_fingerprint_sha256: verifiedFingerprint,
+          declared_fingerprint_sha256: sibling.fingerprint_sha256,
+          sibling_artifact_id: sibling.id,
+          winner: auditWinner,
+          persisted_direction: siblingMetadata?._direction ?? null,
+          reason: auditReason,
+        }),
+        10000,
+      ),
+    })
+    .select('id')
+    .single();
+
+  if (provenanceAuditError) {
+    logger.error(
+      { error: provenanceAuditError, integrationId, envelopeId, winningArtifactId, healed },
+      'DocuSign connector-artifact sibling provenance audit_events insert failed — audit trail incomplete',
+    );
+  }
+
+  if (!autoHealLicensed) {
+    logger.error(
+      {
+        docusign_connector_artifact_provenance_conflict_unresolved: true,
+        integrationId,
+        envelopeId,
+        artifactId: winningArtifactId,
+        siblingArtifactId: sibling.id,
+      },
+      'DocuSign connector-artifact sibling row is NOT provably declared/inbound — auto-heal is not licensed; left as the loud, unresolved integrity event for operator follow-up',
+    );
+    throw new Error('docusign_connector_artifact_provenance_conflict_unresolved');
+  }
+
+  if (!healed) {
+    logger.error(
+      {
+        docusign_connector_artifact_provenance_conflict_unresolved: true,
+        integrationId,
+        envelopeId,
+        artifactId: winningArtifactId,
+        siblingArtifactId: sibling.id,
+        supersedeError,
+      },
+      'DocuSign connector-artifact sibling row could NOT be retired — it already materialized an anchor (or lost the retire race); left as the loud, unresolved integrity event for operator follow-up',
+    );
+    throw new Error('docusign_connector_artifact_provenance_conflict_unresolved');
+  }
+
+  logger.warn(
+    {
+      docusign_connector_artifact_provenance_superseded: true,
+      integrationId,
+      envelopeId,
+      artifactId: winningArtifactId,
+      siblingArtifactId: sibling.id,
+    },
+    "DocuSign connector-artifact sibling row AUTO-RETIRED (status=skipped) — this envelope's verified, server-measured fingerprint is the sole surviving drainable artifact",
+  );
 }
 
 function getRefreshTokenStore(deps: DocusignEnvelopeJobRuntimeDeps): DocusignRefreshTokenStore {
@@ -842,6 +1042,49 @@ export function makeDocusignEnvelopeJobDeps(
         // Fall through: this call's write now durably stands. Proceed to the
         // normal audit breadcrumb + success return below, exactly as if the
         // RPC's own INSERT had won outright.
+      }
+
+      // F2 (docusign-content-addressed-revision P1 fix, 2026-09-26): the F1
+      // read-back above can no longer see a same-envelope sibling written
+      // under the OTHER (inbound-declared) content-addressed key slot at
+      // all — it always reads back THIS call's own row now. Look one up
+      // explicitly and route it through reconcileDeclaredSibling (same
+      // measured-beats-declared precedence + audit trail as F1-heal above,
+      // generalized from "one row, two writers" to "two rows, one
+      // envelope").
+      const { data: siblingRows, error: siblingLookupError } = await (
+        db as unknown as ConnectorArtifactSiblingLookupClient
+      )
+        .from('connector_artifact')
+        .select('id, fingerprint_sha256, metadata, anchor_id, status')
+        .eq('org_id', input.orgId)
+        .eq('source', 'docusign')
+        .eq('external_ref', input.envelopeId)
+        .neq('id', artifactId);
+
+      if (siblingLookupError) {
+        logger.error(
+          {
+            error: siblingLookupError,
+            integrationId: input.integrationId,
+            envelopeId: input.envelopeId,
+            artifactId,
+          },
+          'DocuSign connector-artifact sibling provenance lookup failed — cannot rule out an unreconciled declared-hash duplicate for this envelope',
+        );
+        throw new Error('docusign_connector_artifact_sibling_lookup_failed');
+      }
+
+      for (const sibling of siblingRows ?? []) {
+        await reconcileDeclaredSibling({
+          db,
+          orgId: input.orgId,
+          integrationId: input.integrationId,
+          envelopeId: input.envelopeId,
+          verifiedFingerprint: fingerprint,
+          winningArtifactId: artifactId,
+          sibling,
+        });
       }
 
       // Audit breadcrumb. Carries the artifact id + byte_length but NEVER the

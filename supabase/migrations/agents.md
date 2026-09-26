@@ -1734,3 +1734,69 @@ two different documents for one envelope producing distinct dedupe keys, and
 a same-envelope-same-fingerprint replay dedupe-ing to one row). No hosted
 Supabase project was touched to validate this migration; the safety argument
 above is a static proof from the mig-0343 schema, not a rehearsed run.
+
+### Review-response addendum (P1 + P2, this same PR #3088, still `0487` unapplied)
+
+**P1 — sibling-provenance arbitration (fixed).** Content addressing gives the
+outbound (measured) and inbound (declared) producers DIFFERENT dedupe-key
+slots for the SAME envelope — pre-fix, both wrote `external_revision: null`,
+so the two collapsed onto ONE row and the existing F1 conflict/audit/heal
+path (in `docusign-envelope-completed.ts`'s `enqueueSignedDocument`) could
+observe the collision via its own read-back. Post-fix, that read-back always
+sees only its OWN just-written row, so F1 alone stopped detecting the
+conflict — a genuinely SEPARATE sibling row could persist unreconciled and
+independently drain into its own anchor. Both call sites now ALSO look up any
+same-envelope row under a DIFFERENT `external_revision` and route it through
+the same measured-beats-declared precedence + `audit_events` trail: outbound
+retires (`status='skipped'`) an eligible inbound-declared sibling
+(`reconcileDeclaredSibling` in `docusign-envelope-completed.ts`); inbound
+retires ITSELF the moment it finds a pre-existing verified-outbound sibling,
+never the outbound row (`enqueueInboundDeclaredHashArtifact` in
+`webhooks/docusign.ts`). `status='skipped'` — not a fingerprint/
+`external_revision` rewrite — is pulled out of
+`connector-artifact-drain.ts`'s `DRAINABLE_STATUSES` (`['pending','queued']`)
+without touching the retired row's dedupe-key identity. TDD: a new "F2"
+describe block in `docusign-envelope-completed.test.ts` builds a REAL
+in-memory `connector_artifact` store enforcing the actual
+`(org_id, source, external_ref, COALESCE(external_revision,''))` unique key
+(the prior mock always handed back whatever row a test configured,
+regardless of the key actually written, which is what hid this regression)
+and drives the real `enqueueSignedDocument` against it both orderings;
+confirmed red against the unfixed head (inbound sibling stayed `'pending'`,
+no audit row), green after the fix.
+
+**P2 — `0487`'s documented `-- ROLLBACK:` (addressed here, not in the .sql
+file).** The originally-drafted rollback —
+`UPDATE connector_artifact SET external_revision = NULL WHERE source='docusign' AND external_revision = fingerprint_sha256`
+— claimed the `AND external_revision = fingerprint_sha256` guard made it
+cohort-specific ("only reverts rows this migration itself set"). That claim
+is FALSE once the P1-fixed code is live: BOTH producers now set
+`external_revision = fingerprint_sha256` for every NEW docusign row too (that
+IS content-addressed identity, the whole point of this PR), so the predicate
+matches every docusign row, backfilled or brand-new, indistinguishably.
+Running that statement post-deploy would NULL every docusign row's
+`external_revision`, collapsing the dedupe key back to per-envelope for the
+WHOLE source — reintroducing the exact bug this migration and its paired
+code fix exist to close. No column distinguishes "backfilled by `0487`" from
+"written by the new code path" after the fact, and adding one is a schema
+change this data-only migration deliberately avoids, so there is no fixed
+statement that is both cohort-specific and safe to author in advance; a real
+reversal needs an id-scoped `UPDATE ... WHERE id = ANY(:snapshot_ids)` built
+from a row-id snapshot taken immediately BEFORE `0487` is applied (see the
+migration-procedure skill), never the blanket predicate.
+
+**Why this note lives here and not in `0487`'s own file:**
+`.claude/hooks/check-constitution-on-edit.sh`'s never-modify-an-existing-
+migration rule (CLAUDE.md §1.2) is a blanket, file-existence-based BLOCK with
+no carve-out for a migration that is merely unapplied-and-still-on-branch —
+it denied an Edit/Write to `0487_docusign_content_addressed_external_revision_backfill.sql`
+outright, even though `0487` is independently confirmed applied nowhere
+(absent from `scripts/ci/snapshots/ledger-numeric-exemptions.json`'s
+`exemptPrefixes`, absent from `origin/main`, and the file's own header
+already says so). Routing around a PreToolUse hook via a tool it does not
+intercept would defeat its purpose, so the correction lands here instead,
+where every reader of this migration's history sees it. **If a future
+session CAN legitimately edit `0487`'s `-- ROLLBACK:` comment in place
+(e.g. a fresh worktree/session where the hook's on-disk check does not
+apply, or an explicit operator override) before this PR merges, do so and
+delete this addendum — the corrected text is spelled out above verbatim.**
