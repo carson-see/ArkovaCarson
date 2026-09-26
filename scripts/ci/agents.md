@@ -1111,3 +1111,63 @@ tree reported exactly `attestation.expiring` / `attestation.expired`
 — and correctly did NOT flag `compliance.score_degraded`, which turned out to have no real
 emit call site anywhere (a type-union member and a test assertion, nothing else) — a fact this
 checker's own extractor is what established, not the original bug report.
+
+## 2026-09-26 — `check-webhook-event-emission-registration.ts`: P2 review follow-up, syntax-aware extraction
+
+Review on PR #3091 caught two real gaps in the mechanism the 2026-09-25 entry above describes:
+
+1. **The blind spot the guard exists to catch was itself unguarded.** The original
+   `extractDispatchLiterals` assumed a non-literal `dispatchWebhookEvent` second argument was
+   always constrained by TypeScript to a registered union, so a variable argument contributed
+   NOTHING — including exactly the shape that would recreate this PR's own bug:
+   `const eventType = 'new.unregistered'; dispatchWebhookEvent(orgId, eventType, id, payload);`.
+   `dispatchWebhookEvent`'s real signature (`services/worker/src/webhooks/delivery.ts`) is
+   `eventType: string` — nothing enforces that assumption at the call site.
+2. **The 400-char window regex could misattribute text.** It scanned a fixed window of source
+   AFTER each `dispatchWebhookEvent(` match rather than parsing the call's own argument list, so
+   an event-looking literal in the PAYLOAD argument, or in a wholly unrelated call that happened
+   to fall within the window, could be picked up as if it were the dispatch argument.
+
+**Fix — `extractDispatchArguments` replaces `extractDispatchLiterals`:** parses each call's own
+parenthesised argument list (paren/bracket/brace/string-aware, via `findMatchingParen` +
+`splitTopLevelArgs`) and reads its own second argument, never a fixed window. A literal is taken
+directly. A bare identifier is resolved against same-file `<ident> = 'literal'` assignments
+(`resolveIdentifierLiterals` — the same technique `extractDirectInsertLiterals` already used for
+`event_type: someVar`, now shared by both), which is what catches the reported bug. An identifier
+that resolves to nothing is either a documented, hand-verified entry in
+`KNOWN_TYPE_NARROWED_DISPATCH_ARGS` (two real cases exist today: `folders-deps.ts`'s `eventType`
+is exhaustively typed `FolderEventType` in `api/v1/folders.ts`; `subOrgEvents.ts`'s `eventType` is
+exhaustively typed `SubOrgEventType` in the same file — both unions were manually checked against
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` when the entries were added) or an explicit `unresolvedArgs`
+failure — fail closed, never a silent skip. A `readStringLiteralUnion` test helper re-reads both
+allowlisted union types out of their declaring files on every test run and re-asserts every
+member is still registered, so the allowlist can't quietly go stale.
+
+**A second real false-positive turned up while wiring this in**, against the actual repo tree
+(not a fixture): the naive "any `dispatchWebhookEvent(` match is a call" assumption matched two
+non-call declarations — the `dispatchWebhookEvent` interface method signature in
+`jobs/anchorExpirySweep.ts`'s `AnchorExpirySweepDb` (a typed port, not a call) and the function's
+own declaration line in `webhooks/delivery.ts` (`export async function dispatchWebhookEvent(orgId:
+string, eventType: string, ...)`). Both have an argument shaped like `identifier: Type` at the top
+level, which no real call argument can ever look like (a real object-literal argument starts with
+`{`, not `identifier:`). `PARAM_SIGNATURE_RE` detects this shape and skips the match entirely —
+covered by a dedicated test so a regression here would be caught by fixture, not by re-discovering
+it against the live tree again.
+
+**Verification:** `check-webhook-event-emission-registration.test.ts` gained ~20 new cases
+(the reported bug, whitespace/newline variants, the comparison-vs-assignment distinction, the
+allowlist skip, the two syntax-aware-boundary regressions, the two declaration-vs-call
+false-positives, and the allowlist-honesty test) — confirmed RED against the pre-fix
+implementation (restored a temp copy of the prior file and ran the new test file against it: 19
+of 34 failed, including the exact reported-bug case and both misattribution cases) and GREEN
+after. `scanWorkerEmissions().unresolvedArgs` is `[]` against the real tree — every
+`dispatchWebhookEvent` call site in the repo today is either a literal, a resolvable variable, or
+on the verified allowlist.
+
+**Also fixed in the same PR (attestationExpiry.ts, not this script):** the bulk EXPIRED update
+counted `newly_expired` from the SELECT candidate set rather than from rows the UPDATE actually
+returned, and issued the UPDATE keyed only on `id` with no `status = 'ACTIVE'` guard — so a row a
+concurrent process had already moved off ACTIVE between the SELECT and the UPDATE could be
+silently clobbered back to EXPIRED, and a failed or partially-matched chunk was still counted as
+fully expired. Fixed by adding `.eq('status', 'ACTIVE')` to the UPDATE's own WHERE clause and
+`.select('id')` to count only the rows it actually touched. See `jobs/agents.md`.

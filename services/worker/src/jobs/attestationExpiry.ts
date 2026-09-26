@@ -98,19 +98,28 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       .lt('expires_at', now.toISOString());
 
     if (!expiredError && justExpired?.length) {
-      result.newly_expired += justExpired.length;
-
       // Bulk status update in chunks of `POSTGREST_IN_FILTER_CHUNK` or smaller.
+      // Review follow-up (PR #3091, P2): re-assert `status = 'ACTIVE'` in the
+      // UPDATE's own WHERE clause — the SELECT above and this UPDATE are not
+      // atomic, so a row a concurrent process already moved off ACTIVE (e.g.
+      // REVOKED) between the two must not be clobbered back to EXPIRED. And
+      // count `newly_expired` from the rows the UPDATE actually returns, not
+      // from the SELECT candidate count, so a chunk that errors — or a row
+      // the ACTIVE guard just excluded — is not reported as expired.
       const expiredIds = justExpired.map((att: { id: string }) => att.id);
       for (const { values: chunk } of chunkForInFilter(expiredIds)) {
-        const { error: bulkUpdateErr } = await dbAny
+        const { data: updated, error: bulkUpdateErr } = await dbAny
           .from('attestations')
           .update({ status: 'EXPIRED' })
-          .in('id', chunk);
+          .eq('status', 'ACTIVE')
+          .in('id', chunk)
+          .select('id');
 
         if (bulkUpdateErr) {
           logger.error({ error: bulkUpdateErr, count: chunk.length }, 'Failed to bulk-update expired attestations chunk');
+          continue;
         }
+        result.newly_expired += updated?.length ?? 0;
       }
     }
 

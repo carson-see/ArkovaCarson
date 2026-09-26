@@ -241,7 +241,12 @@ describe('SCRUM-1296 / webhook-event-divergence: attestationExpiry bulk operatio
       if (table === 'attestations' && callCount === 2) return makeChainable({ data: expiredData, error: null }); // just expired
       if (table === 'attestations') {
         statusUpdateCalled = true;
-        return makeChainable({ data: null, error: null });
+        // Review follow-up (PR #3091, P2): newly_expired is counted from the
+        // rows the UPDATE (gated on status = 'ACTIVE') actually returns, not
+        // from the SELECT candidate count — so the mock must reflect what a
+        // real `.update(...).eq('status', 'ACTIVE').in('id', chunk).select('id')`
+        // would hand back: both candidates here really did flip.
+        return makeChainable({ data: expiredData.map((row) => ({ id: row.id })), error: null });
       }
       return makeChainable({ data: null, error: null });
     });
@@ -268,7 +273,10 @@ describe('SCRUM-1296 / webhook-event-divergence: attestationExpiry bulk operatio
 
     let callCount = 0;
     let updateCalls = 0;
-    const updateChain = makeChainable({ data: null, error: null });
+    // Review follow-up (PR #3091, P2): the mocked UPDATE must return the rows
+    // it actually touched (`.select('id')`) — newly_expired now counts those,
+    // not the SELECT candidate count.
+    const updateChain = makeChainable({ data: expiredData.map((row) => ({ id: row.id })), error: null });
     mockDbFrom.mockImplementation((table: string) => {
       callCount++;
       if (table === 'attestations') {

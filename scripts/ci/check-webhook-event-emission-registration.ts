@@ -12,9 +12,10 @@
  * id simply does not exist anywhere it looks.
  *
  * This is the other half. It scans `services/worker/src` for event types that are
- * actually QUEUED — via a literal passed to `dispatchWebhookEvent(...)`, or a
- * direct `.from('webhook_delivery_logs' | 'webhook_events').insert(...)` carrying
- * an `event_type` field — and fails if any of them is missing from
+ * actually QUEUED — via a literal (or a resolvable variable) passed to
+ * `dispatchWebhookEvent(...)`, or a direct
+ * `.from('webhook_delivery_logs' | 'webhook_events').insert(...)` carrying an
+ * `event_type` field — and fails if any of them is missing from
  * `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`. A type queued but unregistered is dispatch-dead
  * in two different ways depending on the path:
  *
@@ -47,6 +48,30 @@
  * pattern, so the guard's own test does not depend on the buggy code staying in
  * the tree to keep passing.
  *
+ * REVIEW FOLLOW-UP (P2, same PR): the first cut of `extractDispatchLiterals`
+ * assumed a non-literal `dispatchWebhookEvent` second argument was always
+ * constrained by TypeScript to a registered union, so it silently contributed
+ * NOTHING for a variable arg — including
+ * `const eventType = 'new.unregistered'; dispatchWebhookEvent(orgId, eventType, id, payload);`,
+ * a shape `dispatchWebhookEvent`'s actual signature (`eventType: string`) does
+ * nothing to prevent. Worse, the extractor used a 400-char window regex after
+ * each call site rather than parsing the call's actual argument list, so a
+ * quoted event-looking string in the PAYLOAD (or in an unrelated adjacent call
+ * within the window) could be misattributed as the dispatch argument.
+ *
+ * Fixed by making extraction syntax-aware: `extractDispatchArguments` parses
+ * each `dispatchWebhookEvent(...)` call's own parenthesised argument list
+ * (respecting nested parens/brackets/braces/strings, so multi-line calls and
+ * adjacent calls/payloads can no longer bleed into each other) and reads its
+ * own second argument, not a fixed-width window. A literal second argument is
+ * taken directly. A bare-identifier second argument is resolved against
+ * same-file `<ident> = 'literal'` assignments (the same technique
+ * `extractDirectInsertLiterals` already used for the `event_type: someVar`
+ * shape below) — this is what now catches the reported bug. An identifier
+ * that cannot be resolved this way is either a documented, verified case in
+ * `KNOWN_TYPE_NARROWED_DISPATCH_ARGS` (see that constant) or an explicit
+ * FAILURE (`unresolvedArgs`), never a silent skip.
+ *
  * DELIBERATE EXCLUSIONS
  *
  * `test.ping` and `webhook.verification` are real literal `event_type` values
@@ -63,11 +88,12 @@
  * addition must edit deliberately, not one a scan can grow into on its own.
  *
  * FAIL CLOSED, same as the sibling script: a source region that cannot be located
- * is a violation, not a skip.
+ * — or a dispatch argument that cannot be resolved to a literal and is not on
+ * the verified narrowed-type allowlist — is a violation, not a skip.
  *
  * Usage: tsx scripts/ci/check-webhook-event-emission-registration.ts
  * Exit 0 = every emitted event type is registered. Exit 1 = an unregistered
- * emission was found.
+ * emission, or an unresolved dispatch argument, was found.
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -79,6 +105,17 @@ const ROOT = resolve(import.meta.dirname, '..', '..');
 /** Matches a complete event id and nothing else — `family.event_name`. */
 const EVENT_ID_RE = /^[a-z][a-z_]*\.[a-z][a-z_]*$/;
 const QUOTED_ID_RE = /(['"])([a-z][a-z_]*\.[a-z][a-z_]*)\1/g;
+/** A bare identifier and nothing else — used to tell "variable" from "literal"
+ * or some other expression (member access, ternary, template literal, call). */
+const BARE_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/;
+/** `name: Type` (optionally `name?: Type`) — a TS parameter's own shape, never
+ * a real call argument (a bare call argument is an expression; the only way
+ * an argument's OWN trimmed text starts with `identifier:` is a declaration's
+ * parameter list, since a real object-literal argument would start with `{`).
+ * Used to recognize `dispatchWebhookEvent(orgId: string, ...)` — an interface
+ * method signature or the function's own declaration line — and skip it: it
+ * is not a call site at all. */
+const PARAM_SIGNATURE_RE = /^[A-Za-z_$][\w$]*\??\s*:\s*\S/;
 
 /**
  * `test.ping` / `webhook.verification` — see the file header. Both are
@@ -89,6 +126,41 @@ const QUOTED_ID_RE = /(['"])([a-z][a-z_]*\.[a-z][a-z_]*)\1/g;
  */
 export const KNOWN_NON_SUBSCRIBABLE_EMISSIONS = ['test.ping', 'webhook.verification'] as const;
 
+/**
+ * `dispatchWebhookEvent` call sites whose event-type argument is a bare
+ * identifier this scanner cannot resolve to a literal by same-file assignment,
+ * because it flows in from a locally-declared, EXHAUSTIVE string-literal union
+ * type declared in a sibling file — not a same-file literal assignment. Each
+ * entry was verified BY HAND when added: every member of the named union type
+ * is present in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`.
+ * `check-webhook-event-emission-registration.test.ts`'s "known narrowed-type
+ * allowlist stays honest" suite re-reads each union type straight out of its
+ * declaring file on every run and re-verifies every member is still
+ * registered, so this allowlist cannot silently go stale even though the
+ * scanner itself cannot see the type system.
+ *
+ * Add an entry here ONLY when you have personally confirmed the identifier's
+ * declared type is a closed string-literal union and every member is
+ * registered — never as a way to make an unresolved-argument failure go away
+ * without doing that check. If `dispatchWebhookEvent` is ever called with a
+ * genuinely unconstrained `string`, remove the file from this list rather than
+ * add to it.
+ */
+export const KNOWN_TYPE_NARROWED_DISPATCH_ARGS = [
+  {
+    file: 'services/worker/src/api/v1/folders-deps.ts',
+    identifier: 'eventType',
+    unionFile: 'services/worker/src/api/v1/folders.ts',
+    unionType: 'FolderEventType',
+  },
+  {
+    file: 'services/worker/src/webhooks/subOrgEvents.ts',
+    identifier: 'eventType',
+    unionFile: 'services/worker/src/webhooks/subOrgEvents.ts',
+    unionType: 'SubOrgEventType',
+  },
+] as const;
+
 const QUEUE_TABLE_NAMES = ['webhook_delivery_logs', 'webhook_events'] as const;
 
 /** Drop `//` line comments and `/* *\/` blocks before extracting ids — mirrors
@@ -97,27 +169,153 @@ export function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
-/**
- * Literal event-type ids passed as `dispatchWebhookEvent`'s own second
- * argument. Scans a bounded window after each call so multi-line calls are
- * covered; a call whose event-type argument is a variable (already
- * type-constrained to a registered `WebhookEventType`-derived union by
- * TypeScript) contributes nothing, which is correct — this guard's job is
- * literal STRINGS that bypass that compile-time guarantee.
- */
-export function extractDispatchLiterals(source: string): string[] {
-  const clean = stripComments(source);
+/** Advances past a string/template literal starting at `quote` (index `start`
+ * holds the opening quote character), honoring backslash escapes. Returns the
+ * index of the closing quote (or the last index of `source` if unterminated). */
+function skipStringLiteral(source: string, start: number, quote: string): number {
+  let i = start + 1;
+  while (i < source.length) {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === quote) return i;
+    i++;
+  }
+  return source.length - 1;
+}
+
+/** Finds the index of the `)` matching the `(` at `openIndex`, honoring
+ * nested parens/brackets/braces and skipping over string/template literals so
+ * a `)` or `,` inside a string can never be mistaken for structural syntax. */
+function findMatchingParen(source: string, openIndex: number): number {
+  let depth = 0;
+  for (let i = openIndex; i < source.length; i++) {
+    const c = source[i];
+    if (c === '"' || c === "'" || c === '`') {
+      i = skipStringLiteral(source, i, c);
+      continue;
+    }
+    if (c === '(') depth++;
+    else if (c === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Splits a call's argument-list text on top-level commas only — commas
+ * nested inside `()`/`[]`/`{}` or inside a string/template literal do not
+ * split. */
+function splitTopLevelArgs(argsSource: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (let i = 0; i < argsSource.length; i++) {
+    const c = argsSource[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const start = i;
+      i = skipStringLiteral(argsSource, i, c);
+      current += argsSource.slice(start, i + 1);
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    if (c === ',' && depth === 0) {
+      args.push(current);
+      current = '';
+      continue;
+    }
+    current += c;
+  }
+  if (current.trim().length > 0) args.push(current);
+  return args;
+}
+
+/** Resolves a bare identifier back to every string literal it is directly
+ * assigned in the same (already comment-stripped) file — `ident = 'literal'`
+ * (not `==`/`===`), covering both a single assignment and the
+ * conditionally-reassigned-in-a-branch shape `attestationExpiry.ts` used to
+ * have. */
+function resolveIdentifierLiterals(identifier: string, cleanSource: string): string[] {
   const ids = new Set<string>();
-  const CALL_RE = /dispatchWebhookEvent\(/g;
-  const WINDOW = 400;
+  const assignRe = new RegExp(`\\b${identifier}\\s*=(?!=)\\s*(['"])([a-z][a-z_]*\\.[a-z][a-z_]*)\\1`, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = assignRe.exec(cleanSource))) ids.add(m[2]);
+  return [...ids];
+}
+
+export interface DispatchArgumentResult {
+  eventTypes: string[];
+  /** One entry per second-argument expression that was neither a literal nor
+   * resolvable to one, and is not on `KNOWN_TYPE_NARROWED_DISPATCH_ARGS`. */
+  unresolved: string[];
+}
+
+/**
+ * Syntax-aware extraction of `dispatchWebhookEvent`'s own second argument
+ * from every call site in `source` (whose file is `relFile`, used only to
+ * check `KNOWN_TYPE_NARROWED_DISPATCH_ARGS`). Replaces the old fixed-width
+ * window regex: it parses each call's actual argument list, so a literal in
+ * the payload argument or in an adjacent call can no longer be misattributed.
+ */
+export function extractDispatchArguments(source: string, relFile = ''): DispatchArgumentResult {
+  const clean = stripComments(source);
+  const eventTypes = new Set<string>();
+  const unresolved: string[] = [];
+  const CALL_RE = /\bdispatchWebhookEvent\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = CALL_RE.exec(clean))) {
-    const window = clean.slice(m.index, m.index + WINDOW);
-    QUOTED_ID_RE.lastIndex = 0;
-    const lit = QUOTED_ID_RE.exec(window);
-    if (lit) ids.add(lit[2]);
+    const openParen = m.index + m[0].length - 1;
+    const closeParen = findMatchingParen(clean, openParen);
+    if (closeParen === -1) {
+      unresolved.push(`${relFile}: unterminated dispatchWebhookEvent(...) call`);
+      continue;
+    }
+    const args = splitTopLevelArgs(clean.slice(openParen + 1, closeParen));
+    if (args.some((a) => PARAM_SIGNATURE_RE.test(a.trim()))) {
+      // Not a call — an interface method signature or the function's own
+      // declaration line (e.g. `dispatchWebhookEvent(orgId: string, ...)`).
+      continue;
+    }
+    const secondArg = args[1]?.trim();
+    if (!secondArg) {
+      unresolved.push(`${relFile}: dispatchWebhookEvent(...) call has no second argument`);
+      continue;
+    }
+
+    const literalMatch = /^(['"])([a-z][a-z_]*\.[a-z][a-z_]*)\1$/.exec(secondArg);
+    if (literalMatch) {
+      eventTypes.add(literalMatch[2]);
+      continue;
+    }
+
+    if (BARE_IDENTIFIER_RE.test(secondArg)) {
+      const resolved = resolveIdentifierLiterals(secondArg, clean);
+      if (resolved.length > 0) {
+        for (const id of resolved) eventTypes.add(id);
+        continue;
+      }
+      const known = KNOWN_TYPE_NARROWED_DISPATCH_ARGS.some(
+        (entry) => entry.file === relFile && entry.identifier === secondArg,
+      );
+      if (known) continue;
+      unresolved.push(
+        `${relFile}: dispatchWebhookEvent(...) second argument \`${secondArg}\` is a variable with no ` +
+          'same-file literal assignment and is not in KNOWN_TYPE_NARROWED_DISPATCH_ARGS',
+      );
+      continue;
+    }
+
+    // Some other expression shape (member access, ternary, template literal,
+    // function call, ...) — fail closed rather than guess.
+    unresolved.push(
+      `${relFile}: dispatchWebhookEvent(...) second argument \`${secondArg}\` is not a literal or a plain ` +
+        'identifier this scanner can resolve',
+    );
   }
-  return [...ids];
+  return { eventTypes: [...eventTypes], unresolved };
 }
 
 /**
@@ -157,9 +355,7 @@ export function extractDirectInsertLiterals(source: string): string[] {
     else if (m[3]) identifiers.add(m[3]);
   }
   for (const ident of identifiers) {
-    const assignRe = new RegExp(`\\b${ident}\\s*=\\s*(['"])([a-z][a-z_]*\\.[a-z][a-z_]*)\\1`, 'g');
-    let am: RegExpExecArray | null;
-    while ((am = assignRe.exec(clean))) ids.add(am[2]);
+    for (const id of resolveIdentifierLiterals(ident, clean)) ids.add(id);
   }
   return [...ids];
 }
@@ -171,15 +367,18 @@ export interface EmissionSource {
 }
 
 /** Every id emitted by a single file, from both extraction strategies, minus
- * the deliberate non-subscribable-ping exclusions. */
-export function extractFileEmissions(file: string, source: string): EmissionSource {
+ * the deliberate non-subscribable-ping exclusions. Also returns any
+ * unresolved `dispatchWebhookEvent` argument found in the file. */
+export function extractFileEmissions(file: string, source: string): EmissionSource & { unresolved: string[] } {
   const excluded = new Set<string>(KNOWN_NON_SUBSCRIBABLE_EMISSIONS);
-  const ids = new Set<string>([
-    ...extractDispatchLiterals(source),
-    ...extractDirectInsertLiterals(source),
-  ]);
+  const dispatch = extractDispatchArguments(source, file);
+  const ids = new Set<string>([...dispatch.eventTypes, ...extractDirectInsertLiterals(source)]);
   for (const excludedId of excluded) ids.delete(excludedId);
-  return { file, eventTypes: [...ids].filter((id) => EVENT_ID_RE.test(id)) };
+  return {
+    file,
+    eventTypes: [...ids].filter((id) => EVENT_ID_RE.test(id)),
+    unresolved: dispatch.unresolved,
+  };
 }
 
 function listTsFiles(dir: string, out: string[] = []): string[] {
@@ -199,6 +398,10 @@ export interface EmissionScanResult {
   sources: EmissionSource[];
   /** Set when the worker source directory could not be located at all. */
   unresolved?: string;
+  /** Per-call-site dispatch arguments that could not be resolved to a literal
+   * and are not on the verified narrowed-type allowlist. Non-empty means the
+   * scan itself must fail closed, same as `unresolved`. */
+  unresolvedArgs: string[];
 }
 
 const WORKER_SRC = 'services/worker/src';
@@ -209,19 +412,22 @@ export function scanWorkerEmissions(root = ROOT): EmissionScanResult {
   try {
     files = listTsFiles(dir);
   } catch {
-    return { sources: [], unresolved: `${WORKER_SRC} could not be read` };
+    return { sources: [], unresolved: `${WORKER_SRC} could not be read`, unresolvedArgs: [] };
   }
   if (files.length === 0) {
-    return { sources: [], unresolved: `${WORKER_SRC} contained no .ts files` };
+    return { sources: [], unresolved: `${WORKER_SRC} contained no .ts files`, unresolvedArgs: [] };
   }
+  const unresolvedArgs: string[] = [];
   const sources = files
     .map((full) => {
       const rel = relative(root, full).split('\\').join('/');
       const source = readFileSync(full, 'utf-8');
-      return extractFileEmissions(rel, source);
+      const emission = extractFileEmissions(rel, source);
+      unresolvedArgs.push(...emission.unresolved);
+      return { file: emission.file, eventTypes: emission.eventTypes };
     })
     .filter((s) => s.eventTypes.length > 0);
-  return { sources };
+  return { sources, unresolvedArgs };
 }
 
 /** The canonical registered set: `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` keys. Same
@@ -256,6 +462,30 @@ export function readCanonicalEventTypes(root = ROOT): CanonicalReading {
   return { ids: [...ids] };
 }
 
+/**
+ * Reads a `type <name> = 'a.b' | 'c.d' | ...;` string-literal union straight
+ * out of `file`, for the "known narrowed-type allowlist stays honest" test —
+ * NOT used by the runtime scan (which never sees the type system). Returns
+ * `undefined` if the declaration can't be found.
+ */
+export function readStringLiteralUnion(file: string, typeName: string, root = ROOT): string[] | undefined {
+  let content: string;
+  try {
+    content = readFileSync(resolve(root, file), 'utf-8');
+  } catch {
+    return undefined;
+  }
+  const clean = stripComments(content);
+  const declRe = new RegExp(`type\\s+${typeName}\\s*=([^;]+);`);
+  const match = declRe.exec(clean);
+  if (!match) return undefined;
+  const ids = new Set<string>();
+  const idRe = new RegExp(QUOTED_ID_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = idRe.exec(match[1]))) ids.add(m[2]);
+  return ids.size > 0 ? [...ids] : undefined;
+}
+
 export interface EmissionViolation {
   file: string;
   /** Emitted event types this file queues that are absent from the canonical map. */
@@ -270,6 +500,9 @@ export function collectEmissionViolations(params: {
   const { canonical, scan } = params;
   if (canonical.unresolved) return { violations: [], unresolved: canonical.unresolved };
   if (scan.unresolved) return { violations: [], unresolved: scan.unresolved };
+  if (scan.unresolvedArgs.length > 0) {
+    return { violations: [], unresolved: scan.unresolvedArgs.join('; ') };
+  }
 
   const canonicalSet = new Set(canonical.ids);
   const violations: EmissionViolation[] = [];
