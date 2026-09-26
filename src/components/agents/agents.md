@@ -52,3 +52,25 @@ quick reference.
   string; no bare literals (§1.3, `npm run lint:copy`)
 - `@/components/ui/dialog` — the revoke confirmation dialog (Radix: focus
   trap + Escape, keyboard-reachable without extra wiring)
+
+## 2026-09-26 — review P2: no assumed state on failure, revoke disabled mid-action (PR #3093)
+
+`actionFailureMessage(err, action, fallback)` gained an `action` parameter
+('suspend' | 'resume' | 'revoke') and now branches on
+`AgentActionError.observedStatus` (see `hooks/agents.md`) instead of a single
+static `*_FAILED` string: a 409 still always renders
+`REVOKED_TERMINAL_ERROR`; otherwise `undefined` observedStatus falls back to
+the generic `*_FAILED` copy, `null` renders the `*_RESULT_UNCONFIRMED` copy,
+and a concrete status renders either the `*_FAILED_CONFIRMED_*` copy (the
+readback confirms nothing changed) or `*_SUCCEEDED_DESPITE_ERROR` (the
+readback shows the mutation actually took effect despite the reported
+failure). None of these strings claim a state the client cannot know — see
+`copy.ts`'s AGENT_LABELS. `handleConfirmRevoke` applies the same principle
+directly: a revoke "failure" whose readback confirms `observedStatus ===
+'revoked'` closes the confirm dialog as a success instead of showing an
+error that would be false.
+
+The Revoke button is now `disabled={isActionLoading}` (same flag Suspend/
+Resume already used) — a suspend/resume in flight for a row used to leave
+Revoke clickable, letting a second, conflicting mutation fire for the same
+agent before the first settled.

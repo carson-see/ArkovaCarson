@@ -201,6 +201,134 @@ describe('useAgents — 409 terminal-revocation surfacing', () => {
   });
 });
 
+describe('useAgents — detail cache invalidation on mutation (review P2)', () => {
+  /**
+   * `invalidate()` used to only touch the `agents` list key. With a detail
+   * view mounted (AgentKeysPanel / useAgentDetail), suspend/resume/revoke
+   * left its separate `agentDetail(agentId)` cache entry stale — the keys
+   * panel kept showing pre-mutation data (e.g. "active" keys after a
+   * suspend). Render both hooks against one shared QueryClient and assert
+   * the detail view's own status flips after the mutation resolves.
+   */
+  it('invalidates the mounted agentDetail query after a successful suspend', async () => {
+    let detailCalls = 0;
+    workerFetch.mockImplementation((path: unknown, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return Promise.resolve(okResponse({}));
+      if (path === '/api/v1/agents/agent-1') {
+        detailCalls += 1;
+        const status = detailCalls === 1 ? 'active' : 'suspended';
+        return Promise.resolve(okResponse({ ...mockAgent, status, api_keys: [] }));
+      }
+      return Promise.resolve(okResponse({ agents: [mockAgent] }));
+    });
+
+    const { result } = renderHook(
+      () => ({ agents: useAgents(), detail: useAgentDetail('agent-1') }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.agents.loading).toBe(false));
+    await waitFor(() => expect(result.current.detail.loading).toBe(false));
+    expect(result.current.detail.detail?.status).toBe('active');
+
+    await act(async () => {
+      await result.current.agents.suspendAgent('agent-1');
+    });
+
+    await waitFor(() => expect(result.current.detail.detail?.status).toBe('suspended'));
+  });
+
+  it('invalidates the mounted agentDetail query after a successful revoke', async () => {
+    let detailCalls = 0;
+    workerFetch.mockImplementation((path: unknown, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return Promise.resolve(okResponse({ status: 'revoked', agent_id: 'agent-1' }));
+      if (path === '/api/v1/agents/agent-1') {
+        detailCalls += 1;
+        const status = detailCalls === 1 ? 'active' : 'revoked';
+        return Promise.resolve(okResponse({ ...mockAgent, status, api_keys: [] }));
+      }
+      return Promise.resolve(okResponse({ agents: [mockAgent] }));
+    });
+
+    const { result } = renderHook(
+      () => ({ agents: useAgents(), detail: useAgentDetail('agent-1') }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.agents.loading).toBe(false));
+    await waitFor(() => expect(result.current.detail.loading).toBe(false));
+    expect(result.current.detail.detail?.status).toBe('active');
+
+    await act(async () => {
+      await result.current.agents.revokeAgent('agent-1');
+    });
+
+    await waitFor(() => expect(result.current.detail.detail?.status).toBe('revoked'));
+  });
+});
+
+describe('useAgents — ambiguous mutation failure carries an observed status (review P2)', () => {
+  /**
+   * A lost response can follow a committed mutation. On failure the hook
+   * must read back the agent's real status (not assume the request never
+   * took effect) and attach it to the thrown error so the UI can report
+   * what actually happened instead of a guess.
+   */
+  it('suspendAgent attaches the readback status when the PATCH fails but a refetch succeeds', async () => {
+    workerFetch.mockImplementation((path: unknown, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'timeout' }) });
+      }
+      if (path === '/api/v1/agents/agent-1') {
+        return Promise.resolve(okResponse({ ...mockAgent, status: 'suspended', api_keys: [] }));
+      }
+      return Promise.resolve(okResponse({ agents: [mockAgent] }));
+    });
+
+    const { result } = renderHook(() => useAgents(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await result.current.suspendAgent('agent-1');
+      } catch (err) {
+        caught = err;
+      }
+    });
+
+    expect(caught).toBeInstanceOf(AgentActionError);
+    expect((caught as AgentActionError).observedStatus).toBe('suspended');
+  });
+
+  it('suspendAgent attaches observedStatus null when the PATCH fails AND the readback also fails', async () => {
+    workerFetch.mockImplementation((path: unknown, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'timeout' }) });
+      }
+      if (path === '/api/v1/agents/agent-1') {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'still down' }) });
+      }
+      return Promise.resolve(okResponse({ agents: [mockAgent] }));
+    });
+
+    const { result } = renderHook(() => useAgents(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await result.current.suspendAgent('agent-1');
+      } catch (err) {
+        caught = err;
+      }
+    });
+
+    expect(caught).toBeInstanceOf(AgentActionError);
+    expect((caught as AgentActionError).observedStatus).toBeNull();
+  });
+});
+
 describe('useAgentDetail', () => {
   it('fetches GET /api/v1/agents/:id and returns api_keys', async () => {
     workerFetch.mockResolvedValue(okResponse({

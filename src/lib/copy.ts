@@ -839,9 +839,23 @@ export const AGENT_LABELS = {
   SUSPEND: 'Suspend',
   RESUME: 'Resume',
   REVOKE: 'Revoke',
-  SUSPEND_FAILED: 'Failed to suspend this agent. It is still active — please try again.',
-  RESUME_FAILED: 'Failed to resume this agent. It is still suspended — please try again.',
+  // review P2 (SPEC-AGENTS-UI): a lost response can follow a committed
+  // mutation, so these generic fallbacks no longer assert a state the
+  // client cannot actually know ("it is still active/suspended"). The hook
+  // always reads the agent back after a failure; AGENTS_SETTINGS picks one
+  // of the *_CONFIRMED_* / *_SUCCEEDED_DESPITE_ERROR / *_RESULT_UNCONFIRMED
+  // strings below from that readback. These bare *_FAILED strings are only
+  // the fallback for an error that carries no readback at all.
+  SUSPEND_FAILED: 'Failed to suspend this agent. Please try again.',
+  RESUME_FAILED: 'Failed to resume this agent. Please try again.',
   REVOKE_FAILED: 'Failed to revoke this agent. Please try again.',
+  SUSPEND_FAILED_CONFIRMED_ACTIVE: 'Failed to suspend this agent — a refresh confirms it is still active. Please try again.',
+  SUSPEND_SUCCEEDED_DESPITE_ERROR: 'The suspend request reported an error, but a refresh confirms this agent is now suspended.',
+  SUSPEND_RESULT_UNCONFIRMED: 'Failed to suspend this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  RESUME_FAILED_CONFIRMED_SUSPENDED: 'Failed to resume this agent — a refresh confirms it is still suspended. Please try again.',
+  RESUME_SUCCEEDED_DESPITE_ERROR: 'The resume request reported an error, but a refresh confirms this agent is now active.',
+  RESUME_RESULT_UNCONFIRMED: 'Failed to resume this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  REVOKE_RESULT_UNCONFIRMED: 'Failed to revoke this agent, and its current status could not be confirmed. Please refresh before retrying.',
   // SCRUM-agents-ui: the worker's 409 for a PATCH against an already-revoked
   // agent (revocation is terminal). Surfaced as its own curated string rather
   // than the server's raw error text, matching this repo's rule against

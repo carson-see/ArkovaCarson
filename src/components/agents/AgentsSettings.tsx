@@ -87,10 +87,43 @@ function AgentStatusBadge({ status }: { status: Agent['status'] }) {
   );
 }
 
-/** Maps an action failure to curated copy — never the raw thrown message (§1.4/§1.5: may carry server internals). */
-function actionFailureMessage(err: unknown, fallback: string): string {
-  if (err instanceof AgentActionError && err.status === 409) {
+/**
+ * Maps an action failure to curated copy — never the raw thrown message
+ * (§1.4/§1.5: may carry server internals).
+ *
+ * Review P2: a lost response can follow a committed mutation, so this no
+ * longer assumes the pre-mutation state still holds. `useAgents` always
+ * reads the agent back after a failure and attaches the result as
+ * `err.observedStatus`:
+ *   - `undefined` — no readback available; fall back to the generic string.
+ *   - `null` — the readback itself also failed; say so rather than guess.
+ *   - a concrete status — report exactly that, including the case where the
+ *     mutation actually succeeded despite the reported failure.
+ */
+function actionFailureMessage(err: unknown, action: 'suspend' | 'resume' | 'revoke', fallback: string): string {
+  if (!(err instanceof AgentActionError)) {
+    return fallback;
+  }
+  if (err.status === 409) {
     return AGENT_LABELS.REVOKED_TERMINAL_ERROR;
+  }
+  if (err.observedStatus === undefined) {
+    return fallback;
+  }
+  if (err.observedStatus === null) {
+    if (action === 'suspend') return AGENT_LABELS.SUSPEND_RESULT_UNCONFIRMED;
+    if (action === 'resume') return AGENT_LABELS.RESUME_RESULT_UNCONFIRMED;
+    return AGENT_LABELS.REVOKE_RESULT_UNCONFIRMED;
+  }
+  if (action === 'suspend') {
+    return err.observedStatus === 'suspended'
+      ? AGENT_LABELS.SUSPEND_SUCCEEDED_DESPITE_ERROR
+      : AGENT_LABELS.SUSPEND_FAILED_CONFIRMED_ACTIVE;
+  }
+  if (action === 'resume') {
+    return err.observedStatus === 'active'
+      ? AGENT_LABELS.RESUME_SUCCEEDED_DESPITE_ERROR
+      : AGENT_LABELS.RESUME_FAILED_CONFIRMED_SUSPENDED;
   }
   return fallback;
 }
@@ -131,7 +164,7 @@ export function AgentsSettings({
     } catch (err) {
       setActionErrors((prev) => ({
         ...prev,
-        [agent.id]: actionFailureMessage(err, AGENT_LABELS.SUSPEND_FAILED),
+        [agent.id]: actionFailureMessage(err, 'suspend', AGENT_LABELS.SUSPEND_FAILED),
       }));
     } finally {
       setActionLoadingId(null);
@@ -146,7 +179,7 @@ export function AgentsSettings({
     } catch (err) {
       setActionErrors((prev) => ({
         ...prev,
-        [agent.id]: actionFailureMessage(err, AGENT_LABELS.RESUME_FAILED),
+        [agent.id]: actionFailureMessage(err, 'resume', AGENT_LABELS.RESUME_FAILED),
       }));
     } finally {
       setActionLoadingId(null);
@@ -172,9 +205,16 @@ export function AgentsSettings({
       await onRevoke(confirmRevokeId);
       setConfirmRevokeId(null);
     } catch (err) {
-      // The mutation rejected — the agent is NOT revoked, so the dialog
-      // stays open rather than implying success by closing.
-      setRevokeError(actionFailureMessage(err, AGENT_LABELS.REVOKE_FAILED));
+      // Review P2: a lost response can follow a committed mutation. Before
+      // assuming the revoke did NOT happen, trust the hook's post-failure
+      // readback (err.observedStatus) — if it confirms the agent IS now
+      // revoked, this "failure" is the success it actually was, so close
+      // the dialog rather than telling the user something untrue.
+      if (err instanceof AgentActionError && err.observedStatus === 'revoked') {
+        setConfirmRevokeId(null);
+      } else {
+        setRevokeError(actionFailureMessage(err, 'revoke', AGENT_LABELS.REVOKE_FAILED));
+      }
     } finally {
       setRevoking(false);
     }
@@ -293,6 +333,7 @@ export function AgentsSettings({
                           size="sm"
                           className="text-destructive hover:text-destructive"
                           aria-label={`Revoke ${agent.name}`}
+                          disabled={isActionLoading}
                           onClick={() => openRevokeConfirm(agent.id)}
                         >
                           <Ban className="h-4 w-4 mr-1" />

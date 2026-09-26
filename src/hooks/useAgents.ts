@@ -86,13 +86,26 @@ export interface AgentDetail extends Agent {
  * curated copy either way (`AGENT_LABELS.REVOKED_TERMINAL_ERROR` for 409,
  * a generic `*_FAILED` string otherwise); this repo does not render raw
  * `Error.message` to users (it may carry server internals).
+ *
+ * `observedStatus` (review P2): a lost response can follow a committed
+ * mutation, so the client cannot infer the agent's real status from "the
+ * PATCH/DELETE call rejected" alone. `suspendAgent` / `resumeAgent` /
+ * `revokeAgent` always read the agent back after a failure and attach the
+ * result here:
+ *   - `undefined` — no readback was attempted (error came from elsewhere).
+ *   - a concrete `AgentStatus` — the readback succeeded; this is the truth,
+ *     which may differ from what the failed request implied.
+ *   - `null` — the readback itself also failed; the result could not be
+ *     confirmed either way.
  */
 export class AgentActionError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  observedStatus?: AgentStatus | null;
+  constructor(message: string, status: number, observedStatus?: AgentStatus | null) {
     super(message);
     this.name = 'AgentActionError';
     this.status = status;
+    this.observedStatus = observedStatus;
   }
 }
 
@@ -127,6 +140,30 @@ async function patchAgentStatus(agentId: string, status: 'active' | 'suspended')
   }
 }
 
+/**
+ * Forces a fresh (non-cached) read of one agent's detail — used only to
+ * establish the OBSERVED status after a mutation failure (review P2).
+ * `staleTime: 0` guarantees a real network round-trip even if a cached
+ * detail entry exists. Never throws: a failed readback resolves to `null`
+ * so the caller can distinguish "confirmed unchanged/changed" from
+ * "could not be confirmed".
+ */
+async function readObservedStatus(
+  qc: ReturnType<typeof useQueryClient>,
+  agentId: string,
+): Promise<AgentStatus | null> {
+  try {
+    const detail = await qc.fetchQuery({
+      queryKey: queryKeys.agentDetail(agentId),
+      queryFn: () => fetchAgentDetailData(agentId),
+      staleTime: 0,
+    });
+    return detail.status;
+  } catch {
+    return null;
+  }
+}
+
 export function useAgents(options: { enabled?: boolean } = {}) {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -143,36 +180,61 @@ export function useAgents(options: { enabled?: boolean } = {}) {
     staleTime: 30_000,
   });
 
-  const refresh = useCallback(async () => {
-    if (user) {
-      await qc.invalidateQueries({ queryKey: queryKeys.agents(user.id) });
+  /**
+   * Invalidates the agents list, and — when an `agentId` is given — that
+   * agent's own detail cache too (review P2). The list and detail routes are
+   * separate query keys (`queryKeys.agents` vs `queryKeys.agentDetail`), so
+   * invalidating only the list left a mounted `AgentKeysPanel` (via
+   * `useAgentDetail`) showing pre-mutation status/keys after a
+   * suspend/resume/revoke.
+   */
+  const invalidate = useCallback(async (agentId?: string) => {
+    if (!user) return;
+    const tasks: Promise<void>[] = [qc.invalidateQueries({ queryKey: queryKeys.agents(user.id) })];
+    if (agentId) {
+      tasks.push(qc.invalidateQueries({ queryKey: queryKeys.agentDetail(agentId) }));
     }
-  }, [user, qc]);
-
-  const invalidate = useCallback(async () => {
-    if (user) {
-      await qc.invalidateQueries({ queryKey: queryKeys.agents(user.id) });
-    }
+    await Promise.all(tasks);
   }, [user, qc]);
 
   const suspendAgent = useCallback(async (agentId: string) => {
-    await patchAgentStatus(agentId, 'suspended');
-    await invalidate();
-  }, [invalidate]);
+    try {
+      await patchAgentStatus(agentId, 'suspended');
+      await invalidate(agentId);
+    } catch (err) {
+      // A lost response can follow a committed mutation — refetch before
+      // reporting failure, never assume the pre-mutation state still holds.
+      await invalidate(agentId);
+      const observedStatus = await readObservedStatus(qc, agentId);
+      const status = err instanceof AgentActionError ? err.status : 0;
+      const message = err instanceof Error ? err.message : 'Failed to update agent';
+      throw new AgentActionError(message, status, observedStatus);
+    }
+  }, [invalidate, qc]);
 
   const resumeAgent = useCallback(async (agentId: string) => {
-    await patchAgentStatus(agentId, 'active');
-    await invalidate();
-  }, [invalidate]);
+    try {
+      await patchAgentStatus(agentId, 'active');
+      await invalidate(agentId);
+    } catch (err) {
+      await invalidate(agentId);
+      const observedStatus = await readObservedStatus(qc, agentId);
+      const status = err instanceof AgentActionError ? err.status : 0;
+      const message = err instanceof Error ? err.message : 'Failed to update agent';
+      throw new AgentActionError(message, status, observedStatus);
+    }
+  }, [invalidate, qc]);
 
   const revokeAgent = useCallback(async (agentId: string) => {
     const res = await workerFetch(`/api/v1/agents/${agentId}`, { method: 'DELETE' });
     if (!res.ok) {
+      await invalidate(agentId);
+      const observedStatus = await readObservedStatus(qc, agentId);
       const body = await res.json().catch(() => ({}));
-      throw new AgentActionError(body.error ?? `Failed to revoke agent (${res.status})`, res.status);
+      throw new AgentActionError(body.error ?? `Failed to revoke agent (${res.status})`, res.status, observedStatus);
     }
-    await invalidate();
-  }, [invalidate]);
+    await invalidate(agentId);
+  }, [invalidate, qc]);
 
   return {
     agents,
@@ -181,7 +243,6 @@ export function useAgents(options: { enabled?: boolean } = {}) {
     suspendAgent,
     resumeAgent,
     revokeAgent,
-    refresh,
   };
 }
 

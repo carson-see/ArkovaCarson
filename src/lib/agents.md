@@ -943,3 +943,15 @@ Classification lives here, not in `copy.ts`: the copy layer stays copy.
 ## 2026-09-21 — SCRUM-5285 org-verification superseded copy
 
 `ORG_VERIFICATION_LABELS` carries the two 409 `verification_superseded` messages for `components/org/OrgVerification.tsx`. Both must keep telling the user to START AGAIN rather than to retry: the worker's compare-and-swap makes the refusal permanent for that code, so "try again" would be false. API error codes stay literals in the handlers — only user-visible strings live here.
+
+## 2026-09-26 — AGENT_LABELS review P2: no assumed state in suspend/resume failure copy (PR #3093)
+
+`SUSPEND_FAILED` / `RESUME_FAILED` no longer say "it is still active/suspended"
+— a lost response can follow a committed mutation, so the client cannot know
+that from a failed request alone (§1.5). They are now the generic fallback
+only. Six new keys carry the three-way readback outcome
+`AgentsSettings.tsx`'s `actionFailureMessage` picks from
+(`SUSPEND_FAILED_CONFIRMED_ACTIVE`, `SUSPEND_SUCCEEDED_DESPITE_ERROR`,
+`SUSPEND_RESULT_UNCONFIRMED`, and the `RESUME_*` mirrors), plus
+`REVOKE_RESULT_UNCONFIRMED`. See `hooks/agents.md` for where the readback
+(`AgentActionError.observedStatus`) comes from.

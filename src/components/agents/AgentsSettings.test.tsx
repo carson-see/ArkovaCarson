@@ -134,6 +134,101 @@ describe('AgentsSettings — suspend / resume actions', () => {
     // Never the raw server string.
     expect(screen.queryByText('Internal server error')).toBeNull();
   });
+
+  it('disables the revoke button for a row while a suspend is in flight for that same row (review P2)', async () => {
+    let resolveSuspend!: () => void;
+    const onSuspend = vi.fn(() => new Promise<void>((resolve) => { resolveSuspend = resolve; }));
+    render(<AgentsSettings {...makeProps({ agents: [activeAgent], onSuspend })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suspend recruiting bot/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /revoke recruiting bot/i })).toBeDisabled();
+    });
+
+    resolveSuspend();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /revoke recruiting bot/i })).not.toBeDisabled();
+    });
+  });
+
+  it('disables the revoke button for a row while a resume is in flight for that same row (review P2)', async () => {
+    let resolveResume!: () => void;
+    const onResume = vi.fn(() => new Promise<void>((resolve) => { resolveResume = resolve; }));
+    render(<AgentsSettings {...makeProps({ agents: [suspendedAgent], onResume })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /resume compliance checker/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /revoke compliance checker/i })).toBeDisabled();
+    });
+
+    resolveResume();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /revoke compliance checker/i })).not.toBeDisabled();
+    });
+  });
+});
+
+describe('AgentsSettings — failure copy reports the observed result, never an assumed one (review P2)', () => {
+  it('reports the agent is still active when a suspend fails and a readback confirms nothing changed', async () => {
+    const onSuspend = vi.fn().mockRejectedValue(new AgentActionError('boom', 500, 'active'));
+    render(<AgentsSettings {...makeProps({ agents: [activeAgent], onSuspend })} />);
+    fireEvent.click(screen.getByRole('button', { name: /suspend recruiting bot/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/still active/i)).toBeInTheDocument();
+    });
+  });
+
+  it('reports the agent is now suspended when the request "failed" but a readback shows it actually took effect', async () => {
+    const onSuspend = vi.fn().mockRejectedValue(new AgentActionError('boom', 500, 'suspended'));
+    render(<AgentsSettings {...makeProps({ agents: [activeAgent], onSuspend })} />);
+    fireEvent.click(screen.getByRole('button', { name: /suspend recruiting bot/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/now suspended/i)).toBeInTheDocument();
+    });
+    // Never claims "still active" when a readback says otherwise.
+    expect(screen.queryByText(/still active/i)).toBeNull();
+  });
+
+  it('says the result could not be confirmed when the post-failure readback also fails', async () => {
+    const onSuspend = vi.fn().mockRejectedValue(new AgentActionError('boom', 500, null));
+    render(<AgentsSettings {...makeProps({ agents: [activeAgent], onSuspend })} />);
+    fireEvent.click(screen.getByRole('button', { name: /suspend recruiting bot/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/could not be confirmed/i)).toBeInTheDocument();
+    });
+  });
+
+  it('reports the agent is still suspended when a resume fails and a readback confirms nothing changed', async () => {
+    const onResume = vi.fn().mockRejectedValue(new AgentActionError('boom', 500, 'suspended'));
+    render(<AgentsSettings {...makeProps({ agents: [suspendedAgent], onResume })} />);
+    fireEvent.click(screen.getByRole('button', { name: /resume compliance checker/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/still suspended/i)).toBeInTheDocument();
+    });
+  });
+
+  it('reports the agent is now active when a resume "failed" but a readback shows it actually took effect', async () => {
+    const onResume = vi.fn().mockRejectedValue(new AgentActionError('boom', 500, 'active'));
+    render(<AgentsSettings {...makeProps({ agents: [suspendedAgent], onResume })} />);
+    fireEvent.click(screen.getByRole('button', { name: /resume compliance checker/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/now active/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/still suspended/i)).toBeNull();
+  });
+
+  it('treats a revoke that "failed" but reads back as revoked as a success — closes the dialog without an error', async () => {
+    const onRevoke = vi.fn().mockRejectedValue(new AgentActionError('boom', 500, 'revoked'));
+    render(<AgentsSettings {...makeProps({ agents: [activeAgent], onRevoke })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /revoke recruiting bot/i }));
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /yes, revoke permanently/i }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
 });
 
 describe('AgentsSettings — revoke requires confirmation', () => {

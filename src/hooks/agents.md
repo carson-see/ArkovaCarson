@@ -325,3 +325,24 @@ active, and emits `recipient_name` only alongside an email (the worker's schema
 rejects name-without-email for the whole request). The hook knows its scope but
 NOT the caller's org ROLE, so a plain org member is still left to the server,
 which anchors the rows and reports the refusal per row.
+
+## 2026-09-26 — useAgents review P2: detail-cache invalidation + observed-status readback (PR #3093)
+
+`invalidate()` used to touch only the `queryKeys.agents(userId)` list key.
+With a `AgentKeysPanel` row expanded (`useAgentDetail`, separate
+`queryKeys.agentDetail(agentId)` key), suspend/resume/revoke left that cache
+entry stale — the keys panel kept showing pre-mutation status/keys.
+`invalidate()` now takes an optional `agentId` and invalidates both keys;
+`suspendAgent` / `resumeAgent` / `revokeAgent` pass it on every outcome,
+success or failure.
+
+On failure, a lost response can follow a committed mutation, so the hook no
+longer lets the caller assume the pre-mutation state still holds. It reads
+the agent back (`readObservedStatus`, a forced `staleTime: 0` fetch — never
+throws, resolves `null` on its own failure) and attaches the result to the
+re-thrown `AgentActionError.observedStatus`: a concrete `AgentStatus` when
+the readback succeeded (which may show the mutation actually took effect
+despite the reported failure), or `null` when the readback itself also
+failed. `undefined` (the default) means no readback was attempted. Deleted
+`refresh` — it was byte-identical to `invalidate` and unused outside this
+file.

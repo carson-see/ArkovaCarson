@@ -51,7 +51,6 @@ vi.mock('@/hooks/useAgents', () => ({
     suspendAgent: vi.fn(),
     resumeAgent: vi.fn(),
     revokeAgent: vi.fn(),
-    refresh: vi.fn(),
   }),
 }));
 
