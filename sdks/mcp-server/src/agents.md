@@ -3,7 +3,7 @@
 Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep 2026-08-18). Exposes Arkova verification as Model Context Protocol tools.
 
 ## Files
-- **`index.ts`** — MCP tool definitions (`TOOL_DEFINITIONS`) and `handleToolCall()` dispatcher. **9 tools**, all `arkova_`-prefixed: `arkova_submit_anchor`, `arkova_get_submission_status`, `arkova_verify_anchor`, `arkova_anchor_status`, `arkova_search_anchors`, `arkova_create_attestation`, `arkova_batch_verify`, `arkova_verify_signature`, `arkova_manage_folders`. If you add or remove a tool, update the count **here** and in `index.test.ts`'s exact-name ratchet in the same change — this file drifting out of sync with the real tool list is what caused a silent 2-test regression in 2026-08 (see History below).
+- **`index.ts`** — MCP tool definitions (`TOOL_DEFINITIONS`) and `handleToolCall()` dispatcher. **17 tools**, all `arkova_`-prefixed; the authoritative exact list is pinned by `index.test.ts` and exposed in the README tool catalog. If you add or remove a tool, update the count **here** and the exact-name ratchet in the same change — this file drifting out of sync with the real tool list is what caused a silent 2-test regression in 2026-08 (see History below).
   - **CLAUDE.md §1.3 (2026-08-18, clean-room verification):** tool names/descriptions/input-property descriptions are the §1.3 UI-copy terminology surface — `index.test.ts` asserts no banned term (and no "credential"/"credentials") appears anywhere in `TOOL_DEFINITIONS`.
   - `vitest.config.ts` (package-local) scopes test discovery to `src/**/*.test.ts` so `npm ci --ignore-scripts && npm test` passes in a checkout with no root `node_modules` — do not rely on `sdks/vitest.config.ts` picking this package up; module resolution for that parent config starts one directory up from where this package's own `vitest` dependency resolves.
   - `arkovaFetch` sets `redirect: 'error'`. Node preserves the custom `X-API-Key` header across an origin-changing redirect, so following one could disclose the key even when the configured base URL itself is trusted — regression-tested in `index.test.ts`'s "HTTP transport" suite.
@@ -18,7 +18,7 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 - Compatible with Claude, OpenAI, Cursor, and any MCP client (stdio transport only — see `cli.ts`).
 - Tool names/descriptions/input-property descriptions are CLAUDE.md §1.3 terminology surface (see `index.test.ts`'s standing guard above) — treat them like UI copy, not internal code, when adding or editing a tool.
 - UAT-23 `arkova_import_rows` accepts 1–100 strict fingerprint rows through the canonical API-key import endpoint; raw file fields and tenant overrides are rejected before fetch, with no automatic write retry.
-- The built stdio server currently lists 9 tools; `cli.bin.test.ts` pins that count through a real symlinked process after UAT-12 status and UAT-23 import were added.
+- The built stdio server currently lists 17 tools; `cli.bin.test.ts` pins that count through a real symlinked process after UAT-12 status and UAT-23 import were added.
 
 ## 2026-09-19 — UAT-12 / UAT-24 status and folder tools
 
@@ -74,3 +74,5 @@ count moved 6 → 9 across these two changes; see the exact-name ratchet in `ind
   disabled-capability 503 instead of swallowing it, `arkova_batch_verify` was capped at 20 (was
   100), and a `limit` NaN-parsing bug was fixed. Tool count was 6, all `arkova_`-prefixed, from this
   point until the 2026-09-19 additions above.
+
+- **2026-09-26 — v3.3.0:** 17 tools. Six generic-agent operations use canonical `/api/v1/agents` routes with `X-API-Key`; the seventh addition is API-key-only ComputeID admission with the complete `verification_receipt`. Mutations make one attempt. Mint/admission return a one-time key only in the direct tool result.

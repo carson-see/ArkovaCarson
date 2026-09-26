@@ -23,6 +23,7 @@ import {
   handleAnchorDocument,
   handleGetSubmissionStatus,
   handleImportRows,
+  handleAgentLifecycle,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -49,6 +50,40 @@ const mockFetch = vi.fn();
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
+});
+
+describe('generic agent lifecycle worker proxy', () => {
+  const config = { ...CONFIG, workerBaseUrl:'https://worker.test', callerApiKey:'ak_test_caller' };
+  const agent = { id:'aaaaaaaa-0000-4000-8000-000000000009', name:'Agent', description:null, agent_type:'custom', status:'active', allowed_scopes:['verify'], framework:null, version:null, callback_url:null, metadata:{} };
+  const key = { key:'ak_once', key_id:'key-id', key_prefix:'ak_once', scopes:['verify'], warning:'Store once.' };
+  it.each([
+    ['register','POST','/api/v1/agents',{name:'Agent'}], ['list','GET','/api/v1/agents',{}],
+    ['get','GET','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}],
+    ['update','PATCH','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001',status:'suspended'}],
+    ['revoke','DELETE','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}],
+    ['create_key','POST','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001/key',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}],
+    ['admit_computeid','POST','/api/v1/agents/computeid/admit',{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{passport_id:'bbbbbbbb-0000-4000-8000-000000000001'}}],
+  ] as const)('%s reaches canonical worker route once', async (operation,method,path,input) => {
+    const success = operation === 'list' ? { agents: [] } : operation === 'revoke' ? { status: 'revoked', agent_id: 'agent_id' in input ? input.agent_id : '' } : operation === 'create_key' ? { ...key, agent_id:input.agent_id, agent_name:'Agent', created_at:'2026-09-26T00:00:00Z' } : operation === 'admit_computeid' ? { ...key, agent:{...agent,metadata:undefined}, binding:{issuer:'computeid',passport_id:input.passport_id,bound_at:'2026-09-26T00:00:00Z',receipt_expires_at:'2026-09-27T00:00:00Z'} } : { ...agent, id:'agent_id' in input ? input.agent_id : agent.id };
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(success),{status:200}));
+    const result=await handleAgentLifecycle(operation,input,config);
+    expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(`https://worker.test${path}`,expect.objectContaining({method,redirect:'manual',headers:expect.objectContaining({'X-API-Key':'ak_test_caller'})}));
+  });
+  it('forwards only a verified bearer and preserves safe nested admission fields', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'no_permitted_scopes',message:'Admission requires an organization API key.',reason:'scope_ceiling',permitted:['verify']}}),{status:403}));
+    const result=await handleAgentLifecycle('admit_computeid',{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}},{...CONFIG,workerBaseUrl:'https://worker.test',callerAuthorization:'Bearer jwt'});
+    expect(mockFetch).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({headers:expect.objectContaining({Authorization:'Bearer jwt'})}));
+    expect(result.content[0].text).toContain('no_permitted_scopes'); expect(result.content[0].text).toContain('Admission requires an organization API key.'); expect(result.content[0].text).toContain('verify');
+  });
+  it('does not log a caller key embedded in a transport exception', async () => { const spy=vi.spyOn(console,'error').mockImplementation(()=>{}); mockFetch.mockRejectedValueOnce(new Error('ak_test_caller https://internal')); const result=await handleAgentLifecycle('list',{},config); expect(result.content[0].text).toContain('AGENT_TRANSPORT_ERROR'); expect(spy.mock.calls.flat().join(' ')).not.toContain('ak_test_caller'); spy.mockRestore(); });
+  it('fails closed once when a one-time key response is lost', async () => { mockFetch.mockResolvedValueOnce(new Response('{}',{status:201})); const result=await handleAgentLifecycle('create_key',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'},config); expect(result.isError).toBe(true); expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE'); expect(mockFetch).toHaveBeenCalledTimes(1); });
+  it.each([['create_key',{...key}],['admit_computeid',{...key,agent,binding:null}],['admit_computeid',{...key,agent,binding:{issuer:'computeid',passport_id:'wrong',bound_at:'now',receipt_expires_at:'later'}}] ] as const)('rejects incomplete %s one-time-key success envelopes',async(operation,response)=>{mockFetch.mockResolvedValueOnce(Response.json(response,{status:201}));const input=operation==='create_key'?{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}:{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}};const result=await handleAgentLifecycle(operation,input,config);expect(result.isError).toBe(true);expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');expect(mockFetch).toHaveBeenCalledTimes(1);});
+  it('rejects missing, duplicate, redirect, and oversized upstream boundaries', async () => {
+    expect((await handleAgentLifecycle('list',{}, {...config,callerAuthorization:'Bearer jwt'})).isError).toBe(true);
+    mockFetch.mockResolvedValueOnce(new Response(null,{status:307})); expect((await handleAgentLifecycle('list',{},config)).isError).toBe(true);
+    mockFetch.mockResolvedValueOnce(new Response('x'.repeat(262145),{status:500})); expect((await handleAgentLifecycle('list',{},config)).content[0].text).toContain('UPSTREAM_RESPONSE_TOO_LARGE');
+  });
 });
 
 describe('handleImportRows', () => {

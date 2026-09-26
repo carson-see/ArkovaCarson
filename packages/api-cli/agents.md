@@ -59,3 +59,6 @@ never reached `main` despite showing MERGED on GitHub. Recovered here for this p
 
 See `packages/sdk/agents.md`, `packages/embed/agents.md`, `sdks/langchain-ts/agents.md`, and
 `sdks/mcp-server/agents.md` for the sibling-package side of the same recovery.
+## 2026-09-26 — agent lifecycle parity
+
+The private CLI exposes generic agent lifecycle and ComputeID admission through the sibling SDK. Validate request files and flags before the SDK call, and add returned one-time keys to the redaction set before stdout serialization. The `file:../sdk` dependency remains a release limitation.

@@ -84,7 +84,7 @@ export interface ToolDefinition {
 }
 
 export interface ToolInputSchemaProperty {
-  type: string;
+  type: string | string[];
   description?: string;
   enum?: string[];
   format?: string;
@@ -94,6 +94,9 @@ export interface ToolInputSchemaProperty {
   minLength?: number;
   maxLength?: number;
   pattern?: string;
+  properties?: Record<string, ToolInputSchemaProperty>;
+  required?: string[];
+  additionalProperties?: boolean;
 }
 
 export interface ToolResult {
@@ -322,6 +325,91 @@ export interface ManageFoldersInput {
   connection_id?: string | null;
   anchor_ids?: string[];
   record_public_ids?: string[];
+}
+
+export interface AgentLifecycleInput {
+  agent_id?: string;
+  name?: string;
+  description?: string;
+  agent_type?: string;
+  allowed_scopes?: string[];
+  status?: 'active' | 'suspended';
+  framework?: string;
+  version?: string;
+  callback_url?: string | null;
+  metadata?: Record<string, unknown>;
+  passport_id?: string;
+  verification_receipt?: Record<string, unknown>;
+}
+
+/** Canonical worker proxy for all agent operations. It never substitutes the
+ * edge service credential and never forwards two caller credentials. */
+export async function handleAgentLifecycle(
+  operation: 'register'|'list'|'get'|'update'|'revoke'|'create_key'|'admit_computeid',
+  input: AgentLifecycleInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  if (!config.workerBaseUrl || (!!config.callerApiKey === !!config.callerAuthorization)) {
+    return errorResult(JSON.stringify({ error: 'agent_operation_unavailable', code: 'AUTH_FORWARDING_REQUIRED' }));
+  }
+  const id = input.agent_id ? encodeURIComponent(input.agent_id) : '';
+  const route = operation === 'register' || operation === 'list' ? '/api/v1/agents'
+    : operation === 'admit_computeid' ? '/api/v1/agents/computeid/admit'
+      : `/api/v1/agents/${id}${operation === 'create_key' ? '/key' : ''}`;
+  const method = operation === 'list' || operation === 'get' ? 'GET'
+    : operation === 'update' ? 'PATCH' : operation === 'revoke' ? 'DELETE' : 'POST';
+  const { agent_id: _agentId, ...payload } = input;
+  const body = ['register','update','admit_computeid'].includes(operation) ? payload : undefined;
+  try {
+    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}${route}`, {
+      method, redirect: 'manual', signal: AbortSignal.timeout(AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS),
+      headers: { 'Content-Type': 'application/json', ...(config.callerApiKey ? { 'X-API-Key': config.callerApiKey } : { Authorization: config.callerAuthorization! }) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (response.status >= 300 && response.status < 400) return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code: 'UPSTREAM_REDIRECT' }));
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      const raw = await response.text();
+      if (raw.length > 262_144) return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code: 'UPSTREAM_RESPONSE_TOO_LARGE' }));
+      parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    } catch { /* bounded generic error below */ }
+    if (!response.ok) {
+      const nested = parsed?.error;
+      const error = typeof nested === 'object' && nested !== null ? nested as Record<string, unknown> : parsed;
+      const code = typeof error?.code === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.code) ? error.code
+        : typeof error?.error === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.error) ? error.error : 'UPSTREAM_ERROR';
+      const reason = typeof error?.reason === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.reason) ? error.reason : undefined;
+      const safeMessageCodes = new Set(['api_key_required','vendor_gated','invalid_request','receipt_invalid','no_permitted_scopes','passport_revoked','passport_already_bound','admission_failed','ambiguous_caller','insufficient_scope','delegation_scope_exceeded','provider_scope_ceiling_exceeded']);
+      const message = safeMessageCodes.has(code) && typeof error?.message === 'string' && error.message.length <= 500 && !/[\r\n\x00-\x1f]/.test(error.message) ? error.message : undefined;
+      const permitted = Array.isArray(error?.permitted) ? error.permitted.filter((v): v is string => typeof v === 'string' && /^[a-z0-9:._-]{1,80}$/i.test(v)).slice(0, 32) : undefined;
+      const agentId = typeof error?.agent_id === 'string' && /^[0-9a-f-]{36}$/i.test(error.agent_id) ? error.agent_id : undefined;
+      return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code, ...(message ? { message } : {}), ...(reason ? { reason } : {}), ...(permitted ? { permitted } : {}), ...(agentId ? { agent_id: agentId } : {}) }));
+    }
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+    const agent = (value: unknown, requireMetadata = true): boolean => record(value) && typeof value.id === 'string' && value.id.length > 0
+      && typeof value.name === 'string' && typeof value.agent_type === 'string' && typeof value.status === 'string'
+      && Array.isArray(value.allowed_scopes) && value.allowed_scopes.every(scope => typeof scope === 'string') && (!requireMetadata || record(value.metadata));
+    const keyFields = (value: Record<string, unknown>): boolean => typeof value.key === 'string' && value.key.length > 0
+      && typeof value.key_id === 'string' && value.key_id.length > 0 && typeof value.key_prefix === 'string' && value.key_prefix.length > 0
+      && Array.isArray(value.scopes) && value.scopes.every(scope => typeof scope === 'string') && typeof value.warning === 'string' && value.warning.length > 0;
+    const binding = (value: unknown): boolean => record(value) && value.issuer === 'computeid'
+      && value.passport_id === input.passport_id && typeof value.bound_at === 'string' && value.bound_at.length > 0
+      && typeof value.receipt_expires_at === 'string' && value.receipt_expires_at.length > 0;
+    const valid = !!parsed && (operation === 'list' ? Array.isArray(parsed.agents) && parsed.agents.every(value => agent(value))
+      : operation === 'revoke' ? parsed.status === 'revoked' && typeof parsed.agent_id === 'string' && parsed.agent_id.length > 0
+        : operation === 'create_key' ? keyFields(parsed) && typeof parsed.agent_id === 'string' && parsed.agent_id.length > 0
+          && typeof parsed.agent_name === 'string' && typeof parsed.created_at === 'string'
+          : operation === 'admit_computeid' ? keyFields(parsed) && agent(parsed.agent, false) && binding(parsed.binding)
+            : agent(parsed));
+    if (!valid) return errorResult(JSON.stringify({ error:'agent_operation_failed', status:response.status, code:'UPSTREAM_INVALID_RESPONSE' }));
+    return textResult(parsed);
+  } catch (error) {
+    // This path has a raw caller credential in the failed fetch options. Do
+    // not log/format the exception: some runtimes embed URL/header material in
+    // network errors. The stable code is sufficient for callers and telemetry.
+    void error;
+    return errorResult(JSON.stringify({ error:'agent_operation_failed', code:'AGENT_TRANSPORT_ERROR' }));
+  }
 }
 
 export async function handleManageFolders(input: ManageFoldersInput, config: SupabaseConfig): Promise<ToolResult> {
@@ -810,6 +898,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {},
       required: [],
     },
+  },
+  { name:'arkova_register_agent', description:'Register a generic agent. Requires agents:manage; metadata.computeid is provider-managed.', inputSchema:{ type:'object', properties:{ name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Optional description.',maxLength:1000},agent_type:{type:'string',description:'Agent type.',enum:['llm_agent','ats_integration','hr_platform','compliance_tool','custom']},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:'string',description:'HTTPS callback URL.'},metadata:{type:'object',description:'Generic metadata without computeid.'}},required:['name']} },
+  { name:'arkova_get_agent', description:'Get one generic agent and active key summaries.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  { name:'arkova_update_agent', description:'Update or suspend/resume a generic agent. Revocation is terminal.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'},name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Description.',maxLength:1000},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},status:{type:'string',description:'Status.',enum:['active','suspended']},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:['string','null'],description:'HTTPS callback URL or null.'}},required:['agent_id']} },
+  { name:'arkova_revoke_agent', description:'Permanently revoke a generic agent and its keys.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  { name:'arkova_create_agent_key', description:'Create a key for an active generic agent. The returned key is a one-time secret; capture it directly into a secret store.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  {
+    name: 'arkova_admit_computeid_agent',
+    description: 'Admit a provider-bound agent using a signed ComputeID verification receipt. Requires an organization API key. The returned key is a one-time secret.',
+    inputSchema: { type: 'object', properties: {
+      passport_id: { type: 'string', format: 'uuid', description: 'ComputeID passport UUID.' }, name: { type: 'string', description: 'Optional agent name.' },
+      description: { type: 'string', description: 'Optional description.' }, allowed_scopes: { type: 'array', description: 'Requested provider-permitted scopes.', items: { type: 'string' }, minItems: 1, maxItems: 32 },
+      verification_receipt: { type: 'object', description: 'Complete signed verification receipt; additional signed fields are preserved.' },
+    }, required: ['passport_id','verification_receipt'] },
   },
   {
     name: 'arkova_manage_folders',

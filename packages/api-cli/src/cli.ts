@@ -2,13 +2,25 @@
 import { readFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { Arkova, ArkovaError, type AnchorDetails, type ArkovaConfig, type VerificationResult } from 'arkova';
+import { Arkova, ArkovaError, type Agent, type AgentKeyCreated, type AgentRevocation, type AgentScope, type AgentType,
+  type AnchorDetails, type ArkovaConfig, type ComputeIdAdmissionInput,
+  type ComputeIdAdmissionResult, type CreateAgentInput, type UpdateAgentInput,
+  type VerificationResult } from 'arkova';
 
 export interface CliClient {
   request<T = unknown>(path: string, init?: RequestInit, options?: { idempotent?: boolean }): Promise<T>;
   getAnchor(publicId: string): Promise<AnchorDetails>;
   verify(publicId: string): Promise<VerificationResult>;
   fingerprint(data: string | ArrayBuffer): Promise<string>;
+  agents: {
+    register(input: CreateAgentInput): Promise<Agent>;
+    list(): Promise<Agent[]>;
+    get(agentId: string): Promise<Agent>;
+    update(agentId: string, input: UpdateAgentInput): Promise<Agent>;
+    revoke(agentId: string): Promise<AgentRevocation>;
+    createKey(agentId: string): Promise<AgentKeyCreated>;
+    admitComputeId(input: ComputeIdAdmissionInput): Promise<ComputeIdAdmissionResult>;
+  };
 }
 
 interface CliIo {
@@ -43,6 +55,10 @@ const HELP = {
     'arkova folder connector <folder-id> (--provider google_drive|docusign --source-id id --connection-id id|--clear)',
     'arkova folder delete <folder-id>',
     'arkova folder move --record-id id [--record-id id] (--folder-id id|--root)',
+    'arkova agent register --name name [--scope value] [--metadata-json file]',
+    'arkova agent list | get <agent-id> | update <agent-id> | revoke <agent-id>',
+    'arkova agent key create <agent-id>',
+    'arkova agent computeid admit --request-json file',
   ],
   credentials: 'Set ARKOVA_API_KEY or pass --config - and pipe JSON on stdin.',
   config: { apiKey: 'required for authenticated commands', baseUrl: 'optional API origin' },
@@ -81,6 +97,91 @@ function noExtra(args: string[]): void {
 function required(value: string | undefined, label: string): string {
   if (!value) throw new UsageError(`${label} is required`);
   return value;
+}
+
+async function readJsonObject(path: string, readLocalFile: (path: string) => Promise<Buffer>, label: string): Promise<Record<string, unknown>> {
+  if (path === '-') throw new UsageError(`${label} requires a local JSON file path`);
+  let value: unknown;
+  try { value = JSON.parse((await readLocalFile(path)).toString('utf8')); } catch { throw new UsageError(`${label} must contain valid JSON`); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new UsageError(`${label} must contain a JSON object`);
+  return value as Record<string, unknown>;
+}
+const CLI_AGENT_TYPES = new Set(['llm_agent', 'ats_integration', 'hr_platform', 'compliance_tool', 'custom']);
+const CLI_AGENT_SCOPES = new Set(['read:records', 'read:orgs', 'read:search', 'write:anchors', 'admin:rules', 'verify', 'verify:batch', 'usage:read', 'keys:manage', 'compliance:read', 'compliance:write', 'oracle:read', 'oracle:write', 'anchor:write', 'anchor:read', 'attestations:write', 'attestations:read', 'webhooks:manage', 'agents:manage', 'keys:read', 'orgs:manage']);
+const CLI_COMPUTEID_SCOPES = new Set(['verify', 'verify:batch', 'anchor:write', 'write:anchors', 'anchor:read', 'read:records', 'read:search']);
+function validateAgentFlags(type: string | undefined, status: string | undefined, scopes: string[], callback: string | undefined): void {
+  if (type !== undefined && !CLI_AGENT_TYPES.has(type)) throw new UsageError('--type is invalid');
+  if (status !== undefined && !['active', 'suspended'].includes(status)) throw new UsageError('--status must be active or suspended');
+  if (scopes.some((scope) => !CLI_AGENT_SCOPES.has(scope))) throw new UsageError('--scope is invalid');
+  if (callback !== undefined) {
+    try {
+      const parsed = new URL(callback);
+      if (parsed.protocol !== 'https:' || !parsed.hostname) throw new Error();
+    } catch { throw new UsageError('--callback-url must be a valid HTTPS URL'); }
+  }
+}
+function validateAdmission(value: Record<string, unknown>): asserts value is Record<string, unknown> & { passport_id: string; verification_receipt: Record<string, unknown> } {
+  const receipt = value.verification_receipt;
+  const scopes = value.allowed_scopes;
+  if (Object.keys(value).some((key) => !['passport_id', 'verification_receipt', 'name', 'description', 'allowed_scopes'].includes(key))
+      || typeof value.passport_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.passport_id)
+      || !receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || (receipt as Record<string, unknown>).passport_id !== value.passport_id
+      || !['status', 'issued_at', 'expires_at', 'key_id', 'receipt_signature', 'receipt_algorithm', 'receipt_payload'].every((key) => typeof (receipt as Record<string, unknown>)[key] === 'string' && ((receipt as Record<string, unknown>)[key] as string).length > 0)
+      || (scopes !== undefined && (!Array.isArray(scopes) || scopes.length === 0 || scopes.some((scope) => typeof scope !== 'string' || !CLI_COMPUTEID_SCOPES.has(scope))))) {
+    throw new UsageError('request-json-file does not match the ComputeID admission contract');
+  }
+}
+
+async function runAgent(args: string[], client: CliClient, readLocalFile: (path: string) => Promise<Buffer>): Promise<unknown> {
+  const action = required(args.shift(), 'agent action');
+  if (action === 'list') { noExtra(args); return client.agents.list(); }
+  if (action === 'get') { const id = required(args.shift(), 'agent-id'); noExtra(args); return client.agents.get(id); }
+  if (action === 'revoke') { const id = required(args.shift(), 'agent-id'); noExtra(args); return client.agents.revoke(id); }
+  if (action === 'key') {
+    if (required(args.shift(), 'key action') !== 'create') throw new UsageError('agent key action must be create');
+    const id = required(args.shift(), 'agent-id'); noExtra(args); return client.agents.createKey(id);
+  }
+  if (action === 'computeid') {
+    if (required(args.shift(), 'ComputeID action') !== 'admit') throw new UsageError('agent computeid action must be admit');
+    const file = required(takeOption(args, '--request-json'), '--request-json'); noExtra(args);
+    const value = await readJsonObject(file, readLocalFile, 'request-json-file');
+    validateAdmission(value);
+    return client.agents.admitComputeId({
+      passportId: value.passport_id, verificationReceipt: value.verification_receipt as ComputeIdAdmissionInput['verificationReceipt'],
+      ...(typeof value.name === 'string' ? { name: value.name } : {}),
+      ...(typeof value.description === 'string' ? { description: value.description } : {}),
+      ...(Array.isArray(value.allowed_scopes) ? { allowedScopes: value.allowed_scopes as ComputeIdAdmissionInput['allowedScopes'] } : {}),
+    });
+  }
+  if (action === 'register') {
+    const name = required(takeOption(args, '--name'), '--name');
+    const description = takeOption(args, '--description'); const agentType = takeOption(args, '--type');
+    const scopes = takeMany(args, '--scope'); const framework = takeOption(args, '--framework');
+    const version = takeOption(args, '--version'); const callbackUrl = takeOption(args, '--callback-url');
+    const metadataFile = takeOption(args, '--metadata-json');
+    const metadata = metadataFile ? await readJsonObject(metadataFile, readLocalFile, 'metadata-json-file') : undefined;
+    validateAgentFlags(agentType, undefined, scopes, callbackUrl);
+    if (metadata && Object.prototype.hasOwnProperty.call(metadata, 'computeid')) throw new UsageError('metadata.computeid is provider-managed');
+    noExtra(args);
+    return client.agents.register({ name, ...(description ? { description } : {}), ...(agentType ? { agentType: agentType as AgentType } : {}),
+      ...(scopes.length ? { allowedScopes: scopes as AgentScope[] } : {}), ...(framework ? { framework } : {}),
+      ...(version ? { version } : {}), ...(callbackUrl ? { callbackUrl } : {}), ...(metadata ? { metadata } : {}) });
+  }
+  if (action === 'update') {
+    const id = required(args.shift(), 'agent-id'); const input: UpdateAgentInput = {};
+    const name = takeOption(args, '--name'); const description = takeOption(args, '--description');
+    const scopes = takeMany(args, '--scope'); const status = takeOption(args, '--status');
+    const framework = takeOption(args, '--framework'); const version = takeOption(args, '--version');
+    const callbackUrl = takeOption(args, '--callback-url'); const clearCallback = takeBoolean(args, '--clear-callback-url');
+    validateAgentFlags(undefined, status, scopes, callbackUrl);
+    if (callbackUrl && clearCallback) throw new UsageError('--callback-url and --clear-callback-url cannot be combined');
+    Object.assign(input, name !== undefined ? { name } : {}, description !== undefined ? { description } : {},
+      scopes.length ? { allowedScopes: scopes as AgentScope[] } : {}, status ? { status } : {}, framework ? { framework } : {},
+      version ? { version } : {}, callbackUrl ? { callbackUrl } : {}, clearCallback ? { callbackUrl: null } : {});
+    noExtra(args); return client.agents.update(id, input);
+  }
+  throw new UsageError(`Unknown agent action: ${action}`);
 }
 
 function validateTags(values: string[], flag: string): string[] {
@@ -134,6 +235,7 @@ async function loadConfig(args: string[], io: CliIo): Promise<ArkovaConfig> {
 
 async function runCommand(args: string[], client: CliClient, readLocalFile: (path: string) => Promise<Buffer>): Promise<{ value: unknown; exitCode?: number }> {
   const command = args.shift();
+  if (command === 'agent') return { value: await runAgent(args, client, readLocalFile) };
   if (command === 'health') {
     noExtra(args);
     return { value: await client.request('/health') };
@@ -358,6 +460,10 @@ export async function main(argv: string[], io: CliIo = defaultIo, dependencies: 
     if (!config.apiKey && args[0] !== 'health') throw new UsageError('ARKOVA_API_KEY or stdin config apiKey is required');
     const client = dependencies.client ?? (dependencies.clientFactory ?? ((value) => new Arkova(value)))(config);
     const result = await runCommand(args, client, dependencies.readFile ?? readFile);
+    if (result.value && typeof result.value === 'object' && !Array.isArray(result.value)) {
+      const returnedKey = (result.value as Record<string, unknown>).key;
+      if (typeof returnedKey === 'string' && !secrets.includes(returnedKey)) secrets.push(returnedKey);
+    }
     writeJson(io.stdout, result.value);
     return result.exitCode ?? 0;
   } catch (error) {

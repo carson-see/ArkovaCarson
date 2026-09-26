@@ -82,11 +82,11 @@ The server speaks JSON-RPC over stdio. A handshake plus a `tools/list` confirms 
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | npx -y arkova-mcp-server
 ```
 
-A healthy server replies with its `serverInfo` and all 10 tool definitions. The `ARKOVA_API_KEY is not set` line on stderr is expected here and is not a failure.
+A healthy server replies with its `serverInfo` and all 17 tool definitions. The `ARKOVA_API_KEY is not set` line on stderr is expected here and is not a failure.
 
 ## Tools
 
-10 tools total, all reading the same `ARKOVA_API_KEY`. **Every tool is a remote HTTPS call to the Arkova API.** None of them read local files, environment variables, or stored secrets.
+17 tools total. The server reads `ARKOVA_API_KEY` once for authentication, and each tool calls the configured Arkova API endpoint. Tools do not read local files or other stored secrets.
 
 | Tool | Description |
 |------|-------------|
@@ -100,6 +100,15 @@ A healthy server replies with its `serverInfo` and all 10 tool definitions. The 
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |
 | `arkova_manage_folders` | List and manage nested folders, connector destinations, and bulk record moves |
 | `arkova_import_rows` | Import 1-100 already-fingerprinted spreadsheet rows through the queue or instant path; never accepts file bytes. A row may carry `recipient_email`/`recipient_name`, which assigns the record to that third party and can cause an activation email to be sent to that address |
+| `arkova_register_agent` | Register a generic agent with bounded delegated scopes |
+| `arkova_list_agents` | List generic agents in the API key organization |
+| `arkova_get_agent` | Get an agent and its active key summaries |
+| `arkova_update_agent` | Update or suspend/resume an agent |
+| `arkova_revoke_agent` | Permanently revoke an agent and its keys |
+| `arkova_create_agent_key` | Create a one-time agent key; capture stdout directly into a secret store |
+| `arkova_admit_computeid_agent` | Admit a provider-bound agent from a complete signed receipt; returns a one-time key |
+
+The six generic agent-management tools require an organization API key with `agents:manage`. A restricted key returned for an admitted or registered agent is not automatically a management key. ComputeID admission is API-key-only. `arkova_list_agents` uses the canonical worker route, so API-key callers now need `agents:manage`; this is intentionally stricter than the legacy hosted service-role RPC behavior.
 
 ### Renamed / removed in this version (v3.0.0, breaking)
 

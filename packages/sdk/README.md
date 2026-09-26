@@ -590,3 +590,7 @@ Override with `baseUrl` config option for staging or local development.
 ### License
 
 MIT © Arkova
+
+## Agent lifecycle
+
+`client.agents` exposes registration, list, detail, update, revoke, one-time key creation, and ComputeID passport admission. Configure an organization API key with `agents:manage`; admission is API-key-only and never widens the caller's scopes. Save `createKey()` and `admitComputeId()` keys immediately: the API returns each raw key once, and the SDK never automatically retries these mutations. The restricted key returned by ComputeID admission is scoped for the admitted agent's work and is not automatically an agent-management key.

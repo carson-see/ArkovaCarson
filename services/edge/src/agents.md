@@ -392,3 +392,6 @@ unknown keys dropped. `reason` survives only when it already matches the bounded
 machine-code regex. The raw body is issuer-/user-influenced, and MCP output is
 model context — free text must not flow straight in. The npm stdio server has
 the identical function.
+
+- **2026-09-26 — generic agent client parity:** hosted MCP registers six generic worker-backed management operations plus API-key-only ComputeID admission. API-key management calls require `agents:manage`; a restricted admitted-agent key is not automatically a management key. Bearer callers retain the server's read/admin-write rules. `arkova_list_agents` no longer calls the legacy service-role RPC, so API-key callers intentionally receive the canonical `agents:manage` enforcement. All lifecycle calls require exactly one verified forwarded credential; ComputeID admission preserves the complete `verification_receipt`. `withTelemetry` audits only validated agent/passport UUIDs for these tools and never the receipt, metadata, names, caller credential, or returned one-time key.
+- **Release ordering:** deploy the matching edge implementation only after the c231 + 0488/0489 server prerequisites (and the existing ComputeID admission gate) are present. Publish the public server card/discovery update only after that edge deployment. This work does not authorize or perform deployment or publication.

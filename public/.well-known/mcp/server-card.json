@@ -567,6 +567,219 @@
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "arkova_register_agent",
+      "description": "Register a generic agent. Requires agents:manage; metadata.computeid is provider-managed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Agent name.",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description.",
+            "maxLength": 1000
+          },
+          "agent_type": {
+            "type": "string",
+            "description": "Agent type.",
+            "enum": [
+              "llm_agent",
+              "ats_integration",
+              "hr_platform",
+              "compliance_tool",
+              "custom"
+            ]
+          },
+          "allowed_scopes": {
+            "type": "array",
+            "description": "Allowed scopes.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 32
+          },
+          "framework": {
+            "type": "string",
+            "description": "Framework.",
+            "maxLength": 100
+          },
+          "version": {
+            "type": "string",
+            "description": "Version.",
+            "maxLength": 50
+          },
+          "callback_url": {
+            "type": "string",
+            "description": "HTTPS callback URL."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Generic metadata without computeid."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "arkova_get_agent",
+      "description": "Get one generic agent and active key summaries.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Agent UUID."
+          }
+        },
+        "required": [
+          "agent_id"
+        ]
+      }
+    },
+    {
+      "name": "arkova_update_agent",
+      "description": "Update or suspend/resume a generic agent. Revocation is terminal.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Agent UUID."
+          },
+          "name": {
+            "type": "string",
+            "description": "Agent name.",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "description": "Description.",
+            "maxLength": 1000
+          },
+          "allowed_scopes": {
+            "type": "array",
+            "description": "Allowed scopes.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 32
+          },
+          "status": {
+            "type": "string",
+            "description": "Status.",
+            "enum": [
+              "active",
+              "suspended"
+            ]
+          },
+          "framework": {
+            "type": "string",
+            "description": "Framework.",
+            "maxLength": 100
+          },
+          "version": {
+            "type": "string",
+            "description": "Version.",
+            "maxLength": 50
+          },
+          "callback_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "HTTPS callback URL or null."
+          }
+        },
+        "required": [
+          "agent_id"
+        ]
+      }
+    },
+    {
+      "name": "arkova_revoke_agent",
+      "description": "Permanently revoke a generic agent and its keys.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Agent UUID."
+          }
+        },
+        "required": [
+          "agent_id"
+        ]
+      }
+    },
+    {
+      "name": "arkova_create_agent_key",
+      "description": "Create a key for an active generic agent. The returned key is a one-time secret; capture it directly into a secret store.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Agent UUID."
+          }
+        },
+        "required": [
+          "agent_id"
+        ]
+      }
+    },
+    {
+      "name": "arkova_admit_computeid_agent",
+      "description": "Admit a provider-bound agent using a signed ComputeID verification receipt. Requires an organization API key. The returned key is a one-time secret.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "passport_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ComputeID passport UUID."
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional agent name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description."
+          },
+          "allowed_scopes": {
+            "type": "array",
+            "description": "Requested provider-permitted scopes.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 32
+          },
+          "verification_receipt": {
+            "type": "object",
+            "description": "Complete signed verification receipt; additional signed fields are preserved."
+          }
+        },
+        "required": [
+          "passport_id",
+          "verification_receipt"
+        ]
+      }
     }
   ],
   "links": [

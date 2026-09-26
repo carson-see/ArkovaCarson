@@ -102,14 +102,21 @@ describe('bin invocation via a real npm-style symlink', () => {
 
     const { tools } = await client.listTools();
     expect(tools.map(({ name }) => name).sort()).toEqual([
+      'arkova_admit_computeid_agent',
       'arkova_anchor_status',
       'arkova_batch_verify',
+      'arkova_create_agent_key',
       'arkova_create_attestation',
+      'arkova_get_agent',
       'arkova_get_submission_status',
       'arkova_import_rows',
+      'arkova_list_agents',
       'arkova_manage_folders',
+      'arkova_register_agent',
+      'arkova_revoke_agent',
       'arkova_search_anchors',
       'arkova_submit_anchor',
+      'arkova_update_agent',
       'arkova_verify_anchor',
       'arkova_verify_signature',
     ]);

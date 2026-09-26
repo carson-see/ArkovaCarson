@@ -512,3 +512,17 @@ curl -X POST https://edge.arkova.ai/mcp \
 - [API docs index](./README.md)
 - [arkova](../../packages/sdk/README.md) — TypeScript SDK
 - [@arkova/embed](../../packages/embed/README.md) — Embeddable widget
+
+## Generic agent lifecycle
+
+For API-key callers, the six generic management tools require an organization API key with `agents:manage`. A restricted key returned for an admitted or registered agent is not automatically a management key. Bearer/JWT callers retain the server's existing read-versus-admin-write authorization rules. ComputeID admission is API-key-only.
+
+`arkova_list_agents` now uses the canonical worker route and therefore requires `agents:manage` for API-key callers. This intentionally tightens authorization from the earlier legacy service-role RPC behavior.
+
+- `arkova_register_agent` — Register a generic agent with bounded delegated scopes.
+- `arkova_list_agents` — List generic agents in the caller organization.
+- `arkova_get_agent` — Get one agent and active key summaries.
+- `arkova_update_agent` — Update or suspend/resume an agent; revocation remains terminal.
+- `arkova_revoke_agent` — Permanently revoke an agent and its keys.
+- `arkova_create_agent_key` — Create a one-time agent key; capture the returned key directly into a secret store.
+- `arkova_admit_computeid_agent` — Admit a provider-bound agent using the complete signed verification receipt. This route requires an organization API key and returns a one-time key.

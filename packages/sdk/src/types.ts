@@ -169,6 +169,67 @@ export interface ArkovaConfig {
   };
 }
 
+export type AgentType = 'llm_agent' | 'ats_integration' | 'hr_platform' | 'compliance_tool' | 'custom';
+export type AgentStatus = 'active' | 'suspended' | 'revoked';
+export type AgentScope =
+  | 'read:records' | 'read:orgs' | 'read:search' | 'write:anchors' | 'admin:rules'
+  | 'verify' | 'verify:batch' | 'usage:read' | 'keys:manage'
+  | 'compliance:read' | 'compliance:write' | 'oracle:read' | 'oracle:write'
+  | 'anchor:write' | 'anchor:read' | 'attestations:write' | 'attestations:read'
+  | 'webhooks:manage' | 'agents:manage' | 'keys:read' | 'orgs:manage';
+export type ComputeIdAgentScope = Extract<AgentScope, 'verify' | 'verify:batch' | 'anchor:write' | 'write:anchors' | 'anchor:read' | 'read:records' | 'read:search'>;
+
+export interface CreateAgentInput {
+  name: string;
+  description?: string;
+  agentType?: AgentType;
+  allowedScopes?: AgentScope[];
+  framework?: string;
+  version?: string;
+  callbackUrl?: string;
+  metadata?: Record<string, unknown>;
+}
+export interface UpdateAgentInput {
+  name?: string;
+  description?: string;
+  allowedScopes?: AgentScope[];
+  status?: Extract<AgentStatus, 'active' | 'suspended'>;
+  framework?: string;
+  version?: string;
+  callbackUrl?: string | null;
+}
+export interface AgentKeySummary {
+  id: string; name: string; keyPrefix: string; scopes: string[]; isActive: boolean;
+  lastUsedAt: string | null; createdAt: string; expiresAt: string | null;
+}
+export interface Agent {
+  id: string; name: string; description: string | null; agentType: string; status: AgentStatus;
+  allowedScopes: string[]; framework: string | null; version: string | null;
+  callbackUrl: string | null; metadata: Record<string, unknown>; apiKeys?: AgentKeySummary[];
+}
+export interface AgentRevocation { status: 'revoked'; agentId: string }
+export interface AgentKeyCreated {
+  key: string; keyId: string; keyPrefix: string; agentId: string; agentName: string;
+  scopes: string[]; createdAt: string; warning: string;
+}
+export interface ComputeIdVerificationReceipt {
+  passport_id: string; status: string; signature_valid?: boolean | null; issued_at: string;
+  expires_at: string; key_id: string; receipt_signature: string; receipt_algorithm: string;
+  receipt_payload: string; [key: string]: unknown;
+}
+export interface ComputeIdAdmissionInput {
+  passportId: string; verificationReceipt: ComputeIdVerificationReceipt; name?: string;
+  description?: string; allowedScopes?: ComputeIdAgentScope[];
+}
+export interface ComputeIdBinding {
+  issuer: 'computeid'; passport_id: string; bound_at: string;
+  receipt_issued_at?: string; receipt_expires_at: string;
+}
+export interface ComputeIdAdmissionResult {
+  agent: Agent; binding: ComputeIdBinding; key: string; keyId: string;
+  keyPrefix: string; scopes: string[]; warning: string;
+}
+
 /** RFC 7807 problem+json payload returned by API v2 errors */
 export interface ProblemDetail {
   type: string;

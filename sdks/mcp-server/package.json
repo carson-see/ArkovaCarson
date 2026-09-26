@@ -1,7 +1,7 @@
 {
   "name": "arkova-mcp-server",
-  "version": "3.2.0",
-  "description": "MCP server tools for Arkova credential verification \u2014 works with Claude, OpenAI, Cursor",
+  "version": "3.3.0",
+  "description": "MCP server tools for Arkova credential verification — works with Claude, OpenAI, Cursor",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
