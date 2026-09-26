@@ -104,19 +104,17 @@
  * evidence. Assertion 4 does not depend on the rig either way — see above.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   makeProbe as probe,
   aggregateProbes as aggregate,
   tallyProbes,
   parseDriverArgs,
-  emitDriverRow,
-  readAdmissionJson,
   resolveSupabaseCredentials,
-  ensureFixtureAuthUser,
+  ensureOrgWithAdmin,
   signInFixtureUser,
   fetchJson,
-  runLiveLoop,
+  runDriverMain,
   type ProbeResult,
   type BaseDriverArgs,
 } from './lib/soak-driver-harness.js';
@@ -479,33 +477,7 @@ async function ensureOrgFixture(db: SupabaseClient, orgSuffix: string): Promise<
   const orgDisplayName = `${FIXTURE_PREFIX}-org-${orgSuffix}`;
   const password = `Pr3086Soak-${Buffer.from(ownerEmail).toString('hex').slice(0, 24)}-Aa1!`;
 
-  const { data: existingOrg } = await db
-    .from('organizations')
-    .select('id')
-    .eq('display_name', orgDisplayName)
-    .maybeSingle();
-
-  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail, password);
-
-  let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
-  if (!orgId) {
-    const { data: org, error: orgError } = await db
-      .from('organizations')
-      .insert({ legal_name: orgDisplayName, display_name: orgDisplayName, verification_status: 'VERIFIED' })
-      .select('id')
-      .single();
-    if (orgError || !org) throw new Error(`could not create fixture organization: ${orgError?.message}`);
-    orgId = (org as { id: string }).id;
-  }
-
-  await db.from('profiles').upsert(
-    { id: orgAdminUserId, email: ownerEmail, role: 'ORG_ADMIN', org_id: orgId },
-    { onConflict: 'id' },
-  );
-  await db.from('org_members').upsert(
-    { user_id: orgAdminUserId, org_id: orgId, role: 'owner' },
-    { onConflict: 'user_id,org_id' },
-  );
+  const { orgId } = await ensureOrgWithAdmin(db, { ownerEmail, orgDisplayName, password });
 
   const { data: existingConnection } = await db
     .from('org_integrations')
@@ -661,64 +633,30 @@ export function parseArgs(argv: string[]): DriverArgs {
   return parseDriverArgs(argv, {}, []);
 }
 
-function buildRow(args: {
-  mode: BaseDriverArgs['mode'];
-  evidenceForSoak: boolean;
-  status: 'pass' | 'fail';
-  cycle: number;
-  probes: ProbeResult[];
-  admission?: Record<string, unknown>;
-  blockers?: string[];
-}): DriverRow {
-  return {
-    utc: new Date().toISOString(),
-    pr: 3086,
-    tier: 'T2',
-    mode: args.mode,
-    evidenceForSoak: args.evidenceForSoak,
-    changedBehavior: CHANGED_BEHAVIOR,
-    status: args.status,
-    cycle: args.cycle,
-    counts: tally(args.probes),
-    probes: args.probes,
-    admission: args.admission,
-    blockers: args.blockers,
-  };
+interface TwoOrgFixture {
+  org1: OrgFixture;
+  org2: OrgFixture;
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = readAdmissionJson(args.admissionJson);
-
-  if (args.mode === 'self-test') {
-    const probes = await runSelfTest();
-    emitDriverRow(buildRow({
-      mode: 'self-test',
-      evidenceForSoak: false,
-      status: aggregate(probes),
-      cycle: 0,
-      probes,
-      blockers: [
-        'self-test mode — local validation only for assertions 1-3, NOT T2 soak evidence. '
-        + 'Assertion 4 (partial_failure_does_not_suppress_other_folders) IS real evidence even here — '
-        + 'see the SCOPING NOTE in this file\'s header.',
-      ],
-    }), args.evidenceJsonl);
-    process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
-    return;
-  }
-
-  if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const targetUrl = args.targetUrl;
-  const creds = resolveSupabaseCredentials({ requireAnonKey: true });
-  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const org1 = await ensureOrgFixture(db, 'a');
-  const org2 = await ensureOrgFixture(db, 'b');
-
-  const { anyCycleFailed } = await runLiveLoop({
-    durationMinutes: args.durationMin,
-    intervalSeconds: args.intervalSec,
-    runCycle: async (cycle) => {
+  await runDriverMain(args, {
+    pr: 3086,
+    tier: 'T2',
+    changedBehavior: CHANGED_BEHAVIOR,
+    assertionNames: Object.values(ASSERTION),
+    selfTestBlockers: [
+      'self-test mode — local validation only for assertions 1-3, NOT T2 soak evidence. '
+      + 'Assertion 4 (partial_failure_does_not_suppress_other_folders) IS real evidence even here — '
+      + 'see the SCOPING NOTE in this file\'s header.',
+    ],
+    runSelfTest,
+    resolveCreds: () => resolveSupabaseCredentials({ requireAnonKey: true }),
+    setupFixture: async (db): Promise<TwoOrgFixture> => ({
+      org1: await ensureOrgFixture(db, 'a'),
+      org2: await ensureOrgFixture(db, 'b'),
+    }),
+    runCycle: async (db, targetUrl, creds, { org1, org2 }, cycle) => {
       // Fresh sign-in EVERY cycle for BOTH orgs rather than one token per org
       // captured before the loop — see pr3083's driver for the incident this
       // avoids: a token minted once with autoRefreshToken:false expires
@@ -727,16 +665,7 @@ async function main(): Promise<void> {
       const bearerToken2 = await signInFixtureUser(creds.url, creds.anonKey, org2.orgAdminEmail, org2.orgAdminPassword);
       return runCycle(db, targetUrl, org1, org2, bearerToken1, bearerToken2, cycle);
     },
-    onCycleComplete: (cycle, probes, status) => {
-      emitDriverRow(buildRow({
-        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
-      }), args.evidenceJsonl);
-    },
   });
-
-  // A failed probe anywhere in the run must fail the process — see pr3083's
-  // driver for the same fix and why the CLI must not exit 0 on a red run.
-  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3086-drive-folder-mirror-driver');

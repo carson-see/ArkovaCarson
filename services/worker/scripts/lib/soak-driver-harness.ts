@@ -99,11 +99,18 @@ export function parseDriverArgs<TExtra extends object>(
     ...extraDefaults,
   } as BaseDriverArgs & TExtra;
 
-  for (let i = 0; i < argv.length; i += 1) {
+  // The assignment that advances `i` is always its OWN statement, never
+  // folded into the subscript/argument expression that reads the value
+  // (SonarCloud S1121 — "extract the assignment of i from this expression").
+  let i = 0;
+  while (i < argv.length) {
     const arg = argv[i];
+    i += 1;
     const extraSpec = extraSpecs.find((spec) => spec.flag === arg);
     if (extraSpec) {
-      extraSpec.apply(args, argv[i += 1] ?? '');
+      const value = argv[i];
+      i += 1;
+      extraSpec.apply(args, value ?? '');
       continue;
     }
     switch (arg) {
@@ -113,21 +120,36 @@ export function parseDriverArgs<TExtra extends object>(
       case '--live':
         args.mode = 'live';
         break;
-      case '--target-url':
-        args.targetUrl = argv[i += 1];
+      case '--target-url': {
+        const value = argv[i];
+        i += 1;
+        args.targetUrl = value;
         break;
-      case '--admission-json':
-        args.admissionJson = argv[i += 1];
+      }
+      case '--admission-json': {
+        const value = argv[i];
+        i += 1;
+        args.admissionJson = value;
         break;
-      case '--evidence-jsonl':
-        args.evidenceJsonl = argv[i += 1];
+      }
+      case '--evidence-jsonl': {
+        const value = argv[i];
+        i += 1;
+        args.evidenceJsonl = value;
         break;
-      case '--duration-min':
-        args.durationMin = Number.parseInt(argv[i += 1] ?? '0', 10);
+      }
+      case '--duration-min': {
+        const value = argv[i];
+        i += 1;
+        args.durationMin = Number.parseInt(value ?? '0', 10);
         break;
-      case '--interval-sec':
-        args.intervalSec = Number.parseInt(argv[i += 1] ?? '900', 10);
+      }
+      case '--interval-sec': {
+        const value = argv[i];
+        i += 1;
+        args.intervalSec = Number.parseInt(value ?? '900', 10);
         break;
+      }
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -228,6 +250,56 @@ export async function signInFixtureUser(
   return data.session.access_token;
 }
 
+export interface OrgWithAdminFixture {
+  orgId: string;
+  orgAdminUserId: string;
+}
+
+/**
+ * Idempotent, re-runnable "one org, one ORG_ADMIN owner" fixture — the
+ * org-lookup-or-create + `profiles`/`org_members` upsert shape every driver's
+ * own `ensureFixtureIdentity`/`ensureOrgFixture` needs, byte-for-byte
+ * identical across pr3083/pr3084/pr3086 before this extraction (a SonarCloud
+ * duplication finding on PR #3092's follow-up pass). Drivers that need MORE
+ * than this (pr3086's `org_integrations` seed, pr3087's additional
+ * ORG_MEMBER) call this first and layer their own extra upserts on top — see
+ * each driver's own fixture function.
+ */
+export async function ensureOrgWithAdmin(
+  db: SupabaseClient,
+  args: { ownerEmail: string; orgDisplayName: string; password?: string },
+): Promise<OrgWithAdminFixture> {
+  const { data: existingOrg } = await db
+    .from('organizations')
+    .select('id')
+    .eq('display_name', args.orgDisplayName)
+    .maybeSingle();
+
+  const orgAdminUserId = await ensureFixtureAuthUser(db, args.ownerEmail, args.password);
+
+  let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
+  if (!orgId) {
+    const { data: org, error: orgError } = await db
+      .from('organizations')
+      .insert({ legal_name: args.orgDisplayName, display_name: args.orgDisplayName, verification_status: 'VERIFIED' })
+      .select('id')
+      .single();
+    if (orgError || !org) throw new Error(`could not create fixture organization: ${orgError?.message}`);
+    orgId = (org as { id: string }).id;
+  }
+
+  await db.from('profiles').upsert(
+    { id: orgAdminUserId, email: args.ownerEmail, role: 'ORG_ADMIN', org_id: orgId },
+    { onConflict: 'id' },
+  );
+  await db.from('org_members').upsert(
+    { user_id: orgAdminUserId, org_id: orgId, role: 'owner' },
+    { onConflict: 'user_id,org_id' },
+  );
+
+  return { orgId, orgAdminUserId };
+}
+
 // ---------------------------------------------------------------------------
 // HTTP — safe URL joining + a shared JSON fetch helper
 // ---------------------------------------------------------------------------
@@ -268,7 +340,9 @@ export async function fetchJson(targetUrl: string, path: string, init: JsonHttpI
   const url = buildRequestUrl(targetUrl, path);
   const res = await fetch(url, {
     method: init.method,
-    headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
+    // Spreading `undefined` is a documented no-op, so no `?? {}` fallback is
+    // needed here (SonarCloud S7744 — "the empty object is useless").
+    headers: { 'content-type': 'application/json', ...init.headers },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const body = await res.json().catch(() => ({}));
@@ -344,4 +418,109 @@ export async function runLiveLoop(opts: LiveLoopOptions): Promise<{ anyCycleFail
   } while (Date.now() < deadline);
 
   return { anyCycleFailed };
+}
+
+// ---------------------------------------------------------------------------
+// The whole-program entrypoint — self-test dispatch, evidence-row shape, and
+// the live-mode setup/loop/exit-status wiring, in ONE place.
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything a driver's `main()` needs to describe about itself. `TFixture`
+ * is whatever `setupFixture` returns (an org/admin identity, a pair of org
+ * fixtures, etc — each driver's own shape); `TCreds` is whatever
+ * `resolveCreds` returns (each driver calls `resolveSupabaseCredentials`
+ * itself with its OWN literal `requireAnonKey`, so the overload that
+ * guarantees `anonKey: string` still resolves statically at that call site).
+ */
+export interface DriverProgram<TArgs extends BaseDriverArgs, TFixture, TCreds extends { url: string; serviceRoleKey: string }> {
+  pr: number;
+  tier: string;
+  changedBehavior: string;
+  /** Usually `Object.values(ASSERTION)` — the driver's own assertion-name enum. */
+  assertionNames: string[];
+  /** `blockers` on the self-test row (e.g. "local validation only, NOT T2 soak evidence"). */
+  selfTestBlockers: string[];
+  runSelfTest: () => ProbeResult[] | Promise<ProbeResult[]>;
+  resolveCreds: () => TCreds;
+  setupFixture: (db: SupabaseClient, creds: TCreds) => Promise<TFixture>;
+  /** One full pass over the driver's own assertions for a single cycle. */
+  runCycle: (db: SupabaseClient, targetUrl: string, creds: TCreds, fixture: TFixture, cycle: number, args: TArgs) => Promise<ProbeResult[]>;
+}
+
+/**
+ * Runs a driver end to end: self-test dispatch (row + exit code, no network)
+ * or live-mode setup (credentials, fixture, the `runLiveLoop` cycle loop) and
+ * exit-status aggregation. This — plus each driver's own `buildRow`-shaped
+ * object literal — was the single largest duplicated block across the four
+ * drivers (SonarCloud New Code duplication, PR #3092 follow-up); every driver
+ * now supplies only what's actually different (its PR/tier/fixture shape/
+ * cycle logic) and this function owns the rest.
+ */
+export async function runDriverMain<
+  TArgs extends BaseDriverArgs,
+  TFixture,
+  TCreds extends { url: string; serviceRoleKey: string },
+>(args: TArgs, program: DriverProgram<TArgs, TFixture, TCreds>): Promise<void> {
+  const admission = readAdmissionJson(args.admissionJson);
+
+  const buildRow = (rowArgs: {
+    mode: DriverMode;
+    evidenceForSoak: boolean;
+    status: 'pass' | 'fail';
+    cycle: number;
+    probes: ProbeResult[];
+    admissionForRow?: Record<string, unknown>;
+    blockers?: string[];
+  }) => ({
+    utc: new Date().toISOString(),
+    pr: program.pr,
+    tier: program.tier,
+    mode: rowArgs.mode,
+    evidenceForSoak: rowArgs.evidenceForSoak,
+    changedBehavior: program.changedBehavior,
+    status: rowArgs.status,
+    cycle: rowArgs.cycle,
+    counts: tallyProbes(rowArgs.probes, program.assertionNames),
+    probes: rowArgs.probes,
+    admission: rowArgs.admissionForRow,
+    blockers: rowArgs.blockers,
+  });
+
+  if (args.mode === 'self-test') {
+    const probes = await program.runSelfTest();
+    emitDriverRow(buildRow({
+      mode: 'self-test',
+      evidenceForSoak: false,
+      status: aggregateProbes(probes),
+      cycle: 0,
+      probes,
+      blockers: program.selfTestBlockers,
+    }), args.evidenceJsonl);
+    process.exitCode = aggregateProbes(probes) === 'pass' ? 0 : 1;
+    return;
+  }
+
+  if (!args.targetUrl) throw new Error('--live requires --target-url');
+  const targetUrl = args.targetUrl;
+  const creds = program.resolveCreds();
+  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const fixture = await program.setupFixture(db, creds);
+
+  const { anyCycleFailed } = await runLiveLoop({
+    durationMinutes: args.durationMin,
+    intervalSeconds: args.intervalSec,
+    runCycle: (cycle) => program.runCycle(db, targetUrl, creds, fixture, cycle, args),
+    onCycleComplete: (cycle, probes, status) => {
+      emitDriverRow(buildRow({
+        mode: 'live', evidenceForSoak: true, status, cycle, probes, admissionForRow: admission,
+      }), args.evidenceJsonl);
+    },
+  });
+
+  // A failed probe anywhere in the run must fail the process, the same way
+  // --self-test already does — otherwise the CLI exits 0 with failed probes
+  // buried in the JSONL and nothing downstream (a CI step, an operator
+  // script) ever notices.
+  process.exitCode = anyCycleFailed ? 1 : 0;
 }

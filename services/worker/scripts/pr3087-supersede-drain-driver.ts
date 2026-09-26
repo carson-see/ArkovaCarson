@@ -123,19 +123,18 @@
  * and must never be cited as T3 soak evidence.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   makeProbe as probe,
   aggregateProbes as aggregate,
   tallyProbes,
   parseDriverArgs,
-  emitDriverRow,
-  readAdmissionJson,
   resolveSupabaseCredentials,
   ensureFixtureAuthUser,
+  ensureOrgWithAdmin,
   buildRequestUrl,
   pollUntil,
-  runLiveLoop,
+  runDriverMain,
   type ProbeResult,
   type BaseDriverArgs,
 } from './lib/soak-driver-harness.js';
@@ -560,38 +559,15 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
   const memberEmail = `${FIXTURE_PREFIX}-member@arkova-soak.invalid`;
   const orgDisplayName = `${FIXTURE_PREFIX}-org`;
 
-  const { data: existingOrg } = await db
-    .from('organizations')
-    .select('id')
-    .eq('display_name', orgDisplayName)
-    .maybeSingle();
+  const { orgId, orgAdminUserId } = await ensureOrgWithAdmin(db, { ownerEmail, orgDisplayName });
 
-  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail);
+  // The member identity is this driver's own extra on top of the shared
+  // admin-fixture shape (assertion 8 needs a non-ORG_ADMIN owner) — idempotent
+  // on a re-run, same as the admin upserts `ensureOrgWithAdmin` already did.
   const memberUserId = await ensureFixtureAuthUser(db, memberEmail);
-
-  let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
-  if (!orgId) {
-    const { data: org, error: orgError } = await db
-      .from('organizations')
-      .insert({ legal_name: orgDisplayName, display_name: orgDisplayName, verification_status: 'VERIFIED' })
-      .select('id')
-      .single();
-    if (orgError || !org) throw new Error(`could not create fixture organization: ${orgError?.message}`);
-    orgId = (org as { id: string }).id;
-  }
-
-  // Upsert profiles/org_members for both identities — idempotent on a re-run.
-  await db.from('profiles').upsert(
-    { id: orgAdminUserId, email: ownerEmail, role: 'ORG_ADMIN', org_id: orgId },
-    { onConflict: 'id' },
-  );
   await db.from('profiles').upsert(
     { id: memberUserId, email: memberEmail, role: 'ORG_MEMBER', org_id: orgId },
     { onConflict: 'id' },
-  );
-  await db.from('org_members').upsert(
-    { user_id: orgAdminUserId, org_id: orgId, role: 'owner' },
-    { onConflict: 'user_id,org_id' },
   );
   await db.from('org_members').upsert(
     { user_id: memberUserId, org_id: orgId, role: 'member' },
@@ -878,69 +854,19 @@ export function parseArgs(argv: string[]): DriverArgs {
   );
 }
 
-function buildRow(args: {
-  mode: BaseDriverArgs['mode'];
-  evidenceForSoak: boolean;
-  status: 'pass' | 'fail';
-  cycle: number;
-  probes: ProbeResult[];
-  admission?: Record<string, unknown>;
-  blockers?: string[];
-}): DriverRow {
-  return {
-    utc: new Date().toISOString(),
-    pr: 3087,
-    tier: 'T3',
-    mode: args.mode,
-    evidenceForSoak: args.evidenceForSoak,
-    changedBehavior: CHANGED_BEHAVIOR,
-    status: args.status,
-    cycle: args.cycle,
-    counts: tally(args.probes),
-    probes: args.probes,
-    admission: args.admission,
-    blockers: args.blockers,
-  };
-}
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = readAdmissionJson(args.admissionJson);
-
-  if (args.mode === 'self-test') {
-    const probes = runSelfTest();
-    emitDriverRow(buildRow({
-      mode: 'self-test',
-      evidenceForSoak: false,
-      status: aggregate(probes),
-      cycle: 0,
-      probes,
-      blockers: ['self-test mode — local validation only, NOT T3 soak evidence'],
-    }), args.evidenceJsonl);
-    process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
-    return;
-  }
-
-  if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const targetUrl = args.targetUrl;
-  const creds = resolveSupabaseCredentials({ requireAnonKey: false });
-  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const fx = await ensureFixtureIdentity(db);
-
-  const { anyCycleFailed } = await runLiveLoop({
-    durationMinutes: args.durationMin,
-    intervalSeconds: args.intervalSec,
-    runCycle: (cycle) => runCycle(db, targetUrl, fx, cycle, args.cronSecret, args.bearerToken),
-    onCycleComplete: (cycle, probes, status) => {
-      emitDriverRow(buildRow({
-        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
-      }), args.evidenceJsonl);
-    },
+  await runDriverMain(args, {
+    pr: 3087,
+    tier: 'T3',
+    changedBehavior: CHANGED_BEHAVIOR,
+    assertionNames: Object.values(ASSERTION),
+    selfTestBlockers: ['self-test mode — local validation only, NOT T3 soak evidence'],
+    runSelfTest,
+    resolveCreds: () => resolveSupabaseCredentials({ requireAnonKey: false }),
+    setupFixture: (db) => ensureFixtureIdentity(db),
+    runCycle: (db, targetUrl, _creds, fx, cycle, cliArgs) => runCycle(db, targetUrl, fx, cycle, cliArgs.cronSecret, cliArgs.bearerToken),
   });
-
-  // A failed probe anywhere in the run must fail the process — see pr3083's
-  // driver for the same fix and why the CLI must not exit 0 on a red run.
-  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3087-supersede-drain-driver');

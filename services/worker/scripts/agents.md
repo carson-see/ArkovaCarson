@@ -191,6 +191,22 @@ Fixed without changing behavior (every driver's existing test file and `--self-t
   `services/worker/scripts/vendor/**` was added to the existing `.sonarcloud.properties`'s
   `sonar.cpd.exclusions` instead.
 
+### Follow-up pass — duplication was still 7.6% (queried live via the SonarCloud API)
+
+The first pass above collapsed the four drivers' New Code duplication from 16.9% to 7.6% (gate: <=3%),
+not all the way — `component_tree`/`duplications/show` on the PR showed the remaining blocks were each
+driver's own `buildRow` helper and the self-test/live-mode dispatch inside `main()` (near-identical
+12-20-line object literals and setup/loop-wiring blocks across all four files), plus the org-fixture
+lookup-or-create block (`ensureFixtureIdentity`/`ensureOrgFixture`) duplicated across pr3083/pr3084/pr3086.
+Fixed by extending `scripts/lib/soak-driver-harness.ts` (see that directory's own `agents.md`) with
+`ensureOrgWithAdmin` (the shared org+admin fixture shape) and `runDriverMain`/`DriverProgram` (the entire
+`main()` body — self-test dispatch, row shape, live-mode loop wiring); every driver's own `main()` is now
+just a `DriverProgram` object literal naming what's actually different (pr/tier/fixture/cycle logic). Two
+more per-file findings, both in the harness itself: S1121 ("extract the assignment of i") in the CLI-arg
+loop, and S7744 ("the empty object is useless") in `fetchJson`'s header spread — see that file's own
+`agents.md` entry for both. Behavior unchanged: same 105/105 driver-test pass, same 777/777 across all of
+`scripts/`, same 13/10/14/19 self-test probe counts (all `pass`, 0 failed) as before either pass.
+
 ## Key subdirectories
 
 - `bench/` — Regional latency benchmarks (Kenya, etc.).

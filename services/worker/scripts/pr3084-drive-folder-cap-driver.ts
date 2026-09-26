@@ -62,19 +62,17 @@
  * and must never be cited as T2 soak evidence.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   makeProbe as probe,
   aggregateProbes as aggregate,
   tallyProbes,
   parseDriverArgs,
-  emitDriverRow,
-  readAdmissionJson,
   resolveSupabaseCredentials,
-  ensureFixtureAuthUser,
+  ensureOrgWithAdmin,
   signInFixtureUser,
   fetchJson,
-  runLiveLoop,
+  runDriverMain,
   type ProbeResult,
   type BaseDriverArgs,
 } from './lib/soak-driver-harness.js';
@@ -299,33 +297,7 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
   const orgDisplayName = `${FIXTURE_PREFIX}-org`;
   const password = `Pr3084Soak-${Buffer.from(ownerEmail).toString('hex').slice(0, 24)}-Aa1!`;
 
-  const { data: existingOrg } = await db
-    .from('organizations')
-    .select('id')
-    .eq('display_name', orgDisplayName)
-    .maybeSingle();
-
-  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail, password);
-
-  let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
-  if (!orgId) {
-    const { data: org, error: orgError } = await db
-      .from('organizations')
-      .insert({ legal_name: orgDisplayName, display_name: orgDisplayName, verification_status: 'VERIFIED' })
-      .select('id')
-      .single();
-    if (orgError || !org) throw new Error(`could not create fixture organization: ${orgError?.message}`);
-    orgId = (org as { id: string }).id;
-  }
-
-  await db.from('profiles').upsert(
-    { id: orgAdminUserId, email: ownerEmail, role: 'ORG_ADMIN', org_id: orgId },
-    { onConflict: 'id' },
-  );
-  await db.from('org_members').upsert(
-    { user_id: orgAdminUserId, org_id: orgId, role: 'owner' },
-    { onConflict: 'user_id,org_id' },
-  );
+  const { orgId } = await ensureOrgWithAdmin(db, { ownerEmail, orgDisplayName, password });
 
   return { orgId, orgAdminEmail: ownerEmail, orgAdminPassword: password };
 }
@@ -402,59 +374,18 @@ export function parseArgs(argv: string[]): DriverArgs {
   return parseDriverArgs(argv, {}, []);
 }
 
-function buildRow(args: {
-  mode: BaseDriverArgs['mode'];
-  evidenceForSoak: boolean;
-  status: 'pass' | 'fail';
-  cycle: number;
-  probes: ProbeResult[];
-  admission?: Record<string, unknown>;
-  blockers?: string[];
-}): DriverRow {
-  return {
-    utc: new Date().toISOString(),
-    pr: 3084,
-    tier: 'T2',
-    mode: args.mode,
-    evidenceForSoak: args.evidenceForSoak,
-    changedBehavior: CHANGED_BEHAVIOR,
-    status: args.status,
-    cycle: args.cycle,
-    counts: tally(args.probes),
-    probes: args.probes,
-    admission: args.admission,
-    blockers: args.blockers,
-  };
-}
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = readAdmissionJson(args.admissionJson);
-
-  if (args.mode === 'self-test') {
-    const probes = runSelfTest();
-    emitDriverRow(buildRow({
-      mode: 'self-test',
-      evidenceForSoak: false,
-      status: aggregate(probes),
-      cycle: 0,
-      probes,
-      blockers: ['self-test mode — local validation only, NOT T2 soak evidence'],
-    }), args.evidenceJsonl);
-    process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
-    return;
-  }
-
-  if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const targetUrl = args.targetUrl;
-  const creds = resolveSupabaseCredentials({ requireAnonKey: true });
-  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const fx = await ensureFixtureIdentity(db);
-
-  const { anyCycleFailed } = await runLiveLoop({
-    durationMinutes: args.durationMin,
-    intervalSeconds: args.intervalSec,
-    runCycle: async (cycle) => {
+  await runDriverMain(args, {
+    pr: 3084,
+    tier: 'T2',
+    changedBehavior: CHANGED_BEHAVIOR,
+    assertionNames: Object.values(ASSERTION),
+    selfTestBlockers: ['self-test mode — local validation only, NOT T2 soak evidence'],
+    runSelfTest,
+    resolveCreds: () => resolveSupabaseCredentials({ requireAnonKey: true }),
+    setupFixture: (db) => ensureFixtureIdentity(db),
+    runCycle: async (_db, targetUrl, creds, fx, cycle) => {
       // Fresh sign-in EVERY cycle rather than one token captured before the
       // loop — see pr3083's driver for the incident this avoids: a token
       // minted once with autoRefreshToken:false expires mid-soak and every
@@ -462,16 +393,7 @@ async function main(): Promise<void> {
       const bearerToken = await signInFixtureUser(creds.url, creds.anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
       return runCycle(targetUrl, fx, bearerToken, cycle);
     },
-    onCycleComplete: (cycle, probes, status) => {
-      emitDriverRow(buildRow({
-        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
-      }), args.evidenceJsonl);
-    },
   });
-
-  // A failed probe anywhere in the run must fail the process — see pr3083's
-  // driver for the same fix and why the CLI must not exit 0 on a red run.
-  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3084-drive-folder-cap-driver');
