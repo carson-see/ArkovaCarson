@@ -4,7 +4,8 @@
  * `p_last_renewal_error` and persist it to `last_renewal_error` on BOTH the
  * INSERT and the ON CONFLICT UPDATE legs.
  *
- * The bootstrap `persist()` helper (drive-watch-bootstrap.ts) forwards
+ * The bootstrap `persist()` helper (formerly drive-watch-bootstrap.ts, since
+ * deleted as dead code) forwarded
  * `p_last_renewal_error: s.lastError` into the RPC. Before this fix the SQL
  * function had NO such parameter, so PostgREST rejected the call at runtime
  * ("function ... does not exist" — no matching overload) and every watch-state
