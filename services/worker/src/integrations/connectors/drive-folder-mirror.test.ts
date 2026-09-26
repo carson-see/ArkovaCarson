@@ -74,6 +74,13 @@ function makeFakeDb(opts: {
    * "winner" row directly (as if another transaction committed it between
    * this call's SELECT and INSERT) so the re-select recovers it. */
   forceInsertConflictOnce?: FolderRow;
+  /** Simulates a genuine driver-level exception (a network blip, a dropped
+   * connection) rather than a Supabase `{data,error}` return — the
+   * `folders` SELECT for this one `connector_source_id` throws synchronously
+   * instead of resolving. Models the DB-layer failure mode `upsertOne`
+   * itself cannot convert into a returned error, because nothing was
+   * returned at all. */
+  throwOnSelectSourceId?: string;
 }) {
   const folders: FolderRow[] = opts.folders ? [...opts.folders] : [];
   const integrations: IntegrationRow[] = opts.integrations ?? [];
@@ -100,6 +107,13 @@ function makeFakeDb(opts: {
       },
       async maybeSingle() {
         calls.push({ table, op: 'select', filters: { ...filters } });
+        if (
+          table === 'folders' &&
+          opts.throwOnSelectSourceId !== undefined &&
+          filters.connector_source_id === opts.throwOnSelectSourceId
+        ) {
+          throw new Error(`simulated driver exception selecting folders for ${String(filters.connector_source_id)}`);
+        }
         const rows = table === 'folders' ? folders : integrations;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const match = (rows as any[]).find((r) =>
@@ -300,6 +314,42 @@ describe('mirrorConnectedDriveFolders', () => {
     expect(result[0]!.folderId).toBe('folder-winner');
     // The loser's own row never landed — exactly the winner's single row exists.
     expect(folders).toHaveLength(1);
+  });
+
+  it('a genuine exception on one folder does not suppress mirroring of later folders in the same rule save', async () => {
+    // Regression for the review finding: `upsertOne` converts DB-layer
+    // `{data,error}` failures into a returned `outcome: 'error'`, but a real
+    // JS exception (network blip, dropped connection — not a Supabase error
+    // return) is a different failure mode entirely. Without a per-iteration
+    // try/catch around the loop in `mirrorConnectedDriveFolders`, that throw
+    // unwinds the whole `for` loop and the function itself rejects, so EVERY
+    // folder after the throwing one is silently never attempted — the
+    // opposite of "one bad folder shouldn't cost the others."
+    const { db, folders } = makeFakeDb({
+      integrations: [{ id: 'conn-1', org_id: ORG_A, provider: 'google_drive', revoked_at: null, connected_at: '2026-09-01T00:00:00Z' }],
+      throwOnSelectSourceId: 'drive-folder-throws',
+    });
+
+    const results = await mirrorConnectedDriveFolders(
+      { db, logger },
+      {
+        orgId: ORG_A,
+        actorUserId: USER_ID,
+        folders: [
+          { folderId: 'drive-folder-throws', folderName: 'Broken' },
+          { folderId: 'drive-folder-2', folderName: 'Invoices' },
+        ],
+      },
+    );
+
+    // Both folders get a result entry — the throw on folder 1 must not
+    // suppress folder 2.
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({ driveFolderId: 'drive-folder-throws', outcome: 'error' });
+    expect(results[1]).toMatchObject({ driveFolderId: 'drive-folder-2', outcome: 'created' });
+    // Folder 2 actually got mirrored despite folder 1's exception.
+    expect(folders).toHaveLength(1);
+    expect(folders[0]!.connector_source_id).toBe('drive-folder-2');
   });
 
   it('an unconnected/unmirrored call — no folders passed — touches neither table and mirrors nothing', async () => {

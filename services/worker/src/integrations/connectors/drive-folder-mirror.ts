@@ -16,12 +16,22 @@
  * (`POST`/`PATCH /api/rules`, wired in `api/rules-crud.ts`).
  *
  * NO NEW MIGRATION. This reuses the exact `public.folders` row shape and the
- * SAME dedupe key (`owner_scope='ORG', org_id, connector_provider,
- * connector_source_id` — the partial unique index
- * `idx_folders_connector_destination_unique` from migration 0462, already on
- * `origin/main`) that the lazy SQL path already uses, so the two paths can
- * never create two rows for the same connected folder: whichever runs first
- * wins, the other finds-and-reuses it.
+ * SAME unique index the lazy SQL path already uses:
+ * `idx_folders_connector_destination_unique` (migration 0462, already on
+ * `origin/main`), a partial index on
+ * `(owner_scope, coalesce(user_id, '00000000-...'), coalesce(org_id,
+ * '00000000-...'), coalesce(context_org_id, '00000000-...'),
+ * connector_provider, connector_source_id) WHERE connector_provider IS NOT
+ * NULL`. It is NOT filtered to `owner_scope='ORG'` — it also covers
+ * USER-scoped rows via the `coalesce(user_id, ...)` column — and it DOES key
+ * on `context_org_id` in addition to `org_id`. This module only ever writes
+ * `owner_scope='ORG'` rows and never sets `context_org_id`, so in practice
+ * its own dedupe key is the narrower `(owner_scope='ORG', org_id,
+ * connector_provider, connector_source_id)` slice of that index — but that
+ * is this module's usage of the index, not the index's own definition; the
+ * two paths can never create two rows for the same connected folder because
+ * both hit the SAME underlying constraint, whichever runs first wins, the
+ * other finds-and-reuses it.
  *
  * WHY NOT `folder_api_create` / `folder_api_update` (also shipped in 0462)
  * -------------------------------------------------------------------------
@@ -270,9 +280,35 @@ export async function mirrorConnectedDriveFolders(
     return folders.map((f) => ({ folderId: '', driveFolderId: f.folderId, outcome: 'skipped_no_connection' as const }));
   }
 
+  // Per-folder isolation (review finding, feat/mirror-connected-drive-folders):
+  // `upsertOne` already converts DB-layer `{data,error}` failures into a
+  // returned `outcome: 'error'`, but that conversion can only happen for a
+  // call that actually returns. A genuine JS exception — a dropped
+  // connection, a client library throw, anything that isn't a Supabase
+  // `{data,error}` response — is a different failure mode, and without a
+  // try/catch AROUND each iteration it unwinds this whole `for` loop: every
+  // folder after the one that threw is silently never attempted, and the
+  // caller (`rules-crud.ts`'s fire-and-forget `.catch`) only ever sees one
+  // generic 'drive-folder-mirror wiring failed' warning with no per-folder
+  // detail. Isolating each iteration means one folder's exception can never
+  // suppress the others, and the exception itself is logged with the
+  // specific `driveFolderId` that caused it.
+  //
+  // This is a diagnosability/completeness fix, not a data-integrity one: the
+  // migration-0462 lazy mirror path is the backstop for any folder that
+  // still has no mirror row, and re-saving the rule re-runs this whole
+  // function, so a partial mirror always self-repairs on the next save.
   const results: MirrorConnectedDriveFolderResult[] = [];
   for (const folder of folders) {
-    results.push(await upsertOne(deps.db, { orgId, actorUserId, connectionId: connection.id, folder }, deps.logger));
+    try {
+      results.push(await upsertOne(deps.db, { orgId, actorUserId, connectionId: connection.id, folder }, deps.logger));
+    } catch (error) {
+      deps.logger?.error?.(
+        { error, orgId, driveFolderId: folder.folderId },
+        'drive-folder-mirror: unexpected exception mirroring one folder — continuing with remaining folders',
+      );
+      results.push({ folderId: '', driveFolderId: folder.folderId, outcome: 'error', error: String(error) });
+    }
   }
   return results;
 }

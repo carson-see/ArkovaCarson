@@ -1,7 +1,43 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-25 — `drive-folder-mirror.ts`: per-folder isolation + index-comment fix (PR #3086 review follow-up)
+
+An independent review of `feat/mirror-connected-drive-folders` (PR #3086, T2)
+returned SHIP-WITH-FOLLOWUP with two P2s, both applied here:
+
+1. **One folder's exception no longer aborts mirroring for every later
+   folder.** `mirrorConnectedDriveFolders`'s `for` loop now wraps each
+   `upsertOne` call in its own try/catch. `upsertOne` already converted
+   DB-layer `{data,error}` failures into a returned `outcome: 'error'` — but
+   a genuine JS exception (a dropped connection, a client-library throw, not
+   a Supabase error return) is a different failure mode the loop had no
+   protection against: it unwound the whole loop, so every folder after the
+   one that threw was silently never attempted, surfaced only as one generic
+   `'drive-folder-mirror wiring failed'` warning in `rules-crud.ts` with no
+   per-folder detail. Each iteration is now isolated and logs its own
+   `driveFolderId` on exception. This is a diagnosability/completeness fix,
+   not a data-integrity one — migration 0462's lazy mirror path is the
+   backstop for any folder that still has no mirror row, and re-saving the
+   rule re-runs this whole function, so a partial mirror always self-repairs
+   on the next save. Regression test:
+   `drive-folder-mirror.test.ts` › "a genuine exception on one folder does
+   not suppress mirroring of later folders in the same rule save" — confirmed
+   failing against the unfixed loop (uncaught throw propagated out of
+   `mirrorConnectedDriveFolders`) before the fix landed.
+2. **Header comment corrected.** It previously described
+   `idx_folders_connector_destination_unique` (migration 0462) as filtered on
+   `owner_scope='ORG'`. Reading that migration directly: the index is NOT
+   scoped to `owner_scope='ORG'` (it also covers USER-scoped rows via
+   `coalesce(user_id, ...)`) and it DOES include `context_org_id` in its key,
+   neither of which the comment said. Functionally harmless today — this
+   module only ever writes `owner_scope='ORG'` rows and never sets
+   `context_org_id`, so its own dedupe key is a narrower slice of the same
+   index — but a future USER-scoped mirror path built on the old, wrong
+   comment would have collided. No behavior change, no new migration.
 
 ## 2026-09-21 — 410/404 cursor re-bootstrap + per-integration single-flight lease (SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)
 
