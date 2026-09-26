@@ -10,11 +10,70 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createEmbeddingProvider } from '../../ai/factory.js';
-import { generateAndStoreEmbedding, batchReEmbed } from '../../ai/embeddings.js';
+import {
+  generateAndStoreEmbedding,
+  batchReEmbed,
+  type BatchReEmbedResult,
+  type EmbeddingFailureCode,
+} from '../../ai/embeddings.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 const router = Router();
+
+/**
+ * B1 (SCRUM-4939 follow-up) — the HTTP status of a credit failure.
+ *
+ * This route used to pick the status by asking whether the failure MESSAGE
+ * contained the substring "credit":
+ *
+ *     const status = result.error?.includes('credit') ? 402 : 500;
+ *     error: result.error?.includes('credit') ? 'insufficient_credits' : …
+ *
+ * Every credit failure in `ai/embeddings.ts` says "credit", so the 55P03 lock
+ * timeout `deduct_ai_credits` raises under contention (migration 0483) and a
+ * flat RPC outage both answered `402 insufficient_credits` — telling a customer
+ * who HAS credits to go buy more, for a failure that is ours and retryable.
+ *
+ * The reasoning is the one already written into `ai-extract.ts`: "503, not 402:
+ * `insufficient_credits` would tell the caller to buy more when
+ * `checkAICredits` just reported that they have some. The failure is ours and
+ * it is retryable." The result now carries a typed `code`; the substring test
+ * is gone, and only genuine exhaustion can reach a 402.
+ */
+const CREDIT_INFRASTRUCTURE_CODES: ReadonlySet<EmbeddingFailureCode> = new Set([
+  'credit_check_unavailable',
+  'credit_debit_unavailable',
+]);
+
+/**
+ * Matches `refund_ai_credits` / `deduct_ai_credits`'s own 5 s `lock_timeout`:
+ * the contended holder is gone by then, so retrying sooner just re-queues
+ * behind the same lock.
+ */
+const CREDIT_RETRY_AFTER_SECONDS = 5;
+
+/** 503 + `Retry-After` for a credit failure that is ours, never the caller's. */
+function respondCreditSystemUnavailable(res: Response, what: string): void {
+  res.setHeader('Retry-After', String(CREDIT_RETRY_AFTER_SECONDS));
+  res.status(503).json({
+    error: 'credit_system_unavailable',
+    message: `Credit accounting could not be confirmed. ${what} Please try again later.`,
+  });
+}
+
+/**
+ * The code shared by EVERY failed row of a wholly-failed batch, or null when
+ * the batch partly succeeded or the rows disagree. A partial failure stays a
+ * 200 with per-row detail: there is no single status that describes it.
+ */
+function wholeBatchFailureCode(result: BatchReEmbedResult): EmbeddingFailureCode | null {
+  if (result.total === 0 || result.failed !== result.total || result.errors.length === 0) {
+    return null;
+  }
+  const first = result.errors[0].code;
+  return result.errors.every((e) => e.code === first) ? first : null;
+}
 
 const EmbedRequestSchema = z.object({
   anchorId: z.string().uuid('Invalid anchor ID'),
@@ -77,11 +136,19 @@ router.post('/', async (req: Request, res: Response) => {
     });
 
     if (!result.success) {
-      const status = result.error?.includes('credit') ? 402 : 500;
-      res.status(status).json({
-        error: result.error?.includes('credit') ? 'insufficient_credits' : 'embedding_failed',
-        message: result.error,
-      });
+      if (CREDIT_INFRASTRUCTURE_CODES.has(result.code)) {
+        logger.error(
+          { userId, orgId, anchorId: parsed.data.anchorId, code: result.code },
+          'AI credit system unavailable during embedding — no embedding kept, nothing charged',
+        );
+        respondCreditSystemUnavailable(res, 'No embedding was kept.');
+        return;
+      }
+      if (result.code === 'insufficient_credits') {
+        res.status(402).json({ error: 'insufficient_credits', message: result.error });
+        return;
+      }
+      res.status(500).json({ error: 'embedding_failed', message: result.error });
       return;
     }
 
@@ -148,6 +215,27 @@ router.post('/batch', async (req: Request, res: Response) => {
 
     const provider = createEmbeddingProvider();
     const result = await batchReEmbed(provider, orgId, items, userId);
+
+    // Same classification as the single route. A batch that failed ENTIRELY
+    // for one credit reason has a single honest status; a partial failure does
+    // not, and stays a 200 carrying the per-row codes.
+    const batchCode = wholeBatchFailureCode(result);
+    if (batchCode && CREDIT_INFRASTRUCTURE_CODES.has(batchCode)) {
+      logger.error(
+        { userId, orgId, count: items.length, code: batchCode },
+        'AI credit system unavailable during batch embedding — no embeddings kept, nothing charged',
+      );
+      respondCreditSystemUnavailable(res, 'No embeddings were kept.');
+      return;
+    }
+    if (batchCode === 'insufficient_credits') {
+      res.status(402).json({
+        error: 'insufficient_credits',
+        message: result.errors[0].error,
+        ...result,
+      });
+      return;
+    }
 
     res.json(result);
   } catch (err) {

@@ -34,6 +34,35 @@ import {
   useConnectorRule,
   type ConnectorActionType,
 } from '@/components/connectors/useConnectorRule';
+import {
+  useConnectorHealth,
+  describeConnectorHealthReason,
+  type ConnectorHealthEntry,
+} from '@/hooks/useConnectorHealth';
+import type { ConnectorHealthDisplay } from '@/components/integrations/ConnectorCardStatusRow';
+
+/**
+ * SCRUM-1146 health surface: resolves one catalog id's `useConnectorHealth()`
+ * entry into the presentational `ConnectorHealthDisplay` the status row
+ * understands. `undefined` while the health request is still in flight — the
+ * page must not flash an "unavailable" reading before the FIRST fetch has
+ * even had a chance to resolve; once it settles, a lookup miss or a fetch
+ * failure both resolve to `'unknown'`, never `'connected'` (fail-closed —
+ * see `useConnectorHealth`'s own doc comment).
+ */
+function resolveHealthDisplay(
+  loading: boolean,
+  entry: ConnectorHealthEntry,
+): ConnectorHealthDisplay | undefined {
+  if (loading) return undefined;
+  if (entry.state === 'degraded') {
+    return { kind: 'degraded', reasonText: describeConnectorHealthReason(entry.health_reason) };
+  }
+  if (entry.state === 'unknown') {
+    return { kind: 'unknown' };
+  }
+  return { kind: 'connected' };
+}
 
 /**
  * Minimal, column-pinned connection-status probe (GH #1836 lesson —
@@ -90,9 +119,11 @@ function extractFolders(triggerConfig: Record<string, unknown> | undefined): Sel
 
 interface DriveConnectorSectionProps {
   orgId: string;
+  /** SCRUM-1146 health surface — see `resolveHealthDisplay` above. */
+  health?: ConnectorHealthDisplay;
 }
 
-function DriveConnectorSection({ orgId }: DriveConnectorSectionProps) {
+function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
   const { connected, refresh: refreshConnected } = useIsConnectorConnected(orgId, 'google_drive');
   const { state, saving, saveError, save } = useConnectorRule(orgId, 'google_drive');
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -130,7 +161,7 @@ function DriveConnectorSection({ orgId }: DriveConnectorSectionProps) {
 
   return (
     <div className="space-y-4">
-      <DriveConnectorCard orgId={orgId} />
+      <DriveConnectorCard orgId={orgId} health={health} />
 
       {connected && !isManaged && (
         <Card>
@@ -279,6 +310,15 @@ export function ConnectorsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const orgId = profile?.org_id ?? null;
 
+  // SCRUM-1146 health surface: ONE fetch for every connector on the page,
+  // not one per card — see `resolveHealthDisplay` above and this hook's own
+  // doc comment for the fail-closed contract.
+  const connectorHealth = useConnectorHealth();
+  const driveHealthDisplay = resolveHealthDisplay(
+    connectorHealth.loading,
+    connectorHealth.getHealth('google_drive'),
+  );
+
   // OAuth return-trip consumption — page-level, StrictMode-safe (see header
   // comment). Mirrors OrgProfilePage's existing effect for drive/docusign;
   // Adobe Sign is not on this page in v1.
@@ -328,7 +368,7 @@ export function ConnectorsPage() {
           <p className="text-sm text-muted-foreground">{CONNECTORS_LABELS.CONNECTORS_EMPTY_ORG}</p>
         ) : (
           <>
-            <DriveConnectorSection orgId={orgId} />
+            <DriveConnectorSection orgId={orgId} health={driveHealthDisplay} />
             <DocusignConnectorSection orgId={orgId} />
           </>
         )}

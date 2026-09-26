@@ -1,6 +1,27 @@
 # agents.md — components/connectors
 
-_Last updated: 2026-09-14 (status row deduplicated against `components/integrations/ConnectorCardStatusRow.tsx`)_
+_Last updated: 2026-09-25 (`DriveConnectorCard.tsx` surfaces SCRUM-1146 connector health)_
+
+## 2026-09-25 — `DriveConnectorCard.tsx` accepts a `health` prop (SCRUM-1146 surface)
+
+Closes a real gap: `services/worker/src/api/connector-health.ts` (`GET /api/connectors/health`)
+already computed `cursor_stale` / `changes_list_never_succeeded` / `grant_exceeds_requested` /
+etc. for months — the last one is TRUE in prod today for the one connected org (~32 granted
+Google scopes) — but `grep -rl "connectors/health" src/` found no consumer before this. That is
+exactly why the `changes.list` 400-on-every-call incident (2026-05-04 to 2026-09-25, fixed by PR
+#3054) went unnoticed: the detection existed and nothing read it.
+
+`health?: ConnectorHealthDisplay` (new type in `../integrations/ConnectorCardStatusRow.tsx`) is a
+pure pass-through prop — this card does NOT call `useConnectorHealth()` itself. `ConnectorsPage.tsx`
+calls it ONCE and resolves `getHealth('google_drive')` via `resolveHealthDisplay()` before handing
+the result down, so one page render costs one health fetch, not one per card. Omitting the prop (or
+passing `{ kind: 'connected' }`) renders the card exactly as before — every prior
+`DriveConnectorCard.test.tsx` case is unmodified and still green.
+
+`DocusignConnectorCard.tsx` has NOT been wired to this — `ConnectorCardStatusRow` supports it
+generically, but only Drive (the connector this incident concerns, and the one with a TRUE-in-prod
+`grant_exceeds_requested` today) was wired in this pass. Wiring Docusign is a repeat of the same
+three lines (`getHealth('docusign')` → `resolveHealthDisplay` → prop), left for a follow-up.
 
 ## 2026-09-14 — `DriveConnectorCard.tsx` / `DocusignConnectorCard.tsx` now use the shared status row
 
@@ -80,3 +101,20 @@ live here itself. One rule engine, zero new semantics: everything here writes ex
   the picker; there is no `radio-group` or `sheet` component in this repo yet, so
   `ConnectorActionChoice` uses plain `<input type="radio">` and `DriveFolderPicker` uses `Dialog`
   styled full-width/full-height below `sm` rather than a separate sheet component.
+
+## 2026-09-25 — the Drive folder cap is THREE, and the server is the authority
+
+`DRIVE_FOLDER_SELECTION_CAP` is **3**, matching the worker's `drive_folders`
+Zod `.max(3)` in `services/worker/src/rules/schemas.ts`. It was 20 on both sides;
+the founder's "Google Drive Expected Behavior" spec says a user connects "up to
+three of those folders", so 20 was a spec divergence, not a decision.
+
+**Change both or neither.** The picker's cap is a courtesy that stops the UI
+offering a selection the save would reject; a direct API caller bypasses it
+entirely, so the Zod schema is the real control. The earlier note in this file
+claiming the cap exists "to match the worker's Zod `.max(20)`" described a
+divergence, not a rationale.
+
+Verified in prod before tightening: 1 rule carried `drive_folders`, max 2 bound,
+0 rules over three — so no existing rule is invalidated by the stricter schema.
+Re-check that before tightening any server-side limit again.

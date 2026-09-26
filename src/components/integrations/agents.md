@@ -1,5 +1,23 @@
 # agents.md — components/integrations
-_Last updated: 2026-09-14 (`ConnectorCardStatusRow.tsx` shared with `components/connectors/` — SonarCloud duplication fix)_
+_Last updated: 2026-09-25 (`ConnectorCardStatusRow.tsx` gains the SCRUM-1146 health surface)_
+
+## 2026-09-25 — `ConnectorCardStatusRow.tsx` gains an optional `health` prop
+
+Surfaces the SCRUM-1146 health dashboard (`useConnectorHealth`, `src/hooks/agents.md`) — the
+connector cards previously rendered only a binary connected/not-connected/checking state, even
+though the backend already classified `degraded` with a specific reason (the exact gap behind the
+#3054 Drive incident's five months of silence). `health?: ConnectorHealthDisplay` is entirely
+additive: omitted, or `{ kind: 'connected' }`, renders EXACTLY the row that existed before this
+change — every prior test in `ConnectorCardStatusRow.test.tsx` still passes unmodified.
+`{ kind: 'degraded', reasonText }` and `{ kind: 'unknown' }` each render a second status line with
+`role="status"` (not color-only — a screen reader announces it) and ONLY while `connected` is true;
+a disconnected connector already reads "Not connected" and a stale health reading from before
+disconnect is not actionable. `'unknown'` renders "Health status unavailable", never a healthy
+claim — the caller's `useConnectorHealth` fails closed to it on any fetch failure.
+
+`DriveConnectorCard.tsx` (in `components/connectors/`) is the one wired consumer today — see that
+folder's agents.md. `AdobeSignConnectorCard.tsx` / `MemberDocusignConnectorCard.tsx` here could take
+the same prop with no further change to this component; left unwired as out of scope for this pass.
 
 ## 2026-09-14 — `ConnectorCardStatusRow.tsx` (from PR #2934) pulled into this branch
 

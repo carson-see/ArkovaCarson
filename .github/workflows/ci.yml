@@ -137,7 +137,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
+        uses: trufflesecurity/trufflehog@64d939a56362f519781c53ea09b27f8d1dc0140a # v3.97.6
         with:
           extra_args: --only-verified
 
@@ -2059,7 +2059,7 @@ jobs:
           python-version: '3.12'
 
       - name: Setup locked Python package manager
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.10.3"
           enable-cache: true

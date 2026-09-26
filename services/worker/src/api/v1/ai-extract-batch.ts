@@ -36,12 +36,14 @@ import { createExtractionProvider } from '../../ai/factory.js';
 import {
   checkAICredits,
   deductAICredits,
+  refundAICredits,
+  recordAICreditDebit,
   ensureAICreditsPeriod,
   logAIUsageEvent,
 } from '../../ai/cost-tracker.js';
+import { enqueueRefundReconciliation } from '../../ai/credit-refund-reconciliation.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
-import { submitJob } from '../../utils/jobQueue.js';
 import { AI_CREDIT_RECONCILE_JOB_TYPE } from '../../jobs/ai-credit-reconcile.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
@@ -168,45 +170,9 @@ async function lookupCachedExtraction(
   }
 }
 
-/**
- * Enqueue a reconciliation job when a refund failed after a successful debit.
- * This prevents a silent overcharge: the credit is reconciled out-of-band
- * instead of being lost in a swallowed `.catch`.
- */
-async function enqueueRefundReconciliation(params: {
-  orgId?: string;
-  userId?: string;
-  amount: number;
-  reason: string;
-  fingerprint?: string;
-}): Promise<void> {
-  try {
-    const jobId = await submitJob({
-      type: AI_CREDIT_RECONCILE_JOB_TYPE,
-      payload: {
-        orgId: params.orgId ?? null,
-        userId: params.userId ?? null,
-        amount: params.amount,
-        reason: params.reason,
-        fingerprint: params.fingerprint ?? null,
-        source: 'ai-extract-batch',
-      },
-      priority: 5,
-    });
-    if (!jobId) {
-      logger.error(
-        { orgId: params.orgId, userId: params.userId, amount: params.amount },
-        'Failed to enqueue AI credit reconciliation job — refund not applied',
-      );
-    }
-  } catch (err) {
-    // Last-resort: surface loudly. Do NOT swallow — a lost refund is an overcharge.
-    logger.error(
-      { error: err, orgId: params.orgId, userId: params.userId, amount: params.amount },
-      'Exception enqueuing AI credit reconciliation job — refund not applied',
-    );
-  }
-}
+// S9: `enqueueRefundReconciliation` used to live here, privately, so only this
+// route had a fallback when a refund failed after a successful debit. It is now
+// `ai/credit-refund-reconciliation.ts`, shared with `ai-extract.ts`.
 
 const router = Router();
 
@@ -333,6 +299,10 @@ router.post('/', async (req: Request, res: Response) => {
         // When credits are unmetered (beta: checkAICredits returned null), a
         // falsy debit is non-fatal — proceed without charging.
         const didDebit = debited === true;
+        // S8 / S2: this row's debit, captured once. The inline refund below and
+        // any reconciliation enqueued from it address the same `ai_credits`
+        // row and the same period. See `AICreditDebit`.
+        const debitRecord = didDebit ? recordAICreditDebit(orgId, userId) : undefined;
 
         try {
           const result = await withRowLatencyBudget(
@@ -387,20 +357,36 @@ router.post('/', async (req: Request, res: Response) => {
           // RISK-6: refund THIS row's credit (only if we actually debited it).
           // If the refund itself fails, do NOT swallow it — enqueue a
           // reconciliation job so the credit is recovered out-of-band.
-          if (didDebit) {
-            const refunded = await deductAICredits(orgId, userId, -1).catch((refundErr) => {
+          // Was `deductAICredits(orgId, userId, -1)` until migration 0484 —
+          // a silent no-op since 0467 closed that RPC to non-positive amounts
+          // (the AI-credit refund regression from 0467). Now the dedicated
+          // `refund_ai_credits` RPC with a positive amount, addressed by the
+          // debit record (migration 0485).
+          //
+          // The `.catch()` that used to wrap this call was dead code:
+          // `refundAICredits` catches internally and has never thrown. It also
+          // logged the same failure three times over — once in the dead catch,
+          // once before the enqueue, and once inside the enqueue helper. One
+          // line per outcome now.
+          if (didDebit && debitRecord) {
+            const outcome = await refundAICredits(debitRecord, 1);
+            if (outcome.status === 'clamped') {
+              // S1: nothing moved, because the credit was already back. Not an
+              // overcharge, so no reconciliation — but not silent either.
               logger.warn(
-                { error: refundErr, orgId, userId, rowIndex: i },
-                'Exception refunding credit for failed batch row',
+                { orgId, userId, rowIndex: i, amount: 1 },
+                'AI credit refund for a failed batch row returned ZERO credits — period floor clamped it; nothing moved',
               );
-              return false;
-            });
-            if (!refunded) {
+            } else if (outcome.status !== 'refunded') {
+              logger.error(
+                { orgId, userId, rowIndex: i, amount: 1, outcome: outcome.status },
+                'AI credit refund failed for a failed batch row — enqueueing reconciliation',
+              );
               await enqueueRefundReconciliation({
-                orgId,
-                userId,
+                debit: debitRecord,
                 amount: 1,
                 reason: 'batch_extraction_failed_refund_failed',
+                source: 'ai-extract-batch',
                 fingerprint: row.fingerprint,
               });
             }

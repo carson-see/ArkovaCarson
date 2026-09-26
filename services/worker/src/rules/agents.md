@@ -26,3 +26,29 @@ Rules engine: trigger evaluation, config validation, and input sanitization for 
 ## 2026-09-14 — SCRUM-5142 destination folders
 
 Anchor-producing actions accept optional `destination_folder_id`. The dispatcher writes it as `anchors.folder_id`; the database ownership/context trigger is the final authority. The Rules UI exposes the same field using canonical folder ids.
+
+## 2026-09-25 — `drive_folders` is capped at THREE
+
+`TriggerConfigWorkspaceFileModified.drive_folders` is `.max(3)`, down from
+`.max(20)`, per the founder's "Google Drive Expected Behavior" spec ("up to three
+of those folders"). **This schema is the authority**; the picker's
+`DRIVE_FOLDER_SELECTION_CAP` in `src/components/connectors/DriveFolderPicker.tsx`
+mirrors it and must move with it.
+
+Verified in prod before tightening: 1 rule with `drive_folders`, max 2 bound,
+0 over three. Always check live data before narrowing a validation limit — a
+tighter schema rejects existing rows on their next save, not at deploy time, so
+the breakage surfaces later and looks unrelated.
+
+**The cap is on the TOTAL, and `.max()` alone cannot express it.** There are two
+binding shapes on this trigger — the legacy singular `type`/`folder_id` and the
+`drive_folders[]` array — and every consumer MERGES them (`driveFolderIds()` in
+`integrations/connectors/drive-folder-bindings.ts`, `readDriveFolderBindings()`
+in `rules/evaluator.ts`). Bounding only the array left the effective limit at
+FOUR: `{type:'drive_folder', folder_id, drive_folders:[a,b,c]}` parsed cleanly.
+The `superRefine` now sums both shapes against `DRIVE_FOLDER_BINDING_CAP`.
+
+The rule builder only ever writes the array, so this gap was invisible through
+the UI and reachable only by a direct API caller — which is precisely the caller
+the server-side cap exists for. **If you add a third way to bind a folder, add it
+to that sum.**

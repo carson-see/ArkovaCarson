@@ -44,15 +44,32 @@ function countOccurrences(ref: 'HEAD' | string): number {
   return total;
 }
 
+/** HEAD^2 when HEAD is a merge ref (pull_request checkout); plain HEAD otherwise. */
+export function prHeadRef(): string {
+  try {
+    execFileSync(GIT_BIN, ['rev-parse', '--verify', '--quiet', 'HEAD^2'], {
+      cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return 'HEAD^2';
+  } catch {
+    return 'HEAD';
+  }
+}
+
 function main(): void {
   // Required base: fail closed if it can't resolve (getBaseRef exits 1).
   const BASE_REF = getBaseRef({ required: true })!;
   const baseline = countOccurrences(BASE_REF);
-  const current = countOccurrences('HEAD');
+  // On a pull_request event HEAD is the synthetic merge ref (PR head merged
+  // into the CURRENT base tip) while BASE_REF_SHA is the base tip snapshotted
+  // at the last PR event. Anything that landed on main in between is counted
+  // against the PR. Compare the PR's own head (HEAD^2) so the gate measures
+  // what the PR changes, not what main drifted by (#3089/#3090, 2026-09-26).
+  const current = countOccurrences(prHeadRef());
 
   console.log(`count: 'exact' callsites (non-test):`);
   console.log(`  ${BASE_REF}: ${baseline}`);
-  console.log(`  HEAD:        ${current}`);
+  console.log(`  ${prHeadRef()}:        ${current}`);
 
   if (current <= baseline) {
     console.log('✅ No new count: \'exact\' callsites introduced.');

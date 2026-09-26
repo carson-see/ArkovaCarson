@@ -1,5 +1,18 @@
 # agents.md — pages
 
+## 2026-09-25 — `ConnectorsPage.tsx` fetches connector health once and feeds the Drive card
+
+Calls `useConnectorHealth()` ONE time at the page level (not per card) and resolves each
+connector's entry through the new `resolveHealthDisplay(loading, entry)` helper before passing it
+to `DriveConnectorSection` → `DriveConnectorCard`. `resolveHealthDisplay` returns `undefined` while
+the request is still in flight (so the page never flashes an "unavailable" reading before the first
+fetch has even had a chance to resolve), and otherwise maps `degraded` → `{ kind: 'degraded',
+reasonText }` (via `describeConnectorHealthReason`) or anything else (`unknown`, a lookup miss) →
+`{ kind: 'unknown' }` — never `{ kind: 'connected' }` on anything but a genuinely healthy read. See
+`src/hooks/agents.md` and `src/components/connectors/agents.md` for the rest of this SCRUM-1146
+surfacing pass; Docusign is not yet wired to this (component/hook both support it — left for a
+follow-up).
+
 ## UAT-22 invitation read mode (2026-09-14)
 
 OrgProfilePage forwards its verified `platformAdmin` mode to the invitation-list hook, matching organization metadata and the existing create-invitation path. The page regression checks that selected-org invitation reads receive that mode. Failed list reads show a visible invitation-section alert using curated copy; raw worker or database errors are never rendered.
@@ -915,3 +928,20 @@ The public gateway serves the machine-readable reference at `/api/docs/spec.json
 
 `OrgProfilePage` is the route-org shell: it passes the route org to Secure Document, registry, queue, and the additive `useOrgProfileFolders` wrapper. It renders safe HTTPS-only organization social links and composes folder filtering/management into Home. `AnchorQueuePage` carries `org_id` through list/run/resolve, queries the exact membership role, clears tenant-bound state on route changes, and ignores stale responses. Never fall back from a route org to the profile/active org.
 The queue scope key includes authenticated user and effective organization, so primary-organization changes also invalidate list requests and clear rows. An explicit empty or malformed `org_id` is visibly denied rather than falling back.
+
+## 2026-09-25 — PROOF-06: RecordDetailPage's two proof downloads are now symmetric
+
+`onDownloadProof` (PDF) and `onDownloadProofJson` (JSON) both source the proof
+via `sourceProofInput` and build the canonical packet via `buildProofPacket`.
+Before this, the JSON handler called `generateProofPackage(anchorFields)` with
+NO proof argument, so `proof` was **always null** in the downloaded file — for
+every record, including ones with a full per-document branch in `anchor_proofs`.
+
+`RecordDetailPage.proof-binding.test.tsx` did not catch it: its `AssetDetailView`
+mock destructures only `onDownloadProof`, so "both real proof builders" in that
+test name means two PDF-side helpers, not the two download paths. The JSON path
+now has its own suite, `RecordDetailPage.proof-json.test.tsx`, which fails
+against the pre-fix handler (`expected null not to be null`).
+
+**If you add a third export path, give it its own spec.** A mock that
+destructures one handler silently proves nothing about the others.
