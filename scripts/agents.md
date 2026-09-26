@@ -127,3 +127,53 @@ retry and an initial zero-credit offboard. This regression failed on the prior
 ## UAT-19 native queue authorization proof
 
 `uat19/native-pg-queue-resolution.sh` owns a loopback-only throwaway PostgreSQL database. It exercises migration 0477 with service-role ACL, exact secondary/no-primary membership, approved direct parent, stale/null authorization denial with zero mutations, server-bound collision keys, and a different-winner concurrent race that must produce one winner without deadlock.
+
+## SCRUM-4939 credit-RPC follow-up native proof
+
+`scrum4939/native-pg-credit-rpc-followups.sh` owns a loopback-only throwaway
+PostgreSQL database (created and dropped by the script; it never touches an
+existing one). It replays 0467 → 0468 → 0483 against a minimal Supabase-shaped
+fixture and asserts RED-then-GREEN in one run: a contended
+`deduct_ai_credits` returns SQLSTATE `57014` after the full statement timeout
+before 0483 and `55P03` inside the 5 s budget after it, with `used_this_month`
+unchanged in both cases; all four credit RPCs are service_role-only on all three
+grantee axes; eight concurrent debits against an allocation of five produce
+exactly five successes and `used_this_month = 5` on one row; `NOTIFY pgrst` is
+observed delivered via `LISTEN`. It also replays 0484 and proves the refund half RED-then-GREEN: before it, no
+`refund_ai_credits` exists and the old refund path (`deduct_ai_credits` with
+-1) returns false having refunded nothing; after it, a refund decrements by
+exactly the amount, floors at zero (over-refund lands on 0, a refund at 0 stays
+0, so a double refund cannot mint), refuses `p_amount` <=0 / >1000 and
+both-ids-NULL, returns false with no covering period row, RAISES
+`insufficient_privilege` when request claims are absent (`get_caller_role()`
+NULL must fail CLOSED), aborts with 55P03 in ~5 s under contention having moved
+nothing, and conserves exactly across eight interleaved debit/refund sessions
+(`used_this_month` = debits - refunds, never negative). `deduct_ai_credits` is
+re-checked to still refuse negative amounts — 0467's guard is kept, not
+reverted.
+
+The SQLSTATE is read from psql's verbose error line, not from a plpgsql
+`EXCEPTION WHEN OTHERS` handler: `statement_timeout` raises `query_canceled`,
+which plpgsql deliberately does not let `WHEN OTHERS` swallow, so a
+handler-based probe cannot observe the pre-0483 case at all.
+
+## 2026-09-21 — `scrum4939/native-pg-credit-rpc-followups.sh` stopped leaking scratch databases
+
+Two fixes, both of which had been producing silent damage:
+
+- **`dropdb --force`** (PG13+), with a `pg_terminate_backend` sweep and a plain
+  `dropdb` fallback. The concurrency sections fork psql sessions, so the EXIT
+  trap's `dropdb` regularly raced a backend that had not finished
+  disconnecting, failed with 55006, and had that failure swallowed by `|| true`.
+  Five `arkova_scrum4939_0483_*` databases had accumulated on the dev host; they
+  are dropped. A drop that still fails now prints a WARN naming the database.
+- **The lock-contention probe terminates the holder BACKEND**, not just its psql
+  client, and waits for it to leave `pg_stat_activity`. The holder runs
+  `pg_sleep(20)`; killing the client does not interrupt that, so the row stayed
+  locked for the rest of the budget and whatever ran next against the same org
+  failed with a spurious 55P03 that looked like a real finding.
+
+The harness also covers migration 0485 now: RED for both 0484 findings (a
+fully-clamped refund answering `true`; a last-month debit refunded against this
+month's period) then GREEN for the integer return, the NULL-vs-0 distinction,
+`p_debited_at` selecting the debit's period, and omitting it behaving as 0484.

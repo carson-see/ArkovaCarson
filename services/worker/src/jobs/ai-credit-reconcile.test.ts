@@ -23,7 +23,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockProcessNextJob = vi.fn();
 const mockDeductAICredits = vi.fn();
+const mockRefundAICredits = vi.fn();
 const mockCaptureException = vi.fn();
+const mockCaptureMessage = vi.fn();
 const mockLoggerError = vi.fn();
 const mockLoggerWarn = vi.fn();
 const mockLoggerInfo = vi.fn();
@@ -33,9 +35,13 @@ vi.mock('../utils/jobQueue.js', () => ({
 }));
 vi.mock('../ai/cost-tracker.js', () => ({
   deductAICredits: (...args: unknown[]) => mockDeductAICredits(...args),
+  refundAICredits: (...args: unknown[]) => mockRefundAICredits(...args),
 }));
 vi.mock('../utils/sentry.js', () => ({
-  Sentry: { captureException: (...args: unknown[]) => mockCaptureException(...args) },
+  Sentry: {
+    captureException: (...args: unknown[]) => mockCaptureException(...args),
+    captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+  },
 }));
 vi.mock('../utils/logger.js', () => ({
   logger: {
@@ -85,10 +91,13 @@ function job(payload: unknown, overrides: Partial<CapturedJob> = {}): CapturedJo
   };
 }
 
+const DEBITED_AT = '2026-08-31T23:59:00.000Z';
+
 const validPayload = {
   orgId: ORG_ID,
   userId: USER_ID,
   amount: 1,
+  debitedAt: DEBITED_AT,
   reason: 'batch_extraction_failed_refund_failed',
   fingerprint: 'a'.repeat(64),
   source: 'ai-extract-batch',
@@ -122,6 +131,7 @@ function withClaimedJob(claimed: CapturedJob): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDeductAICredits.mockResolvedValue(true);
+  mockRefundAICredits.mockResolvedValue({ status: 'refunded', amount: 1 });
   mockProcessNextJob.mockResolvedValue({ claimed: false, status: 'idle' });
 });
 
@@ -136,12 +146,24 @@ describe('ai_credits.reconcile_refund consumer', () => {
     );
   });
 
-  it('re-applies the lost refund as a NEGATIVE deduction for the exact amount', async () => {
+  // Was `deductAICredits(org, user, -amount)` until migration 0483. 0467 had
+  // added `p_amount <= 0 -> RETURN false` to that RPC, so this reconciler —
+  // the last line of defence against an overcharge — silently reconciled
+  // nothing and dead-lettered every job it ever claimed. It now calls the
+  // dedicated `refund_ai_credits` RPC with a POSITIVE amount.
+  it('re-applies the lost refund through refundAICredits with a POSITIVE amount', async () => {
     withClaimedJob(job(validPayload));
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).toHaveBeenCalledWith(ORG_ID, USER_ID, -1);
+    // S8 / S2: the ids AND the instant the debit was taken, replayed verbatim,
+    // so a retry that runs after a month rollover still refunds the period the
+    // charge is actually in, from the row the debit came from.
+    expect(mockRefundAICredits).toHaveBeenCalledWith(
+      { orgId: ORG_ID, userId: USER_ID, debitedAt: DEBITED_AT },
+      1,
+    );
+    expect(mockDeductAICredits).not.toHaveBeenCalled();
     expect(result.reconciled).toBe(1);
     expect(result.failed).toBe(0);
   });
@@ -151,11 +173,87 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).toHaveBeenCalledWith(ORG_ID, USER_ID, -3);
+    expect(mockRefundAICredits).toHaveBeenCalledWith(
+      { orgId: ORG_ID, userId: USER_ID, debitedAt: DEBITED_AT },
+      3,
+    );
+  });
+
+  // S1. Migration 0485 returns the number of credits ACTUALLY returned. Zero
+  // means the period's floor clamped the decrement to nothing — the credit was
+  // already back, which is the expected outcome of the double refund this
+  // queue structurally permits (no idempotency key; a refund that COMMITS and
+  // whose response is lost is re-enqueued).
+  //
+  // Until 0485 the RPC answered `true` here, so this consumer logged "AI
+  // credit refund reconciled" over a job that moved zero credit — the one
+  // outcome an operator most needs to see, reported as success.
+  describe('a clamped refund (0485: zero credits actually returned)', () => {
+    beforeEach(() => {
+      mockRefundAICredits.mockResolvedValue({ status: 'clamped' });
+      withClaimedJob(job(validPayload));
+    });
+
+    it('does NOT log "refund reconciled"', async () => {
+      await runAiCreditReconcileJobs({ limit: 5 });
+
+      expect(mockLoggerInfo).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('reconciled'),
+      );
+    });
+
+    it('completes the job — retrying cannot turn a clamp into a refund', async () => {
+      const result = await runAiCreditReconcileJobs({ limit: 5 });
+
+      expect(result.reconciled).toBe(1);
+      expect(result.failed).toBe(0);
+    });
+
+    it('logs at warn with the ids and emits a distinguishable signal', async () => {
+      await runAiCreditReconcileJobs({ limit: 5 });
+
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: ORG_ID, userId: USER_ID, jobId: 'job-1' }),
+        expect.stringContaining('ZERO credits'),
+      );
+      // Its OWN Sentry signal — not the captureException the dead-letter path
+      // uses, so a clamp can never be counted as a lost refund or vice versa.
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        expect.stringContaining('clamped to zero'),
+        expect.objectContaining({ level: 'warning' }),
+      );
+      expect(mockCaptureException).not.toHaveBeenCalled();
+    });
+  });
+
+  // S2 backwards compatibility. Jobs enqueued before 0485 shipped carry no
+  // `debitedAt`; they must keep validating and keep running, falling back to
+  // the RPC's `now()` — exactly the behaviour they were enqueued under.
+  it('accepts a legacy payload with no debitedAt and refunds without one', async () => {
+    const { debitedAt: _omitted, ...legacyPayload } = validPayload;
+    withClaimedJob(job(legacyPayload));
+
+    const result = await runAiCreditReconcileJobs({ limit: 5 });
+
+    expect(mockRefundAICredits).toHaveBeenCalledWith(
+      { orgId: ORG_ID, userId: USER_ID, debitedAt: undefined },
+      1,
+    );
+    expect(result.reconciled).toBe(1);
+  });
+
+  it('rejects a malformed debitedAt rather than refunding against the wrong period', async () => {
+    withClaimedJob(job({ ...validPayload, debitedAt: 'last tuesday' }));
+
+    const result = await runAiCreditReconcileJobs({ limit: 5 });
+
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
+    expect(result.failed).toBe(1);
   });
 
   it('throws when the refund fails again so processNextJob retries then dead-letters', async () => {
-    mockDeductAICredits.mockResolvedValue(false);
+    mockRefundAICredits.mockResolvedValue({ status: 'rpc_failed' });
     withClaimedJob(job(validPayload));
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
@@ -166,7 +264,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
   });
 
   it('emits a Sentry event when the job dead-letters — a permanently lost refund is an overcharge', async () => {
-    mockDeductAICredits.mockResolvedValue(false);
+    mockRefundAICredits.mockResolvedValue({ status: 'rpc_failed' });
     // Last attempt: processNextJob will mark this `dead`, not `failed`.
     withClaimedJob(job(validPayload, { attempts: 3, max_attempts: 3 }));
 
@@ -180,7 +278,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).not.toHaveBeenCalled();
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
   });
 
@@ -189,7 +287,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).not.toHaveBeenCalled();
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
   });
 
@@ -198,7 +296,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
 
     const result = await runAiCreditReconcileJobs({ limit: 5 });
 
-    expect(mockDeductAICredits).not.toHaveBeenCalled();
+    expect(mockRefundAICredits).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
   });
 
@@ -209,7 +307,7 @@ describe('ai_credits.reconcile_refund consumer', () => {
   });
 
   it('never logs the reconciliation payload verbatim (no fingerprint in log values)', async () => {
-    mockDeductAICredits.mockResolvedValue(false);
+    mockRefundAICredits.mockResolvedValue({ status: 'rpc_failed' });
     withClaimedJob(job(validPayload));
 
     await runAiCreditReconcileJobs({ limit: 1 });
