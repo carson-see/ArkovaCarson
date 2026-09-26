@@ -825,6 +825,72 @@ export const API_KEY_LABELS = {
 } as const;
 
 // =============================================================================
+// AGENTS (SPEC-AGENTS-UI) — ComputeID / agent passport management
+// =============================================================================
+
+export const AGENT_LABELS = {
+  PAGE_TITLE: 'Agents',
+  PAGE_DESCRIPTION: 'Manage the agents and automated integrations registered to your organisation.',
+  NO_AGENTS: 'No agents registered yet. Agents are registered through the Verification API.',
+  FETCH_ERROR: 'Unable to load agents. Please refresh and try again.',
+  STATUS_ACTIVE: 'Active',
+  STATUS_SUSPENDED: 'Suspended',
+  STATUS_REVOKED: 'Revoked',
+  SUSPEND: 'Suspend',
+  RESUME: 'Resume',
+  REVOKE: 'Revoke',
+  // review P2 (SPEC-AGENTS-UI): a lost response can follow a committed
+  // mutation, so these generic fallbacks no longer assert a state the
+  // client cannot actually know ("it is still active/suspended"). The hook
+  // always reads the agent back after a failure; AGENTS_SETTINGS picks one
+  // of the *_CONFIRMED_* / *_SUCCEEDED_DESPITE_ERROR / *_RESULT_UNCONFIRMED
+  // strings below from that readback. These bare *_FAILED strings are only
+  // the fallback for an error that carries no readback at all.
+  SUSPEND_FAILED: 'Failed to suspend this agent. Please try again.',
+  RESUME_FAILED: 'Failed to resume this agent. Please try again.',
+  REVOKE_FAILED: 'Failed to revoke this agent. Please try again.',
+  SUSPEND_FAILED_CONFIRMED_ACTIVE: 'Failed to suspend this agent — a refresh confirms it is still active. Please try again.',
+  SUSPEND_SUCCEEDED_DESPITE_ERROR: 'The suspend request reported an error, but a refresh confirms this agent is now suspended.',
+  SUSPEND_RESULT_UNCONFIRMED: 'Failed to suspend this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  RESUME_FAILED_CONFIRMED_SUSPENDED: 'Failed to resume this agent — a refresh confirms it is still suspended. Please try again.',
+  RESUME_SUCCEEDED_DESPITE_ERROR: 'The resume request reported an error, but a refresh confirms this agent is now active.',
+  RESUME_RESULT_UNCONFIRMED: 'Failed to resume this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  REVOKE_RESULT_UNCONFIRMED: 'Failed to revoke this agent, and its current status could not be confirmed. Please refresh before retrying.',
+  // SCRUM-agents-ui: the worker's 409 for a PATCH against an already-revoked
+  // agent (revocation is terminal). Surfaced as its own curated string rather
+  // than the server's raw error text, matching this repo's rule against
+  // rendering raw Error.message (may carry server internals).
+  REVOKED_TERMINAL_ERROR: 'This agent has already been revoked. Revocation is terminal — a revoked agent cannot be reactivated. Register a new agent if it needs access again.',
+  CONFIRM_REVOKE_TITLE: 'Revoke this agent?',
+  // Names the #3083 fix explicitly: suspending/revoking an agent deactivates
+  // its keys, so the confirmation must say so rather than imply the agent
+  // record alone is affected.
+  CONFIRM_REVOKE_BODY: 'Revoking an agent is permanent and cannot be undone. It immediately deactivates every active API key issued to this agent. Register a new agent if it needs access again.',
+  CONFIRM_REVOKE_CANCEL: 'Cancel',
+  CONFIRM_REVOKE_CONFIRM: 'Yes, revoke permanently',
+  SUSPEND_HINT: 'Suspending deactivates this agent’s active API keys. Resuming restores them.',
+  REVOKED_NOTE: 'Revoked — revocation is terminal. No further status changes are possible.',
+  CREATED_LABEL: 'Registered',
+  VIEW_KEYS: 'View API keys',
+  HIDE_KEYS: 'Hide API keys',
+  KEYS_LOADING: 'Loading API keys…',
+  KEYS_ERROR: 'Unable to load this agent’s API keys.',
+  KEYS_EMPTY: 'No active API keys for this agent.',
+  ORG_REQUIRED_TITLE: 'Agents require an organisation',
+  ORG_REQUIRED_BODY: 'Agents are registered per organisation. Create or join one to manage agent access.',
+  ORG_REQUIRED_CTA: 'Create organisation',
+} as const;
+
+/** Mirrors `VALID_AGENT_TYPES` in services/worker/src/api/v1/agents.ts. */
+export const AGENT_TYPE_LABELS = {
+  llm_agent: 'AI Agent',
+  ats_integration: 'ATS Integration',
+  hr_platform: 'HR Platform',
+  compliance_tool: 'Compliance Tool',
+  custom: 'Custom Integration',
+} as const;
+
+// =============================================================================
 // ENTITLEMENTS / QUOTA
 // =============================================================================
 
@@ -1653,6 +1719,7 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_CREDENTIAL_TEMPLATES: 'Document Templates',
   BREADCRUMB_WEBHOOKS: 'Webhooks',
   BREADCRUMB_API_KEYS: 'API Keys',
+  BREADCRUMB_AGENTS: 'Agents',
   BREADCRUMB_REFERRALS: 'Referrals',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
@@ -1852,6 +1919,8 @@ export const SETTINGS_PAGE_LABELS = {
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
+  AGENTS: 'Agents',
+  AGENTS_DESC: 'View, suspend, or revoke registered agents',
   REFERRALS: 'Referrals',
   REFERRALS_DESC: 'Share your referral code and see who joined through it',
   TEMPLATES_EMPTY_TITLE: 'No templates yet',
