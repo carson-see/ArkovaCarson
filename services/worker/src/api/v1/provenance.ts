@@ -145,8 +145,31 @@ export function buildProvenanceTimeline(
     }
   }
 
-  // 5. Revocation
-  if (anchor.revoked_at) {
+  // 5. Revocation — gated on STATUS, not on `revoked_at` alone.
+  //
+  // `supersede_anchor` (migration 0367) reuses `revoked_at` /
+  // `revocation_reason` to record WHEN a version was superseded — a
+  // long-standing dual-purpose of those columns that `get_public_anchor()` has
+  // handled since migration 0311 by projecting `superseded_at` as
+  // `CASE WHEN status='SUPERSEDED' THEN revoked_at END`. This projection reads
+  // the raw row instead, so before this it emitted `credential_revoked` for a
+  // SUPERSEDED anchor, publicly and without auth.
+  //
+  // That was dormant while supersession was a rare manual admin action. The
+  // connector supersession path makes it the routine outcome of every edit to a
+  // connected document — so a customer editing a file would publish "Revoked"
+  // about their own still-valid evidence. That is exactly the conflation the
+  // supersede-never-revoke decision exists to prevent (§1.5).
+  if (anchor.revoked_at && anchor.status === 'SUPERSEDED') {
+    events.push({
+      event_type: 'credential_superseded',
+      timestamp: anchor.revoked_at,
+      // No free text: the successor's identity is the meaningful fact and it is
+      // already carried by the lineage fields. Asserting a "reason" here would
+      // be asserting a withdrawal that did not happen.
+      detail: 'Replaced by a newer version',
+    });
+  } else if (anchor.revoked_at && anchor.status === 'REVOKED') {
     // Academic records emit NO issuer-authored free text, matching migration
     // 0385, which suppresses `revocation_reason` outright for these types.
     // Unconditional — not gated on `directory_info_opt_out`, for the same

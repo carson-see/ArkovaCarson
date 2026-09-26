@@ -1,3 +1,69 @@
+## 2026-09-25 — Founder decision: connector document updates SUPERSEDE, never duplicate or REVOKE
+
+`connector-artifact-drain.ts` previously did a plain `INSERT INTO anchors(...)` per drained
+artifact with no lookup of any prior anchor for the same document — an updated Drive file
+produced a SECOND, unrelated, fully-valid anchor (no `parent_anchor_id`/`version_number`). Fixed
+by calling the ALREADY-SHIPPED `supersede_anchor` RPC (migration 0367's 4-arg,
+`p_caller_user_id`-carrying overload — the worker's service_role client has no `auth.uid()`) from
+inside `defaultMaterializeAnchor`, rather than reimplementing any of its status-flip/lineage
+logic. No new migration; no new anchors columns.
+
+**Gated to `SUPERSESSION_ENABLED_SOURCES = {'google_drive'}` only.** DocuSign
+`connector_artifact` rows have no `external_revision` signal in prod (0/27 populated vs 8/8 for
+Drive) to correlate an update on — DocuSign keeps today's behavior unchanged (still capable of
+double-anchoring an update; that is pre-existing and out of scope here).
+
+**Correlation key: `(org_id, source, external_ref)`** — deliberately NOT `integration_id`. This
+is `connector_artifact`'s OWN dedupe/identity key per migration 0343 ("Dedup/idempotency key:
+(org_id, source, external_ref, COALESCE(external_revision,''))"); `integration_id` would rotate
+on a Drive reconnect and silently break correlation across it. `findPriorConnectorAnchorForSupersession`
+looks up the current lineage HEAD (max `version_number`) for that key via a single indexed
+`.eq().eq()` point lookup (never `.or()` — see `findExistingEnvelopeAnchor`'s own comment on why
+an OR-shaped filter is a planner cost trap on the 3M+-row `anchors` table), and DELIBERATELY does
+not exclude `REVOKED` (unlike that envelope lookup) — the caller must see a REVOKED head to fail
+closed on it.
+
+**Branch logic in `defaultMaterializeAnchor`** (before the existing DocuSign envelope-guard /
+`materialize_connector_artifact_anchor` call, which is otherwise completely unchanged):
+- No prior anchor, or prior's fingerprint === this artifact's fingerprint → fall through to the
+  existing path unchanged (first-ever anchor, or a content-identical redelivery — the atomic
+  RPC's own `(user_id, fingerprint)` unique-index reuse already makes the identical-content case a
+  no-op for free; no new code needed for it).
+- Prior exists, fingerprint differs, prior status is `REVOKED` → `{ outcome: 'prior_anchor_revoked'
+  }`. `supersede_anchor` is NEVER called and the anchor is NEVER mutated — a genuine, terminal
+  revocation is not silently resumed. The row is left `processing` for the lease reaper / an
+  operator (same posture as every other non-`linked` outcome here — no compensating status write),
+  and `drainOneClaimedRow` alerts `prior_anchor_revoked_fail_closed` (a deliberate decision, not
+  the generic uncertain-outcome alert).
+- Prior exists, fingerprint differs, prior status is anything else → `supersedeConnectorAnchor()`
+  calls `supersede_anchor` (old anchor → `SUPERSEDED`, never `REVOKED`; new child anchor gets
+  `parent_anchor_id` set, and `version_number` is derived by the existing
+  `set_anchor_version_number()` BEFORE INSERT trigger — this code never computes or writes either
+  column), then links `connector_artifact.anchor_id` to the RPC's new anchor with a plain,
+  lease-guarded UPDATE (status='processing' AND the exact captured `updated_at`) — the ONE thing
+  `supersede_anchor` cannot do itself, since it knows nothing about the connector queue.
+
+**Idempotency:** a fresh lookup on every call (never cached) is what makes a retry after a
+lost link-back lease safe — the retry's lookup sees the anchor `supersede_anchor` already
+created as the new head with a MATCHING fingerprint, and falls through to the normal
+unique-index-reuse path instead of superseding a second time. `supersede_anchor` itself is also
+idempotent on `(parent_anchor_id, new_fingerprint)`.
+
+**`p_caller_user_id`** reuses the SAME actor `defaultMaterializeAnchor` already resolves as the
+anchor's `user_id` (`resolveOrgActorUserId` / the DS-04 member-owner branch) — there is no
+independent human caller for an automated connector supersession, and the org-creation flow
+atomically sets both `org_members.role='owner'` and `profiles.role='ORG_ADMIN'` on the SAME user
+(baseline onboarding function), which is what `supersede_anchor` actually checks (`profiles.role`,
+a DIFFERENT, platform-wide field from `org_members.role`) — so the owner this drain already
+resolves is, in the normal case, already the ORG_ADMIN identity the RPC requires. Left out of
+scope: a dedicated "system actor" identity (would need new schema) and enriching the child
+anchor's metadata beyond what `supersede_anchor` itself clones from the old anchor (its
+`connector_artifact_id` metadata key is one version stale post-supersede — cosmetic, not the
+connector_artifact.anchor_id backlink, which IS correct).
+
+Tests: `connector-artifact-drain.test.ts`, describe block "defaultMaterializeAnchor — connector
+document-update supersession (founder decision 2026-09-25)".
+
 ## 2026-09-13 — SCRUM-4514: `webhook-dlq-report.ts` — first reader of `webhook_dlq`
 
 New job, `POST /jobs/webhook-dlq-report` (Cloud Scheduler HTTP trigger only, same shape as
