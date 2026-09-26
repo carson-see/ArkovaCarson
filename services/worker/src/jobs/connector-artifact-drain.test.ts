@@ -1467,6 +1467,273 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
   });
 });
 
+// Founder decision 2026-09-25: a Drive file UPDATE must SUPERSEDE the prior
+// anchor (status -> SUPERSEDED, new anchor gets parent_anchor_id + an
+// incremented version_number via supersede_anchor's own trigger), never
+// duplicate it as an unrelated second anchor, and NEVER REVOKE it.
+describe('defaultMaterializeAnchor — connector document-update supersession (founder decision 2026-09-25)', () => {
+  const OWNER_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const PRIOR_ANCHOR_ID = 'a3333333-3333-4333-8333-333333333333';
+  const NEW_ANCHOR_ID = 'a4444444-4444-4444-8444-444444444444';
+  const FP_OLD = 'c'.repeat(64);
+  const FP_NEW = 'd'.repeat(64);
+
+  const DRIVE_ROW = {
+    id: ART_1,
+    org_id: ORG_A,
+    status: 'processing',
+    fingerprint_sha256: FP_NEW,
+    byte_length: 4096,
+    source: 'google_drive',
+    external_ref: 'drive-file-1',
+    metadata: { file_id: 'drive-file-1' },
+    anchor_id: null,
+    credit_deduction_id: null,
+    updated_at: '2026-09-25T00:00:00.000Z',
+  };
+
+  /** 'anchors' access is purpose-routed by the requested `select()` columns —
+   * the prior-lineage-head lookup asks for `version_number`, the post-
+   * supersede public_id fetch asks for exactly `public_id`. This lets one
+   * table mock serve both call sites unambiguously (unlike a single canned
+   * chainable response, which can't tell them apart). */
+  function anchorsTable(opts: {
+    prior: { id: string; status: string; fingerprint: string } | null;
+    publicId: string | null;
+  }) {
+    return () => {
+      let selectedFields = '';
+      const builder: Record<string, unknown> = {
+        select(fields: string) { selectedFields = fields; return builder; },
+        eq() { return builder; },
+        is() { return builder; },
+        neq() { return builder; },
+        order() { return builder; },
+        limit() { return builder; },
+        maybeSingle: async () => {
+          if (selectedFields.includes('version_number')) {
+            return { data: opts.prior, error: null };
+          }
+          if (selectedFields === 'public_id') {
+            return { data: opts.publicId ? { public_id: opts.publicId } : null, error: null };
+          }
+          throw new Error(`unexpected anchors select in test: ${selectedFields}`);
+        },
+        // findExistingEnvelopeAnchor's terminal call is a bare
+        // `await ...limit(...)` (no `.maybeSingle()`) and expects an ARRAY
+        // back. Harmless/irrelevant to every test in this block: resolving
+        // "no envelope match" lets that unrelated lookup no-op.
+        then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
+          return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+        },
+      };
+      return builder;
+    };
+  }
+
+  function orgMembersTable() {
+    return () => {
+      const builder: Record<string, unknown> = {
+        select() { return builder; },
+        eq() { return builder; },
+        in() { return builder; },
+        order() { return builder; },
+        limit() { return builder; },
+        maybeSingle: async () => ({ data: { user_id: OWNER_ID, role: 'owner' }, error: null }),
+      };
+      return builder;
+    };
+  }
+
+  /** Models the lease-guarded link-back UPDATE `supersedeConnectorAnchor` runs
+   * after `supersede_anchor` returns. `succeed: false` models a lost lease
+   * (zero rows matched). */
+  function connectorArtifactLinkTable(succeed = true) {
+    return vi.fn(() => {
+      const builder: Record<string, unknown> = {
+        update() { return builder; },
+        eq() { return builder; },
+        select() { return builder; },
+        maybeSingle: async () => (succeed ? { data: { id: ART_1 }, error: null } : { data: null, error: null }),
+      };
+      return builder;
+    });
+  }
+
+  function makeDb(args: {
+    prior: { id: string; status: string; fingerprint: string } | null;
+    publicId?: string | null;
+    linkSucceeds?: boolean;
+  }) {
+    const anchors = anchorsTable({ prior: args.prior, publicId: args.publicId ?? 'ARK-NEW-1' });
+    const connectorArtifact = connectorArtifactLinkTable(args.linkSucceeds ?? true);
+    const from = vi.fn((table: string) => {
+      if (table === 'org_members') return orgMembersTable()();
+      if (table === 'anchors') return anchors();
+      if (table === 'connector_artifact') return connectorArtifact();
+      throw new Error(`unexpected table ${table}`);
+    });
+    return { from, connectorArtifact };
+  }
+
+  it('changed fingerprint + a live prior anchor calls supersede_anchor (not a duplicate insert) and links the returned child', async () => {
+    vi.mocked(callRpc).mockImplementation(async (_db, name, rpcArgs) => {
+      expect(name).toBe('supersede_anchor');
+      expect(rpcArgs).toMatchObject({
+        old_anchor_id: PRIOR_ANCHOR_ID,
+        new_fingerprint: FP_NEW,
+        p_caller_user_id: OWNER_ID,
+      });
+      return { data: NEW_ANCHOR_ID, error: null };
+    });
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_OLD } });
+
+    const result = await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(result).toEqual({ outcome: 'linked', anchorId: NEW_ANCHOR_ID, anchorPublicId: 'ARK-NEW-1', created: true });
+    expect(callRpc).toHaveBeenCalledTimes(1);
+    // Never a second, unrelated `materialize_connector_artifact_anchor` insert
+    // for the same update — supersede_anchor is the ONLY anchor-creating call.
+    expect(callRpc).not.toHaveBeenCalledWith(expect.anything(), 'materialize_connector_artifact_anchor', expect.anything());
+    // The glue code never issues a raw UPDATE to `anchors` itself (status
+    // flip / parent_anchor_id / version_number are entirely the RPC's job —
+    // never reimplemented here); the only table this code writes directly is
+    // `connector_artifact`, to link the artifact to the RPC's own new anchor.
+    expect(db.connectorArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it('the prior anchor is left to the RPC\'s own SUPERSEDED transition, never explicitly REVOKED, by this glue code', async () => {
+    // This test pins the CONTRACT this code relies on rather than re-deriving
+    // supersede_anchor's own SQL (out of scope — see the RPC's own migration/
+    // tests): the reason string this code sends is a supersede reason, and
+    // this code performs no direct mutation of `old_anchor_id`'s row at all.
+    let capturedReason: unknown;
+    vi.mocked(callRpc).mockImplementation(async (_db, _name, rpcArgs) => {
+      capturedReason = rpcArgs?.reason;
+      return { data: NEW_ANCHOR_ID, error: null };
+    });
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_OLD } });
+
+    await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(typeof capturedReason).toBe('string');
+    expect(String(capturedReason)).not.toMatch(/revok/i);
+  });
+
+  it('idempotent replay: re-processing after supersede already committed does not call supersede_anchor twice', async () => {
+    const rpcSpy = vi.fn(async (_db: unknown, name: string, rpcArgs: Record<string, unknown> | undefined) => {
+      if (name === 'supersede_anchor') {
+        expect(rpcArgs).toMatchObject({ old_anchor_id: PRIOR_ANCHOR_ID, new_fingerprint: FP_NEW });
+        return { data: NEW_ANCHOR_ID, error: null };
+      }
+      if (name === 'materialize_connector_artifact_anchor') {
+        // Simulates the atomic RPC's own (user_id, fingerprint) unique-index
+        // reuse: same anchor, created:false — never a distinct third anchor.
+        return { data: { outcome: 'linked', anchor_id: NEW_ANCHOR_ID, public_id: 'ARK-NEW-1', created: false }, error: null };
+      }
+      throw new Error(`unexpected rpc ${name}`);
+    });
+    vi.mocked(callRpc).mockImplementation(rpcSpy);
+
+    // Pass 1: prior head is the OLD anchor with the OLD fingerprint.
+    const db1 = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_OLD } });
+    const first = await defaultMaterializeAnchor(DRIVE_ROW, { db: db1 });
+    expect(first).toMatchObject({ anchorId: NEW_ANCHOR_ID, created: true });
+
+    // Pass 2 (replay/retry of the SAME row): the lineage head is now the
+    // anchor supersede_anchor already created, with the SAME fingerprint this
+    // row already has — a fresh lookup (never cached) sees this and skips
+    // straight to the normal reuse path instead of superseding again.
+    const db2 = makeDb({ prior: { id: NEW_ANCHOR_ID, status: 'PENDING', fingerprint: FP_NEW } });
+    const second = await defaultMaterializeAnchor(DRIVE_ROW, { db: db2 });
+    expect(second).toMatchObject({ anchorId: NEW_ANCHOR_ID, created: false });
+
+    const supersedeCalls = rpcSpy.mock.calls.filter((c) => c[1] === 'supersede_anchor');
+    expect(supersedeCalls).toHaveLength(1);
+  });
+
+  it('identical fingerprint (no real content change) never calls supersede_anchor', async () => {
+    vi.mocked(callRpc).mockImplementation(async (_db, name) => {
+      if (name === 'materialize_connector_artifact_anchor') {
+        return { data: { outcome: 'linked', anchor_id: PRIOR_ANCHOR_ID, public_id: 'ARK-SAME-1', created: false }, error: null };
+      }
+      throw new Error(`unexpected rpc ${name} — identical fingerprint must never supersede`);
+    });
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_NEW } });
+
+    const result = await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(result).toMatchObject({ anchorId: PRIOR_ANCHOR_ID, created: false });
+    expect(callRpc).not.toHaveBeenCalledWith(expect.anything(), 'supersede_anchor', expect.anything());
+  });
+
+  it('first-ever anchor for a file (no prior) never calls supersede_anchor', async () => {
+    vi.mocked(callRpc).mockImplementation(async (_db, name) => {
+      if (name === 'materialize_connector_artifact_anchor') {
+        return { data: { outcome: 'linked', anchor_id: NEW_ANCHOR_ID, public_id: 'ARK-FIRST-1', created: true }, error: null };
+      }
+      throw new Error(`unexpected rpc ${name} — no prior anchor exists to supersede`);
+    });
+    const db = makeDb({ prior: null });
+
+    const result = await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(result).toMatchObject({ anchorId: NEW_ANCHOR_ID, created: true });
+    expect(callRpc).not.toHaveBeenCalledWith(expect.anything(), 'supersede_anchor', expect.anything());
+  });
+
+  it('a REVOKED prior anchor is never superseded or mutated — fails closed', async () => {
+    vi.mocked(callRpc).mockImplementation(async (_db, name) => {
+      throw new Error(`unexpected rpc ${name} — a REVOKED lineage head must never be called into`);
+    });
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'REVOKED', fingerprint: FP_OLD } });
+
+    const result = await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(result).toEqual({ outcome: 'prior_anchor_revoked' });
+    expect(callRpc).not.toHaveBeenCalled();
+    // No compensating write of any kind (never resurrect/mutate the revoked
+    // anchor, never link the connector_artifact to it, never mint a fresh
+    // independent anchor automatically).
+    expect(db.connectorArtifact).not.toHaveBeenCalled();
+  });
+
+  it('is gated to google_drive: a DocuSign row with a live, differently-fingerprinted prior never supersedes', async () => {
+    vi.mocked(callRpc).mockImplementation(async (_db, name) => {
+      if (name === 'materialize_connector_artifact_anchor') {
+        return { data: { outcome: 'linked', anchor_id: NEW_ANCHOR_ID, public_id: 'ARK-DS-1', created: true }, error: null };
+      }
+      throw new Error(`unexpected rpc ${name} — DocuSign must not be routed through supersession yet`);
+    });
+    // Same shape as a supersede-eligible row, but source='docusign'. Even
+    // though a "prior" with a different fingerprint exists, DocuSign
+    // connector_artifact rows carry no external_revision signal in prod
+    // (0/27 populated) to correlate an update on — behavior must stay
+    // exactly what it was before this change.
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_OLD } });
+
+    const result = await defaultMaterializeAnchor(
+      { ...DRIVE_ROW, source: 'docusign', external_ref: 'envelope-1', metadata: {} },
+      { db },
+    );
+
+    expect(result).toMatchObject({ anchorId: NEW_ANCHOR_ID, created: true });
+    expect(callRpc).not.toHaveBeenCalledWith(expect.anything(), 'supersede_anchor', expect.anything());
+  });
+
+  it('a lost lease on the link-back after a committed supersede reports lost_lease (never a compensating anchors write)', async () => {
+    vi.mocked(callRpc).mockImplementation(async (_db, name) => {
+      if (name === 'supersede_anchor') return { data: NEW_ANCHOR_ID, error: null };
+      throw new Error(`unexpected rpc ${name}`);
+    });
+    const db = makeDb({ prior: { id: PRIOR_ANCHOR_ID, status: 'SECURED', fingerprint: FP_OLD }, linkSucceeds: false });
+
+    const result = await defaultMaterializeAnchor(DRIVE_ROW, { db });
+
+    expect(result).toEqual({ outcome: 'lost_lease' });
+  });
+});
+
 describe('atomic publication response loss and paid retry recovery', () => {
   it.each(['return', 'throw'] as const)('committed publication with %s response failure retains the link for recovery', async (failure) => {
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })]);

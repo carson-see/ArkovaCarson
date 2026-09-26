@@ -24,6 +24,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
 import { RECORD_DETAIL_LABELS } from '@/lib/copy';
 import { sourceProofInput } from '@/lib/sourceProofInput';
+import { ZodError } from 'zod';
 
 export function RecordDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -307,29 +308,91 @@ export function RecordDetailPage() {
         }}
         onDownloadProofJson={async () => {
           try {
-            const { generateProofPackage, downloadProofPackage, getProofPackageFilename } = await import('@/lib/proofPackage');
-            const proofPackage = generateProofPackage({
+            // PROOF-06: the JSON export embeds the SAME canonical proof packet
+            // the PDF certificate does (PROOF-04 above). Before this, it called
+            // generateProofPackage with no proof argument, so `proof` was ALWAYS
+            // null — for every record, including ones with a full per-document
+            // branch in `anchor_proofs`. The JSON file is the machine-readable
+            // artifact an auditor or partner feeds to a verifier, so a silently
+            // empty proof is the one place it must not happen (§1.5).
+            const { proof, complete } = await sourceProofInput(supabase, {
               id: anchor.id,
-              fingerprint: anchor.fingerprint ?? '',
-              filename: anchor.filename,
-              file_size: anchor.file_size,
-              file_mime: anchor.file_mime,
-              status: anchor.status as 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED',
-              public_id: anchor.public_id,
-              chain_tx_id: anchor.chain_tx_id,
-              chain_block_height: anchor.chain_block_height,
-              chain_timestamp: anchor.chain_timestamp,
-              created_at: anchor.created_at,
-              user_id: anchor.user_id,
-              org_id: anchor.org_id,
+              fingerprint: anchor.fingerprint,
+              status: anchor.status,
+              chain_tx_id: anchor.chain_tx_id ?? null,
+              chain_block_height: anchor.chain_block_height ?? null,
+              chain_block_hash: anchor.chain_block_hash ?? null,
+              chain_timestamp: anchor.chain_timestamp ?? null,
             });
+            if (proof && !complete) {
+              toast.warning(
+                'This package embeds the proof for inspection, but one field needed to run every offline check could not be loaded. Try again in a moment for a complete proof.',
+              );
+            }
+            // buildProofPacket applies the shared block-identity resolver and
+            // preserves `{hash, position}` siblings verbatim; it returns null for
+            // a non-downloadable status, a missing proof, or a block mismatch.
+            const { buildProofPacket } = await import('@/lib/generateAuditReport');
+            const proofBundle = buildProofPacket({
+              publicId: anchor.public_id ?? anchor.id,
+              filename: anchor.filename,
+              fingerprint: anchor.fingerprint,
+              status: anchor.status,
+              createdAt: anchor.created_at,
+              securedAt: anchor.chain_timestamp ?? undefined,
+              networkReceipt: anchor.chain_tx_id ?? undefined,
+              blockHeight: anchor.chain_block_height ?? undefined,
+              blockHash: anchor.chain_block_hash ?? undefined,
+              proof,
+              proofComplete: complete,
+            });
+            const { generateProofPackage, downloadProofPackage, getProofPackageFilename } = await import('@/lib/proofPackage');
+            const proofPackage = generateProofPackage(
+              {
+                id: anchor.id,
+                fingerprint: anchor.fingerprint ?? '',
+                filename: anchor.filename,
+                file_size: anchor.file_size,
+                file_mime: anchor.file_mime,
+                status: anchor.status as 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED',
+                public_id: anchor.public_id,
+                chain_tx_id: anchor.chain_tx_id,
+                chain_block_height: anchor.chain_block_height,
+                chain_timestamp: anchor.chain_timestamp,
+                created_at: anchor.created_at,
+                user_id: anchor.user_id,
+                org_id: anchor.org_id,
+              },
+              // Legacy humanized view, kept for back-compat. Populated from the
+              // same packet so the two can no longer disagree.
+              proofBundle
+                ? {
+                    merkle_root: proofBundle.merkle_root,
+                    proof_path: proofBundle.merkle_proof?.map((e) => e.hash) ?? null,
+                  }
+                : undefined,
+              proofBundle,
+              complete,
+            );
             const filename = getProofPackageFilename({
               filename: anchor.filename,
               public_id: anchor.public_id,
             });
             downloadProofPackage(proofPackage, filename);
-          } catch {
-            toast.error('Failed to generate proof package. Please try again.');
+          } catch (err) {
+            // A stored branch whose sibling hash is malformed fails the
+            // package schema. That is a permanent data defect, not a transient
+            // one, so it must not be reported as "try again" — and the error is
+            // logged rather than swallowed so the record can be found.
+            const corruptProof = err instanceof ZodError;
+            if (corruptProof) {
+              console.error('Proof package rejected for record', anchor.public_id ?? anchor.id, err);
+            }
+            toast.error(
+              corruptProof
+                ? RECORD_DETAIL_LABELS.PROOF_PACKAGE_CORRUPT
+                : RECORD_DETAIL_LABELS.PROOF_PACKAGE_FAILED,
+            );
           }
         }}
       />

@@ -69,6 +69,16 @@ export const TriggerConfigEsignCompleted = z.object({
     .optional(),
 });
 
+/**
+ * Maximum Google Drive folders one rule may watch, per the founder's "Google
+ * Drive Expected Behavior" spec ("up to three of those folders").
+ *
+ * This bounds the TOTAL across both binding shapes. `DRIVE_FOLDER_SELECTION_CAP`
+ * in src/components/connectors/DriveFolderPicker.tsx mirrors it client-side and
+ * must move with it — but the picker is a courtesy, this is the control.
+ */
+export const DRIVE_FOLDER_BINDING_CAP = 3;
+
 export const TriggerConfigWorkspaceFileModified = z.object({
   vendors: z
     .array(z.enum(['google_drive', 'sharepoint', 'onedrive']))
@@ -92,7 +102,14 @@ export const TriggerConfigWorkspaceFileModified = z.object({
         watch_channel_id: z.string().trim().min(1).max(500).optional(),
       }),
     )
-    .max(20)
+    // Spec ("Google Drive Expected Behavior"): a user connects "up to three of
+    // those folders". This is the AUTHORITY for that cap — the picker's
+    // client-side limit is a courtesy that a direct API caller bypasses.
+    // Verified before tightening: prod had 1 rule with drive_folders, max 2
+    // bound, 0 over three, so no existing rule is invalidated.
+    // NOTE: this bounds the ARRAY only. The superRefine below bounds the total
+    // across both binding shapes — that is the real cap.
+    .max(DRIVE_FOLDER_BINDING_CAP)
     .optional(),
   semantic_match: TriggerConfigEsignCompleted.shape.semantic_match,
 }).superRefine((cfg, ctx) => {
@@ -101,6 +118,25 @@ export const TriggerConfigWorkspaceFileModified = z.object({
       code: z.ZodIssueCode.custom,
       path: ['folder_id'],
       message: 'folder_id is required when type is drive_folder',
+    });
+  }
+
+  // The cap is on the TOTAL number of bound folders, not on one representation
+  // of them. There are two shapes — the legacy singular `type`/`folder_id` and
+  // the `drive_folders[]` array — and every consumer MERGES them
+  // (`driveFolderIds()` in integrations/connectors/drive-folder-bindings.ts,
+  // `readDriveFolderBindings()` in rules/evaluator.ts). Bounding only the
+  // array's `.max()` leaves the effective limit one higher, reachable by any
+  // direct API caller; the rule builder only ever writes the array, which is
+  // why the gap is invisible through the UI.
+  const boundFolders =
+    (cfg.type === 'drive_folder' && cfg.folder_id ? 1 : 0) +
+    (cfg.drive_folders?.length ?? 0);
+  if (boundFolders > DRIVE_FOLDER_BINDING_CAP) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['drive_folders'],
+      message: `A rule can watch at most ${DRIVE_FOLDER_BINDING_CAP} Google Drive folders (counting folder_id and drive_folders together)`,
     });
   }
 });
