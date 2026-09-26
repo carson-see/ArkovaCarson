@@ -1,5 +1,69 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-26 (`drive-folder-mirror.ts` — `loadActiveDriveConnection` distinguishes a retryable DB error from a legitimate "no connection"; the caller (`rules-crud.ts`) awaits the mirror instead of firing it after the response — review P2 follow-up on PR #3086)._
+_Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
+_Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
+_Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-26 — `drive-folder-mirror.ts`: retryable connection-lookup error vs legitimate "no connection" (PR #3086 review P2)
+
+A second independent review found `loadActiveDriveConnection` collapsed two
+different states into one `null`: a genuine DB error on the `org_integrations`
+lookup (transient — a network blip, a dropped connection) and "this org has
+never connected Drive" (legitimate — nothing to retry until it does). Both
+produced `outcome: 'skipped_no_connection'`, which is wrong for the first
+case: a caller (or a future durable-retry path) has no way to tell "try again
+next time" from "there is nothing to try." `loadActiveDriveConnection` now
+returns a 3-way `{kind: 'found'|'none'|'error'}` result;
+`mirrorConnectedDriveFolders` maps `'error'` to `outcome: 'error'` (same shape
+`upsertOne` already uses for its own DB-layer failures) and only `'none'` to
+`'skipped_no_connection'`. Regression test: `drive-folder-mirror.test.ts` ›
+"a DB error loading the active connection is retryable ('error'), NOT the
+same as no connection ('skipped_no_connection')" — confirmed failing
+(asserted `'error'`, got `'skipped_no_connection'`) before the fix.
+
+The companion P2 on this same review pass — the caller (`rules-crud.ts`)
+firing this module fire-and-forget AFTER already sending its response,
+so a restart or transient failure mid-mirror left no trace and no retry —
+is fixed in `rules-crud.ts`, not here; see `api/agents.md`'s matching
+2026-09-26 entry. This module's own contract (idempotent, per-folder
+isolated, never throws) did not need to change for that fix — the caller
+now simply awaits it and reports its already-honest result.
+
+## 2026-09-25 — `drive-folder-mirror.ts`: per-folder isolation + index-comment fix (PR #3086 review follow-up)
+
+An independent review of `feat/mirror-connected-drive-folders` (PR #3086, T2)
+returned SHIP-WITH-FOLLOWUP with two P2s, both applied here:
+
+1. **One folder's exception no longer aborts mirroring for every later
+   folder.** `mirrorConnectedDriveFolders`'s `for` loop now wraps each
+   `upsertOne` call in its own try/catch. `upsertOne` already converted
+   DB-layer `{data,error}` failures into a returned `outcome: 'error'` — but
+   a genuine JS exception (a dropped connection, a client-library throw, not
+   a Supabase error return) is a different failure mode the loop had no
+   protection against: it unwound the whole loop, so every folder after the
+   one that threw was silently never attempted, surfaced only as one generic
+   `'drive-folder-mirror wiring failed'` warning in `rules-crud.ts` with no
+   per-folder detail. Each iteration is now isolated and logs its own
+   `driveFolderId` on exception. This is a diagnosability/completeness fix,
+   not a data-integrity one — migration 0462's lazy mirror path is the
+   backstop for any folder that still has no mirror row, and re-saving the
+   rule re-runs this whole function, so a partial mirror always self-repairs
+   on the next save. Regression test:
+   `drive-folder-mirror.test.ts` › "a genuine exception on one folder does
+   not suppress mirroring of later folders in the same rule save" — confirmed
+   failing against the unfixed loop (uncaught throw propagated out of
+   `mirrorConnectedDriveFolders`) before the fix landed.
+2. **Header comment corrected.** It previously described
+   `idx_folders_connector_destination_unique` (migration 0462) as filtered on
+   `owner_scope='ORG'`. Reading that migration directly: the index is NOT
+   scoped to `owner_scope='ORG'` (it also covers USER-scoped rows via
+   `coalesce(user_id, ...)`) and it DOES include `context_org_id` in its key,
+   neither of which the comment said. Functionally harmless today — this
+   module only ever writes `owner_scope='ORG'` rows and never sets
+   `context_org_id`, so its own dedupe key is a narrower slice of the same
+   index — but a future USER-scoped mirror path built on the old, wrong
+   comment would have collided. No behavior change, no new migration.
 _Last updated: 2026-09-25 (`connector-adapter.ts` + `google-drive-adapter.ts` — PR-1 of the connector-adapter-contract series, founder directive "Drive should be a template reproducible for OneDrive")._
 
 _Last updated: 2026-09-26 (PR #3069 review findings: `loadDriveAccessToken`'s `account_label` SELECT no longer discards its error, and the self-heal CAS write now guards `account_label` on the value read)._
@@ -554,6 +618,54 @@ rerun-requested marker it uses at the end of a leased run is
 (see that folder's agents.md for why). The bounded "exactly one extra pass"
 behaviour is unchanged and still pinned by `drive-changes-runner.test.ts`.
 
+## 2026-09-25 — `drive-folder-mirror.ts`: eager mirror at connect/rule-save time (feat/mirror-connected-drive-folders)
+
+THE GAP: migration 0462 already mirrors a connector-sourced Drive folder into
+`public.folders`, but LAZILY — only the first time a document from that
+folder is actually anchored (`resolve_connector_destination_folder`, fired
+from the `anchors`/`connector_artifact` triggers). Founder spec wants the
+mirror folder to exist "upon setup", not on first document. This new module
+adds the EAGER half, wired from `api/rules-crud.ts`'s `handleCreateRule` /
+`handleUpdateRule` (fire-and-forget, same contract as `emitRuleAudit`),
+scoped to the Connectors page's own `WORKSPACE_FILE_MODIFIED` +
+`action_config.tag === 'connector-google_drive'` rule with a non-empty
+`trigger_config.drive_folders[]`.
+
+**No new migration.** Reuses `public.folders` and the SAME dedupe key
+(`owner_scope='ORG', org_id, connector_provider, connector_source_id` — the
+partial unique index `idx_folders_connector_destination_unique` from 0462)
+the lazy SQL path already uses, so the two paths can never create two rows
+for one connected folder — whichever runs first wins, the other
+finds-and-reuses (select-then-insert, with a `23505` unique-violation
+race fallback that re-selects the winner).
+
+**Deliberately NOT `folder_api_create`/`folder_api_update`** (also 0462):
+`folder_api_administers_org()` authorizes off `org_members` alone and lacks
+the "owner linked only via `profiles.org_id`" fallback that
+`rules-crud.ts`'s own `requireOrgAdmin()` (and `drive-folders.ts`'s
+`isCallerOrgAdminResult`) already correctly implement — routing back through
+the narrower RPC check would silently drop mirroring for exactly the
+org-owner accounts `drive-folders.ts`'s own doc comment already flags as a
+known landmine. This module writes directly against `public.folders` via the
+worker's service-role client instead, the same idiom `rules-crud.ts` already
+uses for `organization_rules` (explicit `.eq('org_id', orgId)` scoping, not
+RLS, which service_role bypasses).
+
+**Nesting — flagged for founder/product sign-off, not decided here:**
+`trigger_config.drive_folders[]` carries only `{folder_id, folder_name}`
+today (no ancestor path), so the mirror folder is created FLAT
+(`parent_folder_id = NULL`), one per connected Drive folder. Whether a
+deeply nested Drive tree should someday mirror as a matching nested Arkova
+tree is out of scope — punted, not invented; the existing lazy 0462 path has
+the identical granularity limitation for a file's actual parent folder.
+
+Test coverage: `drive-folder-mirror.test.ts` proves idempotency (exactly one
+row per connected folder across create + reconnect), the concurrent-insert
+race fallback, and tenant isolation (including an adversarial
+same-`connector_source_id`-across-two-orgs case). `api/rules-crud.test.ts`
+has a matching "Drive folder mirror wiring" describe block proving the
+create/update handlers call through only for a connector-tagged Drive rule
+with a non-empty `drive_folders[]`, and never for any other rule shape.
 ## 2026-09-25 — three dead Drive modules deleted (812 lines)
 
 `googleDrive.ts` (373), `drive-watch-bootstrap.ts` (261) and
