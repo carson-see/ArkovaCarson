@@ -150,4 +150,53 @@ describe('PATCH {status:"suspended"} — the keys must stop working', () => {
     // whose status change had not committed.
     expect(agents.update).toHaveBeenCalled();
   });
+
+  // Agent CREATION is admin-gated (migration 0158). Suspend/resume and revoke
+  // were NOT — `getCallerOrgId` selects `role` but only ever checks `org_id`.
+  // That was survivable while suspension was decorative. Once suspension
+  // actually deactivates the agent's API keys, any ordinary org member can
+  // disable the organisation's agents, and DELETE's revocation is terminal.
+  it('refuses a suspend from a non-admin org member', async () => {
+    const { agents, apiKeys } = (() => {
+      const a = builder([{ data: activeRow }]);
+      const k = builder({ data: null });
+      routeDbTables(dbFromMock, {
+        profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_MEMBER' } }),
+        agents: a,
+        api_keys: k,
+      });
+      return { agents: a, apiKeys: k };
+    })();
+
+    const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'suspended' });
+
+    expect(res.status).toBe(403);
+    // Fails BEFORE any write — neither the keys nor the status may move.
+    expect(apiKeys.update).not.toHaveBeenCalled();
+    expect(agents.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a revoke from a non-admin org member', async () => {
+    const agents = builder([{ data: activeRow }]);
+    const apiKeys = builder({ data: null });
+    routeDbTables(dbFromMock, {
+      profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_MEMBER' } }),
+      agents,
+      api_keys: apiKeys,
+    });
+
+    const res = await request(createApp()).delete(`/api/v1/agents/${AGENT_ID}`);
+
+    expect(res.status).toBe(403);
+    expect(agents.update).not.toHaveBeenCalled();
+    expect(apiKeys.update).not.toHaveBeenCalled();
+  });
+
+  it('still allows an ORG_ADMIN to suspend', async () => {
+    const { apiKeys } = setup([{ data: activeRow }, { data: suspendedRow }]);
+    const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'suspended' });
+
+    expect(res.status).toBe(200);
+    expect(apiKeys.update).toHaveBeenCalled();
+  });
 });

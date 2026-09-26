@@ -1887,3 +1887,31 @@ Proven by `machines/orgDomainVerification.machine.ts`, which found window 2 and 
 - **"No trigger demotes it" is wrong for production.** Migration `0482` (on prod 2026-09-21) demotes `domain_verified` and clears the pending token on a non-service_role domain change. See `machines/agents.md` for what that does and does not close.
 - **Added in the same round (test-first, 5 red → 62/62):** the grant is also compare-and-swapped on `ein_tax_id` (it decides `verification_status = 'VERIFIED'` and is NOT one of 0482's guarded columns) — `.is('ein_tax_id', null)` when no EIN was read, never `.eq(..., null)`; a pending token with a NULL or unparseable expiry is refused (it used to never expire); the 6-digit code is compared with `crypto.timingSafeEqual`, a length mismatch being an ordinary wrong code.
 - **NOT fixed here, and it dominates the residual risk:** `confirm-domain` has no per-token attempt limit. A wrong code neither counts nor burns the token; the only throttle is 60 req/min per IP, and the prod origin is reachable directly. The attacker in this threat model is the org admin, who sets `domain = victim.com` and grinds the code. Ticketed separately — do not describe `domain_verified` as sound until a counter burns the token after N failures.
+
+## 2026-09-25 — suspend/revoke are ORG_ADMIN-only (they were not)
+
+`getCallerOrgId` always SELECTed `role` and never checked it, so every lifecycle
+route ran at member level. Agent REGISTRATION has been admin-only since
+migration 0158; `PATCH /:agentId` (suspend/resume) and `DELETE /:agentId`
+(revoke, terminal) were not.
+
+That was survivable only while suspension was decorative. The same change that
+made suspension actually deactivate an agent's API keys turned this into a
+denial-of-service any ordinary org member could perform against the
+organisation's agents — and `DELETE` is unrecoverable. The fix that closed one
+hole widened another; both are closed here.
+
+`getCallerOrgId(userId, res, { requireAdmin: true })` now gates PATCH and DELETE.
+**Reads stay member-visible** — seeing which agents exist is not privileged.
+
+**STILL OPEN, same class, deliberately not changed here:**
+`POST /:agentId/key` mints a key for an existing agent and is NOT admin-gated.
+Minting is at least as privileged as suspending, and registration being
+admin-only makes the asymmetry hard to defend — but it is pre-existing, was not
+amplified by this change, and may have a legitimate non-admin flow this session
+cannot see. It needs a deliberate decision, not a silent tightening.
+
+**Do not name a table selector literally in a comment in this file.** The
+SCRUM-1277 contract test (`agents-org-scope.test.ts`) scans this file's SOURCE
+TEXT for selectors and will read prose as a query.
+
