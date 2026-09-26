@@ -157,7 +157,20 @@ function deriveMirrorFolderName(driveFolderId: string, folderName: string | null
   return `${base} · ${suffix}`;
 }
 
-async function loadActiveDriveConnection(db: DriveFolderMirrorDb, orgId: string): Promise<{ id: string } | null> {
+/**
+ * A genuine DB error looking up the active connection (network blip,
+ * transient outage) must never be conflated with "this org has never
+ * connected Drive" — the first is retryable (the next rule save, or a
+ * future durable-retry path, should try again), the second is a legitimate
+ * terminal state (nothing to retry until the org actually connects).
+ * Review P2 (feat/mirror-connected-drive-folders).
+ */
+type ActiveConnectionLookup =
+  | { kind: 'found'; connection: { id: string } }
+  | { kind: 'none' }
+  | { kind: 'error'; error: unknown };
+
+async function loadActiveDriveConnection(db: DriveFolderMirrorDb, orgId: string): Promise<ActiveConnectionLookup> {
   const { data, error } = await db
     .from('org_integrations')
     .select('id')
@@ -167,8 +180,9 @@ async function loadActiveDriveConnection(db: DriveFolderMirrorDb, orgId: string)
     .order('connected_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error || !data) return null;
-  return data as { id: string };
+  if (error) return { kind: 'error', error };
+  if (!data) return { kind: 'none' };
+  return { kind: 'found', connection: data as { id: string } };
 }
 
 async function findExistingMirror(
@@ -274,11 +288,20 @@ export async function mirrorConnectedDriveFolders(
   const { orgId, actorUserId, folders } = args;
   if (folders.length === 0) return [];
 
-  const connection = await loadActiveDriveConnection(deps.db, orgId);
-  if (!connection) {
+  const lookup = await loadActiveDriveConnection(deps.db, orgId);
+  if (lookup.kind === 'error') {
+    // Retryable: a DB blip here says nothing about whether the org has a
+    // connection — it says the lookup itself didn't complete. Surfacing
+    // 'error' (not 'skipped_no_connection') lets a caller distinguish "try
+    // again" from "nothing to do until the org connects Drive".
+    deps.logger?.error?.({ error: lookup.error, orgId }, 'drive-folder-mirror: active-connection lookup failed (retryable)');
+    return folders.map((f) => ({ folderId: '', driveFolderId: f.folderId, outcome: 'error' as const, error: String(lookup.error) }));
+  }
+  if (lookup.kind === 'none') {
     deps.logger?.warn?.({ orgId }, 'drive-folder-mirror: no active Drive connection — skipping mirror');
     return folders.map((f) => ({ folderId: '', driveFolderId: f.folderId, outcome: 'skipped_no_connection' as const }));
   }
+  const connection = lookup.connection;
 
   // Per-folder isolation (review finding, feat/mirror-connected-drive-folders):
   // `upsertOne` already converts DB-layer `{data,error}` failures into a

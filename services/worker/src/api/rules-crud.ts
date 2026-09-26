@@ -33,6 +33,7 @@ import {
   extractDriveFoldersToMirror,
   shouldMirrorDriveFoldersForRule,
   type DriveFolderMirrorDb,
+  type MirrorConnectedDriveFolderResult,
 } from '../integrations/connectors/drive-folder-mirror.js';
 
 /**
@@ -49,30 +50,55 @@ function isConnectorManagedActionConfig(actionConfig: unknown): boolean {
 }
 
 /**
- * Fire-and-forget Drive-folder mirroring (same contract as `emitRuleAudit`
- * below: must never gate response latency and must never throw into the
- * caller). Scoped to the Connectors page's own Drive rule
- * (`shouldMirrorDriveFoldersForRule`) with a non-empty `drive_folders` list —
- * every other rule create/update (DocuSign, RulesPage/RuleBuilderPage,
- * bare enable-toggles) is a no-op call that never touches `org_integrations`
- * or `folders`.
+ * Drive-folder mirroring for a rule create/update. Scoped to the Connectors
+ * page's own Drive rule (`shouldMirrorDriveFoldersForRule`) with a
+ * non-empty `drive_folders` list — every other rule create/update (DocuSign,
+ * RulesPage/RuleBuilderPage, bare enable-toggles) is a no-op call that never
+ * touches `org_integrations` or `folders`.
+ *
+ * Review P2 (feat/mirror-connected-drive-folders): this used to be
+ * fire-and-forget, called AFTER the response was already sent. A restart or
+ * transient DB failure mid-mirror then left an enabled rule with no folders
+ * and no trace of the attempt — for a connected folder with zero documents
+ * ever arriving, the migration-0462 LAZY mirror never fires either, so
+ * nothing would ever create it until an admin happened to re-save the rule.
+ * The caller now AWAITS this and folds the result into its response body
+ * (a recoverable partial result, not a swallowed exception) — bounded work,
+ * since the folder picker caps connected folders at three (PR #3084), so
+ * this is at most a few sequential `folders` upserts, not unbounded fan-out.
+ * Still never throws: `mirrorConnectedDriveFolders` itself is non-throwing
+ * by contract, and the try/catch here is belt-and-suspenders so a mirror
+ * failure can never turn an already-successful rule save into a 500.
+ *
+ * Returns `null` when mirroring does not apply to this rule at all (so the
+ * caller can omit `drive_folder_mirror` from the response entirely), or the
+ * per-folder result array — which may itself contain `outcome: 'error'`
+ * entries — when it was attempted.
  */
-function mirrorDriveFoldersForRuleWrite(
+async function mirrorDriveFoldersForRuleWrite(
   orgId: string,
   actorUserId: string,
   triggerType: string,
   triggerConfig: unknown,
   actionConfig: unknown,
-): void {
-  if (!shouldMirrorDriveFoldersForRule(triggerType, actionConfig)) return;
+): Promise<MirrorConnectedDriveFolderResult[] | null> {
+  if (!shouldMirrorDriveFoldersForRule(triggerType, actionConfig)) return null;
   const folders = extractDriveFoldersToMirror(triggerConfig as Record<string, unknown> | null | undefined);
-  if (folders.length === 0) return;
-  void mirrorConnectedDriveFolders(
-    { db: db as unknown as DriveFolderMirrorDb, logger },
-    { orgId, actorUserId, folders },
-  ).catch((error: unknown) => {
+  if (folders.length === 0) return null;
+  try {
+    return await mirrorConnectedDriveFolders(
+      { db: db as unknown as DriveFolderMirrorDb, logger },
+      { orgId, actorUserId, folders },
+    );
+  } catch (error: unknown) {
     logger.warn({ error, orgId }, 'drive-folder-mirror wiring failed');
-  });
+    return folders.map((f) => ({
+      folderId: '',
+      driveFolderId: f.folderId,
+      outcome: 'error' as const,
+      error: String(error),
+    }));
+  }
 }
 
 const UuidSchema = z.string().uuid();
@@ -737,12 +763,14 @@ export async function handleCreateRule(
     }
 
     const newId = (data as { id?: string } | null)?.id;
-    res.status(201).json({ id: newId });
+    let mirrorResults: MirrorConnectedDriveFolderResult[] | null = null;
     if (newId) {
       // Eager Drive-folder mirror (founder spec — "duplicate connected
-      // folders in Arkova automatically upon setup"). Fire-and-forget, same
-      // contract as the audit emit below.
-      mirrorDriveFoldersForRuleWrite(
+      // folders in Arkova automatically upon setup"). Review P2: AWAITED
+      // before the response goes out — see `mirrorDriveFoldersForRuleWrite`'s
+      // doc comment for why the old fire-and-forget-after-response shape was
+      // unsafe.
+      mirrorResults = await mirrorDriveFoldersForRuleWrite(
         orgId,
         userId,
         parsed.data.trigger_type,
@@ -762,6 +790,9 @@ export async function handleCreateRule(
         },
       });
     }
+    res.status(201).json(
+      mirrorResults !== null ? { id: newId, drive_folder_mirror: mirrorResults } : { id: newId },
+    );
   } catch (err) {
     logger.error({ error: err }, 'handleCreateRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
@@ -1034,20 +1065,26 @@ export async function handleUpdateRule(
       res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
       return;
     }
-    res.json({ ok: true });
     // Eager Drive-folder mirror, adopt/re-save path (founder spec). Only when
     // THIS patch actually carries a trigger_config — a bare `{enabled:true}`
     // toggle or an unrelated rename never re-derives it. `trigger_type` is
     // immutable and absent from the patch body itself, so it comes from the
     // current-row read `validatePatchAgainstCurrent` already did; same for
     // `action_config` when this patch didn't also resend it.
+    //
+    // Review P2: AWAITED before the response goes out (see
+    // `mirrorDriveFoldersForRuleWrite`'s doc comment) — the old
+    // fire-and-forget-after-response shape could silently lose the mirror on
+    // a restart or transient DB failure with no trace and no retry.
+    let mirrorResults: MirrorConnectedDriveFolderResult[] | null = null;
     if (parsed.patch.trigger_config) {
       const triggerType = validation.currentTriggerType;
       const actionConfig = parsed.patch.action_config ?? validation.currentActionConfig;
       if (triggerType) {
-        mirrorDriveFoldersForRuleWrite(orgId, userId, triggerType, parsed.patch.trigger_config, actionConfig);
+        mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, triggerType, parsed.patch.trigger_config, actionConfig);
       }
     }
+    res.json(mirrorResults !== null ? { ok: true, drive_folder_mirror: mirrorResults } : { ok: true });
     void emitUpdateAudit(userId, orgId, parsed.ruleId, parsed.patch, validation.currentActionType);
   } catch (err) {
     logger.error({ error: err }, 'handleUpdateRule unexpected error');

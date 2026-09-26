@@ -81,6 +81,11 @@ function makeFakeDb(opts: {
    * itself cannot convert into a returned error, because nothing was
    * returned at all. */
   throwOnSelectSourceId?: string;
+  /** Forces the `org_integrations` lookup (the active-connection check) to
+   * return a genuine `{data:null, error}` Supabase response — a transient DB
+   * failure, distinct from "no active connection" (`{data:null, error:null}`,
+   * a legitimate, non-retryable state meaning the org never connected Drive). */
+  orgIntegrationsSelectError?: { message: string };
 }) {
   const folders: FolderRow[] = opts.folders ? [...opts.folders] : [];
   const integrations: IntegrationRow[] = opts.integrations ?? [];
@@ -113,6 +118,9 @@ function makeFakeDb(opts: {
           filters.connector_source_id === opts.throwOnSelectSourceId
         ) {
           throw new Error(`simulated driver exception selecting folders for ${String(filters.connector_source_id)}`);
+        }
+        if (table === 'org_integrations' && opts.orgIntegrationsSelectError) {
+          return { data: null, error: opts.orgIntegrationsSelectError };
         }
         const rows = table === 'folders' ? folders : integrations;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -366,6 +374,22 @@ describe('mirrorConnectedDriveFolders', () => {
       { orgId: ORG_A, actorUserId: USER_ID, folders: [{ folderId: 'drive-folder-1', folderName: 'Invoices' }] },
     );
     expect(results).toEqual([{ folderId: '', driveFolderId: 'drive-folder-1', outcome: 'skipped_no_connection' }]);
+    expect(folders).toHaveLength(0);
+  });
+
+  it('review P2 (feat/mirror-connected-drive-folders): a DB error loading the active connection is retryable ("error"), NOT the same as no connection ("skipped_no_connection")', async () => {
+    const { db, folders } = makeFakeDb({ orgIntegrationsSelectError: { message: 'connection reset by peer' } });
+    const results = await mirrorConnectedDriveFolders(
+      { db, logger },
+      { orgId: ORG_A, actorUserId: USER_ID, folders: [{ folderId: 'drive-folder-1', folderName: 'Invoices' }] },
+    );
+    expect(results).toEqual([
+      { folderId: '', driveFolderId: 'drive-folder-1', outcome: 'error', error: expect.any(String) },
+    ]);
+    // A legitimate "org never connected Drive" state must never be conflated
+    // with a transient DB failure — retrying a skip is pointless, retrying an
+    // error is exactly what should happen on the next save.
+    expect(results[0]!.outcome).not.toBe('skipped_no_connection');
     expect(folders).toHaveLength(0);
   });
 

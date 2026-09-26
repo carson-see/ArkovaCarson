@@ -1,8 +1,34 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-26 (`drive-folder-mirror.ts` — `loadActiveDriveConnection` distinguishes a retryable DB error from a legitimate "no connection"; the caller (`rules-crud.ts`) awaits the mirror instead of firing it after the response — review P2 follow-up on PR #3086)._
 _Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-26 — `drive-folder-mirror.ts`: retryable connection-lookup error vs legitimate "no connection" (PR #3086 review P2)
+
+A second independent review found `loadActiveDriveConnection` collapsed two
+different states into one `null`: a genuine DB error on the `org_integrations`
+lookup (transient — a network blip, a dropped connection) and "this org has
+never connected Drive" (legitimate — nothing to retry until it does). Both
+produced `outcome: 'skipped_no_connection'`, which is wrong for the first
+case: a caller (or a future durable-retry path) has no way to tell "try again
+next time" from "there is nothing to try." `loadActiveDriveConnection` now
+returns a 3-way `{kind: 'found'|'none'|'error'}` result;
+`mirrorConnectedDriveFolders` maps `'error'` to `outcome: 'error'` (same shape
+`upsertOne` already uses for its own DB-layer failures) and only `'none'` to
+`'skipped_no_connection'`. Regression test: `drive-folder-mirror.test.ts` ›
+"a DB error loading the active connection is retryable ('error'), NOT the
+same as no connection ('skipped_no_connection')" — confirmed failing
+(asserted `'error'`, got `'skipped_no_connection'`) before the fix.
+
+The companion P2 on this same review pass — the caller (`rules-crud.ts`)
+firing this module fire-and-forget AFTER already sending its response,
+so a restart or transient failure mid-mirror left no trace and no retry —
+is fixed in `rules-crud.ts`, not here; see `api/agents.md`'s matching
+2026-09-26 entry. This module's own contract (idempotent, per-folder
+isolated, never throws) did not need to change for that fix — the caller
+now simply awaits it and reports its already-honest result.
 
 ## 2026-09-25 — `drive-folder-mirror.ts`: per-folder isolation + index-comment fix (PR #3086 review follow-up)
 

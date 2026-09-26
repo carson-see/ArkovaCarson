@@ -726,3 +726,30 @@ describe block covers the call-through and no-call cases directly (the
 DB-touching `mirrorConnectedDriveFolders` call itself is stubbed there — its
 own idempotency/race/tenant-isolation behavior is proven in
 `drive-folder-mirror.test.ts`).
+
+## 2026-09-26 — review P2: the mirror is now AWAITED, not fire-and-forget (PR #3086)
+
+The entry above is now stale on one point: "fire (unawaited, non-fatal)" was
+the review finding, not the fix. `handleCreateRule` / `handleUpdateRule` now
+`await mirrorDriveFoldersForRuleWrite(...)` **before** sending the response,
+and fold its result into the body as `drive_folder_mirror` (omitted entirely
+when mirroring didn't apply to this rule at all — a plain DocuSign rule's
+response is unchanged). Rationale: the old shape sent the response, THEN
+started the mirror — a worker restart or transient DB failure mid-mirror
+left an enabled rule with no folders and no trace of the attempt, and for a
+connected folder with zero documents ever arriving, migration 0462's lazy
+path never fires either, so nothing would create it until an admin happened
+to re-save the rule. Awaiting is bounded (the folder picker caps connected
+folders at three, PR #3084) and still non-fatal — `mirrorDriveFoldersForRuleWrite`
+never throws, converting any exception into a per-folder `outcome: 'error'`
+entry instead, so a mirror failure can never turn an already-successful rule
+save into a 500. Proven in `rules-crud.test.ts`'s "review P2" tests by
+holding the mirror's promise open with `mockImplementationOnce` and asserting
+`res.json` has NOT been called until it resolves.
+
+Also: `loadActiveDriveConnection` (in `drive-folder-mirror.ts`) now
+distinguishes a genuine DB error looking up the org's active connection from
+"the org has never connected Drive" — the former returns `outcome: 'error'`
+(retryable — the next save should try again), the latter stays
+`'skipped_no_connection'` (a legitimate terminal state; retrying changes
+nothing until the org connects). See `connectors/agents.md`'s matching entry.
