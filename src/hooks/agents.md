@@ -1,3 +1,24 @@
+## 2026-09-25 — `useConnectorHealth.ts` surfaces the SCRUM-1146 health dashboard
+
+`services/worker/src/api/connector-health.ts` already computed a rich `HealthReason`
+(`cursor_stale`, `changes_list_never_succeeded`, `grant_exceeds_requested`, ...) via
+`GET /api/connectors/health`, but `grep -rl "connectors/health" src/` returned zero files — the
+exact gap that let the Drive `changes.list` 400-on-every-call incident (2026-05-04 to 2026-09-25,
+fixed by PR #3054) run silent for five months. This hook is the read-side client that closes it.
+
+Fetch ONCE per page (`ConnectorsPage.tsx` calls it a single time and passes the resolved entry down
+to each card) — never once per card. `getHealth(id)` FAILS CLOSED: a non-OK response, a malformed
+body (no `connectors` array), a thrown network error, or a lookup miss for an id absent from the
+response all resolve to `state: 'unknown'`, never `'connected'`. `'unknown'` is a frontend-only
+addition on top of the backend's `connected | degraded | disconnected` — it must never be read as
+"healthy" by a caller.
+
+`describeConnectorHealthReason(reason)` maps every `HealthReason` to plain-customer-language copy in
+`CONNECTORS_LABELS` (§1.3 — no jargon, no machine token ever rendered, e.g. `cursor_stale` never
+reads as "cursor stale" to a user). `grant_exceeds_requested` is worded as the security-relevant
+condition it is — TRUE in prod today for the one connected org, whose Google account carries ~32
+granted scopes — not softened into an internal "scope" finding.
+
 ## 2026-09-12 — SCRUM-5023: `useApiKeys.extendKey` sends a DURATION
 
 `extendKey(keyId, expiresInDays | null, allowShorten?)` PATCHes `{ expires_in_days: n }`, or

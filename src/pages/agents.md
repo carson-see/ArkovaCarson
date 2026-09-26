@@ -1,5 +1,18 @@
 # agents.md — pages
 
+## 2026-09-25 — `ConnectorsPage.tsx` fetches connector health once and feeds the Drive card
+
+Calls `useConnectorHealth()` ONE time at the page level (not per card) and resolves each
+connector's entry through the new `resolveHealthDisplay(loading, entry)` helper before passing it
+to `DriveConnectorSection` → `DriveConnectorCard`. `resolveHealthDisplay` returns `undefined` while
+the request is still in flight (so the page never flashes an "unavailable" reading before the first
+fetch has even had a chance to resolve), and otherwise maps `degraded` → `{ kind: 'degraded',
+reasonText }` (via `describeConnectorHealthReason`) or anything else (`unknown`, a lookup miss) →
+`{ kind: 'unknown' }` — never `{ kind: 'connected' }` on anything but a genuinely healthy read. See
+`src/hooks/agents.md` and `src/components/connectors/agents.md` for the rest of this SCRUM-1146
+surfacing pass; Docusign is not yet wired to this (component/hook both support it — left for a
+follow-up).
+
 ## UAT-22 invitation read mode (2026-09-14)
 
 OrgProfilePage forwards its verified `platformAdmin` mode to the invitation-list hook, matching organization metadata and the existing create-invitation path. The page regression checks that selected-org invitation reads receive that mode. Failed list reads show a visible invitation-section alert using curated copy; raw worker or database errors are never rendered.
