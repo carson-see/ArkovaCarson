@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -364,13 +365,13 @@ class ProofBundle(ArkovaModel):
     # CodeRabbit (SCRUM-2338): every required member is NON-nullable with NO
     # default. A complete (non-None) bundle must satisfy the
     # ``proof_bundle is not None ⇒ independently verifiable`` contract, so a
-    # malformed payload (missing/wrong-typed member, or an empty merkle_proof)
+    # malformed payload (missing/wrong-typed member, or an incoherent empty proof)
     # must NOT validate into a valid-looking bundle. The parent response coerces
     # any such failure to ``proof_bundle = None`` (see the validator below)
     # rather than defaulting members to None/0/1.
     fingerprint: str
     merkle_root: str
-    merkle_proof: list[MerkleProofEntry] = Field(min_length=1)
+    merkle_proof: list[MerkleProofEntry]
     merkle_index: int
     # Total leaves in the batch tree this proof belongs to; with merkle_index it
     # arms the CVE-2012-2459 duplicate-leaf guard during local verification.
@@ -386,6 +387,18 @@ class ProofBundle(ArkovaModel):
     # ?format=signed response wrapper, not an inline bundle field. The one
     # legitimately-nullable member of the bundle.
     signature: ProofBundleSignature | None = None
+
+    @model_validator(mode="after")
+    def _empty_branch_requires_coherent_singleton(self) -> ProofBundle:
+        if not self.merkle_proof and not (
+            self.leaf_count == 1
+            and self.merkle_index == 0
+            and re.fullmatch(r"[0-9a-fA-F]{64}", self.fingerprint) is not None
+            and re.fullmatch(r"[0-9a-fA-F]{64}", self.merkle_root) is not None
+            and self.fingerprint.lower() == self.merkle_root.lower()
+        ):
+            raise ValueError("empty merkle_proof requires a coherent single-leaf tree")
+        return self
 
 
 class MerkleProofResponse(ArkovaModel):

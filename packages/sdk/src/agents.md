@@ -62,6 +62,10 @@ If you are here to settle it, the question is: for a SINGLE-LEAF app tree, is
 `merkleProof: []` an honest complete branch (root == leaf) or an unverifiable
 one? The bitcoin-tree side has already answered the analogous question with
 "complete". Whichever way it goes, the two should end up agreeing.
+
+Settled 2026-09-26: `[]` is complete only for a coherent singleton bundle
+(`leaf_count=1`, `merkle_index=0`, case-insensitive root=fingerprint). The
+mapper keeps missing/null branches and every incoherent empty branch fail-closed.
 ## DI-775 / SCRUM-3538 — `WebhookEventType` mirrors the worker allowlist
 
 `WebhookEventType` in `types.ts` is a hand-maintained mirror of

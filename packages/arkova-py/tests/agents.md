@@ -84,3 +84,10 @@ bounded `ArkovaError("unexpected response shape")`, not enter the typed model.
 statuses validate, that the additive counter parses, and that
 `created + skipped + failed == total` with recipient-link rows counted inside
 `created`/`skipped`.
+
+## 2026-09-26 — singleton proof-bundle parity
+
+Sync and async proof readers accept the producer's complete singleton shape:
+empty branch, count one, index zero, and case-insensitive root=fingerprint.
+Focused negatives pin missing/null branches, multi-leaf empties, wrong indexes,
+and root mismatches as fail-closed `None` results.

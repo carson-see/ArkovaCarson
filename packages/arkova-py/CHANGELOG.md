@@ -7,7 +7,9 @@ anything earlier, see `git log -- packages/arkova-py/`.
 
 - Add matching synchronous and asynchronous generic agent lifecycle methods and ComputeID passport admission.
 - Add typed request/result models, local input validation, safe nested API errors and strict one-time-key response parsing. Lifecycle mutations are attempted once.
-- Release gate: merge and requalify the separate singleton proof repair from #3104 before publishing a combined SDK release.
+- Preserve complete single-leaf proof bundles. An empty Merkle branch is
+  accepted only when `leaf_count=1`, `merkle_index=0`, and the fingerprint
+  equals the root; incoherent empty branches still fail closed to `None`.
 
 ## 2.5.0
 

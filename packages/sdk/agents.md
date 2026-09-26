@@ -164,6 +164,15 @@ reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
 
 UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–100 fingerprint rows, API-key-derived tenant, and no automatic write retry.
+
+## 2026-09-26 — singleton proof-bundle parity repair
+
+`getMerkleProof()` accepts an empty application-tree branch only when the wire
+bundle describes the one valid empty-branch case: `leaf_count=1`,
+`merkle_index=0`, and `fingerprint == merkle_root`. Multi-leaf, wrong-index,
+and root-mismatch empty branches still map to `proofBundle = null`.
+The repair is packaged as 3.2.1 for a concrete release artifact but is not
+published here.
 ## 2026-09-19 — Finality webhook event types
 
 The SDK webhook union includes `anchor.revocation_anchored` and
