@@ -1,5 +1,13 @@
 # agents.md — lib
 
+## 2026-09-21 — `copy.ts`: `DRIVE_CONNECT_PROMPT` replaces the "least-privilege" claim (SCRUM-5287/SCRUM-2903/SCRUM-2330 privacy-claims accuracy pass)
+
+`CONNECTIONS_LABELS.DRIVE_CONNECT_PROMPT` replaces an inline JSX string in `DriveConnectorCard.tsx`
+("Authorize Arkova with least-privilege Drive access.") that implied `drive.file` per-file access —
+the actual grant (as of the same-day scope cutover, see `services/worker/src/integrations/oauth/agents.md`)
+is read-only access to the connected account's Drive, used only for the folders the customer chooses,
+with file content read once in memory to compute a fingerprint and discarded. No banned §1.3 terms
+involved; `npm run lint:copy` passes.
 ## 2026-09-25 — `CONNECTORS_LABELS` gains the connector-health reason copy
 
 New keys (`CONNECTOR_HEALTH_NEEDS_ATTENTION`, `CONNECTOR_HEALTH_UNAVAILABLE`,

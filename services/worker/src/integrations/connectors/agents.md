@@ -1,6 +1,61 @@
 # agents.md — services/worker/src/integrations/connectors/
 
 _Last updated: 2026-09-25 (`connector-adapter.ts` + `google-drive-adapter.ts` — PR-1 of the connector-adapter-contract series, founder directive "Drive should be a template reproducible for OneDrive")._
+
+_Last updated: 2026-09-26 (PR #3069 review findings: `loadDriveAccessToken`'s `account_label` SELECT no longer discards its error, and the self-heal CAS write now guards `account_label` on the value read)._
+_Last updated: 2026-09-21 (`drive-changes-runner.ts`'s `loadDriveAccessToken` now selects the OAuth client generation for a refresh via `isDriveLegacyGrant` — SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)._
+_Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
+_Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-26 — `loadDriveAccessToken` account_label read-error handling (P1) + label CAS race (P2), PR #3069 review
+
+Two findings from an independent review of PR #3069 (`feat/drive-readonly-scope`), both in
+`loadDriveAccessToken`:
+
+1. **P1 — a discarded SELECT error looked identical to "no label".** The pre-refresh
+   `account_label` SELECT destructured only `data`, never `error`. A transient read failure
+   (`data: null, error: <something>`) therefore looked exactly like a legitimate pre-cutover row
+   with no label at all (`data: null, error: null`) — the case the scope-heuristic fallback exists
+   for. If the refresh that followed then succeeded, the self-heal write unconditionally spread
+   `storedLabel ?? { email: null, channel_token: null, resource_id: null }` — nulling out a real
+   `email` / `channel_token` / `resource_id` that this SELECT merely failed to read, not one that
+   was actually absent. `api/v1/webhooks/drive.ts`'s `resolveDriveChannel` re-reads `account_label`
+   fresh on every webhook delivery and fails closed (401 `integration_missing_channel_token`) on a
+   null `channel_token` — so a single transient read failure turned into a PERMANENT notification
+   failure for that integration. Fixed: the SELECT's `error` now aborts BEFORE the refresh or any
+   write, via a new `DriveRunnerError('account_label_read_failed', …)` — retryable by the caller,
+   same escalation shape as the other DB-read failures in this function (`token_read_failed`,
+   `concurrent_refresh_race`).
+2. **P2 — the self-heal write could clobber a concurrent renewal write.** The CAS write that
+   persists refreshed tokens also serializes the self-healed `account_label` in the SAME UPDATE, but
+   was conditioned only on `encrypted_tokens = $prevCiphertext`. `drive-subscription-renewal.ts`
+   independently rewrites the WHOLE `account_label` blob (fresh `channel_token` on every renewal) —
+   a renewal landing between this function's `account_label` SELECT and its UPDATE could have its
+   fresh credential overwritten by this call's stale copy. Fixed: when the write includes
+   `account_label` (i.e. we are NOT already authoritative), the UPDATE now ALSO guards on
+   `account_label` being unchanged since the read (`.is('account_label', null)` when the row had no
+   label, `.eq('account_label', <raw value read>)` otherwise) — a concurrent account_label writer
+   invalidates the predicate and this call falls into the existing "CAS lost, trust the winner" path
+   instead of overwriting a label it never actually observed.
+
+Tests: `drive-changes-runner.test.ts`'s new `loadDriveAccessToken — account_label read-error
+handling (P1) and label CAS race (P2)` describe block (2 tests) — both reproduced failing against
+the pre-fix PR #3069 head before the fix landed. The shared fakes' `update(...).eq(...)` chains
+(`makeFakeDb`, `makeIdentityFakeDb`, the CAS-lost regression test's inline db) now also expose
+`.is()`, recorded into the same predicate-tracking array as `.eq()`.
+
+## 2026-09-21 — `loadDriveAccessToken` selects OAuth client generation for refresh (SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)
+
+See `oauth/agents.md`'s 2026-09-21 entry for the full scope-cutover story (why `DRIVE_DEFAULT_SCOPES`
+moved from `drive.file` to `drive.readonly`, and why a second OAuth client exists). This file's piece:
+`loadDriveAccessToken` — the ONE real production choke point for Drive token refresh (the
+`drive-subscription-renewal` cron also routes through it via `jobs/drive-subscription-renewal-deps.ts`)
+— now passes `clientGeneration: isDriveLegacyGrant(tokens.scope) ? 'legacy' : 'current'` to
+`refreshAccessToken`. `tokens.scope` is the CACHED scope on the decrypted token blob (set at
+connect/last-refresh time), not re-derived from Drive mid-refresh — cheap, already in hand, and
+exactly what a pre-cutover connection's grant looks like. Getting this backwards sends an old-client
+refresh token to the new client's token endpoint, which Google rejects with `invalid_grant`; there is
+no migration path for a refresh token itself (it is bound to the client that issued it).
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
 
@@ -195,7 +250,6 @@ untouched; only the runner's stale recovery COMMENT was corrected. Blast radius 
 with a null cursor — one in prod today.
 
 _Last updated: 2026-08-30 (`adobe-sign-token-store.ts` added for the Adobe Sign connect flow)._
-
 
 ## 2026-09-12 — SCRUM-4507: the Drive link-back mapping lives in the PRODUCER, not the drain
 
@@ -397,7 +451,6 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
   the Sonar new-code duplication gate. A throw from the SUCCESS-path event write
   deliberately falls through to the failure path — that is the behaviour of the
   chain it replaced, not an accident.
-
 
 ## 2026-08-01 DRIVE B1 — the changes cursor is seeded at CONNECT time, and only there
 

@@ -109,6 +109,32 @@ describe('renewDriveSubscriptions (GH #1835)', () => {
     expect(alert).not.toHaveBeenCalled();
   });
 
+  // SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): a channel
+  // renewal does not re-issue OAuth tokens — oauth_client_id must be
+  // PRESERVED across the account_label rewrite, never dropped or derived.
+  it('preserves oauth_client_id across a channel renewal', async () => {
+    const { db, updates } = makeDb([dueRow({
+      account_label: JSON.stringify({
+        email: 'admin@example.com',
+        channel_token: 'old-token',
+        resource_id: 'res-old',
+        oauth_client_id: 'client-legacy.apps.googleusercontent.com',
+      }),
+    })]);
+    const client = makeClient();
+    await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
+    const label = JSON.parse((updates[0] as Record<string, unknown>).account_label as string);
+    expect(label.oauth_client_id).toBe('client-legacy.apps.googleusercontent.com');
+  });
+
+  it('a row connected before oauth_client_id existed keeps it null across renewal (never invents one)', async () => {
+    const { db, updates } = makeDb([dueRow()]); // dueRow()'s default label has no oauth_client_id key
+    const client = makeClient();
+    await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
+    const label = JSON.parse((updates[0] as Record<string, unknown>).account_label as string);
+    expect(label.oauth_client_id).toBeNull();
+  });
+
   // CRITICAL invariant — see the module doc comment. A renewal that
   // OVERWRITES a populated last_page_token would silently drop every
   // unprocessed change between the last advance and the renewal. (The

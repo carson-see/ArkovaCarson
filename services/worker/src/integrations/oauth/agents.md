@@ -1,9 +1,50 @@
 # agents.md — services/worker/src/integrations/oauth/
 
+_Last updated: 2026-09-21 (`drive.ts` `DRIVE_DEFAULT_SCOPES` cutover to `drive.readonly` + dual OAuth client support — SCRUM-5287/SCRUM-2903/SCRUM-2330)._
 _Last updated: 2026-09-21 (`drive.ts` `listChanges()` fields-mask incident fix — SCRUM-2903/3661/5094/2330)._
 _Last updated: 2026-09-13 (`drive.ts` gained `listChildFolders()` + `drive.metadata.readonly` scope — Connectors page folder picker, SPEC-CONNECTORS §2.1/§2.2)._
 _Last updated: 2026-08-31 (signer-backfill follow-on to PR #2474: `fetchDocusignEnvelopeRecipients` + `extractCapturedSigners`, now delegating to the shared `captureDocusignSigners` mapper)._
 _Last updated: 2026-08-30 (`adobe-sign.ts` gained the OAuth + webhook-provisioning client)._
+
+## 2026-09-21 — `DRIVE_DEFAULT_SCOPES` cutover: `drive.file` → `drive.readonly`, dual OAuth client (SCRUM-5287/SCRUM-2903/SCRUM-2330)
+
+**Why.** The 2026-09-13 entry below records `drive.file` + `drive.activity.readonly` +
+`drive.metadata.readonly` + `userinfo.email` as the requested set. An independent review the same day
+(SCRUM-2903 fields-mask PR follow-up) found this could never deliver what the connector promises:
+`drive.file` per-file access is granted ONLY for a file the app itself created, or one the user
+explicitly picked through Google's REAL Picker widget — NOT merely "a file listed via
+`drive.metadata.readonly`." Arkova's Connectors-page folder browser is a custom `files.list`
+component, not the Picker, so a file someone else later adds to a watched folder is invisible to
+`drive.file` and 403s on byte fetch (`fetchDriveFileBytes`). The Arkova org's own grant working
+(cited in the 2026-09-13 entry) was because it ALSO carries the broad `auth/drive` scope from an
+unrelated earlier consent, not because the requested set was sufficient.
+
+**CTO decision (2026-09-21):** request exactly `drive.readonly` + `userinfo.email`. Confirmed against
+Google's REST reference via `WebFetch` (cited in full in `DRIVE_DEFAULT_SCOPES`'s doc comment) that
+`drive.readonly` covers every Drive API call this module makes: `files.get` (incl. `alt=media`),
+`files.export`, `files.list`, `changes.list`, `changes.watch`, `changes.getStartPageToken`.
+
+**`DRIVE_LEGACY_REQUESTED_SCOPES`** preserves the pre-cutover set so `driveGrantExcessScopes` does
+NOT flag an existing/still-being-issued legacy grant as the SCRUM-5287 over-grant attack (its
+"requested" bound is now the union of both sets). **`isDriveLegacyGrant()`** is the NEW, narrower
+classifier that DOES distinguish a legacy row — consumed by `connector-health.ts` (new
+`reconnect_required_scope_change` reason, ranked above `file_access_not_granted` since it is that
+symptom's actual cause) and by `drive-changes-runner.ts`'s `loadDriveAccessToken` (selects which
+OAuth client a refresh goes to — see next paragraph).
+
+**Dual OAuth client.** `drive.readonly` is a Google RESTRICTED scope; requesting it from the shared
+`GOOGLE_OAUTH_CLIENT_ID` (which also carries unrelated historical consents — the 32-scope prod row
+`driveGrantExcessScopes` guards against) would put every OTHER integration riding that client through
+Google's restricted-scope verification too. `requireClient(env, generation)` now supports a SECOND,
+dedicated pair — `GOOGLE_DRIVE_OAUTH_CLIENT_ID`/`SECRET` (new `arkova-connectors` GCP project, NOT
+PROVISIONED as of this PR) — preferred for new consent/refresh when both are set, with the original
+pair as fallback. **A refresh token is bound to the client that issued it** — `refreshAccessToken`'s
+`clientGeneration: 'legacy'` ALWAYS uses the original pair regardless of whether the new one is
+configured, and `loadDriveAccessToken` in `../connectors/drive-changes-runner.ts` selects it via
+`isDriveLegacyGrant(tokens.scope)` on the decrypted token blob. Getting this backwards sends an
+old-client refresh token to the new client's token endpoint, which Google rejects with
+`invalid_grant`. `config.ts` accepts either complete pair in production and rejects a half-set new
+pair (id without secret) unconditionally.
 
 ## 2026-09-21 — `listChanges()` `fields` mask was concatenated — every Drive change notification failed since 2026-05-04 (SCRUM-2903/3661/5094/2330)
 
@@ -164,7 +205,8 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** keep `deliveryMode: 'SIM'` + `eventData: { version: 'restv2.1' }` riding with the `events` field — DocuSign 400s `INVALID_REQUEST_PARAMETER` on `events` without both (prod failure 2026-07-25, every org connect).
 - **DO** use the optional `detail?: string` (3rd ctor arg) ONLY on the NON-document paths (token exchange/refresh, userinfo, DocuSign Connect list/mutation/parse/timeout; Drive token exchange/refresh, startPageToken, changes.watch, channels.stop, token revoke, files.get, changes.list) — whose error body is safe OAuth/API error JSON. Always build it with `boundedErrorDetail(json)` from `utils/byte-safety.ts` (bounded ~500 chars, byte-redacted, PII-scrubbed). Never pass a raw string/body directly.
 - **DO NOT** re-add `include_granted_scopes` to `buildAuthorizationUrl` (drive.ts). With the shared Google OAuth client it made one Drive connect inherit EVERY scope that client was ever granted by the account — a 33-scope grant (full `drive`, `gmail.modify`, `calendar`, `contacts`, `classroom.*`, `chat.*`) was observed during FULLSOAK 2026-08 (shared-resource register #9). Absent, Google defaults it to false. Pinned by tests in `drive.test.ts`, `googleDrive.test.ts`, and `drive-oauth.test.ts`.
-- **DO NOT** widen `DRIVE_DEFAULT_SCOPES` without a security review — it is the complete allowlist of what a leaked refresh token can reach. Current set: `drive.file` (all Drive API calls), `drive.activity.readonly` (declared Activity surface), `userinfo.email` (the callback's `oauth2/v3/userinfo` identity lookup; without it `account_id` degrades to a constant and collapses the `org_integrations` upsert key).
+- **DO NOT** widen `DRIVE_DEFAULT_SCOPES` without a security review — it is the complete allowlist of what a leaked refresh token can reach. Current set (2026-09-21 cutover): `drive.readonly` (every Drive API call this module makes — files.get incl. `alt=media`, files.export, files.list, changes.list, changes.watch, changes.getStartPageToken; confirmed against Google's REST reference), `userinfo.email` (the callback's `oauth2/v3/userinfo` identity lookup; without it `account_id` degrades to a constant and collapses the `org_integrations` upsert key). `DRIVE_LEGACY_REQUESTED_SCOPES` documents the PRE-cutover set for classification purposes only — never re-request it.
+- **DO NOT** send a refresh token to the WRONG OAuth client. A refresh token is bound to the client that issued it (`requireClient`'s doc comment). Always classify via `isDriveLegacyGrant(scope)` before calling `refreshAccessToken` — never assume `'current'` is safe for a row you haven't checked.
 
 
 ## PR #2474 release review — 2026-09-05
