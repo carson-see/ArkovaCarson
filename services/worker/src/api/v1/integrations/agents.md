@@ -1,5 +1,6 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
+_Last updated: 2026-09-21 (`drive-oauth.ts`: no logic change here, but `DRIVE_DEFAULT_SCOPES` and `driveGrantExcessScopes` it imports from `oauth/drive.ts` moved to the drive.readonly cutover — SCRUM-5287/SCRUM-2903/SCRUM-2330; see `oauth/agents.md` for the full story)_
 _Last updated: 2026-09-21 (`drive-folders.test.ts`: added a `config.js` mock — `drive-changes-runner.js` now transitively imports `jobs/run-lease.ts`)_
 _Last updated: 2026-09-13 (`drive-folders.ts` added — Connectors page folder picker, SPEC-CONNECTORS §2.2)_
 

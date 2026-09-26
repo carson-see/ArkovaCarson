@@ -1,16 +1,25 @@
 /**
  * PR #1944 review follow-up — canonical Drive account_label parser tests.
+ *
+ * SCRUM-5287 follow-up (2026-09-22 fix-round, CRITICAL finding): gained
+ * `oauth_client_id` — the client_id that issued a row's refresh token.
  */
 import { describe, it, expect } from 'vitest';
 import { parseDriveAccountLabel, stringifyDriveAccountLabel } from './drive-account-label.js';
 
 describe('parseDriveAccountLabel', () => {
   it('parses the full canonical shape', () => {
-    const raw = JSON.stringify({ email: 'admin@example.com', channel_token: 'tok-1', resource_id: 'res-1' });
+    const raw = JSON.stringify({
+      email: 'admin@example.com',
+      channel_token: 'tok-1',
+      resource_id: 'res-1',
+      oauth_client_id: 'client-1.apps.googleusercontent.com',
+    });
     expect(parseDriveAccountLabel(raw)).toEqual({
       email: 'admin@example.com',
       channel_token: 'tok-1',
       resource_id: 'res-1',
+      oauth_client_id: 'client-1.apps.googleusercontent.com',
     });
   });
 
@@ -52,6 +61,7 @@ describe('parseDriveAccountLabel', () => {
       email: null,
       channel_token: 'tok-only',
       resource_id: null,
+      oauth_client_id: null,
     });
   });
 
@@ -60,22 +70,40 @@ describe('parseDriveAccountLabel', () => {
       email: null,
       channel_token: 'tok-1',
       resource_id: null,
+      oauth_client_id: null,
     });
   });
 
   it('returns null for a JSON null literal', () => {
     expect(parseDriveAccountLabel('null')).toBeNull();
   });
+
+  // SCRUM-5287 follow-up: a row persisted BEFORE this field existed has no
+  // oauth_client_id key at all — must parse to null, not throw or omit it.
+  it('a pre-existing row with no oauth_client_id key parses that field to null', () => {
+    const raw = JSON.stringify({ email: 'admin@example.com', channel_token: 'tok-1', resource_id: 'res-1' });
+    expect(parseDriveAccountLabel(raw)).toEqual({
+      email: 'admin@example.com',
+      channel_token: 'tok-1',
+      resource_id: 'res-1',
+      oauth_client_id: null,
+    });
+  });
+
+  it('treats a non-string oauth_client_id as null (defensive typing)', () => {
+    const raw = JSON.stringify({ email: 'a@b.com', oauth_client_id: 12345 });
+    expect(parseDriveAccountLabel(raw)?.oauth_client_id).toBeNull();
+  });
 });
 
 describe('stringifyDriveAccountLabel', () => {
   it('round-trips through parseDriveAccountLabel', () => {
-    const label = { email: 'a@b.com', channel_token: 'tok', resource_id: 'res' };
+    const label = { email: 'a@b.com', channel_token: 'tok', resource_id: 'res', oauth_client_id: 'client-1' };
     expect(parseDriveAccountLabel(stringifyDriveAccountLabel(label))).toEqual(label);
   });
 
-  it('round-trips null fields', () => {
-    const label = { email: null, channel_token: 'tok', resource_id: null };
+  it('round-trips null fields, including oauth_client_id', () => {
+    const label = { email: null, channel_token: 'tok', resource_id: null, oauth_client_id: null };
     expect(parseDriveAccountLabel(stringifyDriveAccountLabel(label))).toEqual(label);
   });
 });
