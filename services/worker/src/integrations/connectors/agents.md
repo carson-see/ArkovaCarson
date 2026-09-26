@@ -1,5 +1,7 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+_Last updated: 2026-09-25 (`connector-adapter.ts` + `google-drive-adapter.ts` — PR-1 of the connector-adapter-contract series, founder directive "Drive should be a template reproducible for OneDrive")._
+
 _Last updated: 2026-09-26 (PR #3069 review findings: `loadDriveAccessToken`'s `account_label` SELECT no longer discards its error, and the self-heal CAS write now guards `account_label` on the value read)._
 _Last updated: 2026-09-21 (`drive-changes-runner.ts`'s `loadDriveAccessToken` now selects the OAuth client generation for a refresh via `isDriveLegacyGrant` — SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)._
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
@@ -54,9 +56,63 @@ connect/last-refresh time), not re-derived from Drive mid-refresh — cheap, alr
 exactly what a pre-cutover connection's grant looks like. Getting this backwards sends an old-client
 refresh token to the new client's token endpoint, which Google rejects with `invalid_grant`; there is
 no migration path for a refresh token itself (it is bound to the client that issued it).
-
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
+
+## 2026-09-25 — connector-adapter contract, PR-1 of 4 (founder directive: Drive as a reproducible template)
+
+New files: `connector-adapter.ts` (the vendor-neutral `ConnectorAdapter`
+interface — OAuth lifecycle, watch/cursor lifecycle, changes-feed walk, byte
+fetch, fetch-error classification) and `google-drive-adapter.ts`
+(`GoogleDriveAdapter`, implementing it by delegating to the existing
+`oauth/drive.ts` functions with **zero behavior change**).
+
+**Nothing else changed behaviorally.** `drive-changes-processor.ts`,
+`drive-changes-runner.ts`, the webhook route, and the OAuth routes are NOT
+rewired to consume this adapter in this PR — they still call `oauth/drive.ts`
+directly, unchanged. The one actual code change to an existing file is
+exporting `resolveRevision`/`ResolvedDriveRevision` from
+`drive-changes-processor.ts` (previously module-private) so the adapter's
+`listChanges` reuses Drive's real `headRevisionId` → `mtime:` → `evt:`
+fallback chain verbatim instead of duplicating it — same function body, same
+every existing call site.
+
+**Contract validation found three real mismatches, all resolved INSIDE the
+adapter (the interface shape did not change):**
+1. `OAuthTokenSet` is camelCase; Drive's token responses are snake_case —
+   `toOAuthTokenSet()` field-renames.
+2. `createWatch`/`stopWatch` round-trip ONE `subscriptionId`, but Drive's
+   `channels.stop` needs a CLIENT-generated `channelId` (production always
+   mints this via `randomUUID()` at the call site, e.g. `drive-oauth.ts`) AND
+   the SERVER-issued `resourceId` TOGETHER. `GoogleDriveAdapter.createWatch`
+   generates the channelId itself and encodes both into the opaque
+   `subscriptionId` as `` `${channelId}:${resourceId}` ``; `stopWatch` splits
+   on the first `:` (safe because `channelId` is always our own hyphen-only
+   UUID). See that file's module doc comment for the full account, including
+   an OPEN GAP it flags but does not solve: real Drive watches also carry a
+   caller-supplied verification secret (`channelToken` /
+   `X-Goog-Channel-Token`) that this interface has no slot for yet — fine
+   today because nothing consumes an adapter-created watch, but a real
+   wiring PR must extend the contract before a webhook receiver can trust one.
+3. `revoke()` is a faithful wrapper over `revokeOAuthToken` — it does NOT
+   encode SCRUM-1237/AUDIT-0424-12's "never actually call Google's revoke,
+   the refresh token is shared across sibling orgs" policy. A future
+   multi-vendor caller of `ConnectorAdapter.revoke()` must re-derive that
+   question per vendor, not assume Drive's answer generalizes.
+
+**Deliberately deferred to PR-3** (per founder scoping — generalize from a
+second provider, not for one): a shared health-reason vocabulary, a shared
+revision-ledger/dedupe scheme, and any OneDrive/SharePoint implementation.
+
+**Contracts this interface does not cover for ANY provider** (see
+`connector-adapter.ts`'s module doc comment): folder rename/move, permission/
+ownership changes, historical catch-up on reconnect, retention/expiry of
+fetched artifacts.
+
+`google-drive-adapter.test.ts` covers every method via `vi.mock('../oauth/
+drive.js')` — no real Google calls. §1.6A: `fetchBytes` has no try/catch (the
+underlying `fetchDriveFileBytes` already throws byte-safe errors); a test
+asserts a fetch failure propagates untouched rather than being re-wrapped.
 
 ## 2026-09-21 — 410/404 cursor re-bootstrap + per-integration single-flight lease (SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)
 
@@ -194,7 +250,6 @@ untouched; only the runner's stale recovery COMMENT was corrected. Blast radius 
 with a null cursor — one in prod today.
 
 _Last updated: 2026-08-30 (`adobe-sign-token-store.ts` added for the Adobe Sign connect flow)._
-
 
 ## 2026-09-12 — SCRUM-4507: the Drive link-back mapping lives in the PRODUCER, not the drain
 
@@ -397,7 +452,6 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
   deliberately falls through to the failure path — that is the behaviour of the
   chain it replaced, not an accident.
 
-
 ## 2026-08-01 DRIVE B1 — the changes cursor is seeded at CONNECT time, and only there
 
 `last_page_token` on `org_integrations` is the Drive changes cursor. It has exactly **two** writers:
@@ -499,3 +553,24 @@ rerun-requested marker it uses at the end of a leased run is
 `markRunLeaseDirty` / `checkAndClearRunLeaseDirty` from `../../jobs/run-lease.ts`
 (see that folder's agents.md for why). The bounded "exactly one extra pass"
 behaviour is unchanged and still pinned by `drive-changes-runner.test.ts`.
+
+## 2026-09-25 — three dead Drive modules deleted (812 lines)
+
+`googleDrive.ts` (373), `drive-watch-bootstrap.ts` (261) and
+`drive-change-dedupe.ts` (178) were removed with their test files. All three had
+**zero non-test importers**, no barrel export, and no runtime path.
+
+**Why this mattered beyond tidiness.** `drive-change-dedupe.ts` was a prior,
+abandoned attempt at exactly the generalization a OneDrive adapter needs — its
+`classifyDriveChange`/`revisionKey` were superseded by the ledger-based
+reserve/confirm design now inline in `drive-changes-processor.ts`, and nobody
+deleted the loser. Anyone building the second connector would have found it,
+assumed it was the abstraction to follow, and rebuilt a design this codebase
+already rejected once. `googleDrive.ts` (Secret-Manager OAuth/watch) was
+superseded by `api/v1/integrations/drive-oauth.ts` + KMS/`org_integrations`.
+
+**The real provider-adapter boundary is elsewhere, and it already exists:**
+`adapters.ts` normalizes vendor payloads into `ConnectorCanonicalEventT` (and
+already handles Microsoft Graph), and `connector_artifact` is the
+provider-neutral sink both Drive and DocuSign write to. Build the OneDrive
+adapter against those, not against anything deleted here.

@@ -1952,7 +1952,7 @@ export const CONNECTORS_LABELS = {
   DRIVE_FOLDERS_NONE: 'No folders selected yet. Arkova will not act on anything until you choose at least one.',
   DRIVE_FOLDERS_HEADING: 'Watched folders',
   DRIVE_FOLDERS_DIRECT_ONLY: 'Only files added directly to a selected folder are picked up. Subfolders are not included — select them too if you need them.',
-  DRIVE_FOLDERS_CAP: 'You can watch up to 20 folders.',
+  DRIVE_FOLDERS_CAP: 'You can watch up to 3 folders.',
   DRIVE_PICKER_TITLE: 'Choose Google Drive folders',
   DRIVE_PICKER_ROOT: 'My Drive',
   DRIVE_PICKER_EMPTY: 'No subfolders here.',

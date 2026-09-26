@@ -103,3 +103,20 @@ live here itself. One rule engine, zero new semantics: everything here writes ex
   the picker; there is no `radio-group` or `sheet` component in this repo yet, so
   `ConnectorActionChoice` uses plain `<input type="radio">` and `DriveFolderPicker` uses `Dialog`
   styled full-width/full-height below `sm` rather than a separate sheet component.
+
+## 2026-09-25 — the Drive folder cap is THREE, and the server is the authority
+
+`DRIVE_FOLDER_SELECTION_CAP` is **3**, matching the worker's `drive_folders`
+Zod `.max(3)` in `services/worker/src/rules/schemas.ts`. It was 20 on both sides;
+the founder's "Google Drive Expected Behavior" spec says a user connects "up to
+three of those folders", so 20 was a spec divergence, not a decision.
+
+**Change both or neither.** The picker's cap is a courtesy that stops the UI
+offering a selection the save would reject; a direct API caller bypasses it
+entirely, so the Zod schema is the real control. The earlier note in this file
+claiming the cap exists "to match the worker's Zod `.max(20)`" described a
+divergence, not a rationale.
+
+Verified in prod before tightening: 1 rule carried `drive_folders`, max 2 bound,
+0 rules over three — so no existing rule is invalidated by the stricter schema.
+Re-check that before tightening any server-side limit again.
