@@ -25,6 +25,8 @@ interface AppShellProps {
   profile?: {
     full_name?: string | null;
     avatar_url?: string | null;
+    /** UAT-14 private-bucket object; `avatar_url` is the legacy fallback. */
+    avatar_storage_path?: string | null;
   } | null;
   profileLoading?: boolean;
   onSignOut: () => void;
