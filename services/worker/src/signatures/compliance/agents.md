@@ -4,12 +4,18 @@ _Last updated: 2026-09-25 (complianceEvents.ts removed — see the dated entry b
 
 ## What This Folder Contains
 
-Audit proof export for the signatures subsystem.
+Compliance event emitters and audit proof export for the signatures subsystem.
+
+(As of 2026-09-25 only the audit proof export remains; the compliance event emitters were removed — see the dated entry below. The sentence above and the two inventory rows for the removed files are kept verbatim because `agents.md` is append-only: `scripts/ci/check-agents-md-append-only.ts`.)
 
 | File | Purpose |
 |------|---------|
 | `auditProofExporter.ts` | Per-credential audit proof package generation (anchor proof, AdES details, timestamp, cert chain, eIDAS/ESIGN assessment) |
 | `auditProofExporter.test.ts` | Org-scoping tests for `generateAuditProof` (SECURITY, see below) |
+| `complianceEvents.ts` | Compliance webhook event types and emitters (cert expiry, anchor delay, etc.) |
+| `complianceEvents.test.ts` | Tests for compliance event emission |
+
+_The two rows above describe files deleted on 2026-09-25 (dead, validation-bypassing duplicates of `webhooks/compliance.ts`); they stay listed only to satisfy the append-only rule._
 
 ## 2026-09-25 — `complianceEvents.ts` / `complianceEvents.test.ts` removed (webhook event type divergence fix)
 
