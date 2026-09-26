@@ -512,6 +512,72 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
   });
 
+  // SCRUM-5287 / FD-DRIVE-READONLY (2026-09-21 cutover): the NEW dedicated
+  // arkova-connectors OAuth client pair is an ALTERNATIVE to the legacy
+  // pair, not an additional requirement — either complete pair satisfies
+  // production boot.
+  it('accepts production with ENABLE_DRIVE_OAUTH=true when ONLY the NEW GOOGLE_DRIVE_OAUTH_CLIENT_ID/SECRET pair is set (legacy pair absent)', async () => {
+    await withConfig(
+      {
+        ...PROD_SIGNET,
+        ENABLE_DRIVE_OAUTH: 'true',
+        INTEGRATION_STATE_HMAC_SECRET: 'test-hmac',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+        GOOGLE_OAUTH_CLIENT_ID: undefined,
+        GOOGLE_OAUTH_CLIENT_SECRET: undefined,
+        GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-client-id',
+        GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-client-secret',
+      },
+      (mod) => {
+        expect(mod.config.googleDriveOauthClientId).toBe('new-client-id');
+        expect(mod.config.googleOauthClientId).toBeUndefined();
+      },
+    );
+  });
+
+  it('rejects production with ENABLE_DRIVE_OAUTH=true when NEITHER OAuth client pair is complete', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DRIVE_OAUTH: 'true',
+      INTEGRATION_STATE_HMAC_SECRET: 'test-hmac',
+      GOOGLE_OAUTH_CLIENT_ID: undefined,
+      GOOGLE_OAUTH_CLIENT_SECRET: undefined,
+      GOOGLE_DRIVE_OAUTH_CLIENT_ID: undefined,
+      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: undefined,
+    });
+  });
+
+  // Unconditional half-set guard — NOT gated on NODE_ENV=production or
+  // ENABLE_DRIVE_OAUTH, since a half-set pair is always a misconfiguration
+  // (see config.ts's doc comment on the check).
+  it('rejects ANY environment when GOOGLE_DRIVE_OAUTH_CLIENT_ID is set without GOOGLE_DRIVE_OAUTH_CLIENT_SECRET', async () => {
+    await expectConfigToReject({
+      GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'new-client-id',
+      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: undefined,
+    });
+  });
+
+  it('rejects ANY environment when GOOGLE_DRIVE_OAUTH_CLIENT_SECRET is set without GOOGLE_DRIVE_OAUTH_CLIENT_ID', async () => {
+    await expectConfigToReject({
+      GOOGLE_DRIVE_OAUTH_CLIENT_ID: undefined,
+      GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'new-client-secret',
+    });
+  });
+
+  it('accepts a non-production environment with BOTH the legacy and new pairs unset (nothing to validate)', async () => {
+    await withConfig(
+      {
+        GOOGLE_OAUTH_CLIENT_ID: undefined,
+        GOOGLE_OAUTH_CLIENT_SECRET: undefined,
+        GOOGLE_DRIVE_OAUTH_CLIENT_ID: undefined,
+        GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: undefined,
+      },
+      (mod) => {
+        expect(mod.config.googleDriveOauthClientId).toBeUndefined();
+      },
+    );
+  });
+
   // 2026-04-24 audit finding H1: DocuSign OAuth signs `state` with the same
   // dedicated HMAC secret. Boot must fail closed in production when the flow is
   // on and the secret is missing (parity with the Drive guard above). All other
