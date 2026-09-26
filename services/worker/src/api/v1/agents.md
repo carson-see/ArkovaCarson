@@ -1904,12 +1904,15 @@ hole widened another; both are closed here.
 `getCallerOrgId(userId, res, { requireAdmin: true })` now gates PATCH and DELETE.
 **Reads stay member-visible** — seeing which agents exist is not privileged.
 
-**STILL OPEN, same class, deliberately not changed here:**
-`POST /:agentId/key` mints a key for an existing agent and is NOT admin-gated.
-Minting is at least as privileged as suspending, and registration being
-admin-only makes the asymmetry hard to defend — but it is pre-existing, was not
-amplified by this change, and may have a legitimate non-admin flow this session
-cannot see. It needs a deliberate decision, not a silent tightening.
+**Closed, same class, same PR branch:** `POST /:agentId/key` mints a key for an
+existing agent and was NOT admin-gated — flagged above as "STILL OPEN", now
+fixed. Minting a working credential is at least as privileged as suspending
+one, and registration being admin-only (migration 0158) made the asymmetry
+indefensible: any ordinary org member could mint a live key for any agent in
+the org. `getCallerOrgId(userId, res, { requireAdmin: true })` now gates this
+route too, reusing the same helper as PATCH/DELETE — no second authorization
+path. Regression-pinned in `agents-key-mint-admin.test.ts` (non-admin 403 with
+no key insert; ORG_ADMIN still succeeds).
 
 **Do not name a table selector literally in a comment in this file.** The
 SCRUM-1277 contract test (`agents-org-scope.test.ts`) scans this file's SOURCE

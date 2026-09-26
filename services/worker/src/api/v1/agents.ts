@@ -465,8 +465,9 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
   if (!hmacSecret) { res.status(500).json({ error: 'HMAC secret not configured' }); return; }
 
   try {
-    // Verify caller owns the agent's org
-    const orgId = await getCallerOrgId(userId, res);
+    // Minting a working credential is at least as privileged as suspending
+    // or revoking one (both admin-only below) — so this is too.
+    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
     if (!orgId) return;
 
     const { data: agent, error: agentError } = await dbAny
