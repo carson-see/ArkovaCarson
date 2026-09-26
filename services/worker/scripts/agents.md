@@ -23,6 +23,14 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
   signs the fixture user in for a real Supabase JWT bearer token, since `/api/v1/agents` is
   JWT-authenticated, not API-key-authenticated); default mode is `self-test`, whose rows are
   `evidenceForSoak: false` and must never be cited as soak evidence.
+  - **Independent-review fixes (this PR):** (1) the rename probe now requires the rename PATCH to
+    have actually returned 200 before asserting keys were preserved — a rejected request trivially
+    satisfies "unchanged" and was a false-positive hole. (2) `--live` mode now signs the fixture user
+    in FRESH every cycle instead of once before the soak loop; a single token with
+    `autoRefreshToken:false` expires mid-soak and every later cycle 401s — the exact cascade that
+    killed a prior night's run. (3) a failed probe anywhere in a `--live` run now sets
+    `process.exitCode = 1` at the end of the run, the same way `--self-test` already does — previously
+    the CLI exited 0 with failed probes buried in the JSONL.
 
 - `pr3084-drive-folder-cap-driver.ts` (+ `.test.ts`) — admission driver for PR #3084
   (`fix/drive-folder-cap-three`, T2). Same `STAGING_DRIVER_PATH` override requirement as above —
@@ -36,6 +44,9 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
   shape outright). Fixture rules use a bare `AUTO_ANCHOR` action with no `tag`, so PR #3086's connector
   mirroring/adopt-vs-create race check never fires for them. `--live` needs `--target-url` plus
   `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`; default mode is `self-test`.
+  - **Independent-review fixes (this PR):** same two `--live`-mode fixes as pr3083's driver above —
+    a fresh fixture sign-in every cycle (not one token before the loop) and `process.exitCode = 1` on
+    any failed probe across the whole run.
 
 - `pr3086-drive-folder-mirror-driver.ts` (+ `.test.ts`) — admission driver for PR #3086
   (`feat/mirror-connected-drive-folders`, T2). Same override requirement — set
@@ -46,22 +57,32 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
   with the same folders creates no additional rows and no id churn (idempotent, reusing migration
   0462's unique index); the SAME `connector_source_id` connected under a SECOND, independent org
   mirrors into its OWN distinct row (tenant isolation, fails closed on any collision); and the
-  review-added per-folder isolation (one folder's thrown exception must not suppress the others).
-  - **Assertion 4 is NOT a live-rig probe and does NOT import PR #3086's production module.** This
-    driver's own branch (`feat/t2-soak-drivers`) is based on `origin/main`, which does not contain
-    `services/worker/src/integrations/connectors/drive-folder-mirror.ts` — that file exists only on
-    PR #3086's own still-draft branch. Importing it would fail both typecheck and `tsx` invocation.
-    Assertion 4 instead drives a LOCAL REIMPLEMENTATION (`driverMirrorFolders`, transcribed from the
-    reviewed source at commit `3156a1e28`) of the exact per-item try/catch loop shape against a
-    fault-injecting fake `upsertOne` — the same "reimplement locally, don't import the target PR's
-    src" pattern `pr1408-chain-resilience-driver.ts` already uses. Re-diff it against the real
-    `mirrorConnectedDriveFolders` loop body if PR #3086's head moves. It is real, independently-failable
-    evidence for the ALGORITHM; it is not evidence that the actually-deployed rig has this shape.
+  review-added per-folder isolation (one folder's thrown exception must not suppress the others). The
+  re-save PATCH must itself have returned 200 before the "unchanged folder set" is asserted —
+  independent-review fix, see below.
+  - **Assertion 4 fault-injects the REAL, vendored `mirrorConnectedDriveFolders` (independent-review
+    fix — it previously drove a local reimplementation).** PR #3086 (`feat/mirror-connected-drive-
+    folders`) is still open/unmerged, so `services/worker/src/integrations/connectors/
+    drive-folder-mirror.ts` does not exist on this branch's own `src/` tree — importing it from there
+    fails both typecheck and `tsx` invocation. The fix: the real file is vendored byte-for-byte into
+    `services/worker/scripts/vendor/pr3086-drive-folder-mirror.ts` (see that file's own header for
+    provenance, the exact source commit, and the re-sync procedure), and assertion 4 imports
+    `mirrorConnectedDriveFolders` from THAT copy, fault-injecting it via a fake `DriveFolderMirrorDb`
+    (`buildFaultInjectingMirrorDb`) whose `folders` insert throws a genuine JS exception for exactly
+    one folder id — the real function's real per-iteration try/catch under test via its own injected
+    dependency seam, not a parallel reimplementation that can silently drift. When PR #3086 merges,
+    delete the vendor file and import the real, now-merged path directly instead. A self-test check
+    (`..._fault_injection_is_real`) proves the fake db itself actually throws, so a vacuous pass is
+    caught.
   - `--live` needs `--target-url` plus `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` /
     `SUPABASE_ANON_KEY` (two org fixtures, `pr3086-soak-org-a` / `-org-b`, each with a seeded
     `org_integrations` google_drive connection — seeded directly rather than via a real OAuth round
     trip, the same idiom PR #3087's driver used for its own DS-04 bypass). Assertion 4 runs identically
     in both `self-test` and `--live` mode since it is rig-independent either way.
+  - **Independent-review fixes (this PR):** in addition to the assertion-4 real-import fix above,
+    `--live` mode now signs BOTH org fixture users in fresh every cycle instead of once before the
+    loop (the same expired-token cascade fixed in pr3083/pr3084's drivers), and a failed probe anywhere
+    in a `--live` run now sets `process.exitCode = 1` at the end of the run.
 - `pr3087-supersede-drain-driver.ts` (+ `.test.ts`) — admission driver for PR #3087
   (`fix/connector-supersede-not-duplicate`, T3). `scripts/staging/provision-isolated-rig.sh` DEFAULTS
   `driver_path` to `pr1408-chain-resilience-driver.ts` — using that default for this PR's soak would
@@ -99,6 +120,26 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
     its test: **T1** ("default frontend / additive change" — the fallback default; `services/worker/scripts/`
     is not in the detector's T0 allowlist, so a driver file here needs a draft PR under §1.12, not a
     direct push).
+  - **Independent-review fixes (this driver merged into `feat/t2-soak-drivers` from its own former PR
+    #3099):** (1) the identical-fingerprint no-op probe (assertion 6) previously enqueued, drained,
+    slept a fixed 3s, and read the anchor table — pending/failed/still-unprocessed work satisfies that
+    same observation just as readily as a genuine no-op. It now captures the enqueued artifact's id and
+    polls `connector_artifact.status` for a TERMINAL result (`materialized` or `failed`) before
+    asserting anything about the head anchor; a non-terminal result after bounded polling is now its
+    own explicit failed probe. (2) the fixture used FIXED 64-hex fingerprint constants
+    (`HASH_A`/`HASH_B`/`HASH_C`) across every cycle, but `anchors` carries a partial UNIQUE INDEX on
+    `(user_id, fingerprint) WHERE deleted_at IS NULL` — both `seedPriorAnchor` call sites reuse the SAME
+    fixture user every cycle, so a fixed fingerprint collided with the still-live row from the previous
+    cycle: `duplicate key value violates unique constraint`, reproducibly, on every cycle after the
+    first (the 47/47-failure incident). `cycleFingerprint(letter, cycle)` now derives a per-cycle-unique
+    64-hex fingerprint. (3) same exit-status fix as the other three drivers above — `process.exitCode`
+    is now set on the aggregate result of a `--live` run. (4) added an integration-style test suite
+    (`defaultMaterializeAnchor (real production code, injected deps) — integration-style`) that imports
+    the REAL, now-merged `defaultMaterializeAnchor` from `services/worker/src/jobs/
+    connector-artifact-drain.ts` and drives it with an injected fake `db` (supersession success,
+    fail-closed on a REVOKED prior anchor with `supersede_anchor` never called, and the no-prior-anchor
+    fallback) — previously every test in this file validated hand-constructed classifier inputs, never
+    an execution of the production materializer itself.
 
 - `pr2525-attestation-park-driver.ts` (+ `.test.ts`) — admission driver for the PR #2525 attestation
   park. Probes `GET /api/v1/verify/attestation/:id` and asserts the one behavior that PR changes:
@@ -122,6 +163,10 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - `intelligence-dataset/` — Compliance scenario datasets, evals, and source registries (FCRA/FERPA/HIPAA/KAU/NDD/NPH/NTF).
 - `lib/` — Shared math utilities (percentile, stats).
 - `load-test/` — k6 load-test profiles for SCALE-02.
+- `vendor/` — Byte-for-byte copies of still-unmerged production source, vendored ONLY so a soak
+  driver can fault-inject the REAL target function via its own injected deps instead of a local
+  reimplementation. Each file's own header names its source PR/commit and the re-sync/delete
+  procedure for when that PR merges. Never import from here into anything under `src/`.
 - `ops/` — Operator-run production/sandbox verification scripts.
 
 ## Top-level scripts (selected)

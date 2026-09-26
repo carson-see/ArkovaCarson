@@ -522,20 +522,27 @@ async function main(): Promise<void> {
   const { url, serviceRoleKey, anonKey } = resolveCredentials();
   const db = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const fx = await ensureFixtureIdentity(db);
-  const bearerToken = await signInFixtureUser(url, anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
 
   const startedAt = Date.now();
   const deadline = startedAt + args.durationMin * 60_000;
   let cycle = 0;
+  let anyCycleFailed = false;
 
   do {
     cycle += 1;
     let probes: ProbeResult[];
     try {
+      // Fresh sign-in EVERY cycle rather than one token captured before the
+      // loop — see pr3083's driver for the incident this avoids: a token
+      // minted once with autoRefreshToken:false expires mid-soak and every
+      // later cycle 401s.
+      const bearerToken = await signInFixtureUser(url, anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
       probes = await runCycle(args.targetUrl, fx, bearerToken, cycle);
     } catch (error) {
       probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
     }
+
+    if (aggregate(probes) === 'fail') anyCycleFailed = true;
 
     emit({
       utc: new Date().toISOString(),
@@ -554,6 +561,10 @@ async function main(): Promise<void> {
     if (Date.now() >= deadline) break;
     await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
   } while (Date.now() < deadline);
+
+  // A failed probe anywhere in the run must fail the process — see pr3083's
+  // driver for the same fix and why the CLI must not exit 0 on a red run.
+  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3084-drive-folder-cap-driver');

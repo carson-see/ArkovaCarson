@@ -552,11 +552,22 @@ async function runCycle(
 
   // ── Assertion 5 first, on the pristine active state — a rename must be inert ──
   const beforeRename = await fetchKeyFacts(db, fx.orgId, keyId);
-  await callWorker(targetUrl, `/api/v1/agents/${agentId}`, {
+  const renameRes = await callWorker(targetUrl, `/api/v1/agents/${agentId}`, {
     method: 'PATCH',
     bearerToken,
     body: { name: `${agentName}-renamed` },
   });
+  // A rejected PATCH (4xx/5xx) trivially satisfies "keys unchanged" — nothing
+  // ran. That is a false positive, not evidence the rename path is inert on
+  // keys. Require the write to have actually applied before asserting on it.
+  if (renameRes.httpStatus !== 200) {
+    return [probe(
+      'cycle_setup_rename_call',
+      false,
+      `rename PATCH failed: httpStatus=${renameRes.httpStatus}, body=${JSON.stringify(renameRes.body)} — `
+        + 'cannot assert keys were preserved by a request that was itself rejected',
+    )];
+  }
   const afterRename = await fetchKeyFacts(db, fx.orgId, keyId);
   probes.push(classifyNonStatusEditPreservesKeys({
     activeBefore: beforeRename.is_active,
@@ -722,20 +733,29 @@ async function main(): Promise<void> {
   const { url, serviceRoleKey, anonKey } = resolveCredentials();
   const db = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const fx = await ensureFixtureIdentity(db);
-  const bearerToken = await signInFixtureUser(url, anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
 
   const startedAt = Date.now();
   const deadline = startedAt + args.durationMin * 60_000;
   let cycle = 0;
+  let anyCycleFailed = false;
 
   do {
     cycle += 1;
     let probes: ProbeResult[];
     try {
+      // Fresh sign-in EVERY cycle rather than one token captured before the
+      // loop. `signInFixtureUser` builds its client with `autoRefreshToken:
+      // false`, so a token minted once before a 24h/4h soak eventually
+      // expires mid-run and every subsequent cycle 401s — the exact cascade
+      // that killed a prior night's soak. A per-cycle sign-in is cheap next
+      // to a 900s interval and makes token lifetime a non-issue.
+      const bearerToken = await signInFixtureUser(url, anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
       probes = await runCycle(db, args.targetUrl, fx, bearerToken, cycle);
     } catch (error) {
       probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
     }
+
+    if (aggregate(probes) === 'fail') anyCycleFailed = true;
 
     emit({
       utc: new Date().toISOString(),
@@ -754,6 +774,12 @@ async function main(): Promise<void> {
     if (Date.now() >= deadline) break;
     await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
   } while (Date.now() < deadline);
+
+  // A failed probe anywhere in the run must fail the process, the same way
+  // --self-test already does — otherwise the CLI exits 0 with failed probes
+  // buried in the JSONL and nothing downstream (a CI step, an operator
+  // script) ever notices.
+  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3083-agent-suspend-keys-driver');

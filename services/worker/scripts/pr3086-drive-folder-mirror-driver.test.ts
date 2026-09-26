@@ -9,10 +9,9 @@ import {
   tally,
   runSelfTest,
   runPartialFailureIsolationProbe,
-  driverMirrorFolders,
-  driverMirrorFoldersPreFixShape,
   parseArgs,
 } from './pr3086-drive-folder-mirror-driver.js';
+import { mirrorConnectedDriveFolders } from './vendor/pr3086-drive-folder-mirror.js';
 
 describe('classifyTwoFoldersMirrored', () => {
   it('passes on exactly 2 distinct rows', () => {
@@ -120,47 +119,87 @@ describe('classifyPartialFailureIsolation', () => {
   });
 });
 
-describe('driverMirrorFolders — the reviewed (fixed) per-item isolation loop', () => {
-  it('one folder throwing does not suppress the others', () => {
-    const results = driverMirrorFolders(
-      [{ folderId: 'ok1' }, { folderId: 'faulty' }, { folderId: 'ok2' }],
-      (folderId) => {
-        if (folderId === 'faulty') throw new Error('boom');
-        return { driveFolderId: folderId, outcome: 'created' };
+describe('runPartialFailureIsolationProbe — drives the REAL, vendored mirrorConnectedDriveFolders', () => {
+  it('proves per-item isolation against a fault injected for exactly one folder', async () => {
+    const result = await runPartialFailureIsolationProbe();
+    expect(result.status).toBe('pass');
+    expect(result.name).toBe(ASSERTION.PARTIAL_FAILURE_ISOLATION);
+  });
+});
+
+describe('mirrorConnectedDriveFolders (vendored, real production code) — integration-style, injected deps', () => {
+  it('a genuine thrown exception mirroring one folder does not suppress the others', async () => {
+    // A fresh, minimal fake db built inline here (not the driver's own
+    // `buildFaultInjectingMirrorDb`) so this test exercises the imported
+    // production function directly, independent of the driver's own wrapper.
+    const results = await mirrorConnectedDriveFolders(
+      {
+        db: {
+          from(table: string) {
+            let insertPayload: Record<string, unknown> | undefined;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const chain: any = {
+              select: () => chain,
+              eq: () => chain,
+              is: () => chain,
+              order: () => chain,
+              limit: () => chain,
+              update: () => chain,
+              insert: (payload: Record<string, unknown>) => {
+                insertPayload = payload;
+                return chain;
+              },
+              maybeSingle: async () => (table === 'org_integrations'
+                ? { data: { id: 'conn-1' }, error: null }
+                : { data: null, error: null }),
+              single: async () => {
+                const driveFolderId = insertPayload?.connector_source_id as string | undefined;
+                if (driveFolderId === 'faulty') throw new Error('boom');
+                return { data: { id: `mirror-${driveFolderId}` }, error: null };
+              },
+            };
+            return chain;
+          },
+        },
+      },
+      {
+        orgId: 'org-1',
+        actorUserId: 'user-1',
+        folders: [
+          { folderId: 'ok1', folderName: null },
+          { folderId: 'faulty', folderName: null },
+          { folderId: 'ok2', folderName: null },
+        ],
       },
     );
     expect(results).toHaveLength(3);
-    expect(results.find((r) => r.driveFolderId === 'faulty')?.outcome).toBe('error');
+    const faulty = results.find((r) => r.driveFolderId === 'faulty');
+    expect(faulty?.outcome).toBe('error');
+    expect(faulty?.error).toMatch(/boom/);
     expect(results.filter((r) => r.outcome === 'created')).toHaveLength(2);
   });
 
-  it('captures the thrown error message on the faulty result', () => {
-    const results = driverMirrorFolders(
-      [{ folderId: 'faulty' }],
-      () => { throw new Error('specific boom'); },
-    );
-    expect(results[0].outcome).toBe('error');
-    expect(results[0].error).toMatch(/specific boom/);
-  });
-});
-
-describe('driverMirrorFoldersPreFixShape — the PRE-review defect, for self-test fault-injection proof', () => {
-  it('an exception on one folder throws out of the whole call (no per-item isolation)', () => {
-    expect(() => driverMirrorFoldersPreFixShape(
-      [{ folderId: 'ok1' }, { folderId: 'faulty' }, { folderId: 'ok2' }],
-      (folderId) => {
-        if (folderId === 'faulty') throw new Error('boom');
-        return { driveFolderId: folderId, outcome: 'created' };
+  it('skips every folder (no exception) when there is no active Drive connection', async () => {
+    const results = await mirrorConnectedDriveFolders(
+      {
+        db: {
+          from() {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const chain: any = {
+              select: () => chain,
+              eq: () => chain,
+              is: () => chain,
+              order: () => chain,
+              limit: () => chain,
+              maybeSingle: async () => ({ data: null, error: null }),
+            };
+            return chain;
+          },
+        },
       },
-    )).toThrow(/boom/);
-  });
-});
-
-describe('runPartialFailureIsolationProbe — drives the local reimplementation of the fixed loop', () => {
-  it('proves per-item isolation against a fault injected for exactly one folder', () => {
-    const result = runPartialFailureIsolationProbe();
-    expect(result.status).toBe('pass');
-    expect(result.name).toBe(ASSERTION.PARTIAL_FAILURE_ISOLATION);
+      { orgId: 'org-1', actorUserId: 'user-1', folders: [{ folderId: 'f1', folderName: null }] },
+    );
+    expect(results).toEqual([{ folderId: '', driveFolderId: 'f1', outcome: 'skipped_no_connection' }]);
   });
 });
 
@@ -172,7 +211,7 @@ describe('aggregate / tally', () => {
     ])).toBe('fail');
   });
 
-  it('tallies all four assertions independently, never collapsed into one boolean', () => {
+  it('tallies all four assertions independently, never collapsed into one boolean', async () => {
     const probes = [
       classifyTwoFoldersMirrored([
         { id: 'f1', org_id: 'o1', connector_source_id: 'd1' },
@@ -180,7 +219,7 @@ describe('aggregate / tally', () => {
       ]),
       classifyIdempotentResave({ idsBeforeResave: ['f1', 'f2'], idsAfterResave: ['f1', 'f2'] }),
       classifyTenantIsolationNoCollision({ org1FolderId: 'f-org1', org2FolderId: 'f-org2' }),
-      runPartialFailureIsolationProbe(),
+      await runPartialFailureIsolationProbe(),
     ];
     const counts = tally(probes);
     for (const name of Object.values(ASSERTION)) {
@@ -193,8 +232,8 @@ describe('aggregate / tally', () => {
 });
 
 describe('runSelfTest', () => {
-  it('is entirely self-consistent (aggregates to pass), and covers all four assertions', () => {
-    const probes = runSelfTest();
+  it('is entirely self-consistent (aggregates to pass), and covers all four assertions', async () => {
+    const probes = await runSelfTest();
     expect(aggregate(probes)).toBe('pass');
     for (const name of Object.values(ASSERTION)) {
       expect(probes.some((p) => p.name === name)).toBe(true);

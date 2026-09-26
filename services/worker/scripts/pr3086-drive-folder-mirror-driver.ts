@@ -51,12 +51,11 @@
  *     connector_source_id)`, so a collision here would mean org scoping was
  *     dropped somewhere between the rule save and the mirror write.
  *  4. PARTIAL_FAILURE_DOES_NOT_SUPPRESS_OTHERS — the review-added per-item
- *     isolation. See the SCOPING NOTE below: unlike 1–3, this is verified
- *     against a LOCAL REIMPLEMENTATION of the fixed loop shape, not the live
- *     HTTP+database rig, and not an import of the production module either.
+ *     isolation. See the SCOPING NOTE below: this drives the REAL, production
+ *     `mirrorConnectedDriveFolders` (vendored — see below), fault-injected
+ *     via its own `DriveFolderMirrorDeps.db`, not a local reimplementation.
  *
- * SCOPING NOTE ON ASSERTION 4 (read before citing it as live-rig evidence,
- * OR as an import of the real production module)
+ * SCOPING NOTE ON ASSERTION 4 (read before citing it as live-rig evidence)
  * ---------------------------------------------------------------------------
  * `mirrorConnectedDriveFolders`'s per-folder try/catch (in
  * `services/worker/src/integrations/connectors/drive-folder-mirror.ts`, on
@@ -72,33 +71,32 @@
  * black-box lever to make the Supabase client itself throw for exactly one
  * row in a batch while behaving normally for the others.
  *
- * THIS DRIVER FILE LIVES ON `feat/t2-soak-drivers`, BASED ON `origin/main` —
- * which does NOT contain PR #3086's still-unmerged, still-draft branch.
- * `services/worker/src/integrations/connectors/drive-folder-mirror.ts`
- * therefore does not exist on this branch, and importing it directly would
- * fail both `tsc --noEmit` here AND at actual `tsx` invocation time (the
- * driver script runs from ITS OWN checkout, not from inside the deployed
- * worker container). Doing so would also be indistinguishable from the
- * house pattern's own precedent of NOT importing target-PR production code
- * (`pr1408-chain-resilience-driver.ts` reimplements retry/backoff/duplicate
- * classification locally as `Driver`-prefixed pure functions rather than
- * importing `services/worker/src/chain/*`; PR #3087's driver never imports
- * `connector-artifact-drain.ts` either).
+ * THIS DRIVER FILE LIVES ON `feat/t2-soak-drivers`. PR #3086
+ * (`feat/mirror-connected-drive-folders`) is still open and unmerged, so
+ * `services/worker/src/integrations/connectors/drive-folder-mirror.ts` does
+ * not exist on this branch's own `src/` tree — importing it from there would
+ * fail both `tsc --noEmit` and actual `tsx` invocation.
  *
- * Assertion 4 therefore drives a LOCAL REIMPLEMENTATION
- * (`driverMirrorFolders`, below) of the exact per-item try/catch loop shape,
- * transcribed from the reviewed source at commit `3156a1e28` (this file's own
- * header states which head). It is not the live production code and this
- * driver never claims otherwise. It IS a real, independently-failable proof
- * that the try/catch-per-iteration ALGORITHM is correct — a driver reviewer
- * should re-diff `driverMirrorFolders` against the actual
- * `mirrorConnectedDriveFolders` loop body whenever PR #3086's head moves, the
- * same way `pr1408-chain-resilience-driver.ts`'s reimplementations require
- * re-diffing against `services/worker/src/chain/*` on a change there. This is
- * deterministic, requires neither network nor a database, and is therefore
- * run in BOTH self-test AND live mode identically — but it is NOT live-rig
- * evidence that the actually-deployed code on the isolated rig has this
- * shape, and this driver says so plainly rather than padding its count with
+ * FIX (independent review finding on this driver): rather than
+ * reimplementing the loop shape locally — which can silently drift from what
+ * actually ships and stop being evidence of anything — the real file is
+ * VENDORED byte-for-byte into `services/worker/scripts/vendor/
+ * pr3086-drive-folder-mirror.ts` (see that file's own header for provenance,
+ * the exact source commit, and the re-sync procedure). Assertion 4 imports
+ * `mirrorConnectedDriveFolders` from THAT vendored copy and fault-injects it
+ * via a fake `DriveFolderMirrorDb` (`buildFaultInjectingMirrorDb`, below)
+ * whose `folders` insert throws a genuine JS exception for exactly one
+ * folder id — the same fault class the module's own header describes. This
+ * is the REAL function's REAL per-iteration try/catch under test, driven
+ * through its own injected dependency seam, not a parallel reimplementation.
+ * When PR #3086 merges, delete the vendor file and import the real path
+ * directly instead (see that file's header).
+ *
+ * This is deterministic, requires neither network nor a database, and is
+ * therefore run in BOTH self-test AND live mode identically — but it is NOT
+ * live-rig evidence that the actually-deployed code on the isolated rig
+ * matches the vendored copy exactly (see the vendor file's KEEP IN SYNC
+ * note), and this driver says so plainly rather than padding its count with
  * a probe that can never independently fail against the deployed rig.
  *
  * Self-test mode overall is local validation only for assertions 1–3: those
@@ -108,6 +106,11 @@
 
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  mirrorConnectedDriveFolders,
+  type DriveFolderMirrorDb,
+  type DriveFolderToMirror,
+} from './vendor/pr3086-drive-folder-mirror.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -289,92 +292,89 @@ export function tally(probes: ProbeResult[]): Record<string, number | boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Assertion 4 — a LOCAL REIMPLEMENTATION of the reviewed per-item isolation
-// loop (see the SCOPING NOTE in the file header for why this is not an
-// import of the production module). Transcribed from
-// `mirrorConnectedDriveFolders`'s loop body at commit `3156a1e28`; re-diff
-// against `services/worker/src/integrations/connectors/drive-folder-mirror.ts`
-// if PR #3086's head moves.
+// Assertion 4 — fault-injects the REAL, vendored `mirrorConnectedDriveFolders`
+// (see the SCOPING NOTE in the file header) via its own injected
+// `DriveFolderMirrorDb`. No reimplementation of its loop body lives here.
 // ---------------------------------------------------------------------------
 
-export interface DriverFolderToMirror {
-  folderId: string;
-}
-
-export type DriverMirrorOutcome = 'created' | 'existing' | 'error';
-
-export interface DriverMirrorResult {
-  driveFolderId: string;
-  outcome: DriverMirrorOutcome;
-  error?: string;
+interface FaultInjectingDbArgs {
+  connectionId: string;
+  faultFolderId: string;
 }
 
 /**
- * A single fake "upsert one folder" step that throws a genuine JS exception
- * (NOT a returned `{data,error}`) for exactly one `folderId` — reproducing
- * the fault class the review comment describes ("a dropped connection, a
- * client library throw, anything that isn't a Supabase `{data,error}`
- * response"). Every other folder resolves normally.
+ * A minimal fake `DriveFolderMirrorDb` — real injected DEPS, not a stub of
+ * the algorithm under test. `.from('org_integrations')` resolves an active
+ * connection; `.from('folders')` reports no pre-existing mirror for any
+ * folder (so every folder takes the INSERT path), and the insert itself
+ * throws a genuine JS exception (never a returned `{data,error}`) for
+ * exactly `faultFolderId` — "a dropped connection, a client library throw,
+ * anything that isn't a Supabase `{data,error}` response", the exact fault
+ * class `mirrorConnectedDriveFolders`'s own header describes its per-
+ * iteration try/catch as guarding against. Every other folder resolves
+ * normally.
  */
-function faultInjectingUpsertOne(faultInjectedFolderId: string) {
-  return (folderId: string): DriverMirrorResult => {
-    if (folderId === faultInjectedFolderId) {
-      throw new Error(`simulated client-library throw mirroring folder ${folderId}`);
-    }
-    return { driveFolderId: folderId, outcome: 'created' };
+function buildFaultInjectingMirrorDb(args: FaultInjectingDbArgs): DriveFolderMirrorDb {
+  return {
+    from(table: string) {
+      let insertPayload: Record<string, unknown> | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chain: any = {
+        select: () => chain,
+        eq: () => chain,
+        is: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        update: () => chain,
+        insert: (payload: Record<string, unknown>) => {
+          insertPayload = payload;
+          return chain;
+        },
+        maybeSingle: async () => {
+          if (table === 'org_integrations') {
+            return { data: { id: args.connectionId }, error: null };
+          }
+          // `folders` existing-mirror lookup — nothing pre-exists for any folder.
+          return { data: null, error: null };
+        },
+        single: async () => {
+          const driveFolderId = insertPayload?.connector_source_id as string | undefined;
+          if (driveFolderId === args.faultFolderId) {
+            throw new Error(`simulated client-library throw mirroring folder ${driveFolderId}`);
+          }
+          return { data: { id: `mirror-${driveFolderId ?? 'unknown'}` }, error: null };
+        },
+      };
+      return chain;
+    },
   };
 }
 
 /**
- * The reviewed loop shape: each iteration's own try/catch means one folder's
- * thrown exception can never suppress the rest. This is the fix under test —
- * a version WITHOUT the per-iteration try/catch (just `folders.map(upsertOne)`
- * with no guard) is exactly the pre-review defect, and is exercised directly
- * by `driverMirrorFoldersPreFixShape` below for the self-test's own defect
- * -detection coverage.
+ * Calls the REAL, vendored `mirrorConnectedDriveFolders` with a fault-
+ * injecting fake db. Rig-independent — safe to call in both self-test and
+ * live mode; see the file header's SCOPING NOTE for what this does and does
+ * not prove.
  */
-export function driverMirrorFolders(
-  folders: DriverFolderToMirror[],
-  upsertOne: (folderId: string) => DriverMirrorResult,
-): DriverMirrorResult[] {
-  const results: DriverMirrorResult[] = [];
-  for (const folder of folders) {
-    try {
-      results.push(upsertOne(folder.folderId));
-    } catch (error) {
-      results.push({
-        driveFolderId: folder.folderId,
-        outcome: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  return results;
-}
-
-/** The PRE-REVIEW-FIX shape: no per-iteration try/catch. One throw unwinds the whole loop. */
-export function driverMirrorFoldersPreFixShape(
-  folders: DriverFolderToMirror[],
-  upsertOne: (folderId: string) => DriverMirrorResult,
-): DriverMirrorResult[] {
-  return folders.map((folder) => upsertOne(folder.folderId));
-}
-
-/**
- * Runs the reimplemented (fixed) loop shape against a fault-injecting
- * `upsertOne`. Rig-independent — safe to call in both self-test and live
- * mode; see the file header's SCOPING NOTE for what this does and does not
- * prove.
- */
-export function runPartialFailureIsolationProbe(): ProbeResult {
+export async function runPartialFailureIsolationProbe(): Promise<ProbeResult> {
   const faultInjectedFolderId = `${FIXTURE_PREFIX}-fault-folder`;
-  const folders: DriverFolderToMirror[] = [
-    { folderId: `${FIXTURE_PREFIX}-ok-folder-1` },
-    { folderId: faultInjectedFolderId },
-    { folderId: `${FIXTURE_PREFIX}-ok-folder-2` },
+  const folders: DriveFolderToMirror[] = [
+    { folderId: `${FIXTURE_PREFIX}-ok-folder-1`, folderName: null },
+    { folderId: faultInjectedFolderId, folderName: null },
+    { folderId: `${FIXTURE_PREFIX}-ok-folder-2`, folderName: null },
   ];
-  const results = driverMirrorFolders(folders, faultInjectingUpsertOne(faultInjectedFolderId));
-  return classifyPartialFailureIsolation(results, faultInjectedFolderId);
+  const db = buildFaultInjectingMirrorDb({
+    connectionId: `${FIXTURE_PREFIX}-connection`,
+    faultFolderId: faultInjectedFolderId,
+  });
+  const results = await mirrorConnectedDriveFolders(
+    { db },
+    { orgId: `${FIXTURE_PREFIX}-org`, actorUserId: `${FIXTURE_PREFIX}-actor`, folders },
+  );
+  return classifyPartialFailureIsolation(
+    results.map((r) => ({ driveFolderId: r.driveFolderId, outcome: r.outcome })),
+    faultInjectedFolderId,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -382,8 +382,8 @@ export function runPartialFailureIsolationProbe(): ProbeResult {
 // local reimplementation of the reviewed loop shape for assertion 4 (see file header).
 // ---------------------------------------------------------------------------
 
-export function runSelfTest(): ProbeResult[] {
-  const partialFailureProbe = runPartialFailureIsolationProbe();
+export async function runSelfTest(): Promise<ProbeResult[]> {
+  const partialFailureProbe = await runPartialFailureIsolationProbe();
   return [
     classifyTwoFoldersMirrored([
       { id: 'f1', org_id: 'org-a', connector_source_id: 'drive-1' },
@@ -448,25 +448,20 @@ export function runSelfTest(): ProbeResult[] {
       "the faulty folder's own result must specifically be 'error', not any other outcome",
     ),
     probe(
-      `${ASSERTION.PARTIAL_FAILURE_ISOLATION}_selftest_prefix_shape_reproduces_the_original_defect`,
-      (() => {
-        const faultInjectedFolderId = `${FIXTURE_PREFIX}-prefix-shape-fault`;
+      `${ASSERTION.PARTIAL_FAILURE_ISOLATION}_selftest_fault_injection_is_real`,
+      await (async () => {
+        const faultFolderId = `${FIXTURE_PREFIX}-injection-sanity-fault`;
+        const db = buildFaultInjectingMirrorDb({ connectionId: 'conn-sanity', faultFolderId });
         try {
-          driverMirrorFoldersPreFixShape(
-            [
-              { folderId: `${FIXTURE_PREFIX}-prefix-shape-ok1` },
-              { folderId: faultInjectedFolderId },
-              { folderId: `${FIXTURE_PREFIX}-prefix-shape-ok2` },
-            ],
-            faultInjectingUpsertOne(faultInjectedFolderId),
-          );
-          return false; // it must throw — if it didn't, the pre-fix shape stopped reproducing the defect
+          await db.from('folders').insert({ connector_source_id: faultFolderId }).select('id').single();
+          return false; // it must throw — if it didn't, the injection is a no-op that always passes
         } catch {
           return true;
         }
       })(),
-      'the PRE-FIX loop shape (no per-iteration try/catch) must itself throw and abort — this proves '
-        + "the self-test's fault injection is real, not a no-op that always happens to pass",
+      'the fault-injecting fake db must itself throw for the fault folder id on insert — proves the '
+        + "injection is real, not a no-op that always happens to pass (and that assertion 4's pass "
+        + 'above is not vacuous)',
     ),
     probe('aggregate_selftest', aggregate([probe('x', true, ''), probe('y', false, '')]) === 'fail',
       'one failed probe fails the whole cycle'),
@@ -664,7 +659,18 @@ async function runCycle(
   probes.push(classifyTwoFoldersMirrored(afterCreate));
   const idsBeforeResave = afterCreate.map((r) => r.id);
 
-  await saveConnectorRule(targetUrl, bearerToken1, org1.orgId, [folderA, folderB], ruleId, suffix);
+  const resaveRes = await saveConnectorRule(targetUrl, bearerToken1, org1.orgId, [folderA, folderB], ruleId, suffix);
+  // A rejected PATCH (4xx/5xx) trivially satisfies "the folder set is
+  // unchanged" — nothing ran. Require the re-save to have actually applied
+  // before treating an unchanged mirror set as evidence of idempotent reuse.
+  if (resaveRes.httpStatus !== 200) {
+    return [...probes, probe(
+      'cycle_setup_resave_call',
+      false,
+      `rule re-save PATCH failed: httpStatus=${resaveRes.httpStatus}, body=${JSON.stringify(resaveRes.body)} — `
+        + 'cannot assert idempotent reuse from a request that was itself rejected',
+    )];
+  }
   await new Promise((r) => setTimeout(r, 3000));
   const afterResave = await pollMirrorFolders(db, org1.orgId, [folderA, folderB], 6, 3000);
   probes.push(classifyIdempotentResave({
@@ -686,8 +692,8 @@ async function runCycle(
     org2FolderId: org2Mirror[0]?.id ?? '',
   }));
 
-  // ── Assertion 4: rig-independent, local reimplementation + fault-injecting upsertOne ──
-  probes.push(runPartialFailureIsolationProbe());
+  // ── Assertion 4: rig-independent, real mirrorConnectedDriveFolders + fault-injecting db ──
+  probes.push(await runPartialFailureIsolationProbe());
 
   return probes;
 }
@@ -752,7 +758,7 @@ async function main(): Promise<void> {
     : undefined;
 
   if (args.mode === 'self-test') {
-    const probes = runSelfTest();
+    const probes = await runSelfTest();
     emit({
       utc: new Date().toISOString(),
       pr: 3086,
@@ -779,21 +785,28 @@ async function main(): Promise<void> {
   const db = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const org1 = await ensureOrgFixture(db, 'a');
   const org2 = await ensureOrgFixture(db, 'b');
-  const bearerToken1 = await signInFixtureUser(url, anonKey, org1.orgAdminEmail, org1.orgAdminPassword);
-  const bearerToken2 = await signInFixtureUser(url, anonKey, org2.orgAdminEmail, org2.orgAdminPassword);
 
   const startedAt = Date.now();
   const deadline = startedAt + args.durationMin * 60_000;
   let cycle = 0;
+  let anyCycleFailed = false;
 
   do {
     cycle += 1;
     let probes: ProbeResult[];
     try {
+      // Fresh sign-in EVERY cycle for BOTH orgs rather than one token per org
+      // captured before the loop — see pr3083's driver for the incident this
+      // avoids: a token minted once with autoRefreshToken:false expires
+      // mid-soak and every later cycle 401s.
+      const bearerToken1 = await signInFixtureUser(url, anonKey, org1.orgAdminEmail, org1.orgAdminPassword);
+      const bearerToken2 = await signInFixtureUser(url, anonKey, org2.orgAdminEmail, org2.orgAdminPassword);
       probes = await runCycle(db, args.targetUrl, org1, org2, bearerToken1, bearerToken2, cycle);
     } catch (error) {
       probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
     }
+
+    if (aggregate(probes) === 'fail') anyCycleFailed = true;
 
     emit({
       utc: new Date().toISOString(),
@@ -812,6 +825,10 @@ async function main(): Promise<void> {
     if (Date.now() >= deadline) break;
     await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
   } while (Date.now() < deadline);
+
+  // A failed probe anywhere in the run must fail the process — see pr3083's
+  // driver for the same fix and why the CLI must not exit 0 on a red run.
+  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3086-drive-folder-mirror-driver');

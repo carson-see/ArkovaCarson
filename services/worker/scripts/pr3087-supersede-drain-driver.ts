@@ -539,13 +539,23 @@ export function runSelfTest(): ProbeResult[] {
 // Live fixtures + probes
 // ---------------------------------------------------------------------------
 
-// Fixed 64-hex placeholders (§1.6A: this driver never hashes real bytes —
-// there are none to hash). Collision risk is irrelevant: every fixture below
-// uses a fresh, cycle-unique `external_ref`, so these three constants never
-// need to vary.
-const HASH_A = 'a'.repeat(64);
-const HASH_B = 'b'.repeat(64);
-const HASH_C = 'c'.repeat(64);
+/**
+ * Per-cycle-unique 64-hex fingerprints (§1.6A: this driver never hashes real
+ * bytes — there are none to hash). MUST vary by cycle: `anchors` carries
+ * `idx_anchors_user_fingerprint_unique` — a partial UNIQUE INDEX on
+ * `(user_id, fingerprint) WHERE deleted_at IS NULL` (migration baseline). Both
+ * `seedPriorAnchor` calls in `runCycle` (the google_drive fixture AND the
+ * member fixture) insert directly against the SAME fixture users every
+ * cycle, so a FIXED fingerprint constant collides with the still-live row
+ * from the previous cycle — `duplicate key value violates unique
+ * constraint`, every cycle after the first, 100% reproducible. This was the
+ * 47/47-failure incident: the fixture collided with itself on repeat cycles.
+ * The trailing 8 hex chars are cycle-derived so every cycle gets its own row.
+ */
+function cycleFingerprint(letter: 'a' | 'b' | 'c', cycle: number): string {
+  const suffix = cycle.toString(16).padStart(8, '0').slice(-8);
+  return `${letter.repeat(56)}${suffix}`;
+}
 
 interface FixtureIdentity {
   orgId: string;
@@ -760,17 +770,22 @@ async function runCycle(
 ): Promise<ProbeResult[]> {
   const probes: ProbeResult[] = [];
   const suffix = `${Date.now()}-${cycle}`;
+  // Cycle-unique fingerprints — see cycleFingerprint's own doc comment for the
+  // exact unique-index collision this fixes (47/47 failures without it).
+  const hashA = cycleFingerprint('a', cycle);
+  const hashB = cycleFingerprint('b', cycle);
+  const hashC = cycleFingerprint('c', cycle);
 
   // ── Assertions 1, 2, 3, 4, 5, 6: google_drive update / replay / no-op ──
   const gdRef = `${FIXTURE_PREFIX}-gd-${suffix}`;
   const v1 = await seedPriorAnchor(db, {
     orgId: fx.orgId, userId: fx.orgAdminUserId, source: 'google_drive', externalRef: gdRef,
-    fingerprint: HASH_A, status: 'SECURED',
+    fingerprint: hashA, status: 'SECURED',
   });
 
   await enqueueArtifact(db, {
     orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-2',
-    fingerprint: HASH_B,
+    fingerprint: hashB,
   });
   await triggerDrain(targetUrl, cronSecret, bearerToken);
 
@@ -793,11 +808,11 @@ async function runCycle(
 
   // Assertion 5 — idempotent replay of the SAME (source, external_ref, external_revision).
   const replayIdA = await enqueueArtifact(db, {
-    orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-2', fingerprint: HASH_B,
+    orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-2', fingerprint: hashB,
   });
   const anchorsBeforeReplay = await fetchAnchorByFilter(db, fx.orgId, 'google_drive', gdRef);
   const replayIdB = await enqueueArtifact(db, {
-    orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-2', fingerprint: HASH_B,
+    orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-2', fingerprint: hashB,
   });
   await triggerDrain(targetUrl, cronSecret, bearerToken);
   await new Promise((r) => setTimeout(r, 3000));
@@ -812,26 +827,45 @@ async function runCycle(
   }));
 
   // Assertion 6 — identical-fingerprint no-op against the CURRENT head (child1).
+  // A bare "enqueue, drain, sleep(3s)" satisfies this observation on
+  // pending/failed/still-unprocessed work just as readily as on a genuine
+  // no-op — a fixed sleep is not evidence the artifact was ever actually
+  // handled. Capture the artifact id and require it reach a TERMINAL result
+  // (materialized or failed) before asserting anything about the anchor.
   const headBefore = anchorsAfterReplay.reduce((max, a) => (a.version_number > max.version_number ? a : max));
-  await enqueueArtifact(db, {
+  const noopArtifactId = await enqueueArtifact(db, {
     orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-3',
-    fingerprint: HASH_B, // unchanged content
+    fingerprint: hashB, // unchanged content
   });
   await triggerDrain(targetUrl, cronSecret, bearerToken);
-  await new Promise((r) => setTimeout(r, 3000));
-  const anchorsAfterNoop = await fetchAnchorByFilter(db, fx.orgId, 'google_drive', gdRef);
-  const headAfter = anchorsAfterNoop.reduce((max, a) => (a.version_number > max.version_number ? a : max));
-  probes.push(classifyNoopIdenticalFingerprint({
-    headAnchorIdBefore: headBefore.id, headAnchorIdAfter: headAfter.id, headStatusAfter: headAfter.status,
-  }));
+  const noopArtifactAfter = await pollUntil(
+    () => fetchArtifactStatus(db, noopArtifactId),
+    (a) => a.status === 'materialized' || a.status === 'failed',
+    5, 3000,
+  );
+  if (noopArtifactAfter.status !== 'materialized' && noopArtifactAfter.status !== 'failed') {
+    probes.push(probe(
+      ASSERTION.NOOP_IDENTICAL_FINGERPRINT,
+      false,
+      `no-op artifact never reached a terminal result (status=${noopArtifactAfter.status} after bounded `
+        + 'polling) — cannot assert the head anchor was preserved by an event that was never actually '
+        + 'processed',
+    ));
+  } else {
+    const anchorsAfterNoop = await fetchAnchorByFilter(db, fx.orgId, 'google_drive', gdRef);
+    const headAfter = anchorsAfterNoop.reduce((max, a) => (a.version_number > max.version_number ? a : max));
+    probes.push(classifyNoopIdenticalFingerprint({
+      headAnchorIdBefore: headBefore.id, headAnchorIdAfter: headAfter.id, headStatusAfter: headAfter.status,
+    }));
+  }
 
   // ── Assertion 7: negative control (docusign, ungated, must still double-anchor) ──
   const dsRef = `${FIXTURE_PREFIX}-ds-${suffix}`;
   await enqueueArtifact(db, {
-    orgId: fx.orgId, source: 'docusign', externalRef: dsRef, externalRevision: 'synthetic-a', fingerprint: HASH_A,
+    orgId: fx.orgId, source: 'docusign', externalRef: dsRef, externalRevision: 'synthetic-a', fingerprint: hashA,
   });
   await enqueueArtifact(db, {
-    orgId: fx.orgId, source: 'docusign', externalRef: dsRef, externalRevision: 'synthetic-b', fingerprint: HASH_C,
+    orgId: fx.orgId, source: 'docusign', externalRef: dsRef, externalRevision: 'synthetic-b', fingerprint: hashC,
   });
   await triggerDrain(targetUrl, cronSecret, bearerToken);
   const dsAnchors = await pollUntil(
@@ -845,11 +879,11 @@ async function runCycle(
   const memberRef = `${FIXTURE_PREFIX}-member-${suffix}`;
   const memberV1 = await seedPriorAnchor(db, {
     orgId: fx.orgId, userId: fx.memberUserId, source: 'google_drive', externalRef: memberRef,
-    fingerprint: HASH_A, status: 'SECURED',
+    fingerprint: hashA, status: 'SECURED',
   });
   const memberArtifactId = await enqueueArtifact(db, {
     orgId: fx.orgId, source: 'google_drive', externalRef: memberRef, externalRevision: 'rev-2',
-    fingerprint: HASH_B,
+    fingerprint: hashB,
   });
   await triggerDrain(targetUrl, cronSecret, bearerToken);
   const memberArtifactAfter = await pollUntil(
@@ -961,6 +995,7 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   const deadline = startedAt + args.durationMin * 60_000;
   let cycle = 0;
+  let anyCycleFailed = false;
 
   do {
     cycle += 1;
@@ -970,6 +1005,8 @@ async function main(): Promise<void> {
     } catch (error) {
       probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
     }
+
+    if (aggregate(probes) === 'fail') anyCycleFailed = true;
 
     emit({
       utc: new Date().toISOString(),
@@ -988,6 +1025,10 @@ async function main(): Promise<void> {
     if (Date.now() >= deadline) break;
     await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
   } while (Date.now() < deadline);
+
+  // A failed probe anywhere in the run must fail the process — see pr3083's
+  // driver for the same fix and why the CLI must not exit 0 on a red run.
+  process.exitCode = anyCycleFailed ? 1 : 0;
 }
 
 const invokedDirectly = process.argv[1]?.includes('pr3087-supersede-drain-driver');

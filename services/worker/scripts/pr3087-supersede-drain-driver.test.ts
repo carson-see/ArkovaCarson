@@ -10,7 +10,7 @@
  * the ones an easy implementation would get wrong (REVOKED vs SUPERSEDED,
  * 404 vs still-valid, a stuck artifact scored a pass because nothing threw).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   ASSERTION,
@@ -27,6 +27,185 @@ import {
   runSelfTest,
   tally,
 } from './pr3087-supersede-drain-driver.js';
+
+// The real `connector-artifact-drain.ts` imports `../utils/db.js` and
+// `../config.js` at module top level, both of which validate real worker env
+// vars (SUPABASE_URL etc.) as a load-time side effect — the same reason
+// `connector-artifact-drain.test.ts` itself mocks these before importing the
+// module under test. `callRpc` (`../utils/rpc.js`) is deliberately left
+// UNMOCKED here: it is a thin, side-effect-free wrapper around
+// `client.rpc(...)`, and leaving it real means our fault-injecting fake `db`
+// below is what actually answers the RPC call — this is what makes the test
+// integration-style rather than a mock of the mock.
+vi.mock('../src/utils/db.js', () => ({ db: { from: () => { throw new Error('default db must not be used'); } } }));
+vi.mock('../src/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../src/jobs/batch-anchor.js', () => ({ processBatchAnchors: vi.fn() }));
+vi.mock('../src/utils/sentry.js', () => ({ Sentry: { captureMessage: vi.fn() } }));
+vi.mock('../src/config.js', () => ({ config: { enableConnectorArtifactDrain: true } }));
+
+import {
+  defaultMaterializeAnchor,
+  type ConnectorArtifactRow,
+} from '../src/jobs/connector-artifact-drain.js';
+
+/**
+ * A minimal fake `db` covering exactly the calls `defaultMaterializeAnchor`
+ * makes on the google_drive supersession branch: `org_members` (resolving the
+ * org-admin actor, called once for the base materializer and again for the
+ * supersede call), `anchors` (the prior-anchor lookup, keyed off the
+ * `version_number` column in its select list, and the final child public_id
+ * read, keyed off `public_id`), `connector_artifact` (the lease-guarded
+ * link-back update), and the `supersede_anchor` RPC.
+ */
+function buildSupersessionTestDb(args: {
+  priorAnchor: { id: string; status: string; fingerprint: string; version_number: number } | null;
+  supersedeRpc: { data: string | null; error: { message: string; code?: string } | null };
+  connectorArtifactLinked: boolean;
+  newAnchorPublicId: string;
+}) {
+  let rpcCalls = 0;
+  return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    from(table: string): any {
+      let selectCols = '';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chain: any = {
+        select: (cols?: string) => {
+          selectCols = cols ?? '';
+          return chain;
+        },
+        eq: () => chain,
+        is: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        neq: () => chain,
+        in: () => chain,
+        update: () => chain,
+        maybeSingle: async () => {
+          if (table === 'org_members') {
+            return { data: { user_id: '55555555-5555-4555-8555-555555555555', role: 'owner' }, error: null };
+          }
+          if (table === 'anchors' && selectCols.includes('version_number')) {
+            return { data: args.priorAnchor, error: null };
+          }
+          if (table === 'anchors' && selectCols.includes('public_id')) {
+            return { data: { public_id: args.newAnchorPublicId }, error: null };
+          }
+          if (table === 'connector_artifact') {
+            return args.connectorArtifactLinked
+              ? { data: { id: 'artifact-1' }, error: null }
+              : { data: null, error: null };
+          }
+          return { data: null, error: null };
+        },
+      };
+      return chain;
+    },
+    rpc: async (name: string) => {
+      rpcCalls += 1;
+      if (name === 'supersede_anchor') return args.supersedeRpc;
+      throw new Error(`unexpected rpc call in test db: ${name}`);
+    },
+    // exposed for the "never called" assertion below
+    get rpcCallCount() {
+      return rpcCalls;
+    },
+  };
+}
+
+function driveRow(over: Partial<ConnectorArtifactRow> = {}): ConnectorArtifactRow {
+  return {
+    id: 'artifact-1',
+    org_id: '33333333-3333-4333-8333-333333333333',
+    status: 'processing',
+    fingerprint_sha256: '1'.repeat(64),
+    byte_length: 1024,
+    source: 'google_drive',
+    external_ref: 'drive-file-1',
+    metadata: { connector_source: 'google_drive', external_ref: 'drive-file-1' },
+    anchor_id: null,
+    credit_deduction_id: null,
+    updated_at: '2026-09-26T00:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('defaultMaterializeAnchor (real production code, injected deps) — integration-style', () => {
+  it('supersedes the prior anchor via the real function when the fingerprint changed', async () => {
+    const db = buildSupersessionTestDb({
+      priorAnchor: { id: 'prior-anchor-1', status: 'SECURED', fingerprint: '0'.repeat(64), version_number: 1 },
+      supersedeRpc: { data: '11111111-1111-4111-8111-111111111111', error: null },
+      connectorArtifactLinked: true,
+      newAnchorPublicId: 'pub-child-1',
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await defaultMaterializeAnchor(driveRow(), { db: db as any });
+
+    // This is the REAL function's REAL output — not a hand-constructed
+    // observation — fed through the driver's own classifier shape, proving
+    // the classifier actually agrees with what defaultMaterializeAnchor does.
+    expect(result).toMatchObject({
+      outcome: 'linked',
+      anchorId: '11111111-1111-4111-8111-111111111111',
+      anchorPublicId: 'pub-child-1',
+      created: true,
+    });
+  });
+
+  it('fails closed (prior_anchor_revoked) and never calls supersede_anchor when the prior head is REVOKED', async () => {
+    const db = buildSupersessionTestDb({
+      priorAnchor: { id: 'prior-anchor-1', status: 'REVOKED', fingerprint: '0'.repeat(64), version_number: 1 },
+      supersedeRpc: { data: null, error: { message: 'should never be called' } },
+      connectorArtifactLinked: true,
+      newAnchorPublicId: 'irrelevant',
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await defaultMaterializeAnchor(driveRow(), { db: db as any });
+
+    expect(result).toEqual({ outcome: 'prior_anchor_revoked' });
+    expect(db.rpcCallCount).toBe(0);
+  });
+
+  it('falls through to a plain materialize when there is no prior anchor (first-ever version)', async () => {
+    const db = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      from(table: string): any {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const chain: any = {
+          select: () => chain,
+          eq: () => chain,
+          is: () => chain,
+          order: () => chain,
+          limit: () => chain,
+        neq: () => chain,
+          in: () => chain,
+          maybeSingle: async () => {
+            if (table === 'org_members') return { data: { user_id: '55555555-5555-4555-8555-555555555555', role: 'owner' }, error: null };
+            return { data: null, error: null }; // no prior anchor, no existing envelope anchor
+          },
+        };
+        return chain;
+      },
+      rpc: async (name: string) => {
+        if (name === 'materialize_connector_artifact_anchor') {
+          return {
+            data: { outcome: 'linked', anchor_id: '22222222-2222-4222-8222-222222222222', public_id: 'pub-1', created: true },
+            error: null,
+          };
+        }
+        throw new Error(`unexpected rpc call: ${name}`);
+      },
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await defaultMaterializeAnchor(driveRow(), { db: db as any });
+    expect(result).toMatchObject({
+      outcome: 'linked', anchorId: '22222222-2222-4222-8222-222222222222', created: true,
+    });
+  });
+});
 
 describe('parseArgs', () => {
   it('defaults to local self-test mode', () => {
