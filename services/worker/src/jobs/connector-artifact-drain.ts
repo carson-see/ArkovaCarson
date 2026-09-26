@@ -623,7 +623,30 @@ export async function defaultMaterializeAnchor(
         // mutate it, never mint an independent replacement automatically.
         return { outcome: 'prior_anchor_revoked' };
       }
-      return supersedeConnectorAnchor(row, prior.id, userId, deps);
+      // SCRUM-5290 / DS-04: `userId` above may be a MEMBER owner — DS-04 exists
+      // precisely so an ordinary, non-admin member can own their own personal
+      // connector connection. But `supersede_anchor` (migration 0367) hard-
+      // requires `caller_profile.role = 'ORG_ADMIN'` and raises otherwise, and
+      // that raise is indistinguishable from a transient failure at this layer.
+      // The row would be reaped back to `queued` every 15 minutes and retry
+      // forever, so every update to a non-admin member's connected document
+      // would be permanently, silently un-supersede-able.
+      //
+      // The supersede call therefore resolves its OWN org-admin actor. The
+      // anchor's ownership is unaffected: `supersede_anchor` inherits `user_id`
+      // from the prior anchor, so the member keeps their record.
+      const supersedeActorId = await resolveOrgActorUserId(deps, row.org_id);
+      if (!supersedeActorId) {
+        // No org-admin actor resolvable: do NOT fall through to a plain insert,
+        // which would silently reintroduce the duplicate-anchor defect this
+        // change exists to remove. Fail closed and leave the row for retry.
+        defaultLogger.warn(
+          { artifactId: row.id, orgId: row.org_id },
+          'connector supersession: no org-admin actor resolvable; leaving artifact queued',
+        );
+        return { outcome: 'lost_lease' as const };
+      }
+      return supersedeConnectorAnchor(row, prior.id, supersedeActorId, deps);
     }
     // No prior anchor (first-ever version of this file), or the fingerprint
     // is unchanged (identical content re-delivered) — fall through to the
