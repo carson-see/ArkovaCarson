@@ -284,6 +284,23 @@
         "0482"
       ],
       "reason": "both .sql files are now on origin/main (0443 via #2825, 0482 via #3036); the exemption is only for prod rows with no file on main"
+    },
+    {
+      "date": "2026-09-25",
+      "action": "remove",
+      "prefixes": [
+        "0481"
+      ],
+      "reason": "0481_uat14_profile_brand_media.sql lands on main with this PR (#3033), so its prod ledger row is no longer file-less"
+    },
+    {
+      "date": "2026-09-26",
+      "action": "remove",
+      "prefixes": [
+        "0471",
+        "0476"
+      ],
+      "reason": "merge of origin/main into PR #3033 (cto/uat14-recovery-20260921): both .sql files are now on origin/main (0471, 0476), so this PR branch's own exemptions for them are stale. Superseded by origin/main's current exemptPrefixes, which correctly keeps 0443 and 0481 (0481 is this PR's own not-yet-merged migration, applied ahead of merge per CLAUDE.md 0 rule 10 and exempted in the same motion; remove it when #3033 lands)."
     }
   ],
   "exemptPrefixes": [

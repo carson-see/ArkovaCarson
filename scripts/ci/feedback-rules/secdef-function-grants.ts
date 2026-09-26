@@ -95,6 +95,13 @@ export const DELIBERATELY_PUBLIC = new Set([
   // it, gating the parent/child affiliation behind two-party consent.
   'public.get_public_org_profile',
   'public.get_org_subtree',
+  // 0481: public profile media is private Storage content. Anonymous reads are
+  // authorized only through the personal public-toggle/ACTIVE guard, and both
+  // v2 projections precheck the same active/public boundary before returning
+  // an opaque object path. The browser exchanges that path for a short lease.
+  'public.can_read_profile_media',
+  'public.get_public_member_profile_v2',
+  'public.get_public_org_profile_v2',
 ]);
 
 /**
@@ -140,6 +147,10 @@ export const DELIBERATELY_AUTHENTICATED = new Set([
   'public.ensure_org_referral_code',
   'public.record_org_referral',
   'public.get_org_referrals',
+  // 0481: private Storage write policies call this as the signed-in actor. Its
+  // body derives auth.uid()/AAL and exact active owner or organization-admin
+  // authority; anonymous execution remains revoked.
+  'public.can_write_profile_media',
 ]);
 
 // 0454 is already applied on staging and must remain byte-identical. A future

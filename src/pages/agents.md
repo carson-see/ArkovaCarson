@@ -945,6 +945,15 @@ The public gateway serves the machine-readable reference at `/api/docs/spec.json
 
 `OrgProfilePage` is the route-org shell: it passes the route org to Secure Document, registry, queue, and the additive `useOrgProfileFolders` wrapper. It renders safe HTTPS-only organization social links and composes folder filtering/management into Home. `AnchorQueuePage` carries `org_id` through list/run/resolve, queries the exact membership role, clears tenant-bound state on route changes, and ignores stale responses. Never fall back from a route org to the profile/active org.
 The queue scope key includes authenticated user and effective organization, so primary-organization changes also invalidate list requests and clear rows. An explicit empty or malformed `org_id` is visibly denied rather than falling back.
+## 2026-09-21 — UAT-14 brand media on OrgProfilePage (PR #3033 review)
+
+`orgBrandUpdates` / `orgBrandPublicMirror` are exported and unit-tested: the
+logo commit carries `logo_url` AND `logo_storage_path` in one update, and the
+public mirror is keyed on the INTERNAL org id because migration 0108's
+`org-logos` policies match `(storage.foldername(name))[1]` against
+`org_members.org_id::text`. A `public_id`-keyed public path is denied. Both
+upload surfaces disable their inputs and show `PROFILE_MEDIA_LABELS.MFA_REQUIRED`
+on an AAL1 session.
 
 ## 2026-09-25 — PROOF-06: RecordDetailPage's two proof downloads are now symmetric
 
