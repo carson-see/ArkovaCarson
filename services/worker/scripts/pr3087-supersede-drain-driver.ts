@@ -123,9 +123,22 @@
  * and must never be cited as T3 soak evidence.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  makeProbe as probe,
+  aggregateProbes as aggregate,
+  tallyProbes,
+  parseDriverArgs,
+  emitDriverRow,
+  readAdmissionJson,
+  resolveSupabaseCredentials,
+  ensureFixtureAuthUser,
+  buildRequestUrl,
+  pollUntil,
+  runLiveLoop,
+  type ProbeResult,
+  type BaseDriverArgs,
+} from './lib/soak-driver-harness.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -157,30 +170,18 @@ export const FIXTURE_PREFIX = 'pr3087-soak';
 // Types
 // ---------------------------------------------------------------------------
 
-export type DriverMode = 'self-test' | 'live';
+export type { ProbeResult };
 
-export interface DriverArgs {
-  mode: DriverMode;
-  targetUrl?: string;
-  admissionJson?: string;
-  evidenceJsonl?: string;
+export interface DriverArgs extends BaseDriverArgs {
   cronSecret?: string;
   bearerToken?: string;
-  durationMin: number;
-  intervalSec: number;
-}
-
-export interface ProbeResult {
-  name: string;
-  status: 'pass' | 'fail';
-  detail: string;
 }
 
 export interface DriverRow {
   utc: string;
   pr: 3087;
   tier: 'T3';
-  mode: DriverMode;
+  mode: BaseDriverArgs['mode'];
   evidenceForSoak: boolean;
   changedBehavior: string;
   status: 'pass' | 'fail';
@@ -223,10 +224,6 @@ export interface ProvenanceEvent {
 // collapsed into a shared boolean (task requirement: "an assertion that
 // cannot fail is not evidence").
 // ---------------------------------------------------------------------------
-
-function probe(name: string, ok: boolean, detail: string): ProbeResult {
-  return { name, status: ok ? 'pass' : 'fail', detail };
-}
 
 /** Assertion 1. Explicit on STATUS — the founder decision this PR implements. */
 export function classifySupersedeNotRevoke(priorStatusAfter: string): ProbeResult {
@@ -423,22 +420,11 @@ export function classifyMemberOwnedSupersede(args: {
   );
 }
 
-/** A cycle passes only if every probe in it passed. One failure fails the row. */
-export function aggregate(probes: ProbeResult[]): 'pass' | 'fail' {
-  return probes.some((p) => p.status === 'fail') ? 'fail' : 'pass';
-}
+export { aggregate };
 
 /** Per-assertion counters, so a reviewer can count coverage without re-reading probes. */
 export function tally(probes: ProbeResult[]): Record<string, number | boolean> {
-  const counts: Record<string, number | boolean> = {};
-  for (const name of Object.values(ASSERTION)) {
-    const inFamily = probes.filter((p) => p.name === name);
-    counts[`${name}_ran`] = inFamily.length > 0;
-    counts[`${name}_passed`] = inFamily.length > 0 && inFamily.every((p) => p.status === 'pass');
-  }
-  counts.probes_total = probes.length;
-  counts.probes_failed = probes.filter((p) => p.status === 'fail').length;
-  return counts;
+  return tallyProbes(probes, Object.values(ASSERTION));
 }
 
 // ---------------------------------------------------------------------------
@@ -563,24 +549,6 @@ interface FixtureIdentity {
   memberUserId: string;
 }
 
-async function ensureFixtureUser(
-  db: SupabaseClient,
-  email: string,
-): Promise<string> {
-  const { data: existing } = await db.from('profiles').select('id').eq('email', email).maybeSingle();
-  if (existing && (existing as { id?: string }).id) return (existing as { id: string }).id;
-
-  const { data: created, error: createError } = await db.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    password: randomUUID(),
-  });
-  if (createError || !created?.user) {
-    throw new Error(`could not create fixture auth user ${email}: ${createError?.message ?? 'unknown'}`);
-  }
-  return created.user.id;
-}
-
 /**
  * Idempotent, re-runnable fixture setup: one org, one ORG_ADMIN owner, one
  * plain ORG_MEMBER. Resolved by a deterministic email/display_name so a
@@ -598,8 +566,8 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
     .eq('display_name', orgDisplayName)
     .maybeSingle();
 
-  const orgAdminUserId = await ensureFixtureUser(db, ownerEmail);
-  const memberUserId = await ensureFixtureUser(db, memberEmail);
+  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail);
+  const memberUserId = await ensureFixtureAuthUser(db, memberEmail);
 
   let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
   if (!orgId) {
@@ -690,31 +658,17 @@ async function enqueueArtifact(
  * never fail this cycle by itself. The per-probe DB/HTTP assertions in
  * `runCycle` are the actual evidence; a genuine transport failure (rig
  * unreachable) still propagates as a thrown exception from `fetch` itself,
- * which `main()`'s per-cycle try/catch turns into an explicit `cycle_error`
- * probe rather than a silently empty row.
+ * which `main()`'s per-cycle try/catch (via `runLiveLoop`) turns into an
+ * explicit `cycle_error` probe rather than a silently empty row.
  */
 async function triggerDrain(targetUrl: string, cronSecret?: string, bearerToken?: string): Promise<void> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (cronSecret) headers['x-cron-secret'] = cronSecret;
   if (bearerToken) headers.authorization = `Bearer ${bearerToken}`;
-  await fetch(`${targetUrl.replace(/\/+$/, '')}/jobs/drain-connector-artifacts`, {
+  await fetch(buildRequestUrl(targetUrl, '/jobs/drain-connector-artifacts'), {
     method: 'POST',
     headers,
   });
-}
-
-async function pollUntil<T>(
-  fn: () => Promise<T>,
-  ready: (value: T) => boolean,
-  attempts: number,
-  delayMs: number,
-): Promise<T> {
-  let last: T = await fn();
-  for (let i = 0; i < attempts && !ready(last); i += 1) {
-    await new Promise((r) => setTimeout(r, delayMs));
-    last = await fn();
-  }
-  return last;
 }
 
 async function fetchAnchorByFilter(
@@ -746,17 +700,20 @@ async function fetchArtifactStatus(db: SupabaseClient, artifactId: string): Prom
 }
 
 async function verifyPublicId(targetUrl: string, publicId: string): Promise<VerifyProbeResponse> {
-  const res = await fetch(`${targetUrl.replace(/\/+$/, '')}/api/v1/verify/${encodeURIComponent(publicId)}`);
-  const body = await res.json().catch(() => ({}));
+  const res = await fetch(buildRequestUrl(targetUrl, `/api/v1/verify/${encodeURIComponent(publicId)}`));
+  const body = await res.json().catch(() => ({})) as VerifyProbeResponse['body'];
   return { httpStatus: res.status, body };
 }
 
 async function provenanceForPublicId(targetUrl: string, publicId: string): Promise<ProvenanceEvent[]> {
-  const res = await fetch(
-    `${targetUrl.replace(/\/+$/, '')}/api/v1/verify/${encodeURIComponent(publicId)}/provenance`,
-  );
+  const res = await fetch(buildRequestUrl(targetUrl, `/api/v1/verify/${encodeURIComponent(publicId)}/provenance`));
   const body = await res.json().catch(() => ({ events: [] }));
   return ((body as { events?: ProvenanceEvent[] }).events) ?? [];
+}
+
+/** Picks the highest-`version_number` row. Requires a non-empty array (callers only pass live fixture rows). */
+function latestVersion(anchors: AnchorFacts[]): AnchorFacts {
+  return anchors.reduce((max, a) => (a.version_number > max.version_number ? a : max), anchors[0]);
 }
 
 /** One full pass over all eight assertions, using a cycle-unique external_ref per scenario. */
@@ -797,8 +754,10 @@ async function runCycle(
   const prior1 = afterUpdate.find((a) => a.id === v1.id) ?? null;
   const child1 = afterUpdate.find((a) => a.id !== v1.id) ?? null;
 
-  probes.push(classifySupersedeNotRevoke(prior1?.status ?? 'MISSING'));
-  probes.push(classifyLineage({ id: v1.id, version_number: v1.version_number }, child1));
+  probes.push(
+    classifySupersedeNotRevoke(prior1?.status ?? 'MISSING'),
+    classifyLineage({ id: v1.id, version_number: v1.version_number }, child1),
+  );
 
   const verifyRes = await verifyPublicId(targetUrl, v1.public_id);
   probes.push(classifyVerifyResponse(verifyRes));
@@ -832,7 +791,7 @@ async function runCycle(
   // no-op — a fixed sleep is not evidence the artifact was ever actually
   // handled. Capture the artifact id and require it reach a TERMINAL result
   // (materialized or failed) before asserting anything about the anchor.
-  const headBefore = anchorsAfterReplay.reduce((max, a) => (a.version_number > max.version_number ? a : max));
+  const headBefore = latestVersion(anchorsAfterReplay);
   const noopArtifactId = await enqueueArtifact(db, {
     orgId: fx.orgId, source: 'google_drive', externalRef: gdRef, externalRevision: 'rev-3',
     fingerprint: hashB, // unchanged content
@@ -853,7 +812,7 @@ async function runCycle(
     ));
   } else {
     const anchorsAfterNoop = await fetchAnchorByFilter(db, fx.orgId, 'google_drive', gdRef);
-    const headAfter = anchorsAfterNoop.reduce((max, a) => (a.version_number > max.version_number ? a : max));
+    const headAfter = latestVersion(anchorsAfterNoop);
     probes.push(classifyNoopIdenticalFingerprint({
       headAnchorIdBefore: headBefore.id, headAnchorIdAfter: headAfter.id, headStatusAfter: headAfter.status,
     }));
@@ -909,122 +868,75 @@ async function runCycle(
 // ---------------------------------------------------------------------------
 
 export function parseArgs(argv: string[]): DriverArgs {
-  const args: DriverArgs = { mode: 'self-test', durationMin: 0, intervalSec: 900 };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    switch (arg) {
-      case '--self-test':
-        args.mode = 'self-test';
-        break;
-      case '--live':
-        args.mode = 'live';
-        break;
-      case '--target-url':
-        args.targetUrl = argv[++i];
-        break;
-      case '--admission-json':
-        args.admissionJson = argv[++i];
-        break;
-      case '--evidence-jsonl':
-        args.evidenceJsonl = argv[++i];
-        break;
-      case '--cron-secret':
-        args.cronSecret = argv[++i];
-        break;
-      case '--bearer-token':
-        args.bearerToken = argv[++i];
-        break;
-      case '--duration-min':
-        args.durationMin = Number.parseInt(argv[++i] ?? '0', 10);
-        break;
-      case '--interval-sec':
-        args.intervalSec = Number.parseInt(argv[++i] ?? '900', 10);
-        break;
-      default:
-        throw new Error(`Unknown argument: ${arg}`);
-    }
-  }
-  return args;
+  return parseDriverArgs(
+    argv,
+    { cronSecret: undefined, bearerToken: undefined } as Pick<DriverArgs, 'cronSecret' | 'bearerToken'>,
+    [
+      { flag: '--cron-secret', apply: (args, value) => { args.cronSecret = value; } },
+      { flag: '--bearer-token', apply: (args, value) => { args.bearerToken = value; } },
+    ],
+  );
 }
 
-function emit(row: DriverRow, evidenceJsonl?: string): void {
-  const line = `${JSON.stringify(row)}\n`;
-  if (evidenceJsonl) appendFileSync(evidenceJsonl, line);
-  process.stdout.write(line);
-}
-
-function resolveCredentials(): { url: string; key: string } {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error('live mode requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
-  }
-  return { url, key };
+function buildRow(args: {
+  mode: BaseDriverArgs['mode'];
+  evidenceForSoak: boolean;
+  status: 'pass' | 'fail';
+  cycle: number;
+  probes: ProbeResult[];
+  admission?: Record<string, unknown>;
+  blockers?: string[];
+}): DriverRow {
+  return {
+    utc: new Date().toISOString(),
+    pr: 3087,
+    tier: 'T3',
+    mode: args.mode,
+    evidenceForSoak: args.evidenceForSoak,
+    changedBehavior: CHANGED_BEHAVIOR,
+    status: args.status,
+    cycle: args.cycle,
+    counts: tally(args.probes),
+    probes: args.probes,
+    admission: args.admission,
+    blockers: args.blockers,
+  };
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = args.admissionJson
-    ? (JSON.parse(readFileSync(args.admissionJson, 'utf8')) as Record<string, unknown>)
-    : undefined;
+  const admission = readAdmissionJson(args.admissionJson);
 
   if (args.mode === 'self-test') {
     const probes = runSelfTest();
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3087,
-      tier: 'T3',
+    emitDriverRow(buildRow({
       mode: 'self-test',
       evidenceForSoak: false,
-      changedBehavior: CHANGED_BEHAVIOR,
       status: aggregate(probes),
       cycle: 0,
-      counts: tally(probes),
       probes,
       blockers: ['self-test mode — local validation only, NOT T3 soak evidence'],
-    }, args.evidenceJsonl);
+    }), args.evidenceJsonl);
     process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
     return;
   }
 
   if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const { url, key } = resolveCredentials();
-  const db = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+  const targetUrl = args.targetUrl;
+  const creds = resolveSupabaseCredentials({ requireAnonKey: false });
+  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const fx = await ensureFixtureIdentity(db);
 
-  const startedAt = Date.now();
-  const deadline = startedAt + args.durationMin * 60_000;
-  let cycle = 0;
-  let anyCycleFailed = false;
-
-  do {
-    cycle += 1;
-    let probes: ProbeResult[];
-    try {
-      probes = await runCycle(db, args.targetUrl, fx, cycle, args.cronSecret, args.bearerToken);
-    } catch (error) {
-      probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
-    }
-
-    if (aggregate(probes) === 'fail') anyCycleFailed = true;
-
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3087,
-      tier: 'T3',
-      mode: 'live',
-      evidenceForSoak: true,
-      changedBehavior: CHANGED_BEHAVIOR,
-      status: aggregate(probes),
-      cycle,
-      counts: tally(probes),
-      probes,
-      admission,
-    }, args.evidenceJsonl);
-
-    if (Date.now() >= deadline) break;
-    await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
-  } while (Date.now() < deadline);
+  const { anyCycleFailed } = await runLiveLoop({
+    durationMinutes: args.durationMin,
+    intervalSeconds: args.intervalSec,
+    runCycle: (cycle) => runCycle(db, targetUrl, fx, cycle, args.cronSecret, args.bearerToken),
+    onCycleComplete: (cycle, probes, status) => {
+      emitDriverRow(buildRow({
+        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
+      }), args.evidenceJsonl);
+    },
+  });
 
   // A failed probe anywhere in the run must fail the process — see pr3083's
   // driver for the same fix and why the CLI must not exit 0 on a red run.
@@ -1033,8 +945,10 @@ async function main(): Promise<void> {
 
 const invokedDirectly = process.argv[1]?.includes('pr3087-supersede-drain-driver');
 if (invokedDirectly) {
-  main().catch((error: unknown) => {
+  try {
+    await main();
+  } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'driver failed'}\n`);
     process.exitCode = 1;
-  });
+  }
 }

@@ -95,9 +95,24 @@
  * and must never be cited as T2 soak evidence.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  makeProbe as probe,
+  aggregateProbes as aggregate,
+  tallyProbes,
+  parseDriverArgs,
+  emitDriverRow,
+  readAdmissionJson,
+  resolveSupabaseCredentials,
+  ensureFixtureAuthUser,
+  signInFixtureUser,
+  fetchJson,
+  runLiveLoop,
+  type ProbeResult,
+  type BaseDriverArgs,
+  type JsonHttpResult,
+} from './lib/soak-driver-harness.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -129,28 +144,14 @@ export const FIXTURE_PREFIX = 'pr3083-soak';
 // Types
 // ---------------------------------------------------------------------------
 
-export type DriverMode = 'self-test' | 'live';
-
-export interface DriverArgs {
-  mode: DriverMode;
-  targetUrl?: string;
-  admissionJson?: string;
-  evidenceJsonl?: string;
-  durationMin: number;
-  intervalSec: number;
-}
-
-export interface ProbeResult {
-  name: string;
-  status: 'pass' | 'fail';
-  detail: string;
-}
+export type { ProbeResult };
+export type DriverArgs = BaseDriverArgs;
 
 export interface DriverRow {
   utc: string;
   pr: 3083;
   tier: 'T2';
-  mode: DriverMode;
+  mode: BaseDriverArgs['mode'];
   evidenceForSoak: boolean;
   changedBehavior: string;
   status: 'pass' | 'fail';
@@ -172,10 +173,6 @@ export interface KeyFacts {
 // Every one returns a distinct pass/fail with its OWN detail string; none are
 // collapsed into a shared boolean.
 // ---------------------------------------------------------------------------
-
-function probe(name: string, ok: boolean, detail: string): ProbeResult {
-  return { name, status: ok ? 'pass' : 'fail', detail };
-}
 
 /** Assertion 1. The pre-fix defect is a 200 here — a suspended agent's key kept working. */
 export function classifySuspendRejectsKey(httpStatusAfterSuspend: number): ProbeResult {
@@ -292,22 +289,11 @@ export function classifyNonStatusEditPreservesKeys(args: {
   );
 }
 
-/** A cycle passes only if every probe in it passed. One failure fails the row. */
-export function aggregate(probes: ProbeResult[]): 'pass' | 'fail' {
-  return probes.some((p) => p.status === 'fail') ? 'fail' : 'pass';
-}
+export { aggregate };
 
 /** Per-assertion counters, so a reviewer can count coverage without re-reading probes. */
 export function tally(probes: ProbeResult[]): Record<string, number | boolean> {
-  const counts: Record<string, number | boolean> = {};
-  for (const name of Object.values(ASSERTION)) {
-    const inFamily = probes.filter((p) => p.name === name);
-    counts[`${name}_ran`] = inFamily.length > 0;
-    counts[`${name}_passed`] = inFamily.length > 0 && inFamily.every((p) => p.status === 'pass');
-  }
-  counts.probes_total = probes.length;
-  counts.probes_failed = probes.filter((p) => p.status === 'fail').length;
-  return counts;
+  return tallyProbes(probes, Object.values(ASSERTION));
 }
 
 // ---------------------------------------------------------------------------
@@ -401,25 +387,6 @@ interface FixtureIdentity {
   orgAdminPassword: string;
 }
 
-async function ensureFixtureUser(
-  db: SupabaseClient,
-  email: string,
-  password: string,
-): Promise<string> {
-  const { data: existing } = await db.from('profiles').select('id').eq('email', email).maybeSingle();
-  if (existing && (existing as { id?: string }).id) return (existing as { id: string }).id;
-
-  const { data: created, error: createError } = await db.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    password,
-  });
-  if (createError || !created?.user) {
-    throw new Error(`could not create fixture auth user ${email}: ${createError?.message ?? 'unknown'}`);
-  }
-  return created.user.id;
-}
-
 /**
  * Idempotent, re-runnable fixture setup: one org, one ORG_ADMIN owner. A
  * fixed, deterministic password lets a re-run (interrupted soak resume) sign
@@ -438,13 +405,13 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
 
   // Re-using a stable password across resumed runs by storing it on the
   // profile row would leak a credential into a durable table. Instead: if the
-  // auth user already exists, `ensureFixtureUser` returns its id without
+  // auth user already exists, `ensureFixtureAuthUser` returns its id without
   // touching its password, and re-signing-in requires the SAME password used
   // to create it — so it is deterministically derived from the fixture email
   // rather than randomized per run. Not a secret (fixture-only, soak rig
   // only): the goal is resumability, not confidentiality.
   const password = `Pr3083Soak-${Buffer.from(ownerEmail).toString('hex').slice(0, 24)}-Aa1!`;
-  const orgAdminUserId = await ensureFixtureUser(db, ownerEmail, password);
+  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail, password);
 
   let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
   if (!orgId) {
@@ -469,40 +436,15 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
   return { orgId, orgAdminUserId, orgAdminEmail: ownerEmail, orgAdminPassword: password };
 }
 
-async function signInFixtureUser(
-  supabaseUrl: string,
-  anonKey: string,
-  email: string,
-  password: string,
-): Promise<string> {
-  const anon = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data, error } = await anon.auth.signInWithPassword({ email, password });
-  if (error || !data.session?.access_token) {
-    throw new Error(`fixture sign-in failed for ${email}: ${error?.message ?? 'no session returned'}`);
-  }
-  return data.session.access_token;
-}
-
-interface AgentApiResult {
-  httpStatus: number;
-  body: Record<string, unknown>;
-}
-
 async function callWorker(
   targetUrl: string,
   path: string,
   init: { method: string; bearerToken?: string; apiKey?: string; body?: unknown },
-): Promise<AgentApiResult> {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
+): Promise<JsonHttpResult> {
+  const headers: Record<string, string> = {};
   if (init.bearerToken) headers.authorization = `Bearer ${init.bearerToken}`;
   if (init.apiKey) headers.authorization = `Bearer ${init.apiKey}`;
-  const res = await fetch(`${targetUrl.replace(/\/+$/, '')}${path}`, {
-    method: init.method,
-    headers,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
-  const body = await res.json().catch(() => ({}));
-  return { httpStatus: res.status, body: body as Record<string, unknown> };
+  return fetchJson(targetUrl, path, { method: init.method, headers, body: init.body });
 }
 
 async function fetchKeyFacts(db: SupabaseClient, orgId: string, keyId: string): Promise<KeyFacts> {
@@ -656,124 +598,74 @@ async function runCycle(
 // ---------------------------------------------------------------------------
 
 export function parseArgs(argv: string[]): DriverArgs {
-  const args: DriverArgs = { mode: 'self-test', durationMin: 0, intervalSec: 900 };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    switch (arg) {
-      case '--self-test':
-        args.mode = 'self-test';
-        break;
-      case '--live':
-        args.mode = 'live';
-        break;
-      case '--target-url':
-        args.targetUrl = argv[++i];
-        break;
-      case '--admission-json':
-        args.admissionJson = argv[++i];
-        break;
-      case '--evidence-jsonl':
-        args.evidenceJsonl = argv[++i];
-        break;
-      case '--duration-min':
-        args.durationMin = Number.parseInt(argv[++i] ?? '0', 10);
-        break;
-      case '--interval-sec':
-        args.intervalSec = Number.parseInt(argv[++i] ?? '900', 10);
-        break;
-      default:
-        throw new Error(`Unknown argument: ${arg}`);
-    }
-  }
-  return args;
+  return parseDriverArgs(argv, {}, []);
 }
 
-function emit(row: DriverRow, evidenceJsonl?: string): void {
-  const line = `${JSON.stringify(row)}\n`;
-  if (evidenceJsonl) appendFileSync(evidenceJsonl, line);
-  process.stdout.write(line);
-}
-
-function resolveCredentials(): { url: string; serviceRoleKey: string; anonKey: string } {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!url || !serviceRoleKey || !anonKey) {
-    throw new Error('live mode requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY');
-  }
-  return { url, serviceRoleKey, anonKey };
+function buildRow(args: {
+  mode: BaseDriverArgs['mode'];
+  evidenceForSoak: boolean;
+  status: 'pass' | 'fail';
+  cycle: number;
+  probes: ProbeResult[];
+  admission?: Record<string, unknown>;
+  blockers?: string[];
+}): DriverRow {
+  return {
+    utc: new Date().toISOString(),
+    pr: 3083,
+    tier: 'T2',
+    mode: args.mode,
+    evidenceForSoak: args.evidenceForSoak,
+    changedBehavior: CHANGED_BEHAVIOR,
+    status: args.status,
+    cycle: args.cycle,
+    counts: tally(args.probes),
+    probes: args.probes,
+    admission: args.admission,
+    blockers: args.blockers,
+  };
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = args.admissionJson
-    ? (JSON.parse(readFileSync(args.admissionJson, 'utf8')) as Record<string, unknown>)
-    : undefined;
+  const admission = readAdmissionJson(args.admissionJson);
 
   if (args.mode === 'self-test') {
     const probes = runSelfTest();
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3083,
-      tier: 'T2',
+    emitDriverRow(buildRow({
       mode: 'self-test',
       evidenceForSoak: false,
-      changedBehavior: CHANGED_BEHAVIOR,
       status: aggregate(probes),
       cycle: 0,
-      counts: tally(probes),
       probes,
       blockers: ['self-test mode — local validation only, NOT T2 soak evidence'],
-    }, args.evidenceJsonl);
+    }), args.evidenceJsonl);
     process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
     return;
   }
 
   if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const { url, serviceRoleKey, anonKey } = resolveCredentials();
-  const db = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const targetUrl = args.targetUrl;
+  const creds = resolveSupabaseCredentials({ requireAnonKey: true });
+  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const fx = await ensureFixtureIdentity(db);
 
-  const startedAt = Date.now();
-  const deadline = startedAt + args.durationMin * 60_000;
-  let cycle = 0;
-  let anyCycleFailed = false;
-
-  do {
-    cycle += 1;
-    let probes: ProbeResult[];
-    try {
+  const { anyCycleFailed } = await runLiveLoop({
+    durationMinutes: args.durationMin,
+    intervalSeconds: args.intervalSec,
+    runCycle: async (cycle) => {
       // Fresh sign-in EVERY cycle rather than one token captured before the
-      // loop. `signInFixtureUser` builds its client with `autoRefreshToken:
-      // false`, so a token minted once before a 24h/4h soak eventually
-      // expires mid-run and every subsequent cycle 401s — the exact cascade
-      // that killed a prior night's soak. A per-cycle sign-in is cheap next
-      // to a 900s interval and makes token lifetime a non-issue.
-      const bearerToken = await signInFixtureUser(url, anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
-      probes = await runCycle(db, args.targetUrl, fx, bearerToken, cycle);
-    } catch (error) {
-      probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
-    }
-
-    if (aggregate(probes) === 'fail') anyCycleFailed = true;
-
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3083,
-      tier: 'T2',
-      mode: 'live',
-      evidenceForSoak: true,
-      changedBehavior: CHANGED_BEHAVIOR,
-      status: aggregate(probes),
-      cycle,
-      counts: tally(probes),
-      probes,
-      admission,
-    }, args.evidenceJsonl);
-
-    if (Date.now() >= deadline) break;
-    await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
-  } while (Date.now() < deadline);
+      // loop — see `signInFixtureUser`'s own doc comment for the incident
+      // this avoids.
+      const bearerToken = await signInFixtureUser(creds.url, creds.anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
+      return runCycle(db, targetUrl, fx, bearerToken, cycle);
+    },
+    onCycleComplete: (cycle, probes, status) => {
+      emitDriverRow(buildRow({
+        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
+      }), args.evidenceJsonl);
+    },
+  });
 
   // A failed probe anywhere in the run must fail the process, the same way
   // --self-test already does — otherwise the CLI exits 0 with failed probes
@@ -784,8 +676,10 @@ async function main(): Promise<void> {
 
 const invokedDirectly = process.argv[1]?.includes('pr3083-agent-suspend-keys-driver');
 if (invokedDirectly) {
-  main().catch((error: unknown) => {
+  try {
+    await main();
+  } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'driver failed'}\n`);
     process.exitCode = 1;
-  });
+  }
 }

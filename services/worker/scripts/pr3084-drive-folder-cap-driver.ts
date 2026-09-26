@@ -62,8 +62,22 @@
  * and must never be cited as T2 soak evidence.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  makeProbe as probe,
+  aggregateProbes as aggregate,
+  tallyProbes,
+  parseDriverArgs,
+  emitDriverRow,
+  readAdmissionJson,
+  resolveSupabaseCredentials,
+  ensureFixtureAuthUser,
+  signInFixtureUser,
+  fetchJson,
+  runLiveLoop,
+  type ProbeResult,
+  type BaseDriverArgs,
+} from './lib/soak-driver-harness.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -92,28 +106,14 @@ export const FIXTURE_PREFIX = 'pr3084-soak';
 // Types
 // ---------------------------------------------------------------------------
 
-export type DriverMode = 'self-test' | 'live';
-
-export interface DriverArgs {
-  mode: DriverMode;
-  targetUrl?: string;
-  admissionJson?: string;
-  evidenceJsonl?: string;
-  durationMin: number;
-  intervalSec: number;
-}
-
-export interface ProbeResult {
-  name: string;
-  status: 'pass' | 'fail';
-  detail: string;
-}
+export type { ProbeResult };
+export type DriverArgs = BaseDriverArgs;
 
 export interface DriverRow {
   utc: string;
   pr: 3084;
   tier: 'T2';
-  mode: DriverMode;
+  mode: BaseDriverArgs['mode'];
   evidenceForSoak: boolean;
   changedBehavior: string;
   status: 'pass' | 'fail';
@@ -133,10 +133,6 @@ export interface RuleSaveAttempt {
 // ---------------------------------------------------------------------------
 // Pure classifiers — unit-testable without a network or a database.
 // ---------------------------------------------------------------------------
-
-function probe(name: string, ok: boolean, detail: string): ProbeResult {
-  return { name, status: ok ? 'pass' : 'fail', detail };
-}
 
 /** Assertion 1. The cap must be INCLUSIVE — exactly at the cap must succeed. */
 export function classifyExactlyThreeAccepted(attempt: RuleSaveAttempt): ProbeResult {
@@ -207,22 +203,11 @@ export function classifyCombinedShapeAtCapAccepted(attempt: RuleSaveAttempt): Pr
   );
 }
 
-/** A cycle passes only if every probe in it passed. One failure fails the row. */
-export function aggregate(probes: ProbeResult[]): 'pass' | 'fail' {
-  return probes.some((p) => p.status === 'fail') ? 'fail' : 'pass';
-}
+export { aggregate };
 
 /** Per-assertion counters, so a reviewer can count coverage without re-reading probes. */
 export function tally(probes: ProbeResult[]): Record<string, number | boolean> {
-  const counts: Record<string, number | boolean> = {};
-  for (const name of Object.values(ASSERTION)) {
-    const inFamily = probes.filter((p) => p.name === name);
-    counts[`${name}_ran`] = inFamily.length > 0;
-    counts[`${name}_passed`] = inFamily.length > 0 && inFamily.every((p) => p.status === 'pass');
-  }
-  counts.probes_total = probes.length;
-  counts.probes_failed = probes.filter((p) => p.status === 'fail').length;
-  return counts;
+  return tallyProbes(probes, Object.values(ASSERTION));
 }
 
 // ---------------------------------------------------------------------------
@@ -308,21 +293,6 @@ interface FixtureIdentity {
   orgAdminPassword: string;
 }
 
-async function ensureFixtureUser(db: SupabaseClient, email: string, password: string): Promise<string> {
-  const { data: existing } = await db.from('profiles').select('id').eq('email', email).maybeSingle();
-  if (existing && (existing as { id?: string }).id) return (existing as { id: string }).id;
-
-  const { data: created, error: createError } = await db.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    password,
-  });
-  if (createError || !created?.user) {
-    throw new Error(`could not create fixture auth user ${email}: ${createError?.message ?? 'unknown'}`);
-  }
-  return created.user.id;
-}
-
 /** One org, one org-admin owner (`org_members.role='owner'`, per `isCallerOrgAdmin`). */
 async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentity> {
   const ownerEmail = `${FIXTURE_PREFIX}-owner@arkova-soak.invalid`;
@@ -335,7 +305,7 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
     .eq('display_name', orgDisplayName)
     .maybeSingle();
 
-  const orgAdminUserId = await ensureFixtureUser(db, ownerEmail, password);
+  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail, password);
 
   let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
   if (!orgId) {
@@ -360,20 +330,6 @@ async function ensureFixtureIdentity(db: SupabaseClient): Promise<FixtureIdentit
   return { orgId, orgAdminEmail: ownerEmail, orgAdminPassword: password };
 }
 
-async function signInFixtureUser(
-  supabaseUrl: string,
-  anonKey: string,
-  email: string,
-  password: string,
-): Promise<string> {
-  const anon = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data, error } = await anon.auth.signInWithPassword({ email, password });
-  if (error || !data.session?.access_token) {
-    throw new Error(`fixture sign-in failed for ${email}: ${error?.message ?? 'no session returned'}`);
-  }
-  return data.session.access_token;
-}
-
 async function attemptRuleSave(
   targetUrl: string,
   bearerToken: string,
@@ -381,10 +337,10 @@ async function attemptRuleSave(
   triggerConfig: Record<string, unknown>,
   suffix: string,
 ): Promise<RuleSaveAttempt> {
-  const res = await fetch(`${targetUrl.replace(/\/+$/, '')}/admin/rules`, {
+  return fetchJson(targetUrl, '/admin/rules', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${bearerToken}` },
-    body: JSON.stringify({
+    headers: { authorization: `Bearer ${bearerToken}` },
+    body: {
       org_id: orgId,
       name: `${FIXTURE_PREFIX}-rule-${suffix}`.slice(0, 100),
       trigger_type: 'WORKSPACE_FILE_MODIFIED',
@@ -393,10 +349,8 @@ async function attemptRuleSave(
       action_type: 'AUTO_ANCHOR',
       action_config: {},
       enabled: false,
-    }),
+    },
   });
-  const body = await res.json().catch(() => ({}));
-  return { httpStatus: res.status, body: body as Record<string, unknown> };
 }
 
 /** One full pass over all four assertions, each against its OWN freshly-created rule. */
@@ -445,122 +399,75 @@ async function runCycle(
 // ---------------------------------------------------------------------------
 
 export function parseArgs(argv: string[]): DriverArgs {
-  const args: DriverArgs = { mode: 'self-test', durationMin: 0, intervalSec: 900 };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    switch (arg) {
-      case '--self-test':
-        args.mode = 'self-test';
-        break;
-      case '--live':
-        args.mode = 'live';
-        break;
-      case '--target-url':
-        args.targetUrl = argv[++i];
-        break;
-      case '--admission-json':
-        args.admissionJson = argv[++i];
-        break;
-      case '--evidence-jsonl':
-        args.evidenceJsonl = argv[++i];
-        break;
-      case '--duration-min':
-        args.durationMin = Number.parseInt(argv[++i] ?? '0', 10);
-        break;
-      case '--interval-sec':
-        args.intervalSec = Number.parseInt(argv[++i] ?? '900', 10);
-        break;
-      default:
-        throw new Error(`Unknown argument: ${arg}`);
-    }
-  }
-  return args;
+  return parseDriverArgs(argv, {}, []);
 }
 
-function emit(row: DriverRow, evidenceJsonl?: string): void {
-  const line = `${JSON.stringify(row)}\n`;
-  if (evidenceJsonl) appendFileSync(evidenceJsonl, line);
-  process.stdout.write(line);
-}
-
-function resolveCredentials(): { url: string; serviceRoleKey: string; anonKey: string } {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!url || !serviceRoleKey || !anonKey) {
-    throw new Error('live mode requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY');
-  }
-  return { url, serviceRoleKey, anonKey };
+function buildRow(args: {
+  mode: BaseDriverArgs['mode'];
+  evidenceForSoak: boolean;
+  status: 'pass' | 'fail';
+  cycle: number;
+  probes: ProbeResult[];
+  admission?: Record<string, unknown>;
+  blockers?: string[];
+}): DriverRow {
+  return {
+    utc: new Date().toISOString(),
+    pr: 3084,
+    tier: 'T2',
+    mode: args.mode,
+    evidenceForSoak: args.evidenceForSoak,
+    changedBehavior: CHANGED_BEHAVIOR,
+    status: args.status,
+    cycle: args.cycle,
+    counts: tally(args.probes),
+    probes: args.probes,
+    admission: args.admission,
+    blockers: args.blockers,
+  };
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = args.admissionJson
-    ? (JSON.parse(readFileSync(args.admissionJson, 'utf8')) as Record<string, unknown>)
-    : undefined;
+  const admission = readAdmissionJson(args.admissionJson);
 
   if (args.mode === 'self-test') {
     const probes = runSelfTest();
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3084,
-      tier: 'T2',
+    emitDriverRow(buildRow({
       mode: 'self-test',
       evidenceForSoak: false,
-      changedBehavior: CHANGED_BEHAVIOR,
       status: aggregate(probes),
       cycle: 0,
-      counts: tally(probes),
       probes,
       blockers: ['self-test mode — local validation only, NOT T2 soak evidence'],
-    }, args.evidenceJsonl);
+    }), args.evidenceJsonl);
     process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
     return;
   }
 
   if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const { url, serviceRoleKey, anonKey } = resolveCredentials();
-  const db = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const targetUrl = args.targetUrl;
+  const creds = resolveSupabaseCredentials({ requireAnonKey: true });
+  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const fx = await ensureFixtureIdentity(db);
 
-  const startedAt = Date.now();
-  const deadline = startedAt + args.durationMin * 60_000;
-  let cycle = 0;
-  let anyCycleFailed = false;
-
-  do {
-    cycle += 1;
-    let probes: ProbeResult[];
-    try {
+  const { anyCycleFailed } = await runLiveLoop({
+    durationMinutes: args.durationMin,
+    intervalSeconds: args.intervalSec,
+    runCycle: async (cycle) => {
       // Fresh sign-in EVERY cycle rather than one token captured before the
       // loop — see pr3083's driver for the incident this avoids: a token
       // minted once with autoRefreshToken:false expires mid-soak and every
       // later cycle 401s.
-      const bearerToken = await signInFixtureUser(url, anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
-      probes = await runCycle(args.targetUrl, fx, bearerToken, cycle);
-    } catch (error) {
-      probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
-    }
-
-    if (aggregate(probes) === 'fail') anyCycleFailed = true;
-
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3084,
-      tier: 'T2',
-      mode: 'live',
-      evidenceForSoak: true,
-      changedBehavior: CHANGED_BEHAVIOR,
-      status: aggregate(probes),
-      cycle,
-      counts: tally(probes),
-      probes,
-      admission,
-    }, args.evidenceJsonl);
-
-    if (Date.now() >= deadline) break;
-    await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
-  } while (Date.now() < deadline);
+      const bearerToken = await signInFixtureUser(creds.url, creds.anonKey, fx.orgAdminEmail, fx.orgAdminPassword);
+      return runCycle(targetUrl, fx, bearerToken, cycle);
+    },
+    onCycleComplete: (cycle, probes, status) => {
+      emitDriverRow(buildRow({
+        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
+      }), args.evidenceJsonl);
+    },
+  });
 
   // A failed probe anywhere in the run must fail the process — see pr3083's
   // driver for the same fix and why the CLI must not exit 0 on a red run.
@@ -569,8 +476,10 @@ async function main(): Promise<void> {
 
 const invokedDirectly = process.argv[1]?.includes('pr3084-drive-folder-cap-driver');
 if (invokedDirectly) {
-  main().catch((error: unknown) => {
+  try {
+    await main();
+  } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'driver failed'}\n`);
     process.exitCode = 1;
-  });
+  }
 }

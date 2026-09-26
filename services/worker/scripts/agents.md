@@ -153,6 +153,44 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
     neither is scored as an application regression — and a cycle where nothing was observed fails
     loudly rather than recording a hollow pass. That conflation invalidated the first soak window.
 
+## PR #3092 — SonarCloud quality-gate remediation on the four soak drivers
+
+The four T2/T3 soak drivers above (pr3083/pr3084/pr3086/pr3087) failed the SonarCloud quality gate on
+`feat/t2-soak-drivers`: 16.9% New Code duplication (gate: <=3%), plus Reliability/Security C ratings.
+Fixed without changing behavior (every driver's existing test file and `--self-test` still pass):
+
+- **Duplication.** The four drivers hand-rolled identical CLI parsing, evidence-row emission, Supabase
+  credential resolution, fixture-user creation/sign-in, and the live-mode cycle loop. Extracted into
+  `scripts/lib/soak-driver-harness.ts` (see that directory's own `agents.md` for the full export list) —
+  each driver now imports the shared implementation instead of repeating it, and `services/worker/
+  scripts/vendor/**` (the pr3086 vendored file, necessarily near-duplicate of its still-unmerged source)
+  is excluded from CPD in `.sonarcloud.properties`'s `sonar.cpd.exclusions`.
+- **S3776 cognitive complexity (each driver's own `main()`, one per file).** The deadline-tracking/
+  per-cycle-try-catch/exit-status loop moved into the harness's `runLiveLoop`; each `main()` now just
+  wires its own fixture setup and row-building into that call instead of containing the loop.
+- **S8786 (superlinear regex) + tssecurity S8476/S7044 (CSRF / API traversal on an unsanitized-looking
+  URL).** All four drivers built request URLs as `` `${targetUrl.replace(/\/+$/, '')}${path}` `` — string
+  concatenation after a regex trim. Replaced with the harness's `buildRequestUrl`/`fetchJson`, which parse
+  `targetUrl` with `new URL()`, allowlist the scheme, and join a fixed, string-literal `path` via
+  `new URL(path, base)` — never a concatenated string.
+- **S6959 (`reduce()` without an initial value)**, pr3087's two `headBefore`/`headAfter` version-number
+  lookups — now seeded with the array's own first element.
+- **S7785 (prefer top-level await)**, all four drivers' `main().catch(...)` entrypoint — replaced with
+  `try { await main(); } catch { ... }` (the module target is ES2022/NodeNext, so top-level await is
+  available).
+- **S4624 (nested template literal)**, pr3086's `classifyPartialFailureIsolation` — the inner
+  `others.map(...).join(...)` is now a named local before the outer template.
+- **S7778 (multiple sequential `push()`)**, pr3086 and pr3087 — combined into a single `probes.push(a, b)`
+  call at each site.
+- **S5906 (prefer `toHaveLength`)**, `pr3084-drive-folder-cap-driver.test.ts` — `.length).toBe(n)` ->
+  `expect(arr).toHaveLength(n)`.
+- **NOT created: `sonar-project.properties`.** This project runs SonarCloud Automatic Analysis, which
+  reads `.sonarcloud.properties` only — a root `sonar-project.properties` was deleted 2026-08-01
+  specifically because autoscan never read it (see that file's own header). Creating one here would have
+  been silently inert, exactly the failure mode that file documents. The CPD exclusion for
+  `services/worker/scripts/vendor/**` was added to the existing `.sonarcloud.properties`'s
+  `sonar.cpd.exclusions` instead.
+
 ## Key subdirectories
 
 - `bench/` — Regional latency benchmarks (Kenya, etc.).

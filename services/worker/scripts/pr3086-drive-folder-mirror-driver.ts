@@ -104,8 +104,22 @@
  * evidence. Assertion 4 does not depend on the rig either way — see above.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  makeProbe as probe,
+  aggregateProbes as aggregate,
+  tallyProbes,
+  parseDriverArgs,
+  emitDriverRow,
+  readAdmissionJson,
+  resolveSupabaseCredentials,
+  ensureFixtureAuthUser,
+  signInFixtureUser,
+  fetchJson,
+  runLiveLoop,
+  type ProbeResult,
+  type BaseDriverArgs,
+} from './lib/soak-driver-harness.js';
 import {
   mirrorConnectedDriveFolders,
   type DriveFolderMirrorDb,
@@ -137,28 +151,14 @@ export const FIXTURE_PREFIX = 'pr3086-soak';
 // Types
 // ---------------------------------------------------------------------------
 
-export type DriverMode = 'self-test' | 'live';
-
-export interface DriverArgs {
-  mode: DriverMode;
-  targetUrl?: string;
-  admissionJson?: string;
-  evidenceJsonl?: string;
-  durationMin: number;
-  intervalSec: number;
-}
-
-export interface ProbeResult {
-  name: string;
-  status: 'pass' | 'fail';
-  detail: string;
-}
+export type { ProbeResult };
+export type DriverArgs = BaseDriverArgs;
 
 export interface DriverRow {
   utc: string;
   pr: 3086;
   tier: 'T2';
-  mode: DriverMode;
+  mode: BaseDriverArgs['mode'];
   evidenceForSoak: boolean;
   changedBehavior: string;
   status: 'pass' | 'fail';
@@ -179,10 +179,6 @@ export interface MirrorFolderFacts {
 // ---------------------------------------------------------------------------
 // Pure classifiers — unit-testable without a network or a database.
 // ---------------------------------------------------------------------------
-
-function probe(name: string, ok: boolean, detail: string): ProbeResult {
-  return { name, status: ok ? 'pass' : 'fail', detail };
-}
 
 /** Assertion 1. */
 export function classifyTwoFoldersMirrored(rows: MirrorFolderFacts[]): ProbeResult {
@@ -243,10 +239,10 @@ export function classifyTenantIsolationNoCollision(args: {
 }
 
 /**
- * Assertion 4 — see the SCOPING NOTE in the file header. Runs the LOCAL
- * REIMPLEMENTATION of the reviewed per-item isolation loop
- * (`driverMirrorFolders`, below) against a fault that throws a genuine JS
- * exception for exactly one folder id.
+ * Assertion 4 — see the SCOPING NOTE in the file header. Runs the REAL,
+ * vendored `mirrorConnectedDriveFolders` (via `runPartialFailureIsolationProbe`,
+ * below) against a fault that throws a genuine JS exception for exactly one
+ * folder id.
  */
 export function classifyPartialFailureIsolation(
   results: Array<{ driveFolderId: string; outcome: string }>,
@@ -264,31 +260,21 @@ export function classifyPartialFailureIsolation(
   }
   const faultyIsError = faulty?.outcome === 'error';
   const othersSucceeded = others.every((r) => r.outcome === 'created' || r.outcome === 'existing');
+  const otherOutcomes = others.map((r) => `${r.driveFolderId}:${r.outcome}`).join(', ');
   return probe(
     ASSERTION.PARTIAL_FAILURE_ISOLATION,
     faultyIsError && othersSucceeded,
     `faulty folder outcome=${faulty?.outcome ?? '(missing)'} (expected error), other outcomes=`
-      + `[${others.map((r) => `${r.driveFolderId}:${r.outcome}`).join(', ')}] (expected all `
+      + `[${otherOutcomes}] (expected all `
       + 'created/existing — one exception must never suppress mirroring of the rest)',
   );
 }
 
-/** A cycle passes only if every probe in it passed. One failure fails the row. */
-export function aggregate(probes: ProbeResult[]): 'pass' | 'fail' {
-  return probes.some((p) => p.status === 'fail') ? 'fail' : 'pass';
-}
+export { aggregate };
 
 /** Per-assertion counters, so a reviewer can count coverage without re-reading probes. */
 export function tally(probes: ProbeResult[]): Record<string, number | boolean> {
-  const counts: Record<string, number | boolean> = {};
-  for (const name of Object.values(ASSERTION)) {
-    const inFamily = probes.filter((p) => p.name === name);
-    counts[`${name}_ran`] = inFamily.length > 0;
-    counts[`${name}_passed`] = inFamily.length > 0 && inFamily.every((p) => p.status === 'pass');
-  }
-  counts.probes_total = probes.length;
-  counts.probes_failed = probes.filter((p) => p.status === 'fail').length;
-  return counts;
+  return tallyProbes(probes, Object.values(ASSERTION));
 }
 
 // ---------------------------------------------------------------------------
@@ -379,7 +365,7 @@ export async function runPartialFailureIsolationProbe(): Promise<ProbeResult> {
 
 // ---------------------------------------------------------------------------
 // Self-test — no network, no database. Proves classifiers 1–3 and runs the
-// local reimplementation of the reviewed loop shape for assertion 4 (see file header).
+// real vendored function under fault injection for assertion 4 (see file header).
 // ---------------------------------------------------------------------------
 
 export async function runSelfTest(): Promise<ProbeResult[]> {
@@ -478,21 +464,6 @@ interface OrgFixture {
   orgAdminPassword: string;
 }
 
-async function ensureFixtureUser(db: SupabaseClient, email: string, password: string): Promise<string> {
-  const { data: existing } = await db.from('profiles').select('id').eq('email', email).maybeSingle();
-  if (existing && (existing as { id?: string }).id) return (existing as { id: string }).id;
-
-  const { data: created, error: createError } = await db.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    password,
-  });
-  if (createError || !created?.user) {
-    throw new Error(`could not create fixture auth user ${email}: ${createError?.message ?? 'unknown'}`);
-  }
-  return created.user.id;
-}
-
 /**
  * One org, one org-admin owner, PLUS a seeded `org_integrations` row
  * (provider=google_drive, revoked_at=null) — `mirrorConnectedDriveFolders`
@@ -514,7 +485,7 @@ async function ensureOrgFixture(db: SupabaseClient, orgSuffix: string): Promise<
     .eq('display_name', orgDisplayName)
     .maybeSingle();
 
-  const orgAdminUserId = await ensureFixtureUser(db, ownerEmail, password);
+  const orgAdminUserId = await ensureFixtureAuthUser(db, ownerEmail, password);
 
   let orgId = (existingOrg as { id?: string } | null)?.id ?? null;
   if (!orgId) {
@@ -556,20 +527,6 @@ async function ensureOrgFixture(db: SupabaseClient, orgSuffix: string): Promise<
   return { orgId, orgAdminEmail: ownerEmail, orgAdminPassword: password };
 }
 
-async function signInFixtureUser(
-  supabaseUrl: string,
-  anonKey: string,
-  email: string,
-  password: string,
-): Promise<string> {
-  const anon = createClient(supabaseUrl, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data, error } = await anon.auth.signInWithPassword({ email, password });
-  if (error || !data.session?.access_token) {
-    throw new Error(`fixture sign-in failed for ${email}: ${error?.message ?? 'no session returned'}`);
-  }
-  return data.session.access_token;
-}
-
 interface RuleSaveResult {
   httpStatus: number;
   body: Record<string, unknown>;
@@ -600,13 +557,7 @@ async function saveConnectorRule(
       action_config: { tag: 'connector-google_drive' },
       enabled: false,
     };
-  const res = await fetch(`${targetUrl.replace(/\/+$/, '')}${path}`, {
-    method,
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${bearerToken}` },
-    body: JSON.stringify(body),
-  });
-  const responseBody = await res.json().catch(() => ({}));
-  return { httpStatus: res.status, body: responseBody as Record<string, unknown> };
+  return fetchJson(targetUrl, path, { method, headers: { authorization: `Bearer ${bearerToken}` }, body });
 }
 
 async function pollMirrorFolders(
@@ -687,13 +638,17 @@ async function runCycle(
   }
   const org1Mirror = await pollMirrorFolders(db, org1.orgId, [sharedFolder], 6, 3000);
   const org2Mirror = await pollMirrorFolders(db, org2.orgId, [sharedFolder], 6, 3000);
-  probes.push(classifyTenantIsolationNoCollision({
-    org1FolderId: org1Mirror[0]?.id ?? '',
-    org2FolderId: org2Mirror[0]?.id ?? '',
-  }));
 
-  // ── Assertion 4: rig-independent, real mirrorConnectedDriveFolders + fault-injecting db ──
-  probes.push(await runPartialFailureIsolationProbe());
+  // ── Assertion 3 (tenant isolation) plus assertion 4 (rig-independent, real
+  // mirrorConnectedDriveFolders + fault-injecting db) — combined into one
+  // push, since neither has a statement between them worth separating.
+  probes.push(
+    classifyTenantIsolationNoCollision({
+      org1FolderId: org1Mirror[0]?.id ?? '',
+      org2FolderId: org2Mirror[0]?.id ?? '',
+    }),
+    await runPartialFailureIsolationProbe(),
+  );
 
   return probes;
 }
@@ -703,128 +658,81 @@ async function runCycle(
 // ---------------------------------------------------------------------------
 
 export function parseArgs(argv: string[]): DriverArgs {
-  const args: DriverArgs = { mode: 'self-test', durationMin: 0, intervalSec: 900 };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    switch (arg) {
-      case '--self-test':
-        args.mode = 'self-test';
-        break;
-      case '--live':
-        args.mode = 'live';
-        break;
-      case '--target-url':
-        args.targetUrl = argv[++i];
-        break;
-      case '--admission-json':
-        args.admissionJson = argv[++i];
-        break;
-      case '--evidence-jsonl':
-        args.evidenceJsonl = argv[++i];
-        break;
-      case '--duration-min':
-        args.durationMin = Number.parseInt(argv[++i] ?? '0', 10);
-        break;
-      case '--interval-sec':
-        args.intervalSec = Number.parseInt(argv[++i] ?? '900', 10);
-        break;
-      default:
-        throw new Error(`Unknown argument: ${arg}`);
-    }
-  }
-  return args;
+  return parseDriverArgs(argv, {}, []);
 }
 
-function emit(row: DriverRow, evidenceJsonl?: string): void {
-  const line = `${JSON.stringify(row)}\n`;
-  if (evidenceJsonl) appendFileSync(evidenceJsonl, line);
-  process.stdout.write(line);
-}
-
-function resolveCredentials(): { url: string; serviceRoleKey: string; anonKey: string } {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!url || !serviceRoleKey || !anonKey) {
-    throw new Error('live mode requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY');
-  }
-  return { url, serviceRoleKey, anonKey };
+function buildRow(args: {
+  mode: BaseDriverArgs['mode'];
+  evidenceForSoak: boolean;
+  status: 'pass' | 'fail';
+  cycle: number;
+  probes: ProbeResult[];
+  admission?: Record<string, unknown>;
+  blockers?: string[];
+}): DriverRow {
+  return {
+    utc: new Date().toISOString(),
+    pr: 3086,
+    tier: 'T2',
+    mode: args.mode,
+    evidenceForSoak: args.evidenceForSoak,
+    changedBehavior: CHANGED_BEHAVIOR,
+    status: args.status,
+    cycle: args.cycle,
+    counts: tally(args.probes),
+    probes: args.probes,
+    admission: args.admission,
+    blockers: args.blockers,
+  };
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const admission = args.admissionJson
-    ? (JSON.parse(readFileSync(args.admissionJson, 'utf8')) as Record<string, unknown>)
-    : undefined;
+  const admission = readAdmissionJson(args.admissionJson);
 
   if (args.mode === 'self-test') {
     const probes = await runSelfTest();
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3086,
-      tier: 'T2',
+    emitDriverRow(buildRow({
       mode: 'self-test',
       evidenceForSoak: false,
-      changedBehavior: CHANGED_BEHAVIOR,
       status: aggregate(probes),
       cycle: 0,
-      counts: tally(probes),
       probes,
       blockers: [
         'self-test mode — local validation only for assertions 1-3, NOT T2 soak evidence. '
         + 'Assertion 4 (partial_failure_does_not_suppress_other_folders) IS real evidence even here — '
         + 'see the SCOPING NOTE in this file\'s header.',
       ],
-    }, args.evidenceJsonl);
+    }), args.evidenceJsonl);
     process.exitCode = aggregate(probes) === 'pass' ? 0 : 1;
     return;
   }
 
   if (!args.targetUrl) throw new Error('--live requires --target-url');
-  const { url, serviceRoleKey, anonKey } = resolveCredentials();
-  const db = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const targetUrl = args.targetUrl;
+  const creds = resolveSupabaseCredentials({ requireAnonKey: true });
+  const db = createClient(creds.url, creds.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const org1 = await ensureOrgFixture(db, 'a');
   const org2 = await ensureOrgFixture(db, 'b');
 
-  const startedAt = Date.now();
-  const deadline = startedAt + args.durationMin * 60_000;
-  let cycle = 0;
-  let anyCycleFailed = false;
-
-  do {
-    cycle += 1;
-    let probes: ProbeResult[];
-    try {
+  const { anyCycleFailed } = await runLiveLoop({
+    durationMinutes: args.durationMin,
+    intervalSeconds: args.intervalSec,
+    runCycle: async (cycle) => {
       // Fresh sign-in EVERY cycle for BOTH orgs rather than one token per org
       // captured before the loop — see pr3083's driver for the incident this
       // avoids: a token minted once with autoRefreshToken:false expires
       // mid-soak and every later cycle 401s.
-      const bearerToken1 = await signInFixtureUser(url, anonKey, org1.orgAdminEmail, org1.orgAdminPassword);
-      const bearerToken2 = await signInFixtureUser(url, anonKey, org2.orgAdminEmail, org2.orgAdminPassword);
-      probes = await runCycle(db, args.targetUrl, org1, org2, bearerToken1, bearerToken2, cycle);
-    } catch (error) {
-      probes = [probe('cycle_error', false, error instanceof Error ? error.message : 'unknown')];
-    }
-
-    if (aggregate(probes) === 'fail') anyCycleFailed = true;
-
-    emit({
-      utc: new Date().toISOString(),
-      pr: 3086,
-      tier: 'T2',
-      mode: 'live',
-      evidenceForSoak: true,
-      changedBehavior: CHANGED_BEHAVIOR,
-      status: aggregate(probes),
-      cycle,
-      counts: tally(probes),
-      probes,
-      admission,
-    }, args.evidenceJsonl);
-
-    if (Date.now() >= deadline) break;
-    await new Promise((r) => setTimeout(r, args.intervalSec * 1000));
-  } while (Date.now() < deadline);
+      const bearerToken1 = await signInFixtureUser(creds.url, creds.anonKey, org1.orgAdminEmail, org1.orgAdminPassword);
+      const bearerToken2 = await signInFixtureUser(creds.url, creds.anonKey, org2.orgAdminEmail, org2.orgAdminPassword);
+      return runCycle(db, targetUrl, org1, org2, bearerToken1, bearerToken2, cycle);
+    },
+    onCycleComplete: (cycle, probes, status) => {
+      emitDriverRow(buildRow({
+        mode: 'live', evidenceForSoak: true, status, cycle, probes, admission,
+      }), args.evidenceJsonl);
+    },
+  });
 
   // A failed probe anywhere in the run must fail the process — see pr3083's
   // driver for the same fix and why the CLI must not exit 0 on a red run.
@@ -833,8 +741,10 @@ async function main(): Promise<void> {
 
 const invokedDirectly = process.argv[1]?.includes('pr3086-drive-folder-mirror-driver');
 if (invokedDirectly) {
-  main().catch((error: unknown) => {
+  try {
+    await main();
+  } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'driver failed'}\n`);
     process.exitCode = 1;
-  });
+  }
 }

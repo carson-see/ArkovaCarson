@@ -70,13 +70,13 @@ describe('driveFolderEntry / buildTriggerConfig fixtures', () => {
 
   it('counts array-only totals correctly', () => {
     const cfg = buildTriggerConfig({ driveFoldersCount: 3, includeLegacySingular: false, suffix: 'x' });
-    expect((cfg.drive_folders as unknown[]).length).toBe(3);
+    expect(cfg.drive_folders as unknown[]).toHaveLength(3);
     expect(cfg.folder_id).toBeUndefined();
   });
 
   it('counts combined-shape totals correctly (legacy + array = total)', () => {
     const cfg = buildTriggerConfig({ driveFoldersCount: 2, includeLegacySingular: true, suffix: 'y' });
-    expect((cfg.drive_folders as unknown[]).length).toBe(2);
+    expect(cfg.drive_folders as unknown[]).toHaveLength(2);
     expect(cfg.folder_id).toBeDefined();
     expect(cfg.type).toBe('drive_folder');
   });
