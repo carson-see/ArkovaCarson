@@ -500,3 +500,24 @@ rerun-requested marker it uses at the end of a leased run is
 `markRunLeaseDirty` / `checkAndClearRunLeaseDirty` from `../../jobs/run-lease.ts`
 (see that folder's agents.md for why). The bounded "exactly one extra pass"
 behaviour is unchanged and still pinned by `drive-changes-runner.test.ts`.
+
+## 2026-09-25 — three dead Drive modules deleted (812 lines)
+
+`googleDrive.ts` (373), `drive-watch-bootstrap.ts` (261) and
+`drive-change-dedupe.ts` (178) were removed with their test files. All three had
+**zero non-test importers**, no barrel export, and no runtime path.
+
+**Why this mattered beyond tidiness.** `drive-change-dedupe.ts` was a prior,
+abandoned attempt at exactly the generalization a OneDrive adapter needs — its
+`classifyDriveChange`/`revisionKey` were superseded by the ledger-based
+reserve/confirm design now inline in `drive-changes-processor.ts`, and nobody
+deleted the loser. Anyone building the second connector would have found it,
+assumed it was the abstraction to follow, and rebuilt a design this codebase
+already rejected once. `googleDrive.ts` (Secret-Manager OAuth/watch) was
+superseded by `api/v1/integrations/drive-oauth.ts` + KMS/`org_integrations`.
+
+**The real provider-adapter boundary is elsewhere, and it already exists:**
+`adapters.ts` normalizes vendor payloads into `ConnectorCanonicalEventT` (and
+already handles Microsoft Graph), and `connector_artifact` is the
+provider-neutral sink both Drive and DocuSign write to. Build the OneDrive
+adapter against those, not against anything deleted here.
