@@ -188,6 +188,16 @@ export const SKIPPED_FILES = new Set([
   // definitions. 0399 (same PR) CREATE OR REPLACEs the same three functions
   // with every occurrence wrapped — fixed at runtime, exactly like 0280 did.
   'supabase/migrations/0398_fix_audit_events_actor_email_dropped_column.sql',
+  // 0481 (PR #3033, UAT-14 profile media) shipped five bare auth.uid() calls
+  // in its policies and was applied to prod as-is on 2026-09-20 — before the
+  // PR merged, so the file text must stay byte-identical to what prod ran
+  // (CLAUDE.md §1.2: never modify an existing migration). The PR merged on
+  // 2026-09-26 under `rls-auth-uid-bare-intentional`; this scanner reads the
+  // whole tree rather than the PR diff, so without this entry every later PR
+  // and merge-queue train reds on a file none of them touched. The initplan
+  // wrap lands as a compensating migration (DROP/CREATE POLICY with
+  // `(SELECT auth.uid())`), tracked as a follow-up to #3033.
+  'supabase/migrations/0481_uat14_profile_brand_media.sql',
 ]);
 
 export function migrationPrefix(file: string): number | null {
