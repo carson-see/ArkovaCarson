@@ -48,6 +48,7 @@ describe('agent lifecycle dual auth', () => {
     const res = await request(app(meta)).post('/').set('Authorization', authorization).set('X-API-Key', 'ak_live_one');
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('invalid_authorization');
+    expect(res.body.message).toBe('Authorization header is malformed or empty.');
   });
 
 });

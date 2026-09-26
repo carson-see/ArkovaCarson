@@ -13,7 +13,7 @@ export async function requireAgentLifecycleAuth(req: Request, res: Response, nex
   const headerKey = typeof rawHeaderKey === 'string' ? rawHeaderKey : null;
 
   if (authHeader !== undefined && (!authHeader.startsWith('Bearer ') || !bearer)) {
-    res.status(401).json({ error: 'invalid_authorization', message: 'Authorization must be a non-empty Bearer credential.' });
+    res.status(401).json({ error: 'invalid_authorization', message: 'Authorization header is malformed or empty.' });
     return;
   }
 
