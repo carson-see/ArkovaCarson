@@ -194,4 +194,8 @@ export const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: true,
     fields: ['public_id', 'display_name', 'parent_public_id', 'parent_approval_status', 'occurred_at', 'reclaimed', 'reason?'],
   },
+  'agent.registered': { live: true, fields: ['agent_id', 'status', 'source', 'occurred_at', 'org_public_id?'] },
+  'agent.updated': { live: true, fields: ['agent_id', 'status', 'source', 'occurred_at', 'org_public_id?'] },
+  'agent.revoked': { live: true, fields: ['agent_id', 'status', 'source', 'occurred_at', 'org_public_id?'] },
+  'agent.key_created': { live: true, fields: ['agent_id', 'key_id', 'source', 'occurred_at', 'org_public_id?'] },
 };

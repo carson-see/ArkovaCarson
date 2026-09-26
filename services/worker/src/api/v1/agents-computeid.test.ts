@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const dbFromMock = vi.fn();
 const dbRpcMock = vi.fn();
 const auditMock = vi.fn();
+const agentEventMock = vi.fn();
 const mockConfig = vi.hoisted(() => ({
   enableComputeidIntegration: true,
   computeidCaCertPem: '' as string | undefined,
@@ -27,6 +28,7 @@ vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn()
 vi.mock('../../utils/auditEvent.js', () => ({
   recordAuditEvent: (...args: unknown[]) => { auditMock(...args); return Promise.resolve(); },
 }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: (...args: unknown[]) => agentEventMock(...args) }));
 
 import { agentsComputeIdRouter, PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agents-computeid.js';
 import { requireScopeAnyAuth } from '../../middleware/requireScopeAnyAuth.js';
@@ -194,6 +196,8 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     expect(res.body.agent.registered_by).toBeUndefined();
     expect(res.body.binding).toMatchObject({ issuer: 'computeid', passport_id: PASSPORT });
     expect(res.body.key_id).toBe(KEY_ID);
+    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.registered', agentId: AGENT_ID }));
+    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.key_created', keyId: KEY_ID }));
   });
   it('admits an uppercase UUID inside the actually signed payload and normalizes storage', async () => {
     const res = await admit(validBody({ passport_id: PASSPORT.toUpperCase(),
@@ -213,6 +217,12 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     expect(dbFromMock).not.toHaveBeenCalled();
     expect(dbRpcMock).toHaveBeenCalledTimes(1);
   });
+  it.each([undefined, null, 'revoked_typo', ['active'], { value: 'active' }])(
+    'rejects malformed committed status without fabricating a notification (%s)', async (status) => {
+      dbRpcMock.mockResolvedValue({ data: { ...admissionResult(), agent: { ...insertedAgent(), status } }, error: null });
+      expect((await admit(validBody())).status).toBe(500);
+      expect(agentEventMock).not.toHaveBeenCalled();
+    });
   it('preserves a possibly committed key when the RPC reply is lost', async () => {
     dbRpcMock.mockRejectedValue(new Error('transport response lost'));
     const res = await admit(validBody());

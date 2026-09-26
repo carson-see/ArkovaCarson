@@ -20,6 +20,7 @@ import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, scopeSatisfies } from '../apiScopes.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
 import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
+import { emitAgentEvent } from '../../webhooks/agentEvents.js';
 
 // agents table not yet in database.types.ts — use untyped client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,6 +180,8 @@ router.post('/', async (req: Request, res: Response) => {
     });
 
     logger.info({ agentId: agent.id, name: parsed.data.name, type: parsed.data.agent_type }, 'Agent registered');
+    emitAgentEvent({ eventType: 'agent.registered', orgId: caller.orgId, agentId: agent.id,
+      source: 'api', eventId: agent.id, status: agent.status, occurredAt: agent.created_at });
     res.status(201).json(toPublicAgent(agent));
   } catch (err) {
     logger.error({ error: err }, 'Agent registration failed');
@@ -300,6 +303,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
     const updates: Record<string, unknown> = { ...parsed.data };
     delete updates.status;
     let agent: Record<string, unknown> = existing;
+    let changed = false;
 
     if (parsed.data.status) {
       const { data: transition, error: transitionError } = await dbAny.rpc('apply_admin_agent_status_transition', {
@@ -311,6 +315,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
       if (transitionError) { logger.error({ agentId, error: transitionError }, 'Atomic agent status transition failed'); res.status(500).json({ error: 'Failed to change agent status' }); return; }
       if (!(transition as { found?: boolean } | null)?.found) { res.status(404).json({ error: 'Agent not found' }); return; }
       agent = (transition as { agent: Record<string, unknown> }).agent;
+      changed = (transition as { changed?: boolean }).changed === true;
     }
 
     if (!parsed.data.status && Object.keys(updates).length > 0) {
@@ -318,10 +323,15 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
         .eq('id', agentId).eq('org_id', orgId).select().single();
       if (error || !updatedAgent) { res.status(404).json({ error: 'Agent not found or update failed' }); return; }
       agent = updatedAgent;
+      changed = true;
       void recordAuditEvent({ actor_id: callerAudit(caller).actor_id, org_id: orgId,
         event_type: 'AGENT_UPDATED', event_category: 'SYSTEM', target_type: 'agent', target_id: agentId,
         details: JSON.stringify({ ...callerAudit(caller).details, changes: updates }) });
     }
+
+    if (changed && typeof agent.updated_at === 'string') emitAgentEvent({ eventType: 'agent.updated', orgId,
+      agentId, source: 'api', eventId: `${agentId}:${agent.updated_at}`,
+      status: agent.status as 'active' | 'suspended' | 'revoked', occurredAt: agent.updated_at });
 
     res.json(toPublicAgent(agent));
   } catch (err) {
@@ -364,6 +374,8 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     }
 
     logger.info({ agentId }, 'Agent revoked');
+    if ((revokeResult as { changed?: boolean }).changed === true) emitAgentEvent({ eventType: 'agent.revoked',
+      orgId, agentId, source: 'api', eventId: agentId, status: 'revoked' });
     res.json({ status: 'revoked', agent_id: agentId });
   } catch (err) {
     logger.error({ error: err }, 'Agent revocation failed');
@@ -432,6 +444,9 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
       org_id: agent.org_id,
       details: JSON.stringify({ ...callerAudit(caller).details, agent_name: agent.name, scopes: agent.allowed_scopes }),
     });
+
+    emitAgentEvent({ eventType: 'agent.key_created', orgId: agent.org_id, agentId: String(agentId),
+      keyId: key.id, source: 'api', eventId: key.id, occurredAt: key.created_at });
 
     // Return raw key ONCE (Constitution 1.4: never stored after creation)
     res.status(201).json({

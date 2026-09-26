@@ -53,7 +53,11 @@ export type WebhookEventType =
   | 'suborg.credits_allocated'
   | 'suborg.credits_reclaimed'
   | 'suborg.suspended'
-  | 'suborg.offboarded';
+  | 'suborg.offboarded'
+  | 'agent.registered'
+  | 'agent.updated'
+  | 'agent.revoked'
+  | 'agent.key_created';
 export interface Folder {
   id: string;
   publicId: string;

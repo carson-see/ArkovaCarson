@@ -27,6 +27,7 @@ import type { Json } from '../../types/database.types.js';
 import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { applyPassportEvent, type AgentStatus, type KeyEnforcement } from './binding.js';
 import type { ComputeIdPassportEvent } from './schemas.js';
+import { emitAgentEvent } from '../../webhooks/agentEvents.js';
 
 /** Page size for the bound-agent scan. Bounded so one passport cannot unbound-loop a request. */
 export const BOUND_AGENT_PAGE_SIZE = 200;
@@ -215,5 +216,12 @@ export async function applyPassportEventToAgent(
 
   const failed = await commitAgentTransition(agent, update, keyEnforcement, d);
   if (failed) return failed;
-  return decision.action === 'noop' ? { outcome: 'skipped' } : { outcome: 'applied' };
+  if (decision.action === 'noop') return { outcome: 'skipped' };
+  const eventBase = { orgId: agent.org_id, agentId: agent.id, source: 'computeid' as const,
+    eventId: `${agent.id}:${d.event}:${d.timestamp}`, occurredAt: d.timestamp };
+  if (decision.action === 'revoke') emitAgentEvent({ ...eventBase, eventType: 'agent.revoked',
+    eventId: agent.id, status: 'revoked' });
+  else emitAgentEvent({ ...eventBase, eventType: 'agent.updated',
+    status: (update.status as AgentStatus | undefined) ?? agent.status });
+  return { outcome: 'applied' };
 }

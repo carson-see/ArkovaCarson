@@ -1534,6 +1534,10 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'suborg.credits_reclaimed': true,
   'suborg.suspended': true,
   'suborg.offboarded': true,
+  'agent.registered': true,
+  'agent.updated': true,
+  'agent.revoked': true,
+  'agent.key_created': true,
 };
 
 describe('WebhookEventType', () => {
@@ -1570,6 +1574,10 @@ describe('WebhookEventType', () => {
         'suborg.offboarded',
         'suborg.revoked',
         'suborg.suspended',
+        'agent.registered',
+        'agent.updated',
+        'agent.revoked',
+        'agent.key_created',
       ].sort(),
     );
   });

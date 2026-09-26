@@ -122,6 +122,10 @@ The folder contract suite must cover omission-safe rename, explicit root reparen
 
 `WebhookEventType` includes `job.completed` plus the four registered compliance contracts. The exhaustive client-test pin and repository drift gate keep the SDK union aligned with the worker allowlist; this is a source change for the next artifact freeze and does not claim a package release.
 
+## 2026-09-26 — agent lifecycle webhook event names
+
+`WebhookEventType` and its exhaustive `WEBHOOK_EVENT_TYPE_PIN` include `agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created` in worker registry order. This additive source change remains part of the unreleased 3.3.0 artifact; it does not authorize publishing and the combined release still requires the separate singleton proof repair to merge and be requalified.
+
 ## SCRUM-5211 — authenticated redirects fail closed
 
 The private fetch wrapper forces `redirect: 'error'` after caller options are

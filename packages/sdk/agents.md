@@ -190,3 +190,7 @@ downgraded the version, never dropped the newer status sets or folder events) an
 #2986's `DEFAULT_BASE_URL`/`engines`/`@types/node` qualification fixes on top. See
 `packages/embed/agents.md`, `sdks/langchain-ts/agents.md`, `sdks/mcp-server/agents.md`, and
 `packages/api-cli/agents.md` for the sibling-package side of the same recovery.
+
+## 2026-09-26 — agent lifecycle webhook subscription types
+
+The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized and also depends on requalifying the separate singleton proof repair.

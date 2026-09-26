@@ -551,6 +551,21 @@ export const SubOrgOffboardedPayloadSchema = z
   })
   .strict();
 
+const AGENT_EVENT_BASE_FIELDS = {
+  agent_id: z.string().uuid(),
+  source: z.enum(['api', 'computeid']),
+  occurred_at: isoTimestamp,
+  org_public_id: z.string().min(1).max(64).optional(),
+} as const;
+
+export const AgentRegisteredPayloadSchema = z.object({ ...AGENT_EVENT_BASE_FIELDS,
+  status: z.enum(['active', 'suspended', 'revoked']) }).strict();
+export const AgentUpdatedPayloadSchema = AgentRegisteredPayloadSchema;
+export const AgentRevokedPayloadSchema = z.object({ ...AGENT_EVENT_BASE_FIELDS,
+  status: z.literal('revoked') }).strict();
+export const AgentKeyCreatedPayloadSchema = z.object({ ...AGENT_EVENT_BASE_FIELDS,
+  key_id: z.string().uuid() }).strict();
+
 /**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
@@ -593,6 +608,10 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'suborg.credits_reclaimed': SubOrgCreditsReclaimedPayloadSchema,
   'suborg.suspended': SubOrgSuspendedPayloadSchema,
   'suborg.offboarded': SubOrgOffboardedPayloadSchema,
+  'agent.registered': AgentRegisteredPayloadSchema,
+  'agent.updated': AgentUpdatedPayloadSchema,
+  'agent.revoked': AgentRevokedPayloadSchema,
+  'agent.key_created': AgentKeyCreatedPayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;

@@ -5,6 +5,8 @@
 
 Arkova webhooks let your system react to anchor lifecycle events the moment they happen — no polling required. This guide covers everything an API-only customer needs to register, verify, and consume webhooks programmatically. **You never need to log into the Arkova web app.**
 
+`docs/api/openapi.yaml` does not yet describe webhook endpoint CRUD or its event enum. Until that broader contract is added, this guide and the worker's strict payload registry are the authoritative webhook references; the OpenAPI document must not be read as claiming webhook parity.
+
 ---
 
 ## Table of Contents
@@ -143,6 +145,17 @@ Both obey the same allowlist as every other family: public ids only, no internal
 **Credential-event delivery status:** `credential.issued` and `credential.status_changed` are live — subscribed endpoints receive them today. `credential.verified` is the one exception: its payload schema, dispatch validation, HMAC signing, and CRUD acceptance are all live, and you can register a subscription for it now via `POST /webhooks` (or update an existing subscription), but emission is behind a production feature gate that has not been enabled — deliveries begin when that gate opens, with no re-registration needed. All three schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
+
+### Agent lifecycle
+
+| Event | Fired When | Status |
+|---|---|---|
+| `agent.registered` | A generic registration or verified ComputeID admission commits a new agent. | Stable |
+| `agent.updated` | A committed profile, scope, status, or effective authorization transition requires consumers to refresh the agent. | Stable |
+| `agent.revoked` | A terminal agent revocation commits. It is not duplicated as `agent.updated`. | Stable |
+| `agent.key_created` | A generic key mint or ComputeID admission commits a new agent key. | Stable |
+
+`agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created` are refresh notifications for the organization that owns the agent. Their strict payloads contain the customer-visible `agent_id`, `source` (`api` or `computeid`), and `occurred_at`; lifecycle events include current `status`, while key creation includes the customer-visible `key_id`. An authorized parent fan-out may also include `org_public_id`. They never include raw keys, key prefixes or hashes, scopes, names, callbacks, metadata, actor identifiers, passport identifiers, or signed receipts. A non-status `PATCH` emits after every successful committed write, including a same-value write; the route deliberately does not make a stale pre-read to suppress apparent no-ops. Admission emits separate registered and key-created notifications; delivery order is not guaranteed. Receivers should deduplicate event IDs and re-read current authorized state. A process crash after the lifecycle commit but before the first delivery-log row is created can lose the notification. Retry and DLQ behavior starts only after that delivery is recorded, so this does not claim transactional enqueue, lossless delivery, or exactly-once delivery.
 
 For submissions created through `POST /api/v1/anchor` (including `action: queue` and
 `action: instant`), use authenticated submission-status reads for pre-confirmation state and
