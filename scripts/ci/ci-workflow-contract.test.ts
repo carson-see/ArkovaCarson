@@ -880,6 +880,24 @@ describe("Zapier required clean-build contract", () => {
   });
 });
 
+describe("agent webhook outbox native SQL CI contract", () => {
+  it("runs the tracked full-schema harness after reset and aggregates its outcome", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const testsJob = workflow.match(/^ {2}test:\n([\s\S]*?)(?=^ {2}[a-z][a-z0-9_-]*:|$(?![\s\S]))/mu)?.[0] ?? "";
+    const steps = workflowSteps(testsJob);
+    const native = steps.filter((step) => /^\s+id: agent-outbox-native$/mu.test(step));
+    expect(native).toHaveLength(1);
+    expect(native[0]).toMatch(/steps\.supabase-keys\.outcome == 'success'/u);
+    expect(native[0]).toMatch(/steps\.db-reset\.outcome == 'success'/u);
+    expect(native[0]).toMatch(/timeout 180s psql/u);
+    expect(native[0]).toContain("services/worker/scripts/test-agent-webhook-outbox-native.sql");
+    expect(native[0]).toContain("UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}");
+    const aggregate = steps.find((step) => step.includes("name: Aggregate test suite results")) ?? "";
+    expect(aggregate).toContain('[agent-outbox-native]="${{ steps.agent-outbox-native.outcome }}"');
+    expect(aggregate).toMatch(/for name [^\n]*\bagent-outbox-native\b/u);
+  });
+});
+
 describe("Tests job cancellation-aware independent suites", () => {
   const independentIds = [
     "sdk-tests", "worker-deps", "edge-deps", "zapier-validation",

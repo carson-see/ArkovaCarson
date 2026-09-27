@@ -1125,6 +1125,23 @@ jobs:
           git diff --exit-code -- supabase/migrations
           test -z "$(git ls-files --others --exclude-standard -- supabase/migrations)"
 
+      - name: Run agent webhook outbox native SQL contract
+        id: agent-outbox-native
+        if: ${{ !cancelled() && steps.supabase-keys.outcome == 'success' && steps.db-reset.outcome == 'success' }}
+        timeout-minutes: 4
+        env:
+          UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
+        run: |
+          set -euo pipefail
+          output="$(mktemp)"
+          trap 'rm -f "$output"' EXIT
+          if ! timeout 180s psql "$UAT03_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+            -f services/worker/scripts/test-agent-webhook-outbox-native.sql >"$output" 2>&1; then
+            echo "::error::Agent webhook outbox native SQL contract failed; output withheld because fixtures include private test-only endpoint material."
+            exit 1
+          fi
+          echo "Agent webhook outbox native SQL contract passed."
+
       # CI-worker-test-skip fix — this step (root frontend/scripts suite) and
       # everything below it through "Run worker tests with coverage" are
       # INDEPENDENT verification suites that happen to share one job for
@@ -1363,6 +1380,7 @@ jobs:
             [root-coverage]="${{ steps.root-coverage.outcome }}"
             [sdk-tests]="${{ steps.sdk-tests.outcome }}"
             [rls-tests]="${{ steps.rls-tests.outcome }}"
+            [agent-outbox-native]="${{ steps.agent-outbox-native.outcome }}"
             [worker-deps]="${{ steps.worker-deps.outcome }}"
             [cache-zk-artifacts]="${{ steps.cache-zk-artifacts.outcome }}"
             [install-circom]="${{ steps.install-circom.outcome }}"
@@ -1376,7 +1394,7 @@ jobs:
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests zapier-validation; do
+          for name in db-reset root-coverage sdk-tests rls-tests agent-outbox-native worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests zapier-validation; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then

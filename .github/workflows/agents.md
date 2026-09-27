@@ -869,6 +869,14 @@ deterministic and clears both rules with no suppression. Same fix already applie
 `staging-evidence.yml` and `migration-drift.yml` — this closes the last `npx tsx` call site in a
 workflow that runs on every PR.
 
+## 2026-09-27 — agent webhook outbox native SQL is a required Tests step
+
+The existing `Tests` job runs `services/worker/scripts/test-agent-webhook-outbox-native.sql`
+against the throwaway Supabase database only after `supabase db reset` succeeds. The step uses
+the already-masked local bootstrap-admin URL, is bounded to 180 seconds, withholds fixture output,
+and participates in the job's aggregate outcome gate. It does not start another database, access a
+hosted environment, or run the standalone reduced-schema revoke concurrency harness.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
