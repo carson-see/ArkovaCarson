@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-27",
+      "author": "tech-lead session (Claude Fable 5.1) — backlog merge close-out",
+      "note": "REMOVED 0487: PR #3088 merged to main at 0f2d4a747 (2026-09-27T01:52Z), so the .sql is now on main and the prod row (version 0487, applied 2026-09-26T15:44Z) is covered by the repo; per the file's invariant an entry present in both is stale. Nothing else changed."
+    },
+    {
       "date": "2026-09-26",
       "author": "tech-lead session (Claude Fable 5.1) — founder directive 2026-09-26 backlog merge",
       "note": "ADDED 0487 (0487_docusign_content_addressed_external_revision_backfill, PR #3088) immediately ahead of applying it to prod vzwyaatejekddvltxyye via MCP apply_migration, per CLAUDE.md §0 rule 10 (apply and exemption in the same motion; the drift gate on #3088 head a60daf2d6 demands the numeric row before merge). Exact bytes: sha256 4856e206a3c79efdfc92bc2a444973bdf471fc5f1785be7d5eb4ba014c120a00. Data-only backfill: UPDATE connector_artifact SET external_revision = fingerprint_sha256 WHERE source='docusign' AND external_revision IS NULL, inside BEGIN/SET LOCAL lock_timeout='5s'/COMMIT with a post-condition RAISE; prod precondition read 2026-09-26T15:38Z: 27 docusign rows, 27 NULL, 0 already equal, so exactly 27 rows change and the unique dedupe index cannot be violated. No DDL, no schema-cache reload. Ledger row reconciled to numeric 0487 in-session and list_migrations re-read. Same motion also applied the three main-merged-but-never-applied migrations 0483/0484/0485 (scrum4939 credit RPC follow-ups) and reconciled their rows; those need no exemption because their .sql is on main. REMOVE when #3088 lands the .sql on main."
@@ -304,7 +309,6 @@
     }
   ],
   "exemptPrefixes": [
-    "0487",
     "0443",
     "0481"
   ]
