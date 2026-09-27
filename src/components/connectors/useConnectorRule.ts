@@ -76,9 +76,9 @@ interface RuleWriteBody {
   error?: { code?: string; message?: string; existing_rule_id?: string };
 }
 
-function hasFolderMirrorError(body: RuleWriteBody): boolean {
+function hasFolderMirrorFailure(body: RuleWriteBody): boolean {
   return Array.isArray(body.drive_folder_mirror)
-    && body.drive_folder_mirror.some((result) => result.outcome === 'error');
+    && body.drive_folder_mirror.some((result) => result.outcome !== 'created' && result.outcome !== 'existing');
 }
 
 async function fetchRuleDetail(id: string): Promise<ConnectorRuleDetail | null> {
@@ -174,8 +174,8 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
             }),
           });
           const body = await res.json().catch(() => ({})) as RuleWriteBody;
-          if (!res.ok || hasFolderMirrorError(body)) {
-            setSaveError(body?.error?.message ?? (hasFolderMirrorError(body) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED));
+          if (!res.ok || hasFolderMirrorFailure(body)) {
+            setSaveError(body?.error?.message ?? (hasFolderMirrorFailure(body) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED));
             return false;
           }
           if (!state.rule.enabled) {
@@ -216,14 +216,14 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
               }),
             });
             const patchBody = await patchRes.json().catch(() => ({})) as RuleWriteBody;
-            if (!patchRes.ok || hasFolderMirrorError(patchBody)) {
-              setSaveError(hasFolderMirrorError(patchBody) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+            if (!patchRes.ok || hasFolderMirrorFailure(patchBody)) {
+              setSaveError(hasFolderMirrorFailure(patchBody) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
               return false;
             }
           } else if (!createRes.ok || !createBody.id) {
             setSaveError(createBody?.error?.message ?? CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
             return false;
-          } else if (hasFolderMirrorError(createBody)) {
+          } else if (hasFolderMirrorFailure(createBody)) {
             setState({
               status: 'adoptable',
               rule: { id: createBody.id, trigger_type: triggerType, trigger_config: input.triggerConfig, action_type: input.actionType, action_config: actionConfig, enabled: false },
@@ -261,8 +261,8 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
                   }),
                 });
                 const patchBody = await patchRes.json().catch(() => ({})) as RuleWriteBody;
-                if (!patchRes.ok || hasFolderMirrorError(patchBody)) {
-                  setSaveError(hasFolderMirrorError(patchBody) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+                if (!patchRes.ok || hasFolderMirrorFailure(patchBody)) {
+                  setSaveError(hasFolderMirrorFailure(patchBody) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
                   return false;
                 }
               } else {

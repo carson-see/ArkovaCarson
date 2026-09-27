@@ -203,7 +203,7 @@ describe('ConnectorsPage', () => {
         const body = JSON.parse(String(init.body));
         if (body.enabled === true) { recovered = true; return response(200, { ok: true }); }
         attempts += 1;
-        if (attempts === 1) return response(200, { ok: true, drive_folder_mirror: [{ folderId: '', driveFolderId: 'f1', outcome: 'error' }] });
+        if (attempts === 1) return response(200, { ok: true, drive_folder_mirror: [{ folderId: '', driveFolderId: 'f1', outcome: 'skipped_no_connection' }] });
         return response(200, { ok: true, drive_folder_mirror: [{ folderId: 'arkova-f1', driveFolderId: 'f1', outcome: 'created' }] });
       }
       if (endpoint === '/api/rules/created-rule' && init?.method === 'GET') {

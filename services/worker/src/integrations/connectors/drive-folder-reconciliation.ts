@@ -112,7 +112,7 @@ function applyDriveFolderMirrorOutcome(
 ): void {
   if (outcome.outcome === 'created') summary.created += 1;
   else if (outcome.outcome === 'existing') summary.existing += 1;
-  else if (outcome.outcome === 'skipped_no_connection') summary.skipped += 1;
+  else if (outcome.outcome === 'skipped_no_connection') { summary.skipped += 1; summary.errored += 1; }
   else summary.errored += 1;
 }
 

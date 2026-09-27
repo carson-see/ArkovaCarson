@@ -22,6 +22,20 @@ describe('driveFolderReconciliationPage', () => {
 });
 
 describe('runDriveFolderReconciliation', () => {
+  it('reports a configured rule with no active Drive connection as non-green', async () => {
+    const candidate = driveRule({ created_by_user_id: '00000000-0000-4000-8000-000000000020' });
+    let error: unknown;
+    try {
+      await runDriveFolderReconciliation({
+        db: { from: vi.fn() },
+        listCandidates: async () => ({ rows: [candidate], count: 1 }),
+        readCurrentRule: async () => candidate,
+        mirror: async () => [{ folderId: '', driveFolderId: 'f1', outcome: 'skipped_no_connection' }],
+      });
+    } catch (caught) { error = caught; }
+    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
+    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ skipped: 1, errored: 1 });
+  });
   it('queries only enabled workspace rules in stable id order', async () => {
     const chain: Record<string, ReturnType<typeof vi.fn>> = {};
     chain.select = vi.fn(() => chain); chain.eq = vi.fn(() => chain);
