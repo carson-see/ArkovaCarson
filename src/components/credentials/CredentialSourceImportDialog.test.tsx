@@ -23,7 +23,6 @@ const PREVIEW = {
   credential_title: 'Cloud Architecture Fundamentals',
   credential_issuer: 'Example Cloud',
   credential_recipient_display: 'Ada Recipient',
-  credential_recipient_hash: 'c'.repeat(64),
   credential_issued_at: '2026-04-15',
   credential_expires_at: '2028-04-15',
   verification_level: 'captured_url',
@@ -79,6 +78,7 @@ describe('CredentialSourceImportDialog', () => {
     expect(screen.getByText('Example Cloud')).toBeInTheDocument();
     expect(screen.getByText('Credly')).toBeInTheDocument();
     expect(screen.getByText('Ada Recipient')).toBeInTheDocument();
+    expect(screen.queryByText(/recipient proof/i)).not.toBeInTheDocument();
     expect(screen.getByText('2028-04-15')).toBeInTheDocument();
     // SCRUM-2914 (Founder UI findings): the extraction-confidence percentage
     // is no longer surfaced — the score is unreliable and must not be shown.

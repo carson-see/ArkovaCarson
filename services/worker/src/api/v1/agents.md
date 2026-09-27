@@ -1981,3 +1981,13 @@ NULL human actor and JSON details containing the key id/prefix; `registered_by`
 and `created_by` retain the owning user only to satisfy their FK contracts.
 Terminal machine revoke calls the distinct service-only 0489 RPC. SDK, CLI, MCP,
 and outbound-event exposure are outside this server repair.
+
+## 2026-09-27 — credential source preview recipient-hash suppression
+
+`credential-sources.ts` does not pass `RECIPIENT_IDENTIFIER_PEPPER` into the
+caller-controlled source preview builder. Preview, confirm, and duplicate
+responses retain the deprecated `credential_recipient_hash` property as
+`null`; the source evidence package also omits the recipient identifier, so
+`evidence_package_hash` cannot act as a secondary comparison channel. The
+private self-link remains `buildSelfImportRecipientHash(userId)` and must not be
+replaced with an extracted external recipient identifier.

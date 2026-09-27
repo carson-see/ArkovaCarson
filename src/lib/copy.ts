@@ -1591,7 +1591,6 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   SOURCE_FIELD: 'Source',
   PROVIDER_FIELD: 'Provider',
   RECIPIENT_FIELD: 'Recipient',
-  RECIPIENT_PROOF_FIELD: 'Recipient Proof',
   // SCRUM-2914: CONFIDENCE_FIELD removed — extraction confidence scoring is
   // unreliable and is no longer surfaced anywhere in the UI. Do not re-add.
   EVIDENCE_FIELD: 'Evidence',

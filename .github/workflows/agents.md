@@ -954,6 +954,24 @@ It checks EXISTENCE only — never a value, never a version payload, nothing pri
 
 Also added dark: `ENABLE_COMPUTEID_INTEGRATION=false` in `--set-env-vars`. It was already false by `config.ts` default; stating it makes the activation flip one reviewable line instead of an invisible default, and it fails SAFE if the code default ever changes.
 
+## 2026-09-27 — UAT-23 recipient identity pepper binding
+
+`deploy-worker.yml` binds `RECIPIENT_IDENTIFIER_PEPPER` to the existing Secret
+Manager version `recipient-identifier-pepper:1` and includes that secret id in
+the metadata-only preflight. Version 1 is deliberately pinned: this is a
+durable identity key, so silent rotation through `:latest` would make newly
+computed recipient identifiers stop matching existing ones. Rotation requires
+an explicit versioned identifier migration.
+
+This worker binding does not complete public-verification readiness.
+`get_public_anchor` separately depends on the database setting
+`app.recipient_pepper`; release acceptance must verify the production setting
+and matching behavior without reading or logging the value. This workflow must
+not write that GUC. The binding must ship with the credential-source import
+privacy prerequisite: caller-controlled previews derive no external recipient
+HMAC and retain `credential_recipient_hash` only as an always-null compatibility
+field.
+
 ## 2026-09-13 — `deploy-worker.yml`: `CLOUDFLARE_ORIGIN_GUARD_MODE=off` added; `CLOUDFLARE_ORIGIN_SECRET` deliberately NOT added yet (SCRUM-3888)
 
 Same "state the dark default explicitly" move as `ENABLE_COMPUTEID_INTEGRATION=false` above:

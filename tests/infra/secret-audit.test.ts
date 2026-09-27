@@ -97,6 +97,7 @@ describe('EXPECTED_SECRETS contract', () => {
       'CLOUDFLARE_TUNNEL_TOKEN',
       'SAM_GOV_API_KEY',
       'RUNPOD_API_KEY',
+      'RECIPIENT_IDENTIFIER_PEPPER',
     ];
     for (const r of required) expect(EXPECTED_SECRETS).toContain(r);
   });

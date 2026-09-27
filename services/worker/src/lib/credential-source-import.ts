@@ -2,7 +2,6 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { z } from 'zod';
-import { hashRecipientEmail } from './recipient-identity.js';
 import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
 import {
   ANCHOR_CREDENTIAL_TYPES,
@@ -80,6 +79,7 @@ export interface CredentialSourceImportPreview {
   credential_title: string;
   credential_issuer: string | null;
   credential_recipient_display: string | null;
+  /** @deprecated Always null for caller-controlled source imports. */
   credential_recipient_hash: string | null;
   credential_issued_at: string | null;
   credential_expires_at: string | null;
@@ -119,14 +119,6 @@ export interface CredentialSourceImportDeps {
   fetchFn: (url: string, init?: RequestInit) => Promise<Response>;
   urlGuard: (url: string) => Promise<boolean>;
   now?: () => Date;
-  /**
-   * SCRUM-2484: server pepper for the keyed HMAC-SHA256 of recipient email
-   * identifiers. When set, recipient identifiers are keyed (not enumerable). When
-   * unset, no recipient identifier hash is produced at all — we NEVER fall back
-   * to a bare, enumerable sha256(email). Callers pass
-   * `config.recipientIdentifierPepper`.
-   */
-  recipientPepper?: string;
 }
 
 interface FetchedCredentialSource {
@@ -140,7 +132,6 @@ interface ExtractedCredentialMetadata {
   title: string;
   issuerName?: string;
   recipientDisplayName?: string;
-  recipientIdentifierHash?: string;
   issuedAt?: string;
   expiresAt?: string;
   credentialType: AnchorCredentialType;
@@ -160,23 +151,6 @@ interface ExtractedCredentialMetadata {
 
 function sha256Hex(value: Buffer | string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-/**
- * SCRUM-2484: hash a recipient identifier with a keyed HMAC (server pepper) so
- * the digest cannot be precomputed / enumerated offline. When no pepper is
- * available we return undefined — we NEVER fall back to a bare sha256(value),
- * which would re-open the enumeration leak. `pepper` is threaded from
- * `CredentialSourceImportDeps.recipientPepper` (config.recipientIdentifierPepper).
- */
-function hashRecipientIdentifier(value: string | undefined, pepper: string | undefined): string | undefined {
-  const cleaned = cleanText(value, 500);
-  if (!cleaned) return undefined;
-  // Omit the identifier hash entirely when no pepper is available — never fall
-  // back to a bare, enumerable sha256(value). (The keyed HMAC throws on an empty
-  // pepper; here we degrade to "no identifier" rather than failing the import.)
-  if (!pepper) return undefined;
-  return hashRecipientEmail(cleaned, pepper);
 }
 
 function collapseWhitespace(value: string): string {
@@ -493,7 +467,7 @@ function parseJsonMaybe(text: string): unknown {
   }
 }
 
-function extractStructuredMetadata(value: unknown, pepper: string | undefined): Partial<ExtractedCredentialMetadata> {
+function extractStructuredMetadata(value: unknown): Partial<ExtractedCredentialMetadata> {
   if (!value) return {};
 
   const recipientDisplayName = firstJsonObjectName(value, [
@@ -511,23 +485,11 @@ function extractStructuredMetadata(value: unknown, pepper: string | undefined): 
     'holderName',
     'holder_name',
   ]);
-  const recipientIdentifier = firstJsonString(value, [
-    'recipientIdentifier',
-    'recipient_identifier',
-    'recipientEmail',
-    'recipient_email',
-    'recipientId',
-    'recipient_id',
-    'subjectId',
-    'subject_id',
-  ]) ?? recipientDisplayName;
-
   return {
     title: firstJsonString(value, ['name', 'title', 'credentialName', 'achievementName']),
     issuerName: firstJsonObjectName(value, ['issuer', 'issuedBy', 'provider', 'organization']) ??
       firstJsonString(value, ['issuerName', 'issuer_name', 'authority', 'providerName']),
     recipientDisplayName,
-    recipientIdentifierHash: hashRecipientIdentifier(recipientIdentifier, pepper),
     issuedAt: firstJsonDate(value, ['issuedOn', 'issuanceDate', 'dateIssued', 'validFrom', 'startDate', 'issuedAt']),
     expiresAt: firstJsonDate(value, ['expires', 'expirationDate', 'validUntil', 'endDate', 'expiresAt']),
     sourceId: safeSourceId(firstJsonString(value, ['id', '@id', 'identifier', 'credentialId'])),
@@ -553,7 +515,7 @@ function firstElementText($: cheerio.CheerioAPI, selectors: readonly string[]): 
   return undefined;
 }
 
-function extractJsonLd($: cheerio.CheerioAPI, pepper: string | undefined): Partial<ExtractedCredentialMetadata> {
+function extractJsonLd($: cheerio.CheerioAPI): Partial<ExtractedCredentialMetadata> {
   const scripts = $('script[type*="ld+json"]')
     .map((_, element) => $(element).text())
     .get()
@@ -561,7 +523,7 @@ function extractJsonLd($: cheerio.CheerioAPI, pepper: string | undefined): Parti
     .filter((script): script is NonNullable<unknown> => Boolean(script));
 
   for (const script of scripts) {
-    const extracted = extractStructuredMetadata(script, pepper);
+    const extracted = extractStructuredMetadata(script);
     if (extracted.title || extracted.issuerName || extracted.issuedAt || extracted.sourceId) return extracted;
   }
 
@@ -617,10 +579,9 @@ function extractHtmlMetadata(
   url: string,
   requestedType: AnchorCredentialType | undefined,
   issuerHint: string | undefined,
-  pepper: string | undefined,
 ): ExtractedCredentialMetadata {
   const $ = cheerio.load(text);
-  const structured = extractJsonLd($, pepper);
+  const structured = extractJsonLd($);
   const title = structured.title ??
     metaContent($, ['meta[property="og:title"]', 'meta[name="twitter:title"]', 'meta[name="title"]']) ??
     firstElementText($, ['title', 'h1']);
@@ -656,7 +617,6 @@ function extractHtmlMetadata(
     title: finalTitle,
     issuerName,
     recipientDisplayName,
-    recipientIdentifierHash: structured.recipientIdentifierHash ?? hashRecipientIdentifier(recipientDisplayName, pepper),
     issuedAt,
     expiresAt: structured.expiresAt,
     credentialType: inferCredentialType(requestedType, url, finalTitle, issuerName),
@@ -672,10 +632,9 @@ function extractJsonMetadata(
   url: string,
   requestedType: AnchorCredentialType | undefined,
   issuerHint: string | undefined,
-  pepper: string | undefined,
 ): ExtractedCredentialMetadata {
   const parsed = parseJsonMaybe(text);
-  const structured = extractStructuredMetadata(parsed, pepper);
+  const structured = extractStructuredMetadata(parsed);
   const title = structured.title ?? `Imported credential from ${new URL(url).hostname}`;
   const issuerName = structured.issuerName ?? cleanText(issuerHint);
 
@@ -683,7 +642,6 @@ function extractJsonMetadata(
     title,
     issuerName,
     recipientDisplayName: structured.recipientDisplayName,
-    recipientIdentifierHash: structured.recipientIdentifierHash,
     issuedAt: structured.issuedAt,
     expiresAt: structured.expiresAt,
     credentialType: inferCredentialType(requestedType, url, title, issuerName),
@@ -739,13 +697,12 @@ export function buildCredentialSourceAnchorFingerprint(
 function extractCredentialMetadata(
   fetched: FetchedCredentialSource,
   input: CredentialSourceImportRequest,
-  pepper: string | undefined,
 ): ExtractedCredentialMetadata {
   if (JSON_CONTENT_TYPES.has(fetched.contentType)) {
-    return extractJsonMetadata(fetched.text, fetched.url, input.credential_type, input.issuer_hint, pepper);
+    return extractJsonMetadata(fetched.text, fetched.url, input.credential_type, input.issuer_hint);
   }
   if (HTML_CONTENT_TYPES.has(fetched.contentType)) {
-    return extractHtmlMetadata(fetched.text, fetched.url, input.credential_type, input.issuer_hint, pepper);
+    return extractHtmlMetadata(fetched.text, fetched.url, input.credential_type, input.issuer_hint);
   }
   return extractPlainTextMetadata(fetched.text, fetched.url, input.credential_type, input.issuer_hint);
 }
@@ -824,7 +781,7 @@ export async function buildCredentialSourceImportPreview(
   deps: CredentialSourceImportDeps,
 ): Promise<CredentialSourceImportBuildResult> {
   const fetched = await fetchPublicCredentialSource(input.source_url, deps);
-  const extracted = extractCredentialMetadata(fetched, input, deps.recipientPepper);
+  const extracted = extractCredentialMetadata(fetched, input);
   const fetchedAt = (deps.now?.() ?? new Date()).toISOString();
   const payloadHash = sha256Hex(fetched.bytes);
   const evidencePackage = buildCredentialEvidencePackage({
@@ -842,7 +799,6 @@ export async function buildCredentialSourceImportPreview(
       type: extracted.credentialType,
       title: extracted.title,
       issuerName: extracted.issuerName,
-      recipientIdentifierHash: extracted.recipientIdentifierHash,
       issuedAt: extracted.issuedAt,
       expiresAt: extracted.expiresAt,
     },
@@ -879,7 +835,9 @@ export async function buildCredentialSourceImportPreview(
       credential_title: evidencePackage.credential.title,
       credential_issuer: evidencePackage.credential.issuerName ?? null,
       credential_recipient_display: extracted.recipientDisplayName ?? null,
-      credential_recipient_hash: evidencePackage.credential.recipientIdentifierHash ?? null,
+      // Deprecated compatibility field. Caller-controlled credential sources
+      // must never expose or commit to a stable peppered recipient identifier.
+      credential_recipient_hash: null,
       credential_issued_at: evidencePackage.credential.issuedAt ?? null,
       credential_expires_at: evidencePackage.credential.expiresAt ?? null,
       verification_level: 'captured_url',
@@ -903,8 +861,9 @@ export async function buildCredentialSourceImportPreview(
  * self-import marker is intentionally left as a plain namespaced sha256 so
  * existing `anchor_recipients` rows keep matching without a data backfill; it is
  * never projected to public output. The keyed HMAC applies to the recipient
- * EMAIL identifier (`hashRecipientEmail` / `hashRecipientIdentifier`) which is
- * the value that leaks publicly.
+ * EMAIL identifiers. Caller-controlled source previews deliberately derive no
+ * recipient hash; trusted flows that need one use `hashRecipientEmail` at their
+ * own boundary.
  */
 export function buildSelfImportRecipientHash(userId: string): string {
   return sha256Hex(`self-import:${userId}`);
