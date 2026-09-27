@@ -16,6 +16,7 @@ export interface DriveFolderRuleCandidate {
 export interface DriveFolderReconciliationSummary {
   candidates: number; page: number; pages: number; scanned: number; eligible: number;
   created: number; existing: number; skipped: number; errored: number; invalid: number;
+  needsAdminRepair: number;
   deadlineExceeded: boolean;
 }
 export class DriveFolderReconciliationError extends Error {
@@ -94,6 +95,14 @@ async function prepareDriveFolderRule(args: {
     args.summary.invalid += 1; args.summary.errored += 1;
     return null;
   }
+  if (rule.created_by_user_id === null) {
+    args.summary.needsAdminRepair += 1; args.summary.errored += 1;
+    args.logger?.error(
+      { ruleId: rule.id, orgId: rule.org_id, recovery: 'org_admin_resave' },
+      'drive-folder reconciliation: rule needs admin attribution repair before mirroring',
+    );
+    return null;
+  }
   return { rule, folders };
 }
 
@@ -141,7 +150,7 @@ export async function runDriveFolderReconciliation(deps: ReconciliationDeps): Pr
   if (monotonicNow() >= deadlineAt) {
     throw new DriveFolderReconciliationError({
       candidates: 0, page: 0, pages: 1, scanned: 0, eligible: 0,
-      created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, deadlineExceeded: true,
+      created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, needsAdminRepair: 0, deadlineExceeded: true,
     });
   }
   let listed = await list({ page: 0, pageSize: DRIVE_FOLDER_RECONCILIATION_PAGE_SIZE });
@@ -153,13 +162,13 @@ export async function runDriveFolderReconciliation(deps: ReconciliationDeps): Pr
     );
     throw new DriveFolderReconciliationError({
       candidates: listed.count, page: selected.page, pages: selected.pages, scanned: 0, eligible: 0,
-      created: 0, existing: 0, skipped: 0, errored: remaining, invalid: 0, deadlineExceeded: true,
+      created: 0, existing: 0, skipped: 0, errored: remaining, invalid: 0, needsAdminRepair: 0, deadlineExceeded: true,
     });
   }
   if (selected.page !== 0) listed = await list({ page: selected.page, pageSize: DRIVE_FOLDER_RECONCILIATION_PAGE_SIZE });
   const summary: DriveFolderReconciliationSummary = {
     candidates: listed.count, page: selected.page, pages: selected.pages, scanned: 0, eligible: 0,
-    created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, deadlineExceeded: false,
+    created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
   };
   for (const candidate of listed.rows) {
     if (monotonicNow() >= deadlineAt) {

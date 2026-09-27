@@ -142,9 +142,11 @@ function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
   const folders = draftFolders ?? persistedFolders;
   const actionValue = draftAction ?? persistedAction;
   const isManaged = state.status === 'managed';
+  const needsAdminRepair = state.status === 'adoptable' && state.rule.created_by_user_id === null;
+  const needsDisabledRuleRecovery = state.status === 'adoptable' && !state.rule.enabled;
   const dirty =
     (draftFolders !== null && JSON.stringify(draftFolders) !== JSON.stringify(persistedFolders)) ||
-    (draftAction !== null && draftAction !== persistedAction);
+    (draftAction !== null && draftAction !== persistedAction) || needsAdminRepair || needsDisabledRuleRecovery;
 
   async function handleSave() {
     const ok = await save({
@@ -196,6 +198,9 @@ function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
             <ConnectorActionChoice value={actionValue} onChange={setDraftAction} name="drive-action" />
 
             {saveError && <p className="text-sm text-destructive">{saveError}</p>}
+            {needsAdminRepair && !saveError && (
+              <p className="text-sm text-destructive">{CONNECTORS_LABELS.CONNECTOR_ADMIN_REPAIR_REQUIRED}</p>
+            )}
 
             <Button onClick={() => void handleSave()} disabled={!dirty || saving}>
               {saving ? CONNECTORS_LABELS.CONNECTOR_SAVING : CONNECTORS_LABELS.CONNECTOR_SAVE}

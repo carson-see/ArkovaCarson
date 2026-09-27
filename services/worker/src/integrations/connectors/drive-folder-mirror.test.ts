@@ -252,9 +252,23 @@ describe('extractDriveFoldersToMirror', () => {
         { type: 'drive_folder', folder_id: 'second', folder_name: 'Second' },
       ],
     })).toEqual([
-      { folderId: 'same', folderName: null },
+      { folderId: 'same', folderName: 'duplicate' },
       { folderId: 'second', folderName: 'Second' },
     ]);
+  });
+
+  it('ignores a legacy folder_id unless its type is drive_folder, without displacing three array selections', () => {
+    expect(extractDriveFoldersToMirror({
+      type: 'workspace_file_modified', folder_id: 'irrelevant',
+      drive_folders: [1, 2, 3].map((n) => ({ folder_id: `array-${n}`, folder_name: `Folder ${n}` })),
+    })).toEqual([1, 2, 3].map((n) => ({ folderId: `array-${n}`, folderName: `Folder ${n}` })));
+  });
+
+  it('returns four for three array selections plus a distinct valid legacy binding so the caller cap rejects it', () => {
+    expect(extractDriveFoldersToMirror({
+      type: 'drive_folder', folder_id: 'legacy',
+      drive_folders: [1, 2, 3].map((n) => ({ folder_id: `array-${n}` })),
+    })).toHaveLength(4);
   });
 
   it('drops duplicate folder ids and malformed entries', () => {

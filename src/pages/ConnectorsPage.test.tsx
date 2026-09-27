@@ -6,7 +6,7 @@
  * call recorded on the mock chain, alongside the column-pinning assertion.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ConnectorsPage } from './ConnectorsPage';
@@ -160,6 +160,76 @@ describe('ConnectorsPage', () => {
 
     const saveButtons = screen.getAllByRole('button', { name: 'Save' });
     saveButtons.forEach((btn) => expect(btn).toBeDisabled());
+  });
+
+  it('shows a null-creator Drive rule as admin-repairable and enables unchanged re-save', async () => {
+    installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+    installRules(
+      [{ id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true }],
+      { 'rule-1': { id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: { vendors: ['google_drive'], drive_folders: [{ folder_id: 'f1', folder_name: 'Evidence' }] }, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: true, created_by_user_id: null } },
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByText(CONNECTORS_LABELS.CONNECTOR_ADMIN_REPAIR_REQUIRED)).toBeInTheDocument());
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' });
+    expect(saveButtons.some((button) => !button.hasAttribute('disabled'))).toBe(true);
+  });
+
+  it('keeps unchanged Save enabled for a reloaded disabled connector rule with a valid creator', async () => {
+    installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+    installRules(
+      [{ id: 'rule-disabled', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: false }],
+      { 'rule-disabled': { id: 'rule-disabled', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: { vendors: ['google_drive'], drive_folders: [] }, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: false, created_by_user_id: 'admin-1' } },
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+  });
+
+  it('keeps the disabled rule retry actionable after mirror failure, then toasts only after mirror and enable succeed', async () => {
+    const response = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response;
+    installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+    installRules(
+      [{ id: 'created-rule', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: false }],
+      { 'created-rule': { id: 'created-rule', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: { vendors: ['google_drive'], drive_folders: [] }, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: false, created_by_user_id: 'admin-1' } },
+    );
+    let attempts = 0;
+    let recovered = false;
+    renderPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    workerFetch.mockImplementation(async (endpoint: string, init?: RequestInit) => {
+      if (endpoint.startsWith('/api/v1/integrations/google_drive/folders?')) {
+        return response(200, { folders: [{ id: 'f1', name: 'Evidence', hasChildren: null, driveId: null }] });
+      }
+      if (endpoint === '/api/rules/created-rule' && init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body));
+        if (body.enabled === true) { recovered = true; return response(200, { ok: true }); }
+        attempts += 1;
+        if (attempts === 1) return response(200, { ok: true, drive_folder_mirror: [{ folderId: '', driveFolderId: 'f1', outcome: 'error' }] });
+        return response(200, { ok: true, drive_folder_mirror: [{ folderId: 'arkova-f1', driveFolderId: 'f1', outcome: 'created' }] });
+      }
+      if (endpoint === '/api/rules/created-rule' && init?.method === 'GET') {
+        return response(200, { item: { id: 'created-rule', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: { vendors: ['google_drive'], drive_folders: [] }, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: recovered, created_by_user_id: 'admin-1' } });
+      }
+      return response(200, {});
+    });
+    fireEvent.click(screen.getByRole('button', { name: CONNECTORS_LABELS.DRIVE_CHOOSE_FOLDERS }));
+    await screen.findByRole('checkbox', { name: 'Evidence' });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Evidence' }));
+    fireEvent.click(screen.getByText(CONNECTORS_LABELS.DRIVE_PICKER_DONE));
+    const save = screen.getByRole('button', { name: 'Save' });
+    save.click();
+    await waitFor(() => expect(screen.getByText(CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED)).toBeInTheDocument());
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(save).toBeEnabled();
+    screen.getByRole('button', { name: 'Save' }).click();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(CONNECTORS_LABELS.CONNECTOR_SAVED_TOAST));
+    const writes = workerFetch.mock.calls.filter((call) => ['POST', 'PATCH'].includes(call[1]?.method));
+    expect(writes.map((call) => [call[0], call[1].method])).toEqual([
+      ['/api/rules/created-rule', 'PATCH'], ['/api/rules/created-rule', 'PATCH'], ['/api/rules/created-rule', 'PATCH'],
+    ]);
+    for (const call of writes.slice(0, 2)) {
+      const body = JSON.parse(String(call[1].body));
+      expect(body.trigger_config?.drive_folders).toEqual([{ type: 'drive_folder', folder_id: 'f1', folder_name: 'Evidence' }]);
+    }
   });
 
   it('two enabled WORKSPACE_FILE_MODIFIED rules produce the read-only Managed-in-Rules state; Save absent (test 9)', async () => {

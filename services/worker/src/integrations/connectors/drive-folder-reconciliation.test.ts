@@ -7,7 +7,7 @@ import {
 const driveRule = (overrides: Partial<DriveFolderRuleCandidate> = {}): DriveFolderRuleCandidate => ({
   id: '00000000-0000-4000-8000-000000000001',
   org_id: '00000000-0000-4000-8000-000000000010',
-  created_by_user_id: null,
+  created_by_user_id: '00000000-0000-4000-8000-000000000020',
   trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'drive-folder-a', folder_name: 'Evidence' }] },
   action_config: { tag: 'connector-google_drive' },
   ...overrides,
@@ -87,6 +87,32 @@ describe('runDriveFolderReconciliation', () => {
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(DriveFolderReconciliationError);
     expect((error as DriveFolderReconciliationError).summary).toMatchObject({ invalid: 1, errored: 1 });
+    expect(mirror).not.toHaveBeenCalled();
+  });
+
+  it('rejects three array selections plus a distinct valid legacy binding as four total folders', async () => {
+    const mixed = driveRule({ trigger_config: {
+      type: 'drive_folder', folder_id: 'legacy',
+      drive_folders: [1, 2, 3].map((n) => ({ type: 'drive_folder', folder_id: `folder-${n}` })),
+    } });
+    const mirror = vi.fn();
+    const error = await runDriveFolderReconciliation({
+      db: {} as never, listCandidates: async () => ({ rows: [mixed], count: 1 }),
+      readCurrentRule: current, mirror, now: () => new Date(0),
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
+    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ invalid: 1, errored: 1 });
+    expect(mirror).not.toHaveBeenCalled();
+  });
+
+  it('keeps a null-creator rule visibly non-green as needs_admin_repair without attempting an impossible mirror', async () => {
+    const mirror = vi.fn();
+    const error = await runDriveFolderReconciliation({
+      db: {} as never, listCandidates: async () => ({ rows: [driveRule({ created_by_user_id: null })], count: 1 }),
+      readCurrentRule: current, mirror, now: () => new Date(0),
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
+    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ needsAdminRepair: 1, errored: 1 });
     expect(mirror).not.toHaveBeenCalled();
   });
 

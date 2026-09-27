@@ -37,6 +37,10 @@ function tableMock(terminalByOp: {
         calls.push({ method: 'eq', args });
         return handler;
       },
+      is: (...args: unknown[]) => {
+        calls.push({ method: 'is', args });
+        return handler;
+      },
       order: () => handler,
       limit: () => handler,
       maybeSingle: async () => terminal,
@@ -701,9 +705,10 @@ describe('handleCreateRule', () => {
     // `enabled` MUST be false even though VALID_CREATE_BODY.enabled was true.
     const insertCall = rulesInsert.calls.find((c) => c.method === 'insert');
     expect(insertCall).toBeDefined();
-    const payload = insertCall!.args[0] as { enabled: boolean; name: string };
+    const payload = insertCall!.args[0] as { enabled: boolean; name: string; created_by_user_id: string };
     expect(payload.enabled).toBe(false);
     expect(payload.name).toBe(VALID_CREATE_BODY.name);
+    expect(payload.created_by_user_id).toBe(USER_ID);
   });
 
   it('rejects non-admin rule creation with 403', async () => {
@@ -1385,12 +1390,17 @@ describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', (
           action_type: 'AUTO_ANCHOR',
           action_config: { tag: 'connector-google_drive' },
           org_id: ORG_ID,
+          created_by_user_id: null,
         },
         error: null,
       },
     });
+    const creatorClaim = tableMock({ update: { error: null, count: 1 } });
     const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
-    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), currentRow.from(''), ruleUpdate.from('')));
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), currentRow.from(''), creatorClaim.from(''), ruleUpdate.from('')));
+    driveFolderMirrorMock.mirrorConnectedDriveFolders.mockResolvedValueOnce([
+      { folderId: 'arkova-folder-1', driveFolderId: 'drv-2', outcome: 'created' },
+    ]);
 
     const { res, json } = mockRes();
     await handleUpdateRule(
@@ -1409,14 +1419,20 @@ describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', (
       res,
     );
 
-    // review P2: the mirror is now awaited, so its (real, mocked-empty)
-    // result is part of the response body rather than invisible.
-    expect(json).toHaveBeenCalledWith({ ok: true, drive_folder_mirror: [] });
+    // The mirror is awaited, so its created-folder result is part of the
+    // response body rather than invisible to the caller.
+    expect(json).toHaveBeenCalledWith({
+      ok: true,
+      drive_folder_mirror: [{ folderId: 'arkova-folder-1', driveFolderId: 'drv-2', outcome: 'created' }],
+    });
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledTimes(1);
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledWith(
       expect.objectContaining({ db: expect.anything() }),
       { orgId: ORG_ID, actorUserId: USER_ID, folders: [{ folderId: 'drv-2', folderName: 'Contracts' }] },
     );
+    const claimUpdate = creatorClaim.calls.find((call) => call.method === 'update');
+    expect(claimUpdate?.args[0]).toEqual({ created_by_user_id: USER_ID });
+    expect(creatorClaim.calls).toContainEqual({ method: 'is', args: ['created_by_user_id', null] });
   });
 
   it('review P2: handleUpdateRule AWAITS the mirror before responding, and the response carries its real per-folder outcome', async () => {

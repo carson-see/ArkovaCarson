@@ -362,7 +362,7 @@ export async function handleGetRule(
     const { data, error } = await (db as any)
       .from('organization_rules')
       .select(
-        'id, org_id, name, description, enabled, trigger_type, trigger_config, action_type, action_config, created_at, updated_at, last_executed_at',
+        'id, org_id, name, description, enabled, trigger_type, trigger_config, action_type, action_config, created_by_user_id, created_at, updated_at, last_executed_at',
       )
       .eq('id', idParsed.data)
       .eq('org_id', orgId)
@@ -751,6 +751,7 @@ export async function handleCreateRule(
         trigger_config: parsed.data.trigger_config,
         action_type: parsed.data.action_type,
         action_config: parsed.data.action_config,
+        created_by_user_id: userId,
         enabled: false,
       })
       .select('id')
@@ -800,7 +801,7 @@ export async function handleCreateRule(
 }
 
 type PatchValidationResult =
-  | { kind: 'ok'; currentActionType?: string; currentTriggerType?: string; currentActionConfig?: unknown }
+  | { kind: 'ok'; currentActionType?: string; currentTriggerType?: string; currentActionConfig?: unknown; currentCreatedByUserId?: string | null }
   | { kind: 'error'; status: number; body: Record<string, unknown> };
 
 type ParsedUpdateRuleRequest =
@@ -885,7 +886,7 @@ async function validatePatchAgainstCurrent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: readErr } = await (db as any)
     .from('organization_rules')
-    .select('trigger_type, trigger_config, action_type, action_config, org_id')
+    .select('trigger_type, trigger_config, action_type, action_config, org_id, created_by_user_id')
     .eq('id', ruleId)
     .eq('org_id', orgId)
     .maybeSingle();
@@ -917,6 +918,7 @@ async function validatePatchAgainstCurrent(
       currentActionType: current.action_type as string | undefined,
       currentTriggerType: current.trigger_type as string | undefined,
       currentActionConfig: current.action_config,
+      currentCreatedByUserId: current.created_by_user_id as string | null | undefined,
     };
   } catch (err) {
     return {
@@ -1046,6 +1048,23 @@ export async function handleUpdateRule(
     // `new Date()` instead of the DB commit time, and the trigger has always
     // been authoritative for audit.
     const update = buildRuleUpdate(parsed.patch);
+    const actionConfig = parsed.patch.action_config ?? validation.currentActionConfig;
+    const connectorDriveResave = !!parsed.patch.trigger_config
+      && !!validation.currentTriggerType
+      && shouldMirrorDriveFoldersForRule(validation.currentTriggerType, actionConfig);
+    if (connectorDriveResave && validation.currentCreatedByUserId === null) {
+      // Atomic compare-and-set: only an authorized org admin reaches this
+      // point, and a concurrent/non-null original creator is never replaced.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const claim = await (db as any).from('organization_rules')
+        .update({ created_by_user_id: userId }, { count: 'exact' })
+        .eq('id', parsed.ruleId).eq('org_id', orgId).is('created_by_user_id', null);
+      if (claim.error) {
+        logger.warn({ error: claim.error, ruleId: parsed.ruleId, orgId }, 'connector rule creator claim failed');
+        res.status(500).json({ error: { code: 'creator_claim_failed', message: 'Could not repair connector rule ownership' } });
+        return;
+      }
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error, count } = await (db as any)
       .from('organization_rules')
@@ -1079,7 +1098,6 @@ export async function handleUpdateRule(
     let mirrorResults: MirrorConnectedDriveFolderResult[] | null = null;
     if (parsed.patch.trigger_config) {
       const triggerType = validation.currentTriggerType;
-      const actionConfig = parsed.patch.action_config ?? validation.currentActionConfig;
       if (triggerType) {
         mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, triggerType, parsed.patch.trigger_config, actionConfig);
       }

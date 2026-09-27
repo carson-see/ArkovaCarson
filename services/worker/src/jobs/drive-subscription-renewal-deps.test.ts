@@ -456,7 +456,7 @@ describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 corre
     runDriveFolderReconciliationMock.mockReset();
     runDriveFolderReconciliationMock.mockResolvedValue({
       candidates: 0, page: 0, pages: 1, scanned: 0, eligible: 0,
-      created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, deadlineExceeded: false,
+      created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
     });
   });
 
@@ -471,7 +471,7 @@ describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 corre
       reconciliation: { scanned: 0, ran: 0, skipped: 0, errored: 0 },
       folderReconciliation: {
         candidates: 0, page: 0, pages: 1, scanned: 0, eligible: 0,
-        created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, deadlineExceeded: false,
+        created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
       },
     });
     expect(renewDriveSubscriptionsMock).toHaveBeenCalledTimes(1);
@@ -538,7 +538,7 @@ describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 corre
       renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 0, renewed: 0, degraded: 0, failed: 0 });
       const aggregate = new DriveFolderReconciliationError({
         candidates: 2, page: 0, pages: 1, scanned: 2, eligible: 2,
-        created: 1, existing: 0, skipped: 0, errored: 1, invalid: 0, deadlineExceeded: false,
+        created: 1, existing: 0, skipped: 0, errored: 1, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
       });
       runDriveFolderReconciliationMock.mockRejectedValueOnce(aggregate);
 

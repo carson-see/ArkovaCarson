@@ -2,6 +2,10 @@
 
 _Last updated: 2026-09-26 (`drive-folder-mirror.ts` — `loadActiveDriveConnection` distinguishes a retryable DB error from a legitimate "no connection"; the caller (`rules-crud.ts`) awaits the mirror instead of firing it after the response — review P2 follow-up on PR #3086)._
 _Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
+
+## 2026-09-27 — Drive rule attribution recovery
+
+Worker-created rules persist `created_by_user_id`. An org-admin connector re-save atomically claims only a null creator and uses that authenticated admin for the awaited mirror. Scheduled reconciliation reports null creators as `needsAdminRepair` and stays non-green until that visible re-save succeeds. Legacy singular `folder_id` is accepted only with `type: drive_folder`; named `drive_folders[]` entries win de-duplication and remain capped by the schema.
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
 

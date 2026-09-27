@@ -4,6 +4,10 @@ _Last updated: 2026-09-21 (`DriveConnectorCard.tsx`: unconnected-state prompt mo
 _Last updated: 2026-09-14 (status row deduplicated against `components/integrations/ConnectorCardStatusRow.tsx`)_
 _Last updated: 2026-09-25 (`DriveConnectorCard.tsx` surfaces SCRUM-1146 connector health)_
 
+## 2026-09-27 — visible Drive mirror recovery
+
+An adopted Drive rule with no persisted creator shows an administrator re-save message and keeps Save enabled even when the folder/action values are unchanged. The save hook inspects the awaited `drive_folder_mirror` result and reports “saved, recovery required” when any selected folder failed, preventing the page success toast from claiming complete recovery. Disabled connector-tagged rows are rediscovered after reload; unrelated disabled rules are never adopted.
+
 ## 2026-09-25 — `DriveConnectorCard.tsx` accepts a `health` prop (SCRUM-1146 surface)
 
 Closes a real gap: `services/worker/src/api/connector-health.ts` (`GET /api/connectors/health`)
