@@ -5,14 +5,135 @@ INSERT INTO auth.users(id,email) VALUES
   ('11111111-1111-4111-8111-111111111111','ar20-admin@example.test');
 INSERT INTO public.organizations(id,legal_name,display_name,public_id) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000001','AR20 Org','AR20 Org','ORG-AR20');
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claim.role','service_role',true);
 INSERT INTO public.profiles(id,email,role,org_id) VALUES
   ('11111111-1111-4111-8111-111111111111','ar20-admin@example.test','ORG_ADMIN',
-   'aaaaaaaa-0000-4000-8000-000000000001');
+   'aaaaaaaa-0000-4000-8000-000000000001')
+ON CONFLICT(id) DO UPDATE SET email=excluded.email,role=excluded.role,org_id=excluded.org_id;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.role','',true);
 
 INSERT INTO public.api_keys(id,org_id,key_prefix,key_hash,name,scopes,is_active,created_by)
 VALUES ('55555555-5555-4555-8555-555555555555','aaaaaaaa-0000-4000-8000-000000000001',
   'ak_live_5555',repeat('5',64),'bounded manager',ARRAY['agents:manage','verify'],true,
   '11111111-1111-4111-8111-111111111111');
+
+CREATE TEMP TABLE machine_agent AS
+SELECT public.register_agent_with_outbox(
+  'aaaaaaaa-0000-4000-8000-000000000001','api_key',
+  '55555555-5555-4555-8555-555555555555','machine agent','custom',ARRAY['verify'],
+  NULL,NULL,NULL,NULL,jsonb_build_object('environment','staging')) AS value;
+DO $$
+DECLARE v_agent uuid := ((SELECT value FROM machine_agent)#>>'{agent,id}')::uuid;
+BEGIN
+  IF (SELECT metadata->>'environment' FROM public.agents WHERE id=v_agent) IS DISTINCT FROM 'staging'
+     OR NOT EXISTS (SELECT 1 FROM public.audit_events WHERE target_id=v_agent::text
+       AND details::jsonb @> jsonb_build_object('actor_api_key_id','55555555-5555-4555-8555-555555555555',
+         'actor_key_prefix','ak_live_5555')) THEN
+    RAISE EXCEPTION 'machine registration metadata or audit attribution was lost';
+  END IF;
+  PERFORM public.create_agent_key_with_outbox(
+    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'api_key',
+    '55555555-5555-4555-8555-555555555555',repeat('7',64),'ak_live_7777');
+  IF NOT EXISTS (SELECT 1 FROM public.audit_events WHERE event_type='AGENT_KEY_CREATED'
+      AND details::jsonb @> jsonb_build_object('actor_api_key_id','55555555-5555-4555-8555-555555555555',
+        'actor_key_prefix','ak_live_5555','agent_id',v_agent)) THEN
+    RAISE EXCEPTION 'machine key audit attribution was lost';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  v_agents bigint := (SELECT count(*) FROM public.agents);
+  v_keys bigint := (SELECT count(*) FROM public.api_keys);
+  v_audits bigint := (SELECT count(*) FROM public.audit_events);
+  v_outbox bigint := (SELECT count(*) FROM public.agent_webhook_outbox);
+BEGIN
+  BEGIN
+    PERFORM public.admit_computeid_agent_as_api_key_with_outbox(
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      '55555555-5555-4555-8555-555555555555',
+      '77777777-7777-4777-8777-777777777777',
+      clock_timestamp()+interval '1 hour','over-ceiling ComputeID machine',
+      ARRAY['verify','anchor:write'],repeat('c',64),'ak_live_cccc',NULL,clock_timestamp());
+    RAISE EXCEPTION 'API-key admission exceeded its transaction-time caller scope ceiling';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  IF (SELECT count(*) FROM public.agents)<>v_agents
+     OR (SELECT count(*) FROM public.api_keys)<>v_keys
+     OR (SELECT count(*) FROM public.audit_events)<>v_audits
+     OR (SELECT count(*) FROM public.agent_webhook_outbox)<>v_outbox THEN
+    RAISE EXCEPTION 'denied ComputeID admission left agent, key, audit, or outbox writes';
+  END IF;
+END $$;
+
+CREATE TEMP TABLE computeid_admission AS
+SELECT public.admit_computeid_agent_as_api_key_with_outbox(
+  'aaaaaaaa-0000-4000-8000-000000000001',
+  '55555555-5555-4555-8555-555555555555',
+  '88888888-8888-4888-8888-888888888888',
+  clock_timestamp()+interval '1 hour','ComputeID machine',ARRAY['verify'],
+  repeat('8',64),'ak_live_8888',NULL,clock_timestamp()
+) AS value;
+DO $$
+DECLARE
+  v_agent uuid := ((SELECT value FROM computeid_admission)#>>'{agent,id}')::uuid;
+  v_key uuid := ((SELECT value FROM computeid_admission)#>>'{key,id}')::uuid;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.audit_events
+      WHERE event_type='AGENT_PASSPORT_ADMITTED' AND target_id=v_agent::text
+        AND actor_id IS NULL
+        AND details::jsonb @> jsonb_build_object(
+          'actor_kind','api_key',
+          'actor_api_key_id','55555555-5555-4555-8555-555555555555',
+          'actor_key_prefix','ak_live_5555',
+          'agent_id',v_agent,
+          'agent_name','ComputeID machine',
+          'agent_type','llm_agent',
+          'passport_id','88888888-8888-4888-8888-888888888888'))
+     OR NOT EXISTS (SELECT 1 FROM public.audit_events
+      WHERE event_type='AGENT_KEY_CREATED' AND target_id=v_key::text
+        AND actor_id IS NULL
+        AND details::jsonb @> jsonb_build_object(
+          'actor_kind','api_key',
+          'actor_api_key_id','55555555-5555-4555-8555-555555555555',
+          'actor_key_prefix','ak_live_5555',
+          'agent_id',v_agent,
+          'agent_name','ComputeID machine',
+          'scopes',jsonb_build_array('verify'),
+          'passport_id','88888888-8888-4888-8888-888888888888')) THEN
+    RAISE EXCEPTION 'ComputeID API-key admission audit impersonated its human owner or lost operation context';
+  END IF;
+END $$;
+
+DO $$
+DECLARE v_agent uuid;
+BEGIN
+  IF has_table_privilege('authenticated','public.agents','DELETE')
+     OR has_table_privilege('anon','public.agents','DELETE') THEN
+    RAISE EXCEPTION 'client role retained direct agent DELETE';
+  END IF;
+  SELECT id INTO STRICT v_agent FROM public.agents WHERE name='machine agent';
+  BEGIN
+    SET LOCAL ROLE authenticated;
+    DELETE FROM public.agents WHERE id=v_agent;
+    RESET ROLE;
+    RAISE EXCEPTION 'authenticated direct agent DELETE succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RESET ROLE;
+  END;
+  INSERT INTO public.agents(org_id,registered_by,name,agent_type,allowed_scopes)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001',
+    '11111111-1111-4111-8111-111111111111','service delete fixture','custom',ARRAY['verify'])
+  RETURNING id INTO v_agent;
+  SET LOCAL ROLE service_role;
+  DELETE FROM public.agents WHERE id=v_agent;
+  RESET ROLE;
+  IF EXISTS (SELECT 1 FROM public.agents WHERE id=v_agent) THEN
+    RAISE EXCEPTION 'service_role hard delete failed';
+  END IF;
+END $$;
 
 CREATE TEMP TABLE ar20_result AS
 SELECT public.register_agent_with_outbox(
@@ -22,8 +143,11 @@ SELECT public.register_agent_with_outbox(
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM public.agents) <> 1
-     OR (SELECT count(*) FROM public.agent_webhook_outbox) <> 1 THEN
+  IF NOT EXISTS (SELECT 1 FROM public.agents
+       WHERE id=((SELECT value FROM ar20_result)#>>'{agent,id}')::uuid)
+     OR NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox
+       WHERE agent_id=((SELECT value FROM ar20_result)#>>'{agent,id}')::uuid
+         AND event_type='agent.registered') THEN
     RAISE EXCEPTION 'register + outbox did not commit together';
   END IF;
   IF EXISTS (SELECT 1 FROM public.agent_webhook_outbox
@@ -95,6 +219,65 @@ BEGIN
     RAISE EXCEPTION 'API key minted an agent key above its scope ceiling';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
+END $$;
+
+DO $$
+DECLARE
+  v_agent uuid;
+  v_key uuid;
+  v_audits bigint;
+BEGIN
+  INSERT INTO public.agents(org_id,registered_by,name,status,agent_type,allowed_scopes,metadata)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+    'narrow resume fixture','suspended','custom',ARRAY['anchor:write'],jsonb_build_object('admin_suspended',true))
+  RETURNING id INTO v_agent;
+  INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('9',64),'ak_live_9999',
+    'narrow resume key',ARRAY['anchor:write'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'admin:agent.suspended')
+  RETURNING id INTO v_key;
+  SELECT count(*) INTO v_audits FROM public.audit_events;
+  BEGIN
+    PERFORM public.apply_admin_agent_status_transition(
+      'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'active','{}','api_key',
+      '55555555-5555-4555-8555-555555555555');
+    RAISE EXCEPTION 'narrow API-key caller resumed an agent above its scope ceiling';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  IF (SELECT status FROM public.agents WHERE id=v_agent)<>'suspended'
+     OR (SELECT is_active FROM public.api_keys WHERE id=v_key)
+     OR (SELECT count(*) FROM public.audit_events)<>v_audits THEN
+    RAISE EXCEPTION 'denied status-only resume left writes or audit evidence';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  v_agent uuid;
+  v_broad uuid;
+  v_eligible uuid;
+  v_expected jsonb := '{"computeid":{"issuer":"computeid","passport_id":"99999999-9999-4999-8999-999999999999","suspended_by":"computeid","provider_suspended":true,"last_event":"passport.suspended"}}';
+  v_next jsonb := '{"computeid":{"issuer":"computeid","passport_id":"99999999-9999-4999-8999-999999999999","last_event":"passport.reinstated"}}';
+BEGIN
+  INSERT INTO public.agents(org_id,registered_by,name,status,agent_type,allowed_scopes,metadata)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+    'provider resume fixture','suspended','custom',ARRAY['verify'],v_expected)
+  RETURNING id INTO v_agent;
+  INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('a',64),'ak_live_aaaa','broad old key',ARRAY['verify','anchor:write'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'computeid:passport.suspended')
+  RETURNING id INTO v_broad;
+  INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('b',64),'ak_live_bbbb','eligible old key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'computeid:passport.suspended')
+  RETURNING id INTO v_eligible;
+  PERFORM public.apply_computeid_agent_transition(
+    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,
+    '99999999-9999-4999-8999-999999999999','suspended',v_expected,
+    jsonb_build_object('status','active','suspended_at',NULL,'metadata',v_next),
+    'reactivate','passport.reinstated',clock_timestamp());
+  IF (SELECT status FROM public.agents WHERE id=v_agent)<>'active'
+     OR (SELECT is_active FROM public.api_keys WHERE id=v_broad)
+     OR NOT (SELECT is_active FROM public.api_keys WHERE id=v_eligible) THEN
+    RAISE EXCEPTION 'provider reinstatement restored a key outside the current agent scope ceiling';
+  END IF;
 END $$;
 
 INSERT INTO public.webhook_endpoints(id,org_id,url,secret_hash,events,is_active,public_id)

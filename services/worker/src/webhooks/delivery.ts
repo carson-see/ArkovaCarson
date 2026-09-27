@@ -1471,7 +1471,6 @@ async function completeClaimedAgentDelivery(
 }
 
 async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<boolean> {
-  let payload: WebhookPayload;
   try {
     const parsed = JSON.parse(claim.payload_text) as Partial<WebhookPayload>;
     const allowedKeys = new Set(['event_type', 'event_id', 'timestamp', 'data', 'resource_key', 'sequence']);
@@ -1484,7 +1483,6 @@ async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<
     ) throw new Error('invalid stored envelope');
     const validation = validateWebhookPayload(parsed.event_type, parsed.data);
     if (!validation.ok || validation.bypassed) throw new Error('stored payload is not strictly registered');
-    payload = parsed as WebhookPayload;
   } catch {
     return completeClaimedAgentDelivery(
       claim, 'terminal', undefined, undefined, 'payload_refused_before_signing',

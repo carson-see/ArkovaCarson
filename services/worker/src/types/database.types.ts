@@ -7604,6 +7604,21 @@ export type Database = {
       }
     }
     Functions: {
+      admit_computeid_agent_as_api_key_with_outbox: {
+        Args: {
+          p_actor_api_key_id: string
+          p_description?: string
+          p_key_hash: string
+          p_key_prefix: string
+          p_name: string
+          p_org_id: string
+          p_passport_id: string
+          p_receipt_expires_at: string
+          p_receipt_issued_at?: string
+          p_scopes: string[]
+        }
+        Returns: Json
+      }
       admit_computeid_agent_with_outbox: {
         Args: {
           p_description?: string
@@ -7701,6 +7716,7 @@ export type Database = {
           p_callback_url?: string
           p_description?: string
           p_framework?: string
+          p_metadata?: Json
           p_name: string
           p_org_id: string
           p_version?: string

@@ -63,15 +63,19 @@ describe('generic agent lifecycle API-key caller', () => {
     expect(agentEventMock).not.toHaveBeenCalled();
   });
   it('registers within the machine delegation ceiling with owner FK and machine audit', async () => {
-    const row = { id: AGENT, org_id: ORG, registered_by: OWNER, name: 'bot', allowed_scopes: ['verify'] };
+    const row = { id: AGENT, org_id: ORG, registered_by: OWNER, name: 'bot', allowed_scopes: ['verify'], metadata: { environment: 'staging' } };
     const agents = builder({ data: row }); routeDbTables(dbFromMock, { agents });
     rpcMock.mockResolvedValue({ data: { agent: row }, error: null });
-    const response = await request(app()).post('/api/v1/agents').send({ name: 'bot', allowed_scopes: ['verify'] });
+    const response = await request(app()).post('/api/v1/agents').send({
+      name: 'bot', allowed_scopes: ['verify'], metadata: { environment: 'staging' },
+    });
     expect(response.status).toBe(201);
     expect(rpcMock).toHaveBeenCalledWith('register_agent_with_outbox', expect.objectContaining({
       p_org_id: ORG, p_actor_kind: 'api_key', p_actor_id: KEY,
+      p_metadata: { environment: 'staging' },
     }));
     expect(agentEventMock).not.toHaveBeenCalled();
+    expect(response.body.metadata).toEqual({ environment: 'staging' });
   });
 
   it('gets one tenant-owned agent and its active key metadata', async () => {
@@ -154,6 +158,24 @@ describe('generic agent lifecycle API-key caller', () => {
     rpcMock.mockResolvedValue({ data: { found: true, changed: false, agent: { id: AGENT, status: 'suspended' } }, error: null });
     expect((await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ status: 'suspended' })).status).toBe(200);
     expect(agentEventMock).not.toHaveBeenCalled();
+  });
+
+  it('denies status-only resume when existing scopes exceed the machine caller ceiling', async () => {
+    const agents = builder({ data: { id: AGENT, org_id: ORG, status: 'suspended', metadata: {}, allowed_scopes: ['anchor:write'] } });
+    routeDbTables(dbFromMock, { agents });
+    const response = await request(app(['agents:manage'])).patch(`/api/v1/agents/${AGENT}`).send({ status: 'active' });
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: 'delegation_scope_exceeded', missing: ['anchor:write'] });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('maps and scrubs authoritative transition authorization failures', async () => {
+    const agents = builder({ data: { id: AGENT, org_id: ORG, status: 'suspended', metadata: {}, allowed_scopes: ['verify'] } });
+    routeDbTables(dbFromMock, { agents });
+    rpcMock.mockResolvedValue({ data: null, error: { code: '42501', message: 'private SQL detail' } });
+    const response = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ status: 'active' });
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: 'forbidden' });
   });
 
 });

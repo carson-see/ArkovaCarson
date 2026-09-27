@@ -141,8 +141,14 @@ function validateAgentUpdate(
   caller: AgentLifecycleCaller,
   res: Response,
 ): boolean {
-  if (update.allowed_scopes) {
-    const missing = missingDelegatedScopes(caller, update.allowed_scopes);
+  const effectiveDelegatedScopes = update.allowed_scopes ?? (
+    caller.kind === 'api_key' && existing.status === 'suspended' && update.status === 'active'
+      && Array.isArray(existing.allowed_scopes)
+      ? existing.allowed_scopes.filter((scope): scope is string => typeof scope === 'string')
+      : undefined
+  );
+  if (effectiveDelegatedScopes) {
+    const missing = missingDelegatedScopes(caller, effectiveDelegatedScopes);
     if (missing.length) {
       res.status(403).json({ error: 'delegation_scope_exceeded', missing });
       return false;
@@ -189,6 +195,11 @@ async function applyAgentUpdate(
       p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
     });
     if (error?.code === '23514') { res.status(409).json({ error: error.message }); return null; }
+    if (error?.code === '42501') {
+      res.status(403).json({ error: error.message === 'delegation_scope_exceeded'
+        ? 'delegation_scope_exceeded' : 'forbidden' });
+      return null;
+    }
     if (error) {
       logger.error({ agentId, error }, 'Atomic agent status transition failed');
       res.status(500).json({ error: 'Failed to change agent status' });
@@ -246,6 +257,7 @@ router.post('/', async (req: Request, res: Response) => {
       p_framework: parsed.data.framework ?? null,
       p_version: parsed.data.version ?? null,
       p_callback_url: parsed.data.callback_url ?? null,
+      p_metadata: parsed.data.metadata ?? {},
     });
     const agent = (registered as { agent?: Record<string, unknown> } | null)?.agent;
 

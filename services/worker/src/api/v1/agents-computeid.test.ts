@@ -77,7 +77,7 @@ function receipt(priv: KeyObject = privateKey, payloadOverride: Record<string, u
     receipt_payload,
   };
 }
-const apiKeyMeta = (scopes: string[] = ['agents:manage']): ApiKeyMeta => ({
+const apiKeyMeta = (scopes: string[] = ['agents:manage', 'verify', 'anchor:write']): ApiKeyMeta => ({
   keyId: KEY_ID, orgId: ORG_ID, userId: USER_ID, scopes, rateLimitTier: 'paid', keyPrefix: 'ak_live_test',
 });
 const insertedAgent = (over: Record<string, unknown> = {}) => ({
@@ -178,14 +178,41 @@ describe('POST /api/v1/agents/computeid/admit — validation + receipt', () => {
 });
 
 describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
+  it('rejects an agents:manage-only caller before generating or committing a delegated key', async () => {
+    const res = await admit(validBody(), createApp({ apiKey: apiKeyMeta(['agents:manage']) }));
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('delegation_scope_exceeded');
+    expect(dbRpcMock).not.toHaveBeenCalled();
+  });
+  it('rejects an explicit passport scope above the caller ceiling instead of silently narrowing it', async () => {
+    const res = await admit(validBody({ allowed_scopes: ['verify', 'anchor:write'] }),
+      createApp({ apiKey: apiKeyMeta(['agents:manage', 'verify']) }));
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: { code: 'delegation_scope_exceeded' } });
+    expect(dbRpcMock).not.toHaveBeenCalled();
+  });
+  it('defaults omitted scopes to the eligible caller/passport intersection', async () => {
+    const res = await admit(validBody({ allowed_scopes: undefined }),
+      createApp({ apiKey: apiKeyMeta(['agents:manage', 'verify']) }));
+    expect(res.status).toBe(201);
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_as_api_key_with_outbox',
+      expect.objectContaining({ p_scopes: ['verify'] }));
+  });
+  it('maps the locked admission RPC delegation denial to a stable 403 without a raw key', async () => {
+    dbRpcMock.mockResolvedValue({ data: null, error: { code: '42501', message: 'private detail' } });
+    const res = await admit(validBody());
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: { code: 'delegation_scope_exceeded' } });
+    expect(res.body.key).toBeUndefined();
+  });
   it('201: binds the authenticated principal/org and persists only the key hash in one RPC', async () => {
     const r = receipt();
     const res = await admit(validBody({ verification_receipt: r, allowed_scopes: ['verify', 'anchor:write', 'keys:manage', 'admin:rules'] }));
     expect(res.status).toBe(201);
     const raw: string = res.body.key;
     expect(raw.startsWith('ak_live_')).toBe(true);
-    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('admit_computeid_agent_with_outbox', expect.objectContaining({
-      p_org_id: ORG_ID, p_principal_id: USER_ID, p_passport_id: PASSPORT,
+    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('admit_computeid_agent_as_api_key_with_outbox', expect.objectContaining({
+      p_org_id: ORG_ID, p_actor_api_key_id: KEY_ID, p_passport_id: PASSPORT,
       p_receipt_issued_at: r.issued_at, p_receipt_expires_at: r.expires_at,
       p_name: 'cortex-agent', p_scopes: ['verify', 'anchor:write'],
       p_key_hash: hashApiKey(raw, HMAC), p_key_prefix: raw.slice(0, 12),
@@ -204,11 +231,11 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     const res = await admit(validBody({ passport_id: PASSPORT.toUpperCase(),
       verification_receipt: receipt(privateKey, { passport_id: PASSPORT.toUpperCase() }), allowed_scopes: ['write:anchors'] }));
     expect(res.status).toBe(201);
-    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_with_outbox', expect.objectContaining({ p_passport_id: PASSPORT, p_scopes: ['write:anchors'] }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_as_api_key_with_outbox', expect.objectContaining({ p_passport_id: PASSPORT, p_scopes: ['write:anchors'] }));
   });
   it('defaults to verify and a passport-derived name', async () => {
     expect((await admit({ passport_id: PASSPORT, verification_receipt: receipt() })).status).toBe(201);
-    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_with_outbox', expect.objectContaining({ p_scopes: ['verify'], p_name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_as_api_key_with_outbox', expect.objectContaining({ p_scopes: ['verify'], p_name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
   });
   it('returns no key on transaction/audit failure, without issuing any compensating delete', async () => {
     dbRpcMock.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'audit insert failed' } });
@@ -244,7 +271,7 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     const res = await admit(validBody(), createApp({ apiKey: otherOrg }));
     expect(res.status).toBe(409);
     expect(res.body.key).toBeUndefined();
-    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_with_outbox', expect.objectContaining({ p_org_id: otherOrg.orgId, p_passport_id: PASSPORT }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_as_api_key_with_outbox', expect.objectContaining({ p_org_id: otherOrg.orgId, p_passport_id: PASSPORT }));
   });
 });
 

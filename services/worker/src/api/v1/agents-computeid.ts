@@ -19,7 +19,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { toPublicAgent } from './agents.js';
-import type { ApiKeyScope } from '../apiScopes.js';
+import { scopeSatisfies, type ApiKeyScope } from '../apiScopes.js';
 import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
 import { loadPinnedCa, type PinnedCa } from '../../integrations/computeid/ca-cert.js';
 import { verifyComputeIdReceipt } from '../../integrations/computeid/receipt-verifier.js';
@@ -46,10 +46,10 @@ function getPinnedCa(): PinnedCa | null {
   }
 }
 
-function clampScopes(requested: readonly ApiKeyScope[] | undefined): ApiKeyScope[] {
+function clampScopes(requested: readonly ApiKeyScope[] | undefined, callerScopes: string[]): ApiKeyScope[] {
   const allow = new Set<string>(PASSPORT_AGENT_SCOPE_ALLOWLIST);
   const wanted = requested && requested.length > 0 ? requested : DEFAULT_PASSPORT_AGENT_SCOPES;
-  return [...new Set(wanted.filter((s) => allow.has(s)))];
+  return [...new Set(wanted.filter((s) => allow.has(s) && scopeSatisfies(callerScopes, s)))];
 }
 
 type AdmissionAgentStatus = 'active' | 'suspended' | 'revoked';
@@ -72,7 +72,7 @@ function isAdmissionResult(data: Record<string, unknown>): data is Record<string
 interface AdmissionContext {
   hmacSecret: string;
   orgId: string;
-  principalUserId: string;
+  actorApiKeyId: string;
   passportId: string;
   name: string;
   description?: string;
@@ -110,7 +110,13 @@ function prepareAdmission(req: Request, res: Response): AdmissionContext | null 
     res.status(401).json({ error: { code: 'receipt_invalid', reason: verdict.reason } });
     return null;
   }
-  const scopes = clampScopes(parsed.data.allowed_scopes);
+  const explicitlyRequestedPassportScopes = parsed.data.allowed_scopes?.filter((scope) =>
+    PASSPORT_AGENT_SCOPE_ALLOWLIST.includes(scope));
+  if (explicitlyRequestedPassportScopes?.some((scope) => !scopeSatisfies(apiKey.scopes ?? [], scope))) {
+    res.status(403).json({ error: { code: 'delegation_scope_exceeded' } });
+    return null;
+  }
+  const scopes = clampScopes(parsed.data.allowed_scopes, apiKey.scopes ?? []);
   if (scopes.length === 0) {
     res.status(400).json({ error: { code: 'no_permitted_scopes', permitted: PASSPORT_AGENT_SCOPE_ALLOWLIST } });
     return null;
@@ -118,7 +124,7 @@ function prepareAdmission(req: Request, res: Response): AdmissionContext | null 
   return {
     hmacSecret, scopes, passportId,
     orgId: apiKey.orgId,
-    principalUserId: apiKey.userId,
+    actorApiKeyId: apiKey.keyId,
     name: parsed.data.name ?? `computeid-${passportId.slice(0, 8)}`,
     ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
     ...(verdict.issuedAt ? { issuedAt: verdict.issuedAt } : {}),
@@ -129,14 +135,14 @@ function prepareAdmission(req: Request, res: Response): AdmissionContext | null 
 agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
   const admission = prepareAdmission(req, res);
   if (!admission) return;
-  const { hmacSecret, orgId, principalUserId, passportId, name, description,
+  const { hmacSecret, orgId, actorApiKeyId, passportId, name, description,
     scopes, issuedAt, expiresAt } = admission;
 
   try {
     const key = generateApiKey(hmacSecret);
-    const { data, error } = await db.rpc('admit_computeid_agent_with_outbox', {
+    const { data, error } = await db.rpc('admit_computeid_agent_as_api_key_with_outbox', {
       p_org_id: orgId,
-      p_principal_id: principalUserId,
+      p_actor_api_key_id: actorApiKeyId,
       p_passport_id: passportId,
       ...(issuedAt ? { p_receipt_issued_at: issuedAt.toISOString() } : {}),
       p_receipt_expires_at: expiresAt.toISOString(),
@@ -146,6 +152,10 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       p_key_hash: key.hash,
       p_key_prefix: key.prefix,
     });
+    if (error?.code === '42501') {
+      res.status(403).json({ error: { code: 'delegation_scope_exceeded' } });
+      return;
+    }
     if (error) throw error;
     if (!isRecord(data)) throw new Error('invalid_admission_result');
     if (data.error === 'passport_revoked' || data.error === 'passport_already_bound') {
