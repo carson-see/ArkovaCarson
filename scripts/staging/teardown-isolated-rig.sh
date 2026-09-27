@@ -300,7 +300,7 @@ echo "# Step 2b/3 — delete per-rig secrets for '$RIG_NAME'"
 # is the expected case for older rigs, so it must not be fatal; anything left
 # behind is reported at the end instead.
 SECRETS_NOT_FOUND=()
-for secret in "supabase-url-${RIG_NAME}-staging" "supabase-service-role-key-${RIG_NAME}-staging" "ip-hash-pepper-${RIG_NAME}-staging" "cron-secret-${RIG_NAME}-staging"; do
+for secret in "supabase-url-${RIG_NAME}-staging" "supabase-service-role-key-${RIG_NAME}-staging" "ip-hash-pepper-${RIG_NAME}-staging" "recipient-identifier-pepper-${RIG_NAME}-staging" "cron-secret-${RIG_NAME}-staging"; do
   if [[ $APPLY -eq 1 ]]; then
     print_cmd gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet
     echo "executing: gcloud secrets delete $secret" >&2

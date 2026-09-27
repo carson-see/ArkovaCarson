@@ -272,7 +272,7 @@ if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "projects" && "$2" == "get-iam-policy" ]]; then
-  echo '[]'
+  echo '{"bindings":[]}'
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "describe" ]]; then
@@ -305,7 +305,7 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
   cat <<JSON
-{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"AI_EXTRACTION_LATENCY_BUDGET_MS","value":"15000"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}},{"name":"IP_HASH_PEPPER","valueSource":{}}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
+{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"AI_EXTRACTION_LATENCY_BUDGET_MS","value":"15000"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}},{"name":"IP_HASH_PEPPER","valueSource":{}},{"name":"RECIPIENT_IDENTIFIER_PEPPER","valueSource":{}},{"name":"ENABLE_BULK_RECIPIENT_PROVISIONING","value":"false"}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
 JSON
   exit 0
 fi

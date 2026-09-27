@@ -679,6 +679,7 @@ BASE_ENV_VARS=(
   "NODE_ENV=production"
   "ENABLE_AI_FRAUD=false"
   "ENABLE_AI_REPORTS=false"
+  "ENABLE_BULK_RECIPIENT_PROVISIONING=false"
   # Mirrors the prod deploy (deploy-worker.yml --set-env-vars). The worker's
   # code default is 4500ms and prod runs 15000; --set-env-vars is authoritative
   # here, so without this line a rig soaks /api/v1/ai/extract at a budget prod
@@ -706,6 +707,7 @@ BASE_SECRETS=(
   "API_KEY_HMAC_SECRET=${API_KEY_HMAC_SECRET_SECRET}:latest"
   "CRON_SECRET=${CRON_SECRET_SECRET}:latest"
   "IP_HASH_PEPPER=ip-hash-pepper-${NAME}-staging:latest"
+  "RECIPIENT_IDENTIFIER_PEPPER=recipient-identifier-pepper-${NAME}-staging:1"
 )
 
 ENV_VARS=("${BASE_ENV_VARS[@]}")
@@ -807,7 +809,8 @@ fi
 SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
 SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
 IP_HASH_PEPPER_SECRET_NAME="ip-hash-pepper-${NAME}-staging"
-RIG_SECRET_NAMES=("$SUPABASE_URL_SECRET_NAME" "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$IP_HASH_PEPPER_SECRET_NAME" "$CRON_SECRET_SECRET")
+RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME="recipient-identifier-pepper-${NAME}-staging"
+RIG_SECRET_NAMES=("$SUPABASE_URL_SECRET_NAME" "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$IP_HASH_PEPPER_SECRET_NAME" "$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME" "$CRON_SECRET_SECRET")
 STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
 PROVISION_STATE_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-provision-${NAME}.json"
 ADMISSION_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
@@ -1044,12 +1047,12 @@ validate_rig_service_accounts() {
     jq -e --arg email "$sa" '.email == $email and (.disabled // false) == false and (.uniqueId | type == "string" and length > 0)' <<<"$payload" >/dev/null \
       || { echo "ERROR: required dedicated service account is missing, disabled, or mismatched: $sa" >&2; exit 1; }
     if [[ "$sa" == "$RUNTIME_SA" ]]; then RUNTIME_SA_UNIQUE_ID="$(jq -r '.uniqueId' <<<"$payload")"; else OIDC_SA_UNIQUE_ID="$(jq -r '.uniqueId' <<<"$payload")"; fi
+    # Read the full policy: avoid a flattened/filter projection silently losing grants.
     # Retain condition metadata. Only these unconditional telemetry grants are tolerated;
     # resource-scoped secret/invoker grants are established below.
     payload="$(gcloud projects get-iam-policy "$GCP_PROJECT" \
-      --flatten=bindings[].members --filter="bindings.members=serviceAccount:${sa}" \
-      --format='json(bindings.role,bindings.members,bindings.condition)')"
-    jq -e --arg member "serviceAccount:${sa}" 'type == "array" and all(.[]; (.bindings | type == "object") and (.bindings.members == $member) and (.bindings.role | IN("roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/cloudtrace.agent", "roles/errorreporting.writer")) and ((.bindings.condition // null) == null))' <<<"$payload" >/dev/null \
+      --format=json)"
+    jq -e --arg member "serviceAccount:${sa}" 'type == "object" and (.bindings | type == "array") and all(.bindings[]; type == "object" and (.role | type == "string") and (.members | type == "array") and all(.members[]; type == "string")) and all(.bindings[] | select(.members | index($member) != null); (.role | IN("roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/cloudtrace.agent", "roles/errorreporting.writer")) and ((.condition // null) == null))' <<<"$payload" >/dev/null \
       || { echo "ERROR: dedicated rig service account has an unknown, sensitive, conditional, or malformed project grant: $sa" >&2; exit 1; }
   done
 }
@@ -1156,6 +1159,7 @@ write_provision_state() {
     --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
     --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
     --arg ip_hash_pepper_secret "$IP_HASH_PEPPER_SECRET_NAME" \
+    --arg recipient_identifier_pepper_secret "$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME" \
     --arg cron_secret "$CRON_SECRET_SECRET" \
     --arg runtime_sa "$RUNTIME_SA" \
     --arg runtime_sa_unique_id "$RUNTIME_SA_UNIQUE_ID" \
@@ -1197,6 +1201,7 @@ write_provision_state() {
         supabase_url: $supabase_url_secret,
         supabase_service_role_key: $supabase_service_role_secret,
         ip_hash_pepper: $ip_hash_pepper_secret,
+        recipient_identifier_pepper: $recipient_identifier_pepper_secret,
         cron: $cron_secret
       },
       identities: {
@@ -1387,13 +1392,13 @@ generate_ip_hash_pepper() {
 }
 
 ensure_stable_random_secret_resource() {
-  local secret_name="$1" purpose="$2" value
+  local secret_name="$1" purpose="$2" version="${3:-latest}" value
   if gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
-    if gcloud secrets versions access latest --secret="$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+    if gcloud secrets versions access "$version" --secret="$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
       echo "# per-rig ${purpose} secret already has a usable version — keeping it (never rotated)"
       return 0
     fi
-    echo "ERROR: per-rig ${purpose} secret exists without a usable latest version; refusing rotation." >&2
+    echo "ERROR: per-rig ${purpose} secret exists without a usable $version version; refusing rotation." >&2
     exit 1
   fi
   value="$(generate_ip_hash_pepper || true)"
@@ -1859,12 +1864,13 @@ if [[ $APPLY -ne 1 ]]; then
   echo
 fi
 
-# Establish only the four rig-owned secret resources and exact resource IAM before
+# Establish only the five rig-owned secret resources and exact resource IAM before
 # the paid Supabase mutation. No project-level IAM is changed.
 for rig_secret in "${RIG_SECRET_NAMES[@]}"; do
   if [[ $APPLY -eq 1 ]]; then
     case "$rig_secret" in
       "$IP_HASH_PEPPER_SECRET_NAME") ensure_stable_random_secret_resource "$rig_secret" "IP_HASH_PEPPER" ;;
+      "$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME") ensure_stable_random_secret_resource "$rig_secret" "recipient identity" 1 ;;
       "$CRON_SECRET_SECRET") ensure_stable_random_secret_resource "$rig_secret" "cron authentication" ;;
       *)
         if ! gcloud secrets describe "$rig_secret" --project="$GCP_PROJECT" >/dev/null 2>&1; then
@@ -1877,7 +1883,7 @@ for rig_secret in "${RIG_SECRET_NAMES[@]}"; do
     grant_and_verify_rig_secret_access "$rig_secret"
   else
     case "$rig_secret" in
-      "$IP_HASH_PEPPER_SECRET_NAME"|"$CRON_SECRET_SECRET")
+      "$IP_HASH_PEPPER_SECRET_NAME"|"$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME"|"$CRON_SECRET_SECRET")
         print_cmd gcloud secrets create "$rig_secret" --project="$GCP_PROJECT" --replication-policy=automatic --data-file='<redacted:generated-32-bytes>'
         ;;
       *) print_cmd gcloud secrets create "$rig_secret" --project="$GCP_PROJECT" --replication-policy=automatic ;;

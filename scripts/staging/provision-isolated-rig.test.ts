@@ -554,6 +554,7 @@ function applyRunStubbed(
     NODE_ENV: 'production',
     ENABLE_AI_FRAUD: 'false',
     ENABLE_AI_REPORTS: 'false',
+    ENABLE_BULK_RECIPIENT_PROVISIONING: 'false',
     // Mirrors the prod deploy so an extraction soak runs the budget prod runs
     // (BASE_ENV_VARS in provision-isolated-rig.sh).
     AI_EXTRACTION_LATENCY_BUDGET_MS: '15000',
@@ -586,6 +587,7 @@ function applyRunStubbed(
     'CRON_SECRET',
     // config.ts superRefine fails production boot without it (2026-08-30 finding 1).
     'IP_HASH_PEPPER',
+    'RECIPIENT_IDENTIFIER_PEPPER',
     ...(profile === 'chain'
       ? ['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']
       : []),
@@ -658,8 +660,7 @@ if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "projects" && "$2" == "get-iam-policy" ]]; then
   if [[ -n '${options.projectIamPayload ?? ''}' ]]; then echo '${options.projectIamPayload ?? ''}'; exit 0; fi
-  if [[ "$*" == *'-run@'* ]]; then member='serviceAccount:${runtimeSa}'; else member='serviceAccount:${oidcSa}'; fi
-  printf '[{"bindings":{"role":"roles/logging.logWriter","members":"%s"}}]\n' "$member"
+  printf '{"bindings":[{"role":"roles/logging.logWriter","members":["serviceAccount:${runtimeSa}","serviceAccount:${oidcSa}"]}]}\n'
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "get-iam-policy" ]]; then
@@ -1028,10 +1029,11 @@ function expectEveryDeclaredSchedulerJobContainedAfter(
 
 
 describe('teardown-isolated-rig.sh — exact rig-secret cleanup', () => {
-  it('plans deletion of exactly the four derived rig secrets including cron', () => {
+  it('plans deletion of exactly the five derived rig secrets including recipient identity', () => {
     const out = execFileSync('bash', [TEARDOWN_SCRIPT, '--project-ref', 'abcdefghijklmnopqrst', '--service', 'arkova-worker-cleanup-scope-staging'], { encoding: 'utf8' });
     const deletes = out.split('\n').filter((line) => line.includes('gcloud secrets delete'));
-    expect(deletes).toHaveLength(4);
+    expect(deletes).toHaveLength(5);
+    expect(deletes.join("\n")).toContain("recipient-identifier-pepper-cleanup-scope-staging");
     expect(deletes.join('\n')).toContain('cron-secret-cleanup-scope-staging');
     expect(deletes.join('\n')).not.toContain('cron-secret-staging ');
   });
@@ -1050,7 +1052,7 @@ describe('provision-isolated-rig.sh — dedicated resource identity boundary', (
     const grants = result.callOrder
       .map((entry, index) => ({ entry, index }))
       .filter(({ entry }) => entry.startsWith('gcloud secrets add-iam-policy-binding '));
-    expect(grants).toHaveLength(4);
+    expect(grants).toHaveLength(5);
     expect(grants.every(({ entry, index }) => entry.includes(`--member=serviceAccount:${runtime}`) && index < projectCreate)).toBe(true);
     expect(result.gcloudCalls.some((entry) => entry.startsWith('projects add-iam-policy-binding'))).toBe(false);
     expect(result.gcloudCalls.some((entry) => entry.includes('kms'))).toBe(false);
@@ -1088,7 +1090,7 @@ describe('provision-isolated-rig.sh — dedicated resource identity boundary', (
     const name = `${_label}-policy`;
     const hash = createHash('sha256').update(name).digest('hex').slice(0, 12);
     const member = `serviceAccount:ark-rig-${hash}-run@arkova1.iam.gserviceaccount.com`;
-    const projectIamPayload = JSON.stringify([{ bindings: { role, members: member, ...(condition ? { condition } : {}) } }]);
+    const projectIamPayload = JSON.stringify({ bindings: [{ role, members: [member], ...(condition ? { condition } : {}) }] });
     const result = applyRunStubbed(name, 'mock', { projectIamPayload, allowDirtySource: true });
     expect(result.code).not.toBe(0);
     expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
@@ -1115,9 +1117,10 @@ describe('provision-isolated-rig.sh — dedicated resource identity boundary', (
     const name = 'atomic-stable';
     const cron = `cron-secret-${name}-staging`;
     const pepper = `ip-hash-pepper-${name}-staging`;
+    const recipientPepper = `recipient-identifier-pepper-${name}-staging`;
     const result = applyRunStubbed(name, 'mock', {
       allowDirtySource: true,
-      missingSecrets: [cron, pepper],
+      missingSecrets: [cron, pepper, recipientPepper],
     });
     expect(result.code, result.out).toBe(0);
     expect(result.gcloudCalls).toContain(`secrets create ${cron} --project=arkova1 --replication-policy=automatic --data-file=-`);
@@ -1127,6 +1130,9 @@ describe('provision-isolated-rig.sh — dedicated resource identity boundary', (
     expect(result.secretPayloads[cron]).toMatch(/^[0-9a-f]{64}$/);
     expect(result.secretPayloads[pepper]).toMatch(/^[0-9a-f]{64}$/);
     expect(result.secretPayloads[cron]).not.toBe(result.secretPayloads[pepper]);
+    expect(result.secretPayloads[recipientPepper]).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.secretPayloads[recipientPepper]).not.toBe(result.secretPayloads[pepper]);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith(`secrets versions add ${recipientPepper}`))).toBe(false);
   });
 
   it('stops on a concurrent stable-secret create loser before paid mutation', () => {
@@ -1143,8 +1149,34 @@ describe('provision-isolated-rig.sh — dedicated resource identity boundary', (
     expect(result.gcloudCalls.some((entry) => entry.startsWith(`secrets versions add ${cron}`))).toBe(false);
   });
 
+  it('rejects a lossy flattened IAM projection instead of accepting an empty match', () => {
+    const result = applyRunStubbed('lossy-policy', 'mock', { allowDirtySource: true, projectIamPayload: '[]' });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('keeps a rig-local recipient key pinned and rollout off', () => {
+    const name = 'recipient-key';
+    const result = applyRunStubbed(name, 'mock', { allowDirtySource: true });
+    expect(result.code, result.out).toBe(0);
+    expect(result.gcloudCalls).toContain(`secrets versions access 1 --secret=recipient-identifier-pepper-${name}-staging --project=arkova1`);
+    const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy ')) ?? '';
+    expect(deploy).toContain(`RECIPIENT_IDENTIFIER_PEPPER=recipient-identifier-pepper-${name}-staging:1`);
+    expect(deploy).toContain('ENABLE_BULK_RECIPIENT_PROVISIONING=false');
+  });
+
+  it('refuses an unusable pinned recipient key without substituting latest', () => {
+    const name = 'recipient-key-disabled';
+    const secret = `recipient-identifier-pepper-${name}-staging`;
+    const result = applyRunStubbed(name, 'mock', { allowDirtySource: true, failLatestAccessFor: [secret] });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain('without a usable 1 version; refusing rotation');
+    expect(result.gcloudCalls.some((call) => call.startsWith(`secrets versions add ${secret}`))).toBe(false);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
   it('accepts a typed empty direct-project grant projection', () => {
-    const result = applyRunStubbed('empty-project-roles', 'mock', { allowDirtySource: true, projectIamPayload: '[]' });
+    const result = applyRunStubbed('empty-project-roles', 'mock', { allowDirtySource: true, projectIamPayload: '{"bindings":[]}' });
     expect(result.code, result.out).toBe(0);
   });
 
