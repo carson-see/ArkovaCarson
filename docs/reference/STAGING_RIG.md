@@ -448,3 +448,13 @@ conclude either way from this table alone.
 
 **Status: this sweep has NOT been executed.** It is recorded as owed. Five of the eight rows are
 teardown candidates today; three are held pending their PRs.
+
+### Per-rig identities and secret ownership
+
+Fresh isolated rigs use two distinct owner-created service accounts derived from the validated rig name (`ark-rig-<sha256-prefix>-run` and `ark-rig-<sha256-prefix>-oidc`). Before paid project creation, the provisioner verifies both identities, their direct project-role projections, and the runtime identity's metadata-only access to the closed set of approved dependency secrets. Project IAM is never changed by the script.
+
+Those source checks cover direct policy metadata only. Inherited roles, group membership, IAM deny policies, and other effective-access paths require a separate live isolation receipt before the rig is accepted; the provisioner does not claim to prove their absence.
+
+The provisioner owns exactly four per-rig secret resources: the new Supabase URL and service-role key, `ip-hash-pepper-<rig>-staging`, and `cron-secret-<rig>-staging`. It grants the runtime identity accessor only on those resources and reads the policy back. Cron and IP values are created atomically with their first version and are never rotated; an existing unusable resource fails closed. For non-mock rigs, the OIDC identity receives invoker only on the exact derived Cloud Run service, with policy readback before Scheduler creation. The chain profile remains WIF-backed and receives no KMS key grant.
+
+Provisioning is one-shot. A failure before Supabase creation best-effort deletes only secret resources created by that invocation and records any incomplete cleanup. A later partial failure must be inspected and torn down using the recorded exact resource names before a fresh named run; rerunning the same name is not a supported resume flow. Dry-run performs no IAM or resource mutation.
