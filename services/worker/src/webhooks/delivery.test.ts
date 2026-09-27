@@ -1784,6 +1784,30 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
     expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
   });
 
+  it.each([
+    ['scalar', 42],
+    ['empty object', {}],
+    ['missing lease token', { cancelled_delivery_id: null, delivery_id: '33333333-3333-4333-8333-333333333333' }],
+    ['mixed cancellation and delivery', { cancelled_delivery_id: '33333333-3333-4333-8333-333333333333', delivery_id: '44444444-4444-4444-8444-444444444444' }],
+  ])('fails closed on a %s claim response before HTTP or completion', async (_label, claim) => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }];
+    await expect(processAgentWebhookOutbox()).rejects.toThrow('agent webhook claim returned an invalid shape');
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.anything());
+  });
+
+  it('retains the terminal cancellation sentinel without HTTP or completion', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [
+      { data: { cancelled_delivery_id: '33333333-3333-4333-8333-333333333333' }, error: null },
+      { data: null, error: null },
+    ];
+    expect(await processAgentWebhookOutbox()).toBe(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.anything());
+  });
+
   it('terminalizes an invalid stored envelope before signing or network I/O', async () => {
     rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
     rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: {
