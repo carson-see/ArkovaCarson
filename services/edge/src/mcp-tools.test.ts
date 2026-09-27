@@ -70,6 +70,32 @@ describe('generic agent lifecycle worker proxy', () => {
     expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(`https://worker.test${path}`,expect.objectContaining({method,redirect:'manual',headers:expect.objectContaining({'X-API-Key':'ak_test_caller'})}));
   });
+  it('preserves the one-time admission key when the worker canonicalizes an uppercase passport UUID', async () => {
+    const passportUpper = 'BBBBBBBB-0000-4000-8000-000000000001';
+    const passportCanonical = passportUpper.toLowerCase();
+    const receipt = { passport_id: passportUpper, status: 'active', issued_at: '2026-09-26', expires_at: '2026-09-27', key_id: '0123456789abcdef', receipt_signature: 'sig', receipt_algorithm: 'ed25519', receipt_payload: '{}' };
+    mockFetch.mockResolvedValueOnce(Response.json({ ...key, agent: { ...agent, metadata: undefined }, binding: { issuer: 'computeid', passport_id: passportCanonical, bound_at: '2026-09-26T00:00:00Z', receipt_expires_at: '2026-09-27T00:00:00Z' } }, { status: 201 }));
+
+    const result = await handleAgentLifecycle('admit_computeid', { passport_id: passportUpper, verification_receipt: receipt }, config);
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('ak_once');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({passport_id:passportUpper,verification_receipt:receipt});
+  });
+  it('rejects a different valid passport binding without exposing the one-time key', async () => {
+    const passportUpper = 'BBBBBBBB-0000-4000-8000-000000000001';
+    const passportCanonical = 'cccccccc-0000-4000-8000-000000000002';
+    const receipt = { passport_id: passportUpper, status: 'active', issued_at: '2026-09-26', expires_at: '2026-09-27', key_id: '0123456789abcdef', receipt_signature: 'sig', receipt_algorithm: 'ed25519', receipt_payload: '{}' };
+    mockFetch.mockResolvedValueOnce(Response.json({ ...key, agent: { ...agent, metadata: undefined }, binding: { issuer: 'computeid', passport_id: passportCanonical, bound_at: '2026-09-26T00:00:00Z', receipt_expires_at: '2026-09-27T00:00:00Z' } }, { status: 201 }));
+
+    const result = await handleAgentLifecycle('admit_computeid', { passport_id: passportUpper, verification_receipt: receipt }, config);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+    expect(result.content[0].text).not.toContain('ak_once');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
   it('forwards only a verified bearer and preserves safe nested admission fields', async () => {
     mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'no_permitted_scopes',message:'Admission requires an organization API key.',reason:'scope_ceiling',permitted:['verify']}}),{status:403}));
     const result=await handleAgentLifecycle('admit_computeid',{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}},{...CONFIG,workerBaseUrl:'https://worker.test',callerAuthorization:'Bearer jwt'});

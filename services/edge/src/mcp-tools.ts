@@ -393,7 +393,9 @@ export async function handleAgentLifecycle(
       && typeof value.key_id === 'string' && value.key_id.length > 0 && typeof value.key_prefix === 'string' && value.key_prefix.length > 0
       && Array.isArray(value.scopes) && value.scopes.every(scope => typeof scope === 'string') && typeof value.warning === 'string' && value.warning.length > 0;
     const binding = (value: unknown): boolean => record(value) && value.issuer === 'computeid'
-      && value.passport_id === input.passport_id && typeof value.bound_at === 'string' && value.bound_at.length > 0
+      // Compare UUID identity without rewriting the signed receipt sent upstream.
+      && typeof value.passport_id === 'string' && typeof input.passport_id === 'string'
+      && value.passport_id.toLowerCase() === input.passport_id.toLowerCase() && typeof value.bound_at === 'string' && value.bound_at.length > 0
       && typeof value.receipt_expires_at === 'string' && value.receipt_expires_at.length > 0;
     const valid = !!parsed && (operation === 'list' ? Array.isArray(parsed.agents) && parsed.agents.every(value => agent(value))
       : operation === 'revoke' ? parsed.status === 'revoked' && typeof parsed.agent_id === 'string' && parsed.agent_id.length > 0

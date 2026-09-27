@@ -76,3 +76,7 @@ count moved 6 → 9 across these two changes; see the exact-name ratchet in `ind
   point until the 2026-09-19 additions above.
 
 - **2026-09-26 — v3.3.0:** 17 tools. Six generic-agent operations use canonical `/api/v1/agents` routes with `X-API-Key`; the seventh addition is API-key-only ComputeID admission with the complete `verification_receipt`. Mutations make one attempt. Mint/admission return a one-time key only in the direct tool result.
+
+## ComputeID admission UUID identity
+
+Admission response binding compares passport UUIDs case-insensitively, because the worker canonicalizes them to lowercase. Preserve the original request and signed verification receipt; never rewrite signed content to fix a response check. A different UUID still fails closed without exposing the one-time key. Both MCP implementations have positive and mismatched-binding regressions; mutations still make one request only.
