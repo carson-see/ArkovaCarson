@@ -67,6 +67,27 @@ describe('runDriveFolderReconciliation', () => {
     expect(persisted.size).toBe(1);
   });
 
+  it('retries when durable mirror health state could not be recorded', async () => {
+    const mirror = vi.fn()
+      .mockResolvedValueOnce([{
+        folderId: '', driveFolderId: '', outcome: 'error' as const,
+        error: 'mirror_health_state_write_failed',
+      }])
+      .mockResolvedValueOnce([{
+        folderId: 'mirror-a', driveFolderId: 'drive-folder-a', outcome: 'existing' as const,
+      }]);
+    const deps = {
+      db: {} as never, listCandidates: async () => ({ rows: [driveRule()], count: 1 }),
+      readCurrentRule: current, mirror,
+      now: () => new Date(0),
+    };
+    const failed = await runDriveFolderReconciliation(deps).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(DriveFolderReconciliationError);
+    expect((failed as DriveFolderReconciliationError).summary).toMatchObject({ errored: 1 });
+    await expect(runDriveFolderReconciliation(deps)).resolves.toMatchObject({ existing: 1, errored: 0 });
+    expect(mirror).toHaveBeenCalledTimes(2);
+  });
+
   it('re-reads candidates and suppresses deleted/disabled or removed selections before writes', async () => {
     const candidates = [driveRule({ id: 'deleted' }), driveRule({ id: 'removed' }), driveRule({ id: 'current', org_id: 'org-current' })];
     const mirror = vi.fn(async (_deps: unknown, _args: { orgId: string }) => [
@@ -94,6 +115,17 @@ describe('runDriveFolderReconciliation', () => {
     const mirror = vi.fn();
     const result = await runDriveFolderReconciliation({
       db: {} as never, listCandidates: async () => ({ rows: [overCap], count: 1 }),
+      readCurrentRule: current, mirror, now: () => new Date(0),
+    });
+    expect(result).toMatchObject({ invalid: 1, errored: 0 });
+    expect(mirror).not.toHaveBeenCalled();
+  });
+
+  it('diagnoses a persisted folder_id without its discriminator instead of mirroring it unscoped', async () => {
+    const malformed = driveRule({ trigger_config: { folder_id: 'drive-folder-a' } });
+    const mirror = vi.fn();
+    const result = await runDriveFolderReconciliation({
+      db: {} as never, listCandidates: async () => ({ rows: [malformed], count: 1 }),
       readCurrentRule: current, mirror, now: () => new Date(0),
     });
     expect(result).toMatchObject({ invalid: 1, errored: 0 });

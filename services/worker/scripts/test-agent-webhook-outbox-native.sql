@@ -197,6 +197,157 @@ END $$;
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policy
+    WHERE polrelid='public.agent_webhook_outbox'::regclass
+      AND polname='mfa_verified_authenticated'
+      AND NOT polpermissive
+      AND polcmd='*'
+      AND polroles @> ARRAY[(SELECT oid FROM pg_roles WHERE rolname='authenticated')]
+  ) THEN
+    RAISE EXCEPTION 'agent webhook outbox is missing the canonical restrictive MFA policy';
+  END IF;
+END $$;
+
+-- Exercise the policy itself, not only its catalog shape. The temporary grant
+-- proves that an AAL2 authenticated caller still sees no rows because this
+-- service-only table intentionally has no permissive authenticated policy.
+GRANT SELECT ON public.agent_webhook_outbox TO authenticated;
+DO $$
+DECLARE v_authenticated_count bigint; v_service_count bigint;
+BEGIN
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config(
+    'request.jwt.claims',
+    '{"role":"authenticated","aal":"aal2","sub":"11111111-1111-4111-8111-111111111111"}',
+    true
+  );
+  SELECT count(*) INTO v_authenticated_count FROM public.agent_webhook_outbox;
+  RESET ROLE;
+  IF v_authenticated_count<>0 THEN
+    RAISE EXCEPTION 'authenticated AAL2 unexpectedly read the service-only outbox';
+  END IF;
+
+  SET LOCAL ROLE service_role;
+  SELECT count(*) INTO v_service_count FROM public.agent_webhook_outbox;
+  RESET ROLE;
+  IF v_service_count=0 THEN
+    RAISE EXCEPTION 'service_role lost outbox access';
+  END IF;
+END $$;
+REVOKE SELECT ON public.agent_webhook_outbox FROM authenticated;
+
+DO $$
+BEGIN
+  IF has_function_privilege(
+       'authenticated',
+       'public.get_latest_drive_folder_mirror_states(uuid,text[])',
+       'EXECUTE'
+     ) OR NOT has_function_privilege(
+       'service_role',
+       'public.get_latest_drive_folder_mirror_states(uuid,text[])',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'Drive mirror health RPC ACL is not service-role-only';
+  END IF;
+
+  BEGIN
+    PERFORM public.get_latest_drive_folder_mirror_states(
+      'aaaaaaaa-0000-4000-8000-000000000001', ARRAY['rule-a',NULL]
+    );
+    RAISE EXCEPTION 'Drive mirror health RPC accepted a NULL rule id';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+END $$;
+
+INSERT INTO public.audit_events(
+  actor_id,event_type,event_category,target_type,target_id,org_id,details,created_at
+) VALUES
+  (NULL,'drive_folder_mirror_failed','SYSTEM','organization_rules','rule-a',
+   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '2 minutes'),
+  (NULL,'drive_folder_mirror_recovered','SYSTEM','organization_rules','rule-a',
+   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute'),
+  (NULL,'drive_folder_mirror_failed','SYSTEM','organization_rules','rule-b',
+   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute');
+DO $$
+DECLARE v_states jsonb;
+BEGIN
+  v_states:=public.get_latest_drive_folder_mirror_states(
+    'aaaaaaaa-0000-4000-8000-000000000001',ARRAY['rule-a','rule-b']);
+  IF jsonb_array_length(v_states)<>2
+     OR NOT v_states @> '[{"target_id":"rule-a","event_type":"drive_folder_mirror_recovered"}]'::jsonb THEN
+    RAISE EXCEPTION 'Drive mirror health RPC omitted a requested rule or selected a stale state';
+  END IF;
+END $$;
+
+-- The RPC returns one JSON value rather than SETOF rows so PostgREST's default
+-- 1,000-row response cap cannot truncate a complete enabled-rule inventory.
+INSERT INTO public.audit_events(
+  actor_id,event_type,event_category,target_type,target_id,org_id,details,created_at
+)
+SELECT NULL,'drive_folder_mirror_failed','SYSTEM','organization_rules',
+  'bulk-rule-'||lpad(i::text,4,'0'),'aaaaaaaa-0000-4000-8000-000000000001',
+  '{}',clock_timestamp()-interval '2 minutes'
+FROM generate_series(1,1001) AS generated(i);
+INSERT INTO public.audit_events(
+  actor_id,event_type,event_category,target_type,target_id,org_id,details,created_at
+) VALUES
+  (NULL,'drive_folder_mirror_recovered','SYSTEM','organization_rules','bulk-rule-0001',
+   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute'),
+  (NULL,'drive_folder_mirror_recovered','SYSTEM','organization_rules','bulk-rule-1001',
+   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute');
+DO $$
+DECLARE v_rule_ids text[]; v_states jsonb;
+BEGIN
+  SELECT array_agg('bulk-rule-'||lpad(i::text,4,'0') ORDER BY i)
+    INTO v_rule_ids FROM generate_series(1,1001) AS generated(i);
+  v_states:=public.get_latest_drive_folder_mirror_states(
+    'aaaaaaaa-0000-4000-8000-000000000001',v_rule_ids);
+  IF jsonb_array_length(v_states)<>1001
+     OR v_states->0 <> '{"target_id":"bulk-rule-0001","event_type":"drive_folder_mirror_recovered"}'::jsonb
+     OR v_states->1000 <> '{"target_id":"bulk-rule-1001","event_type":"drive_folder_mirror_recovered"}'::jsonb THEN
+    RAISE EXCEPTION 'Drive mirror health JSON envelope was truncated or selected stale boundary states';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  v_agent uuid := ((SELECT value FROM ar20_result)#>>'{agent,id}')::uuid;
+  v_deleted integer;
+BEGIN
+  BEGIN
+    DELETE FROM public.agents WHERE id=v_agent;
+    RAISE EXCEPTION 'registered agent delete bypassed unresolved outbox retention';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  IF NOT EXISTS (SELECT 1 FROM public.agents WHERE id=v_agent) THEN
+    RAISE EXCEPTION 'failed registered-agent delete did not roll back atomically';
+  END IF;
+
+  UPDATE public.agent_webhook_outbox
+     SET state='suppressed', resolved_at=clock_timestamp(),
+         created_at=clock_timestamp()-interval '91 days'
+   WHERE agent_id=v_agent AND event_type='agent.registered';
+  SELECT public.cleanup_terminal_agent_webhook_outbox(500) INTO v_deleted;
+  IF v_deleted<1 OR EXISTS (
+    SELECT 1 FROM public.agent_webhook_outbox WHERE agent_id=v_agent
+  ) THEN
+    RAISE EXCEPTION 'terminal retention did not release the registered agent FK';
+  END IF;
+
+  DELETE FROM public.agents WHERE id=v_agent;
+  IF EXISTS (SELECT 1 FROM public.agents WHERE id=v_agent)
+     OR NOT EXISTS (
+       SELECT 1 FROM public.audit_events
+       WHERE target_id=v_agent::text AND event_type='AGENT_REVOKED'
+         AND details::jsonb @> '{"reason":"physical_delete"}'::jsonb
+     ) THEN
+    RAISE EXCEPTION 'physical delete after retention did not complete with audit';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
   IF has_function_privilege('anon','public.claim_next_agent_webhook_delivery(uuid)','EXECUTE')
      OR has_function_privilege('authenticated','public.claim_next_agent_webhook_delivery(uuid)','EXECUTE')
      OR has_function_privilege('anon','public.complete_agent_webhook_delivery(uuid,uuid,text,integer,text,text)','EXECUTE')

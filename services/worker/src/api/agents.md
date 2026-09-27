@@ -773,3 +773,12 @@ distinguishes a genuine DB error looking up the org's active connection from
 (retryable — the next save should try again), the latter stays
 `'skipped_no_connection'` (a legitimate terminal state; retrying changes
 nothing until the org connects). See `connectors/agents.md`'s matching entry.
+## 2026-09-27 — bounded Drive mirror-health state lookup
+
+Connector health loads the newest failed/recovered marker for all enabled
+Drive-bound rules through service-role-only
+`get_latest_drive_folder_mirror_states`. The RPC uses `DISTINCT ON` inside
+Postgres, so one noisy rule cannot hide another behind a PostgREST row cap and
+the page no longer issues one query per rule. The handler accepts only
+requested rule ids and the two canonical event names; RPC errors, duplicates,
+unknown ids, or malformed rows keep the complete health response fail-closed.

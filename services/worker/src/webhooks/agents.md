@@ -467,3 +467,12 @@ The fan-out reader uses config.enableSubOrgWebhookFanout. Delivery suites explic
 ## 2026-09-26 — Agent lifecycle refresh notifications (SCRUM-3983)
 
 The generic lifecycle routes and ComputeID admission/transition paths emit four registered strict events: `agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created`. Payloads contain only agent/key UUIDs, status where applicable, `source`, `occurred_at`, and optional public organization id; names, metadata, scopes, receipts, passport data, prefixes, hashes, and raw keys are forbidden. Emission begins only after the authoritative mutation succeeds and is asynchronous/failure-isolated, so customer endpoint failure never hides a committed mutation or one-time key response. Status/revoke RPC retries emit only when their authoritative `changed` flag is true; a successful non-status PATCH emits a refresh notification for each committed write because a stale pre-read cannot safely prove a concurrent write was a no-op. Provider skipped/conflict/failure outcomes do not emit. Recorded retry ordering groups these events with `resource_key = agent:<agent_id>`; this does not claim transactional delivery with the domain mutation or guaranteed cross-producer delivery order.
+
+## 2026-09-27 — terminal logical-outbox visibility (SCRUM-5294)
+
+The owned drainer inspects each materialization result. A terminal
+`materialization_failed` state emits an operator error and Sentry exception
+containing only a validated logical-outbox UUID when one is present. Payload,
+endpoint, tenant, malformed identifiers, and SQL error material are excluded.
+Retryable materialization remains owned by the SQL retry budget; the terminal
+alert does not retry or duplicate the domain mutation.

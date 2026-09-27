@@ -141,6 +141,10 @@ function filenameRejected(
 }
 
 function driveFolderRejected(cfg: Record<string, unknown>, event: TriggerEvent): boolean {
+  // Persisted rows may predate the schema guard. A stray folder_id must never
+  // degrade into an unscoped match merely because the canonical parser
+  // correctly refuses to treat it as a Drive binding.
+  if (typeof cfg.folder_id === 'string' && cfg.folder_id.length > 0 && cfg.type !== 'drive_folder') return true;
   const bindings = parseDriveFolderBindings(cfg);
   if (bindings.length === 0) return false;
   if (event.vendor !== GOOGLE_DRIVE_VENDOR) return true;

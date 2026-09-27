@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Record } from '@/components/records';
 import type { Folder } from '@/hooks/useFolders';
@@ -85,7 +85,11 @@ describe('MyRecordsPage — Folders UI', () => {
   });
   it('exposes a generic private-tag filter and forwards the selected scope to the RLS hook', async () => {
     await renderPage();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Private tag' }), 'internal-review');
+    const initialCalls = mockUsePrivateAnchorList.mock.calls.length;
+    fireEvent.change(screen.getByRole('textbox', { name: 'Private tag' }), { target: { value: 'internal-review' } });
+    expect(mockUsePrivateAnchorList.mock.calls.slice(initialCalls)).not.toEqual(
+      expect.arrayContaining([expect.arrayContaining([expect.objectContaining({ tag: 'internal-review' })])]),
+    );
     await waitFor(() => expect(mockUsePrivateAnchorList).toHaveBeenLastCalledWith(expect.objectContaining({ tag: 'internal-review', scope: 'user', page: 0 })));
     expect(screen.getByRole('combobox', { name: 'Private tag scope' })).toBeInTheDocument();
   });
@@ -146,7 +150,7 @@ describe('MyRecordsPage — Folders UI', () => {
     });
     await renderPage();
     await userEvent.type(screen.getByRole('textbox', { name: 'Private tag' }), 'internal-review');
-    expect(screen.getByText('Folder, status, and filename filters apply to the current private-tag page.')).toBeInTheDocument();
+    expect(await screen.findByText('Folder, status, and filename filters apply to the current private-tag page.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(refetch).toHaveBeenCalledOnce();
   });
@@ -314,6 +318,7 @@ describe('MyRecordsPage — Folders UI', () => {
     const user = userEvent.setup();
     await renderPage();
     await user.type(screen.getByRole('textbox', { name: 'Private tag' }), 'internal-review');
+    await screen.findByText('Folder, status, and filename filters apply to the current private-tag page.');
 
     const row = screen.getByText('invoice.pdf').closest('div[role="button"]') as HTMLElement;
     await user.click(within(row).getByRole('button', { name: 'Actions' }));

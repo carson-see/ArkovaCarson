@@ -2054,6 +2054,7 @@ export const CONNECTORS_LABELS = {
   CONNECTOR_SAVE_FAILED: 'Could not save those settings. Please try again.',
   CONNECTOR_FOLDER_RECOVERY_REQUIRED: 'The connector rule was saved, but one or more Drive folders still need recovery. Save again to retry those folders.',
   CONNECTOR_ADMIN_REPAIR_REQUIRED: 'This saved Drive setup needs an organization administrator to save it again before folder recovery can continue.',
+  CONNECTOR_DISABLED_RECOVERY_REQUIRED: 'This saved Drive setup is paused because folder recovery did not finish. Save to retry recovery; it will be enabled only after every selected folder is ready.',
   CONNECTOR_MANAGED_IN_RULES: 'This connector is set up with more than one rule, so it is managed in Rules.',
   CONNECTOR_MANAGE_IN_RULES_LINK: 'Manage in Rules',
   CONNECTOR_FOLDER_MISSING: 'This folder was removed or renamed in Google Drive.',
@@ -2113,6 +2114,17 @@ export const CONNECTORS_LABELS = {
   CONNECTOR_HEALTH_LAST_CHANNEL_RENEWAL: 'Last channel renewal',
   CONNECTOR_HEALTH_CHANNEL_EXPIRES: 'Push channel expires',
   CONNECTOR_HEALTH_REASON_GENERIC: 'This connector needs attention. Reconnect, or contact support if this continues.',
+} as const;
+
+export const RECORDS_PRIVATE_TAG_LABELS = {
+  INPUT: 'Private tag',
+  PLACEHOLDER: 'Filter by private tag',
+  SCOPE: 'Private tag scope',
+  USER_SCOPE: 'My tags',
+  ORGANIZATION_SCOPE: 'Organization tags',
+  PAGE_FILTER_NOTE: 'Folder, status, and filename filters apply to the current private-tag page.',
+  LOAD_ERROR: 'Private tag results could not be loaded.',
+  RETRY: 'Try again',
 } as const;
 
 // =============================================================================

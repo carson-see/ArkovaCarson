@@ -1,5 +1,9 @@
 # agents.md — e2e/
 
+## 2026-09-27 — Round 3 private-tag viewport fixture
+
+`round3-private-tag-search.spec.ts` drives the real My Records page at 1280px and 375px while intercepting only synthetic auth/data boundaries. It proves the 300 ms query debounce, exact user-tag predicates, retry action, accessible scope control, and no horizontal overflow; screenshots are local component/CSS evidence, not hosted auth/RLS acceptance. The spec self-skips under named shared projects and runs only with its standalone config.
+
 ## 2026-09-19 — UAT-19 exact-organization dashboard fixture
 
 `uat19-org-profile.spec.ts` and its dedicated config render the real `OrgProfilePage`,

@@ -233,6 +233,9 @@ function DriveConnectorSection({ orgId, health, onReconnect }: DriveConnectorSec
             {needsAdminRepair && !saveError && (
               <p className="text-sm text-destructive">{CONNECTORS_LABELS.CONNECTOR_ADMIN_REPAIR_REQUIRED}</p>
             )}
+            {needsDisabledRuleRecovery && !needsAdminRepair && !saveError && (
+              <p className="text-sm text-destructive">{CONNECTORS_LABELS.CONNECTOR_DISABLED_RECOVERY_REQUIRED}</p>
+            )}
 
             <Button onClick={() => void handleSave()} disabled={!dirty || saving}>
               {saving ? CONNECTORS_LABELS.CONNECTOR_SAVING : CONNECTORS_LABELS.CONNECTOR_SAVE}

@@ -2,11 +2,18 @@
 
 This directory is the single small reviewer packet for the current source candidate. It contains sanitized summaries and hashes rather than raw logs, package archives, fixtures, credentials, customer data, or local database URLs.
 
+## Current review state
+
+Round-3 review of `7a395366fb` returned material findings against the runtime still present in published `533db3578`. The corrective source, documentation and verification are tracked in `round3-review-dispositions.md`; earlier receipts below are historical unless that document explicitly revalidates them. No external approval, image qualification or soak is implied.
+
 ## What is covered
 
+- `0494-agent-key-delete-lock-evidence.md`: restored historical native receipt, with its original hashes rechecked and the later MFA-census limitation made explicit.
+- `round3-release-prerequisites.md`: read-only production legacy-rule count and enabled recipient-secret version check.
+- `round3-review-dispositions.md`: item-by-item round-3 corrections, disputed marker behavior, current tests and remaining live gates.
 - `0494-review.md`: independent review of agent-key mint/revoke locking and physical-delete safety.
 - `drive-review.md`: final Drive recovery source review.
-- `fixed-a-review.md`: the compatible fallback worker that blocks agent mutations while continuing reads and durable webhook draining.
+- `fixed-a-review.md`: historical fallback review. Current emergency DELETE and materialization-reporting corrections are identified in the round-3 receipt; register/PATCH/key creation remain blocked.
 - `parts5-6-review.md`: bounded PR #3152 client/MCP/worker corrections.
 - `packaged-clients.md`: clean installed TypeScript SDK, API CLI, and stdio MCP localhost qualification.
 - `package-source-hashes.txt`: exact source-file hashes used for those client packages.
@@ -18,12 +25,12 @@ This directory is the single small reviewer packet for the current source candid
 - `release-candidate-operator-runbook.md`: future production zero-traffic observation commands, blocked until the external review and acceptance prerequisites are met.
 - `final-local-qualification.md`: final local source/package qualification boundaries and remaining live gates.
 
-## Exact identities and checks
+## Historical source checkpoints and package receipts
 
 - 0494 migration SHA-256: `11e3db7802e3636d3225eca1746074f5809fa8eebf38c97735020cdc3a029836`
 - 0494 native harness SHA-256: `722c3c162c6b359bfc09a470d4de1e559336aada0b02b3bef5243c3ba86b15ff`
 - Historical fixed-A head: `10459180091b9cb4d88313b5e7108ccc297d57f2` — review-only and unready after material findings in [comment 5860117184](https://github.com/carson-see/ArkovaCarson/pull/3154#issuecomment-5860117184); corrected source commit 0ff11a14e exists; final operational admission awaits external exact-head re-review
-- Published runtime source checkpoint: commit `ce545a2f6315f81e087640d0520d6a6f05e98c95`, tree `8288c37ff07336d0e63d46074f6f7d11d18b54d8`, based on main `d3ebb81f000a81a9cc835118961e06c701fe4da2`. Documentation-only supplements after this checkpoint do not change the runtime file contents represented by that checkpoint; they do change the repository tree when committed.
+- Historical pre-round-3 runtime source checkpoint: commit `ce545a2f6315f81e087640d0520d6a6f05e98c95`, tree `8288c37ff07336d0e63d46074f6f7d11d18b54d8`, based on main `d3ebb81f000a81a9cc835118961e06c701fe4da2`. The earlier documentation-only supplements left that runtime unchanged; the round-3 correction now changes it. Use the enclosing correction commit and current disposition receipt for review.
 - Draft PR #3154 previously published historical head `10459180091b9cb4d88313b5e7108ccc297d57f2`. Emergency revocation and malformed-claim continuation are source-corrected and internally reviewed at 0ff11a14e; image-build instructions and bulk-only recipient wording are corrected below. External exact-head re-review and actual image qualification remain open. Its image, deployment, quiescence and rehearsal gates also remain open.
 - Draft PR #3153 publishes isolated-rig source commit `d89e78a71ce429690081e3d0bacc0313d0f79cd5`; no rig was provisioned and no live isolation acceptance was claimed.
 - Client source manifest SHA-256: `d0b6ead5bea883983c380699d64987cc0dd6f0c1556a820a702a1406398d16ef`
@@ -32,14 +39,14 @@ This directory is the single small reviewer packet for the current source candid
 - AR20-32 isolated-rig local source commit: `d89e78a71ce429690081e3d0bacc0313d0f79cd5` (161 tests plus 12 shell-harness tests passed; no live rig acceptance).
 - API CLI artifact SHA-256: `f3c86e944aa4becd9840cd18496ce5e5569c7d5e4901e1e6f73f1d2d8d5d81f1`
 - stdio MCP artifact SHA-256: `bd2c53943eeb74a823d10ff2ebaa764f4f382779977affe3cb143b0a92394078`
-- Current working-tree results include 89 focused worker delivery tests after adding the retention call; the historical published-candidate receipt remains 87/87. Package evidence also covers two-page SDK/CLI/MCP execution, CLI authentication failure, and the six-field MCP response projection without private tags.
+- Historical pre-round-3 results included 89 focused worker delivery tests after adding the retention call; the historical published-candidate receipt remains 87/87. Package evidence also covers two-page SDK/CLI/MCP execution, CLI authentication failure, and the six-field MCP response projection without private tags.
 - Five synthetic credential variants and 70 CTDL mapping assertions were prepared previously.
 
 Typical local commands represented by the receipts were package build/pack, clean `npm install --ignore-scripts`, installed binary execution against a loopback fixture, focused Vitest, TypeScript typecheck, ESLint, and the disposable native PostgreSQL harness. Exact commands and output boundaries are in the individual summaries.
 
 ## Status limits
 
-This packet identifies the published runtime **source checkpoint** above and later documentation-only supplements. It does **not** claim that checkpoint is the future executable release freeze: external review, finding disposition, fixes, re-review, immutable image provenance, migration-ledger decisions, and the named acceptance prerequisites still have to bind a final executable candidate. It also does not claim registry publication, production migration application, production configuration, deployment, browser acceptance, live customer acceptance, staging acceptance, production soak, or completed third-party external review. No soak was started in this session.
+This packet retains historical source checkpoints and identifies the round-3 corrections separately. It does **not** claim that checkpoint is the future executable release freeze: external review, finding disposition, fixes, re-review, immutable image provenance, migration-ledger decisions, and the named acceptance prerequisites still have to bind a final executable candidate. It also does not claim registry publication, production migration application, production configuration, deployment, browser acceptance, live customer acceptance, staging acceptance, production soak, or completed third-party external review. No soak was started in this session.
 
 The 36-hour plain-language report and the complete 137-item recovery ledger remain in the existing canonical roadmap, rather than being duplicated here:
 

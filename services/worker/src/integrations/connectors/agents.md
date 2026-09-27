@@ -6,6 +6,13 @@ _Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in 
 ## 2026-09-27 — Drive rule attribution recovery
 
 Worker-created rules persist `created_by_user_id`. An org-admin connector re-save atomically claims only a null creator and uses that authenticated admin for the awaited mirror. Scheduled reconciliation reports null creators as `needsAdminRepair` and stays non-green until that visible re-save succeeds. Legacy singular `folder_id` is accepted only with `type: drive_folder`; named `drive_folders[]` entries win de-duplication and remain capped by the schema.
+
+An audit-state write failure remains a retryable reconciliation failure. A
+successful folder upsert without its durable failed/recovered marker would
+leave the connector card stale while the shared job reported success; the
+synthetic `mirror_health_state_write_failed` outcome deliberately makes the
+hourly runner retry. This is a durable-observability postcondition, not a
+per-folder content failure to suppress.
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
 

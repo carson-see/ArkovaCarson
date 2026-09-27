@@ -113,6 +113,13 @@ export const TriggerConfigWorkspaceFileModified = z.object({
     .optional(),
   semantic_match: TriggerConfigEsignCompleted.shape.semantic_match,
 }).superRefine((cfg, ctx) => {
+  if (cfg.folder_id && cfg.type !== 'drive_folder') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['type'],
+      message: 'type must be drive_folder when folder_id is provided',
+    });
+  }
   if (cfg.type === 'drive_folder' && !cfg.folder_id) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

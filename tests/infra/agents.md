@@ -44,5 +44,4 @@ against `wrangler.toml` so a var missing on the rig cannot produce a green hollo
 - External services are mocked; no real GCP/Cloudflare calls in tests.
 ## 2026-09-19 — MCP manifest count
 
-The registered/server-card tool-set ratchet is 25. Update the exact-count assertion only with a matching registry and server-card change.
-The registered/server-card tool-set ratchet is 18: 16 default launch tools (including the UAT-24 `arkova_manage_folders` tool) plus the two write-gated UAT-12 submission-lifecycle tools (`arkova_anchor_document`, `arkova_get_submission_status`). Update the exact-count assertion only with a matching registry and server-card change.
+`mcp-manifest-parity.test.ts` derives names and the exact tool count from hosted `TOOL_DEFINITIONS`. It also pins public-card descriptions and input-property descriptions to that canonical registry; do not maintain a second hard-coded total.

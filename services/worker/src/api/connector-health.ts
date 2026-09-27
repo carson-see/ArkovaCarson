@@ -646,29 +646,27 @@ async function loadLatestDriveMirrorStates(
   ruleIds: string[],
 ): Promise<Map<string, string>> {
   const latest = new Map<string, string>();
-  const concurrency = 10;
+  if (ruleIds.length === 0) return latest;
   const signal = AbortSignal.timeout(3_000);
-  for (let offset = 0; offset < ruleIds.length; offset += concurrency) {
-    if (signal.aborted) throw new Error('Drive folder mirror health state deadline exceeded');
-    const chunk = ruleIds.slice(offset, offset + concurrency);
-    const rows = await Promise.all(chunk.map(async (ruleId) => {
-      // Exact per-rule limit avoids one noisy rule hiding another unresolved failure.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (db as any).from('audit_events').select('event_type')
-        .eq('org_id', orgId).eq('target_type', 'organization_rules').eq('target_id', ruleId)
-        .in('event_type', ['drive_folder_mirror_failed', 'drive_folder_mirror_recovered'])
-        .order('created_at', { ascending: false }).limit(1).abortSignal(signal);
-      if (result.error) throw new Error('Drive folder mirror health state unavailable');
-      if (!Array.isArray(result.data) || result.data.length > 1) {
-        throw new Error('Drive folder mirror health state malformed');
-      }
-      const eventType = (result.data[0] as { event_type?: unknown } | undefined)?.event_type;
-      if (result.data.length === 1 && eventType !== 'drive_folder_mirror_failed' && eventType !== 'drive_folder_mirror_recovered') {
-        throw new Error('Drive folder mirror health state malformed');
-      }
-      return { ruleId, eventType };
-    }));
-    for (const row of rows) if (typeof row.eventType === 'string') latest.set(row.ruleId, row.eventType);
+  // One bounded DISTINCT ON RPC prevents both N+1 health reads and a noisy
+  // rule hiding another rule behind PostgREST's row cap.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (db as any).rpc('get_latest_drive_folder_mirror_states', {
+    p_org_id: orgId,
+    p_rule_ids: ruleIds,
+  }).abortSignal(signal);
+  if (result.error || !Array.isArray(result.data)) {
+    throw new Error('Drive folder mirror health state unavailable');
+  }
+  const requested = new Set(ruleIds);
+  for (const value of result.data) {
+    if (!value || typeof value !== 'object') throw new Error('Drive folder mirror health state malformed');
+    const { target_id: targetId, event_type: eventType } = value as Record<string, unknown>;
+    if (typeof targetId !== 'string' || !requested.has(targetId) || latest.has(targetId)
+      || (eventType !== 'drive_folder_mirror_failed' && eventType !== 'drive_folder_mirror_recovered')) {
+      throw new Error('Drive folder mirror health state malformed');
+    }
+    latest.set(targetId, eventType);
   }
   return latest;
 }

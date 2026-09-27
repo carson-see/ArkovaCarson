@@ -607,6 +607,7 @@ Top-level page components rendered by react-router-dom routes. Each page compose
 - 2026-03-07 Code-review fixes: `DashboardPage.tsx` — surfaced `revokeError` from `useRevokeAnchor` with dismissible Alert; used `recordDetailPath()` instead of hardcoded path; corrected docstring.
 - 2026-03-07 P3-TS-01: `DashboardPage.tsx` — replaced `useState<Record[]>([])` mock with `useAnchors()` hook for real Supabase data. Wired `handleRevokeRecord` to `useRevokeAnchor`. Removed `Math.random()` fingerprints and `console.log` stubs.
 - 2026-09-27 private tag lookup parity: `MyRecordsPage` exposes a generic user/organization private-tag filter backed by the JWT/RLS `usePrivateAnchorList` relational query. Organization scope is unavailable without an active org; member reads retain the existing user-owned anchor restriction. Results page 25 at a time with truthful Previous/Next controls.
+- 2026-09-27 Round 3 UI hardening: keep the tag input immediate but pass only its 300 ms debounced value into `usePrivateAnchorList`; tag labels/help/errors belong in `RECORDS_PRIVATE_TAG_LABELS`. An adoptable disabled Drive rule must explain that Save retries folder recovery and enables the rule only after every selected folder is ready.
 - 2026-03-07 P4-TS-03: Created `RecordDetailPage.tsx` — extracts `:id` from URL params, uses `useAnchor` hook, renders `AssetDetailView` with real Supabase data. Wired into App.tsx route.
 
 ## Do / Don't Rules

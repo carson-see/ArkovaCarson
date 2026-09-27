@@ -193,6 +193,7 @@ describe('ConnectorsPage', () => {
       { 'rule-disabled': { id: 'rule-disabled', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: { vendors: ['google_drive'], drive_folders: [] }, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: false, created_by_user_id: 'admin-1' } },
     );
     renderPage();
+    await waitFor(() => expect(screen.getByText(CONNECTORS_LABELS.CONNECTOR_DISABLED_RECOVERY_REQUIRED)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
   });
 

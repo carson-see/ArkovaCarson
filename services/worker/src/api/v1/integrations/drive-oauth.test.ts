@@ -303,6 +303,27 @@ describe('Drive OAuth router', () => {
     expect(url.searchParams.has('include_granted_scopes')).toBe(false);
   });
 
+  it('authorizes the requested org and replaces a cross-origin return URL before signing state', async () => {
+    const requestedOrg = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const app = createApp(makeRouteDb());
+    const start = await request(app)
+      .post('/api/v1/integrations/google_drive/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: requestedOrg, return_to: 'https://attacker.example/steal' });
+
+    expect(start.status).toBe(200);
+    expect(mockAdmin).toHaveBeenCalledWith(TEST_USER_ID, requestedOrg);
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+    const callback = await request(app)
+      .get('/api/v1/integrations/google_drive/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ state, error: 'access_denied' });
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toBe(
+      `http://localhost:5173/organizations/${requestedOrg}?tab=settings&drive_error=access_denied`,
+    );
+  });
+
   it('rejects OAuth start when the caller is not an org admin', async () => {
     // Canonical resolver reports non-admin → gate denies with reason not_admin.
     mockAdmin.mockResolvedValue({ value: false, error: false });

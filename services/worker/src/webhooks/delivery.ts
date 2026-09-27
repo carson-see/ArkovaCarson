@@ -1470,6 +1470,14 @@ function isCancelledAgentDelivery(value: Json): boolean {
     && typeof value.cancelled_delivery_id === 'string';
 }
 
+function terminalMaterializationFailure(value: Json): { outboxId?: string } | undefined {
+  if (!isJsonRecord(value) || value.state !== 'materialization_failed') return undefined;
+  const outboxId = typeof value.outbox_id === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.outbox_id)
+    ? value.outbox_id : undefined;
+  return outboxId ? { outboxId } : {};
+}
+
 async function completeClaimedAgentDelivery(
   claim: ClaimedAgentDelivery,
   outcome: 'success' | 'retry' | 'terminal',
@@ -1574,6 +1582,20 @@ export async function processAgentWebhookOutbox(): Promise<number> {
     });
     if (error) throw new Error('agent webhook materialization failed');
     if (data === null) break;
+    const terminalFailure = terminalMaterializationFailure(data);
+    if (terminalFailure) {
+      logger.error(
+        terminalFailure,
+        'Agent webhook event reached terminal materialization failure',
+      );
+      Sentry.captureException(
+        new Error('agent webhook event reached terminal materialization failure'),
+        {
+          tags: { component: 'agent-webhook-outbox', operation: 'materialize' },
+          ...(terminalFailure.outboxId ? { extra: terminalFailure } : {}),
+        },
+      );
+    }
   }
   let completed = 0;
   for (let i = 0; i < 10; i += 1) {

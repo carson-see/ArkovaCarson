@@ -1,4 +1,6 @@
-# Final local integration qualification
+# Historical local integration qualification — pre-round-3
+
+These focused results are retained as historical evidence, not a full-suite pass. The external round-3 reviewer reproduced 15 failures outside that selection. Use `round3-review-dispositions.md` for the corrective batch and current qualification. Historical fallback1045918 is superseded; do not select it for operation.
 
 The tech lead verified the integrated working source before publication. The enclosing Git commit and PR head bind this packet; no self-referential commit hash is embedded here.
 

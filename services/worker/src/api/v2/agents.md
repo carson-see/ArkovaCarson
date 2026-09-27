@@ -74,6 +74,8 @@ the subset of rows where `chain_timestamp` is NULL, so a spot check will not cat
 
 ## 2026-09-14 — SCRUM-5142 MCP workflow documentation count
 
+The runtime `TOOL_DEFINITIONS` registry is the tool-count source of truth. Tests must parse both formatted and compact registry entries and derive the default launch set by removing the three conditional submission tools; do not copy a stale numeric count into the test.
+
 The canonical runtime has sixteen default tools after `arkova_manage_folders`:
 fifteen read-oriented tools plus the separately scoped folder-management tool.
 `agentWorkflows.test.ts` pins both the count and that distinction against

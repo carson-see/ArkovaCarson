@@ -349,12 +349,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "since": { "type": "string" },
-          "until": { "type": "string" },
-          "tag": { "type": "string", "minLength": 1, "maxLength": 64 },
-          "tag_scope": { "type": "string", "enum": ["user", "organization"] },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
-          "cursor": { "type": "string", "maxLength": 2048 }
+          "since": { "type": "string", "description": "Inclusive RFC3339 timestamp with timezone." },
+          "until": { "type": "string", "description": "Exclusive RFC3339 timestamp with timezone." },
+          "tag": { "type": "string", "description": "Exact private tag, 1-64 characters.", "minLength": 1, "maxLength": 64 },
+          "tag_scope": { "type": "string", "enum": ["user", "organization"], "description": "Private tag scope." },
+          "limit": { "type": "integer", "description": "Page size, 1-100.", "minimum": 1, "maximum": 100 },
+          "cursor": { "type": "string", "description": "Opaque cursor from the previous response.", "maxLength": 2048 }
         },
         "required": [],
         "additionalProperties": false
@@ -587,7 +587,7 @@
     },
     {
       "name": "arkova_register_agent",
-      "description": "Register a generic agent. Requires agents:manage; metadata.computeid is provider-managed.",
+      "description": "Register a generic agent. Hosted MCP requires API-key authentication with agents:manage; metadata.computeid is provider-managed.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -744,7 +744,7 @@
     },
     {
       "name": "arkova_create_agent_key",
-      "description": "Create a key for an active generic agent. The returned key is a one-time secret; capture it directly into a secret store.",
+      "description": "Create a key for an active generic agent. Hosted MCP requires API-key authentication. The returned key is a one-time secret; capture it directly into a secret store.",
       "inputSchema": {
         "type": "object",
         "properties": {

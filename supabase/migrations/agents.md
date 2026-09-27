@@ -2086,3 +2086,12 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
 - `0493_scrum5300_agent_lifecycle_audit_details.sql` is a forward-only audit-detail correction for the two atomic status-transition RPCs. It preserves 0492's signatures, locks, caller ceilings, grants, writes, and return contracts while recording value-free actual changed-field names, previous/next status, actual key deactivate/restore counts, and canonical actor kind/identity. Already-inactive provider-owned keys do not inflate the admin suspension count; clean admin no-ops still emit no audit, and ComputeID retains its existing status-change-only audit policy. No raw metadata, passport identifier, key material, or changed values enter these transition details.
 
 - `0494_scrum5300_agent_key_delete_lock_corrections.sql` is a forward-only integrity correction. Key mint now locks the target agent before resolving and locking its caller, matching revoke/status lock order. An internal physical agent delete permanently deactivates active or administratively/provider-resumable attached keys and records a value-free service audit before the existing FK clears `agent_id`; unrelated inactive compromise reasons remain unchanged. The migration does not make physical deletion a user operation, and the logical outbox remains intentionally service-role-only under forced RLS. Local full-lineage evidence is supporting evidence only; production ledger state must be checked before any apply.
+
+- `0495_scrum5294_agent_webhook_outbox_mfa_policy.sql` restores the canonical
+  restrictive `mfa_verified_authenticated` census policy on the service-only
+  logical outbox without adding any permissive client policy or grant.
+  `service_role` remains the only outbox access path. It also adds the bounded,
+  service-only `get_latest_drive_folder_mirror_states(uuid,text[])` RPC so
+  connector health reads one deterministic latest failure/recovery state for
+  every requested enabled rule without relying on a PostgREST row-capped audit
+  scan. No hosted database application is asserted.

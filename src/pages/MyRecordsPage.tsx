@@ -29,6 +29,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { usePrivateAnchorList, type PrivateTagScope } from '@/hooks/usePrivateAnchorList';
+import { useDebounce } from '@/hooks/useDebounce';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useFolders, type Folder } from '@/hooks/useFolders';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
@@ -65,7 +66,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS, RECORDS_PRIVATE_TAG_LABELS } from '@/lib/copy';
 import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
@@ -126,12 +127,13 @@ export function MyRecordsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [privateTag, setPrivateTag] = useState('');
+  const debouncedPrivateTag = useDebounce(privateTag, 300);
   const [privateTagScope, setPrivateTagScope] = useState<PrivateTagScope>('user');
   const [privateTagPage, setPrivateTagPage] = useState(0);
   const activeRole = resolveActiveAnchorRole(activeOrgId, activeMembership?.role, profile?.role);
-  const privateList = usePrivateAnchorList({ userId: user?.id, orgId: activeOrgId, role: activeRole, tag: privateTag, scope: privateTagScope, page: privateTagPage });
+  const privateList = usePrivateAnchorList({ userId: user?.id, orgId: activeOrgId, role: activeRole, tag: debouncedPrivateTag, scope: privateTagScope, page: privateTagPage });
   const { data: privateListData, isLoading: privateListLoading, error: privateListError, refetch: refetchPrivateList } = privateList;
-  const privateFilterActive = privateTag.trim().length > 0;
+  const privateFilterActive = debouncedPrivateTag.trim().length > 0;
   const records = useMemo(() => privateFilterActive ? (privateListData?.records ?? []) : allRecords, [allRecords, privateFilterActive, privateListData?.records]);
   const recordsLoading = privateFilterActive ? privateListLoading : allRecordsLoading;
 
@@ -330,8 +332,8 @@ export function MyRecordsPage() {
       <Card>
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 gap-2">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <div className="relative min-w-0 flex-1 sm:max-w-sm">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search by filename or fingerprint..."
@@ -357,18 +359,18 @@ export function MyRecordsPage() {
                 </SelectContent>
               </Select>
               <Input
-                aria-label="Private tag"
-                placeholder="Filter by private tag"
+                aria-label={RECORDS_PRIVATE_TAG_LABELS.INPUT}
+                placeholder={RECORDS_PRIVATE_TAG_LABELS.PLACEHOLDER}
                 value={privateTag}
                 maxLength={64}
                 onChange={(event) => { setPrivateTag(event.target.value); setPrivateTagPage(0); }}
-                className="max-w-[190px]"
+                className="w-full sm:max-w-[190px]"
               />
               <Select value={privateTagScope} onValueChange={(value) => { setPrivateTagScope(value as PrivateTagScope); setPrivateTagPage(0); }}>
-                <SelectTrigger aria-label="Private tag scope" className="w-[155px]"><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label={RECORDS_PRIVATE_TAG_LABELS.SCOPE} className="w-full sm:w-[190px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">My tags</SelectItem>
-                  <SelectItem value="organization" disabled={!activeOrgId}>Organization tags</SelectItem>
+                  <SelectItem value="user">{RECORDS_PRIVATE_TAG_LABELS.USER_SCOPE}</SelectItem>
+                  <SelectItem value="organization" disabled={!activeOrgId}>{RECORDS_PRIVATE_TAG_LABELS.ORGANIZATION_SCOPE}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -388,11 +390,11 @@ export function MyRecordsPage() {
         <CardContent className="pt-0">
           {privateFilterActive && (
             <p className="py-3 text-xs text-muted-foreground">
-              Folder, status, and filename filters apply to the current private-tag page.
+              {RECORDS_PRIVATE_TAG_LABELS.PAGE_FILTER_NOTE}
             </p>
           )}
           {privateFilterActive && privateListError && (
-            <Alert variant="destructive" className="my-4"><AlertDescription className="flex items-center justify-between gap-2"><span>Private tag results could not be loaded.</span><Button variant="outline" size="sm" onClick={() => void refetchPrivateList()}>Try again</Button></AlertDescription></Alert>
+            <Alert variant="destructive" className="my-4"><AlertDescription className="flex items-center justify-between gap-2"><span>{RECORDS_PRIVATE_TAG_LABELS.LOAD_ERROR}</span><Button variant="outline" size="sm" onClick={() => void refetchPrivateList()}>{RECORDS_PRIVATE_TAG_LABELS.RETRY}</Button></AlertDescription></Alert>
           )}
           {recordsLoading ? (
             <div className="divide-y">

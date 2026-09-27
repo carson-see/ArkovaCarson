@@ -820,9 +820,9 @@ describe('loadDriveAccessToken — account_label read-error handling (P1) and la
 describe('loadWatchedFolderIds', () => {
   it('unions legacy folder_id + drive_folders[] across all enabled WORKSPACE_FILE_MODIFIED rules', async () => {
     const fakeData = [
-      { trigger_config: { folder_id: 'folder-A' } },
-      { trigger_config: { drive_folders: [{ folder_id: 'folder-B' }, { folder_id: 'folder-C' }] } },
-      { trigger_config: { folder_id: 'folder-A' /* duplicate */ } },
+      { trigger_config: { type: 'drive_folder', folder_id: 'folder-A' } },
+      { trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'folder-B' }, { type: 'drive_folder', folder_id: 'folder-C' }] } },
+      { trigger_config: { type: 'drive_folder', folder_id: 'folder-A' /* duplicate */ } },
       { trigger_config: { /* no folder binding */ filename_contains: 'invoice' } },
     ];
     const db = {
@@ -1510,7 +1510,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
               eq: (_c2: string, _v2: unknown) => ({
                 eq: (_c3: string, _v3: unknown) =>
                   Promise.resolve({
-                    data: [{ trigger_config: { folder_id: 'folder-Z' } }],
+                    data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }],
                     error: null,
                   }),
               }),
@@ -1586,7 +1586,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
               eq: (_c1: string, _v1: unknown) => ({
                 eq: (_c2: string, _v2: unknown) => ({
                   eq: (_c3: string, _v3: unknown) =>
-                    Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }),
+                    Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }),
                 }),
               }),
             }),
@@ -1630,7 +1630,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
               eq: (_c1: string, _v1: unknown) => ({
                 eq: (_c2: string, _v2: unknown) => ({
                   eq: (_c3: string, _v3: unknown) =>
-                    Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }),
+                    Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }),
                 }),
               }),
             }),
@@ -1672,7 +1672,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           if (t === 'job_queue') return leaseStore.from(t);
           return {
             select: (_c: string) => ({
-              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }) }) }),
             }),
           };
         },
@@ -1704,7 +1704,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           if (t === 'job_queue') return leaseStore.from(t);
           return {
             select: (_c: string) => ({
-              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }) }) }),
             }),
           };
         },
@@ -1760,7 +1760,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           if (t === 'job_queue') return leaseStore.from(t);
           return {
             select: (_c: string) => ({
-              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }) }) }),
             }),
           };
         },
@@ -1823,7 +1823,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           if (t === 'job_queue') return leaseStore.from(t);
           return {
             select: (_c: string) => ({
-              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }) }) }),
             }),
           };
         },
@@ -1883,7 +1883,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           }
           return {
             select: (_c: string) => ({
-              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }) }) }),
             }),
           };
         },
@@ -1949,7 +1949,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           }
           return {
             select: (_c: string) => ({
-              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { folder_id: 'folder-Z' } }], error: null }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ trigger_config: { type: 'drive_folder', folder_id: 'folder-Z' } }], error: null }) }) }),
             }),
           };
         },

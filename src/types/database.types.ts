@@ -7703,6 +7703,10 @@ export type Database = {
         }
         Returns: string
       }
+      get_latest_drive_folder_mirror_states: {
+        Args: { p_org_id: string; p_rule_ids: string[] }
+        Returns: Json
+      }
       materialize_next_agent_webhook_event: {
         Args: { p_flag_state: string; p_include_parent_fanout?: boolean }
         Returns: Json
