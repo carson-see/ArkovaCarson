@@ -14,6 +14,17 @@
 
 ## Now
 
+### 2026-09-27T14:20Z — close-out addendum: MERGE FREEZE for the release soak; Jira/Confluence current; prod parity re-verified
+
+**Founder directive 2026-09-27 (Carson): nothing merges until the pre-release simultaneous soak; handle only this session's PRs.** State as of this block:
+
+- **`SOAK_GATE_DISABLED` is `false` again** (set 2026-09-27T14:0xZ). The Staging Soak Evidence Gate enforces normally; every open PR body carries a waiver, not evidence, so none can queue. Mergify queue empty, no trains. The code window in `check-staging-evidence.ts` still reads 2026-10-03 — irrelevant while the variable is false.
+- **Prod parity re-verified 2026-09-27T14:05Z:** `list_migrations` numeric prefixes 183 = main's 183, zero difference either way; `/health` `git_sha f72bbee7b` = the last deployable commit on main (`git diff --stat f72bbee7b origin/main -- services/worker …` is empty). Only prod and `arkova-staging-2026-08` remain in Supabase (Carson deleted the 14 soak rigs on 09-26).
+- **Jira updated:** SCRUM-5297, SCRUM-5284, SCRUM-5287 → Done with prod artifacts; status notes on SCRUM-5294, 5286, 5289, 3610, 5093, 5291 (not fixed — say so); prod-parity notes on SCRUM-1275, 2337, 4939; roll-ups on epics SCRUM-2330 (Drive), 2329 (DocuSign), 4492 (ComputeID), 2529 (merge authority); SCRUM-5190 (connector health).
+- **Confluence:** SCRUM-5297 page corrected (fix PR is #3110, Done); new story pages for SCRUM-5284 (156729345) and SCRUM-5287 (156729369); **bug-log entries are on an addendum child page (156762113)** because the 230 KB master page cannot be round-tripped through the MCP update safely — merge them into `88768514` in date order.
+- **Other sessions' PRs, untouched from here on:** #3104, #3116, #3121, #3122, #3123 (draft). **Disclosure:** before the directive arrived, a review agent from this session pushed `a317ef6ba` (main merge + review fixes) to #3104's branch `codex/debt-recovery-20260926`; it was stopped before updating the body. Three sibling agents were stopped before any push. #3111 (duplicate of merged #3110) closed.
+- **Owed:** compensating migration for `0481`'s five bare `auth.uid()` calls (in progress in Carson's task-chip session, `task_84adcc90`) then drop the lint skip entry; SCRUM-5291 `public_id`-keyed org profile RPC can ride the same migration.
+
 ### 2026-09-27T02:00Z — tech-lead session (Claude Fable 5.1): the 11-PR backlog is MERGED without re-soaks; prod ledger is current with main; two gate defects and one main-level red fixed along the way
 
 **Founder directive 2026-09-26 (Carson): fix the reviewed defects and merge without re-soaking.** Everything below happened under that directive. No staging soak is claimed for any of these heads; every PR body carries a `## Soak waiver — founder directive 2026-09-26` block saying so.
@@ -52,8 +63,7 @@
 
 ### Owed
 - Compensating migration wrapping `0481`'s five `auth.uid()` calls as `(SELECT auth.uid())` (task chip `task_84adcc90`), then remove `0481` from the lint's `SKIPPED_FILES`.
-- Clear `SOAK_GATE_DISABLED` when the directive ends (window closes 2026-10-03 regardless).
-- Supabase cleanup (Carson): the 14 `soak`-named projects listed 2026-09-26; keep `carson-see's Project` (prod) and `arkova-staging-2026-08`.
+- ~~Clear `SOAK_GATE_DISABLED`~~ — done 2026-09-27 (see addendum above).
 - `HANDOFF.md ## History` still carries the 03:20Z block's "soaks live" table — those rigs were killed; treat it as history only.
 
 ### 2026-09-26T03:20Z — external tech-lead engagement (SUPERSEDED by the 2026-09-27T02:00Z block above) (Claude Opus 5): 90-day tech-debt audit; 4 merged, 6 soaking, ONE ordering constraint that is a security control
