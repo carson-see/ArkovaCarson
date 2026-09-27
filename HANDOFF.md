@@ -27,7 +27,7 @@
 - `0487` (PR #3088, data-only backfill): precondition read `27 docusign rows, 27 NULL external_revision, 0 already equal`; applied; post-check `0 NULL, 27 backfilled`; ledger reconciled to `0487`. Its `exemptPrefixes` entry was added ahead of the apply (`d2830439c`) per §0 rule 10 and is removed in this commit now that the `.sql` is on main.
 
 ### Prod worker deploy
-`deploy-worker.yml` fired on the merges: run 36283372701 (`728f8696b`, success), 36283479176 (`08effc242`, success), 36286822125 (`0f2d4a747`) and 36286828282 (`f72bbee7b`) — https://github.com/carson-see/ArkovaCarson/actions/runs/36286828282 . Confirm the serving revision with `gcloud run services describe arkova-worker` and an authenticated `/health` before citing a `git_sha`; this block does not assert one.
+`deploy-worker.yml` fired on the merges: run 36283372701 (`728f8696b`, success), 36283479176 (`08effc242`, success), 36286822125 (`0f2d4a747`) and 36286828282 (`f72bbee7b`) — https://github.com/carson-see/ArkovaCarson/actions/runs/36286828282 . Both later runs completed **success**. Prod worker `/health` at 2026-09-27T02:05Z: `git_sha f72bbee7b5af482c5a7e31896d1b480040bf7e05`, `status healthy`, `database`/`anchoring`/`kms` all `ok`, `network mainnet` — i.e. prod is serving the merged main head.
 
 ### Main-level defects found and fixed (each one was redding every PR and every train)
 1. **`SOAK_GATE_DISABLED` had silently expired in code on 2026-09-12** (`SOAK_GATE_BYPASS_EXPIRES_AT`); setting the variable did nothing. Window reopened to **2026-10-03T00:00:00Z** in `ff862ad04`; variable set `true`. After 10-03 the gate enforces again by itself — clear the variable then.
