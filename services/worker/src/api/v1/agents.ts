@@ -140,6 +140,89 @@ export const UpdateAgentSchema = z.object({
   callback_url: z.string().url().startsWith('https://').nullable().optional(),
 });
 
+type AgentUpdate = z.infer<typeof UpdateAgentSchema>;
+
+function validateAgentUpdate(
+  existing: Record<string, unknown>,
+  update: AgentUpdate,
+  caller: AgentLifecycleCaller,
+  res: Response,
+): boolean {
+  if (update.allowed_scopes) {
+    const missing = missingDelegatedScopes(caller, update.allowed_scopes);
+    if (missing.length) {
+      res.status(403).json({ error: 'delegation_scope_exceeded', missing });
+      return false;
+    }
+  }
+  const metadata = typeof existing.metadata === 'object' && existing.metadata !== null
+    ? existing.metadata as Record<string, unknown> : {};
+  const computeid = typeof metadata.computeid === 'object' && metadata.computeid !== null
+    ? metadata.computeid as Record<string, unknown> : {};
+  if (update.allowed_scopes && computeid.issuer === 'computeid') {
+    const outsidePassportCeiling = update.allowed_scopes.filter(
+      (scope) => !(PASSPORT_AGENT_SCOPE_ALLOWLIST as readonly string[]).includes(scope),
+    );
+    if (outsidePassportCeiling.length) {
+      res.status(403).json({ error: 'provider_scope_ceiling_exceeded', missing: outsidePassportCeiling });
+      return false;
+    }
+  }
+  if (update.status === 'active' && (computeid.suspended_by === 'computeid' || computeid.provider_suspended === true)) {
+    res.status(409).json({ error: 'Agent is suspended by ComputeID and requires provider reinstatement' });
+    return false;
+  }
+  if (existing.status === 'revoked' && update.status !== undefined) {
+    res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
+    return false;
+  }
+  return true;
+}
+
+async function applyAgentUpdate(
+  agentId: string,
+  orgId: string,
+  caller: AgentLifecycleCaller,
+  existing: Record<string, unknown>,
+  update: AgentUpdate,
+  res: Response,
+): Promise<{ agent: Record<string, unknown>; changed: boolean } | null> {
+  const updates: Record<string, unknown> = { ...update };
+  delete updates.status;
+  if (update.status) {
+    const { data: transition, error } = await dbAny.rpc('apply_admin_agent_status_transition', {
+      p_org_id: orgId, p_agent_id: agentId, p_next_status: update.status, p_updates: updates,
+      p_actor_kind: caller.kind,
+      p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+    });
+    if (error?.code === '23514') { res.status(409).json({ error: error.message }); return null; }
+    if (error) {
+      logger.error({ agentId, error }, 'Atomic agent status transition failed');
+      res.status(500).json({ error: 'Failed to change agent status' });
+      return null;
+    }
+    if (!(transition as { found?: boolean } | null)?.found) {
+      res.status(404).json({ error: 'Agent not found' });
+      return null;
+    }
+    return {
+      agent: (transition as { agent: Record<string, unknown> }).agent,
+      changed: (transition as { changed?: boolean }).changed === true,
+    };
+  }
+  if (Object.keys(updates).length === 0) return { agent: existing, changed: false };
+  const { data: agent, error } = await dbAny.from('agents').update(updates)
+    .eq('id', agentId).eq('org_id', orgId).select().single();
+  if (error || !agent) {
+    res.status(404).json({ error: 'Agent not found or update failed' });
+    return null;
+  }
+  void recordAuditEvent({ actor_id: callerAudit(caller).actor_id, org_id: orgId,
+    event_type: 'AGENT_UPDATED', event_category: 'SYSTEM', target_type: 'agent', target_id: agentId,
+    details: JSON.stringify({ ...callerAudit(caller).details, changes: updates }) });
+  return { agent, changed: true };
+}
+
 // ─── POST /api/v1/agents — Register a new agent ─────────────────
 
 router.post('/', async (req: Request, res: Response) => {
@@ -259,75 +342,12 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
 
   try {
     const orgId = caller.orgId;
-
-    if (parsed.data.allowed_scopes) {
-      const missing = missingDelegatedScopes(caller, parsed.data.allowed_scopes);
-      if (missing.length) { res.status(403).json({ error: 'delegation_scope_exceeded', missing }); return; }
-    }
-
-    // Verify ownership before updating
     const existing = await verifyAgentOwnership(agentId, orgId, res);
     if (!existing) return;
-
-    const existingMetadata = typeof existing.metadata === 'object' && existing.metadata !== null
-      ? existing.metadata as Record<string, unknown> : {};
-    const existingComputeid = typeof existingMetadata.computeid === 'object' && existingMetadata.computeid !== null
-      ? existingMetadata.computeid as Record<string, unknown> : {};
-    if (parsed.data.allowed_scopes && existingComputeid.issuer === 'computeid') {
-      const outsidePassportCeiling = parsed.data.allowed_scopes.filter(
-        (scope) => !(PASSPORT_AGENT_SCOPE_ALLOWLIST as readonly string[]).includes(scope),
-      );
-      if (outsidePassportCeiling.length) {
-        res.status(403).json({ error: 'provider_scope_ceiling_exceeded', missing: outsidePassportCeiling });
-        return;
-      }
-    }
-
-    const metadata = typeof existing.metadata === 'object' && existing.metadata !== null
-      ? existing.metadata as Record<string, unknown> : {};
-    const computeid = typeof metadata.computeid === 'object' && metadata.computeid !== null
-      ? metadata.computeid as Record<string, unknown> : {};
-    if (parsed.data.status === 'active' && (computeid.suspended_by === 'computeid' || computeid.provider_suspended === true)) {
-      res.status(409).json({ error: 'Agent is suspended by ComputeID and requires provider reinstatement' });
-      return;
-    }
-
-    // Revoked is terminal (partner revocations, DELETE /:agentId). Re-activating
-    // a revoked row would let POST /:agentId/key mint keys for a passport
-    // ComputeID has revoked. Non-status edits (name, description) stay allowed.
-    if (existing.status === 'revoked' && parsed.data.status !== undefined) {
-      res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
-      return;
-    }
-
-    const updates: Record<string, unknown> = { ...parsed.data };
-    delete updates.status;
-    let agent: Record<string, unknown> = existing;
-    let changed = false;
-
-    if (parsed.data.status) {
-      const { data: transition, error: transitionError } = await dbAny.rpc('apply_admin_agent_status_transition', {
-        p_org_id: orgId, p_agent_id: agentId, p_next_status: parsed.data.status, p_updates: updates,
-        p_actor_kind: caller.kind,
-        p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
-      });
-      if (transitionError?.code === '23514') { res.status(409).json({ error: transitionError.message }); return; }
-      if (transitionError) { logger.error({ agentId, error: transitionError }, 'Atomic agent status transition failed'); res.status(500).json({ error: 'Failed to change agent status' }); return; }
-      if (!(transition as { found?: boolean } | null)?.found) { res.status(404).json({ error: 'Agent not found' }); return; }
-      agent = (transition as { agent: Record<string, unknown> }).agent;
-      changed = (transition as { changed?: boolean }).changed === true;
-    }
-
-    if (!parsed.data.status && Object.keys(updates).length > 0) {
-      const { data: updatedAgent, error } = await dbAny.from('agents').update(updates)
-        .eq('id', agentId).eq('org_id', orgId).select().single();
-      if (error || !updatedAgent) { res.status(404).json({ error: 'Agent not found or update failed' }); return; }
-      agent = updatedAgent;
-      changed = true;
-      void recordAuditEvent({ actor_id: callerAudit(caller).actor_id, org_id: orgId,
-        event_type: 'AGENT_UPDATED', event_category: 'SYSTEM', target_type: 'agent', target_id: agentId,
-        details: JSON.stringify({ ...callerAudit(caller).details, changes: updates }) });
-    }
+    if (!validateAgentUpdate(existing, parsed.data, caller, res)) return;
+    const result = await applyAgentUpdate(agentId, orgId, caller, existing, parsed.data, res);
+    if (!result) return;
+    const { agent, changed } = result;
 
     if (changed && typeof agent.updated_at === 'string') emitAgentEvent({ eventType: 'agent.updated', orgId,
       agentId, source: 'api', eventId: `${agentId}:${agent.updated_at}`,

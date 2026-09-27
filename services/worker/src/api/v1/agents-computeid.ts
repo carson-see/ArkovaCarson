@@ -52,55 +52,94 @@ function clampScopes(requested: readonly ApiKeyScope[] | undefined): ApiKeyScope
   return [...new Set(wanted.filter((s) => allow.has(s)))];
 }
 
-agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
+type AdmissionAgentStatus = 'active' | 'suspended' | 'revoked';
+
+interface AdmissionResult {
+  agent: Record<string, unknown> & { id: string; status: AdmissionAgentStatus };
+  key: Record<string, unknown> & { id: string; key_prefix: string; scopes: unknown[] };
+  binding: Record<string, unknown>;
+}
+
+function isAdmissionResult(data: Record<string, unknown>): data is Record<string, unknown> & AdmissionResult {
+  if (!isRecord(data.agent) || !isRecord(data.key) || !isRecord(data.binding)) return false;
+  if (typeof data.agent.id !== 'string' || typeof data.agent.status !== 'string') return false;
+  if (!['active', 'suspended', 'revoked'].includes(data.agent.status)) return false;
+  return typeof data.key.id === 'string'
+    && typeof data.key.key_prefix === 'string'
+    && Array.isArray(data.key.scopes);
+}
+
+function emitAdmissionEvents(data: AdmissionResult, orgId: string): void {
+  emitAgentEvent({ eventType: 'agent.registered', orgId, agentId: data.agent.id,
+    source: 'computeid', eventId: data.agent.id, status: data.agent.status,
+    occurredAt: typeof data.agent.created_at === 'string' ? data.agent.created_at : undefined });
+  emitAgentEvent({ eventType: 'agent.key_created', orgId, agentId: data.agent.id,
+    keyId: data.key.id, source: 'computeid', eventId: data.key.id,
+    occurredAt: typeof data.key.created_at === 'string' ? data.key.created_at : undefined });
+}
+
+interface AdmissionContext {
+  hmacSecret: string;
+  orgId: string;
+  principalUserId: string;
+  passportId: string;
+  name: string;
+  description?: string;
+  scopes: ApiKeyScope[];
+  issuedAt?: Date;
+  expiresAt: Date;
+}
+
+function prepareAdmission(req: Request, res: Response): AdmissionContext | null {
   if (!config.enableComputeidIntegration) {
     res.status(503).json({
       error: { code: 'vendor_gated', message: 'ComputeID integration is not enabled in this environment.' },
     });
-    return;
+    return null;
   }
-
   const apiKey = req.apiKey;
   if (!apiKey) {
     res.status(401).json({ error: { code: 'api_key_required', message: 'Admission requires an organization API key.' } });
-    return;
+    return null;
   }
-  // From typed config, NOT req.hmacSecret: that field is attached only by the
-  // JWT `requireAuth` middleware, which this API-key mount deliberately omits.
   const hmacSecret = config.apiKeyHmacSecret;
-  if (!hmacSecret) {
-    res.status(500).json({ error: { code: 'hmac_unconfigured' } });
-    return;
-  }
+  if (!hmacSecret) { res.status(500).json({ error: { code: 'hmac_unconfigured' } }); return null; }
   const ca = getPinnedCa();
-  if (!ca) {
-    res.status(500).json({ error: { code: 'ca_unconfigured' } });
-    return;
-  }
-
+  if (!ca) { res.status(500).json({ error: { code: 'ca_unconfigured' } }); return null; }
   const parsed = ComputeIdAdmissionRequest.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: { code: 'invalid_request', details: parsed.error.issues } });
-    return;
+    return null;
   }
-  const { passport_id: passportId, verification_receipt: receipt } = parsed.data;
-
-  const verdict = verifyComputeIdReceipt({ receipt, ca, expectedPassportId: passportId });
+  const passportId = parsed.data.passport_id;
+  const verdict = verifyComputeIdReceipt({
+    receipt: parsed.data.verification_receipt, ca, expectedPassportId: passportId,
+  });
   if (!verdict.ok) {
     res.status(401).json({ error: { code: 'receipt_invalid', reason: verdict.reason } });
-    return;
+    return null;
   }
-
   const scopes = clampScopes(parsed.data.allowed_scopes);
   if (scopes.length === 0) {
     res.status(400).json({ error: { code: 'no_permitted_scopes', permitted: PASSPORT_AGENT_SCOPE_ALLOWLIST } });
-    return;
+    return null;
   }
+  return {
+    hmacSecret, scopes, passportId,
+    orgId: apiKey.orgId,
+    principalUserId: apiKey.userId,
+    name: parsed.data.name ?? `computeid-${passportId.slice(0, 8)}`,
+    ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
+    ...(verdict.issuedAt ? { issuedAt: verdict.issuedAt } : {}),
+    expiresAt: verdict.expiresAt,
+  };
+}
 
-  const orgId = apiKey.orgId;
-  const principalUserId = apiKey.userId;
-  const shortId = passportId.slice(0, 8);
-  const name = parsed.data.name ?? `computeid-${shortId}`;
+agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
+  const admission = prepareAdmission(req, res);
+  if (!admission) return;
+  const { hmacSecret, orgId, principalUserId, passportId, name, description,
+    scopes, issuedAt, expiresAt } = admission;
 
   try {
     const key = generateApiKey(hmacSecret);
@@ -108,10 +147,10 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       p_org_id: orgId,
       p_principal_id: principalUserId,
       p_passport_id: passportId,
-      ...(verdict.issuedAt ? { p_receipt_issued_at: verdict.issuedAt.toISOString() } : {}),
-      p_receipt_expires_at: verdict.expiresAt.toISOString(),
+      ...(issuedAt ? { p_receipt_issued_at: issuedAt.toISOString() } : {}),
+      p_receipt_expires_at: expiresAt.toISOString(),
       p_name: name,
-      ...(parsed.data.description !== undefined ? { p_description: parsed.data.description } : {}),
+      ...(description !== undefined ? { p_description: description } : {}),
       p_scopes: scopes,
       p_key_hash: key.hash,
       p_key_prefix: key.prefix,
@@ -122,20 +161,8 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       res.status(409).json({ error: { code: data.error, ...(typeof data.agent_id === 'string' ? { agent_id: data.agent_id } : {}) } });
       return;
     }
-    if (!isRecord(data.agent) || !isRecord(data.key) || !isRecord(data.binding)
-        || typeof data.agent.id !== 'string' || typeof data.key.id !== 'string'
-        || typeof data.agent.status !== 'string'
-        || !['active', 'suspended', 'revoked'].includes(data.agent.status)
-        || typeof data.key.key_prefix !== 'string' || !Array.isArray(data.key.scopes)) {
-      throw new Error('invalid_admission_result');
-    }
-    emitAgentEvent({ eventType: 'agent.registered', orgId, agentId: data.agent.id,
-      source: 'computeid', eventId: data.agent.id,
-      status: data.agent.status as 'active' | 'suspended' | 'revoked',
-      occurredAt: typeof data.agent.created_at === 'string' ? data.agent.created_at : undefined });
-    emitAgentEvent({ eventType: 'agent.key_created', orgId, agentId: data.agent.id,
-      keyId: data.key.id, source: 'computeid', eventId: data.key.id,
-      occurredAt: typeof data.key.created_at === 'string' ? data.key.created_at : undefined });
+    if (!isAdmissionResult(data)) throw new Error('invalid_admission_result');
+    emitAdmissionEvents(data, orgId);
     // The same transaction wrote both security audit rows. No compensation:
     // an uncertain reply must preserve any committed agent/key and its audit.
     res.status(201).json({
