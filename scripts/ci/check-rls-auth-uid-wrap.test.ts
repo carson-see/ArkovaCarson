@@ -14,6 +14,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   scanFiles,
   maskNonCode,
@@ -158,10 +160,33 @@ describe('file-level exemptions are unchanged', () => {
       'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql',
       'supabase/migrations/0280_rls_auth_uid_subquery_wrap.sql',
       'supabase/migrations/0398_fix_audit_events_actor_email_dropped_column.sql',
-      // 0481: applied to prod as-is on 2026-09-20 before PR #3033 merged; the
-      // compensating initplan wrap is a follow-up migration.
+      // 0481: applied to prod as-is on 2026-09-20 before PR #3033 merged. Its
+      // text is immutable, so the exemption is permanent; migration 0490 is the
+      // compensating initplan wrap that replaces the five calls at runtime.
       'supabase/migrations/0481_uat14_profile_brand_media.sql',
     ]);
+  });
+
+  it('0481 still carries exactly the five bare calls that 0490 compensates for', () => {
+    // Read the real file and scan it under a NON-skipped name: if someone edits
+    // 0481 (forbidden — it is live on prod) or the scanner stops seeing helper
+    // bodies, this count moves and the 0490 rationale is no longer true.
+    const body = readFileSync(resolve(__dirname, '..', '..', M('0481_uat14_profile_brand_media.sql')), 'utf8');
+    const hits = findings(M('0481_as_if_not_skipped.sql'), body);
+    expect(hits).toHaveLength(5);
+    expect(hits.filter((h) => h.includes('can_read') || h.includes('can_write'))).toEqual([]);
+    expect(hits.map((h) => h.split(':')[0])).toEqual(['42', '52', '64', '67', '71']);
+  });
+
+  it('0490 (the compensating wrap for 0481) has zero bare calls and is NOT exempted', () => {
+    const name = M('0490_wrap_auth_uid_profile_media_helpers.sql');
+    expect(SKIPPED_FILES.has(name)).toBe(false);
+    const body = readFileSync(resolve(__dirname, '..', '..', name), 'utf8');
+    expect(findings(name, body)).toEqual([]);
+    // The wrap must actually be present in code, not just absent from findings:
+    // five wrapped occurrences, matching 0481's five bare ones.
+    const code = maskNonCode(body);
+    expect(code.match(/\(SELECT auth\.uid\(\)\)/g)).toHaveLength(5);
   });
 
   it('parses the numeric prefix out of a migration path', () => {

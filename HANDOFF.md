@@ -51,7 +51,7 @@
 `#3104` SDK single-record proof bundle (codex), `#3111` — a **duplicate of the merged #3110** opened from the spawned-task chip; superseded, left for its owner to close. `#3116`/`#3121`/`#3122`/`#3123` — agent revocation atomicity, scoped-key lifecycle, client parity, agent webhooks (codex, 2026-09-26T16–18Z), all draft.
 
 ### Owed
-- Compensating migration wrapping `0481`'s five `auth.uid()` calls as `(SELECT auth.uid())` (task chip `task_84adcc90`), then remove `0481` from the lint's `SKIPPED_FILES`.
+- ~~Compensating migration wrapping `0481`'s five `auth.uid()` calls~~ → **PR #3149** (draft, T3, `0490_wrap_auth_uid_profile_media_helpers.sql`, 2026-09-27). The five calls are in the two SECURITY DEFINER storage-policy helpers, not in the `storage.objects` policies, so 0490 is a `CREATE OR REPLACE` of the helpers and touches no policy. Rollback rehearsed and grant/deny equality proven on an isolated local stack (`tests/rls/profile-media-auth-uid-wrap.test.ts`). **Still owed by the operator:** the §0 rule 10 prod apply + `exemptPrefixes` entry in one motion (the PR does not apply anything), a T3 soak or a founder/CTO waiver before ready, and the `0481` `SKIPPED_FILES` entry STAYS — the lint reads immutable file text, so "remove 0481 from the lint" was never achievable; the entry's comment now cites 0490.
 - Clear `SOAK_GATE_DISABLED` when the directive ends (window closes 2026-10-03 regardless).
 - Supabase cleanup (Carson): the 14 `soak`-named projects listed 2026-09-26; keep `carson-see's Project` (prod) and `arkova-staging-2026-08`.
 - `HANDOFF.md ## History` still carries the 03:20Z block's "soaks live" table — those rigs were killed; treat it as history only.
