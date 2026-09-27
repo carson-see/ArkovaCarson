@@ -129,7 +129,7 @@ The folder contract suite must cover omission-safe rename, explicit root reparen
 
 ## 2026-09-26 — agent lifecycle webhook event names
 
-`WebhookEventType` and its exhaustive `WEBHOOK_EVENT_TYPE_PIN` include `agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created` in worker registry order. This additive source change remains part of the unreleased 3.3.0 artifact; it does not authorize publishing and the combined release still requires the separate singleton proof repair to merge and be requalified.
+`WebhookEventType` and its exhaustive `WEBHOOK_EVENT_TYPE_PIN` include `agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created` in worker registry order. This additive source change remains part of the unreleased 3.3.0 artifact; it does not authorize publishing; the combined candidate includes the singleton proof repair and still requires qualification.
 
 ## SCRUM-5211 — authenticated redirects fail closed
 

@@ -135,4 +135,5 @@ Literal in sync with the worker's OpenAPI enum.
 `ProofBundle` accepts an empty application-tree branch only for a coherent
 single-leaf tree (`leaf_count=1`, `merkle_index=0`, root equals fingerprint).
 All other empty branches still fail closed to `proof_bundle=None`. The repair
-is packaged as 2.5.1 for a concrete release artifact but is not published here.
+was first packaged as 2.5.1 and is folded into the unreleased 2.6.0 combined
+candidate; publishing is not authorized here.

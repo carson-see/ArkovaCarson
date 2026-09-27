@@ -171,8 +171,8 @@ UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–
 bundle describes the one valid empty-branch case: `leaf_count=1`,
 `merkle_index=0`, and `fingerprint == merkle_root`. Multi-leaf, wrong-index,
 and root-mismatch empty branches still map to `proofBundle = null`.
-The repair is packaged as 3.2.1 for a concrete release artifact but is not
-published here.
+The repair was first packaged as 3.2.1 and is folded into the unreleased 3.3.0
+combined candidate; publishing is not authorized here.
 
 ## 2026-09-19 — Finality webhook event types
 
@@ -203,4 +203,4 @@ downgraded the version, never dropped the newer status sets or folder events) an
 
 ## 2026-09-26 — agent lifecycle webhook subscription types
 
-The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized and also depends on requalifying the separate singleton proof repair.
+The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized; the combined candidate includes the singleton proof repair and still requires qualification.
