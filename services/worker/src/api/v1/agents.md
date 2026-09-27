@@ -2002,3 +2002,11 @@ responses retain the deprecated `credential_recipient_hash` property as
 `evidence_package_hash` cannot act as a secondary comparison channel. The
 private self-link remains `buildSelfImportRecipientHash(userId)` and must not be
 replaced with an extracted external recipient identifier.
+## 2026-09-27 — fixed-A emergency revoke remains available
+
+The compatibility router blocks registration, update, and key minting while the
+fallback build is active. It deliberately leaves authenticated `DELETE` on the
+canonical lifecycle handler: revocation still enforces the human-admin or
+`agents:manage` caller ceiling, and the retained outbox-backed RPC atomically revokes the
+agent and keys with audit and logical-event persistence. Do not replace that
+path with a legacy route-level delete or post-commit event dispatch.

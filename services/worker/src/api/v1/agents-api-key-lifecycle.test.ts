@@ -3,14 +3,14 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
-const { dbFromMock, rpcMock, auditMock, agentEventMock } = vi.hoisted(() => ({
-  dbFromMock: vi.fn(), rpcMock: vi.fn(), auditMock: vi.fn(), agentEventMock: vi.fn(),
+const { dbFromMock, rpcMock, auditMock, agentEventMock, hintMock } = vi.hoisted(() => ({
+  dbFromMock: vi.fn(), rpcMock: vi.fn(), auditMock: vi.fn(), agentEventMock: vi.fn(), hintMock: vi.fn(),
 }));
 vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: rpcMock } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: auditMock }));
 vi.mock('../../config.js', () => ({ config: { apiKeyHmacSecret: 'machine-test-hmac' } }));
-vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: agentEventMock }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: agentEventMock, hintAgentWebhookDrain: hintMock }));
 
 import { agentsRouter } from './agents.js';
 const ORG = '11111111-1111-1111-1111-111111111111';
@@ -51,15 +51,17 @@ describe('generic agent lifecycle API-key caller', () => {
     rpcMock.mockResolvedValue({ data: { found: true, changed: true }, error: null });
     const response = await request(app()).delete(`/api/v1/agents/${AGENT}`);
     expect(response.status).toBe(200);
-    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys_as_api_key', {
+    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys_as_api_key_with_outbox', {
       p_org_id: ORG, p_agent_id: AGENT, p_actor_api_key_id: KEY,
     });
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.revoked' }));
+    expect(hintMock).toHaveBeenCalledOnce();
+    expect(agentEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.revoked' }));
   });
   it('suppresses revocation when the RPC reports changed=false', async () => {
     const agents = builder({ data: { id: AGENT, org_id: ORG, status: 'revoked' } }); routeDbTables(dbFromMock, { agents });
     rpcMock.mockResolvedValue({ data: { found: true, changed: false }, error: null });
     expect((await request(app()).delete(`/api/v1/agents/${AGENT}`)).status).toBe(200);
+    expect(hintMock).not.toHaveBeenCalled();
     expect(agentEventMock).not.toHaveBeenCalled();
   });
   it('registers within the machine delegation ceiling with owner FK and machine audit', async () => {

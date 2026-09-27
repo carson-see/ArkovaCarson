@@ -1815,14 +1815,49 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
   it.each([
     ['scalar', 42],
     ['empty object', {}],
+    ['secret-shaped delivery id', { delivery_id: 'ak_must_not_be_logged' }],
     ['missing lease token', { cancelled_delivery_id: null, delivery_id: '33333333-3333-4333-8333-333333333333' }],
     ['mixed cancellation and delivery', { cancelled_delivery_id: '33333333-3333-4333-8333-333333333333', delivery_id: '44444444-4444-4444-8444-444444444444' }],
-  ])('fails closed on a %s claim response before HTTP or completion', async (_label, claim) => {
+  ])('reports and skips a %s claim response before HTTP or completion', async (_label, claim) => {
     rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
-    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }];
-    await expect(processAgentWebhookOutbox()).rejects.toThrow('agent webhook claim returned an invalid shape');
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockRpc).not.toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.anything());
+    expect(mockSentry.captureException).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({
+      tags: expect.objectContaining({ subsystem: 'agent-webhook-outbox', operation: 'claim-validation' }),
+    }));
+    if (_label === 'secret-shaped delivery id') {
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('ak_must_not_be_logged');
+      expect(JSON.stringify(mockSentry.captureException.mock.calls)).not.toContain('ak_must_not_be_logged');
+    }
+  });
+
+  it('continues to a valid delivery after reporting a malformed claim', async () => {
+    const payloadText = '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-09-27T16:29:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-09-27T16:29:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":90}';
+    const validClaim = {
+      delivery_id: '33333333-3333-4333-8333-333333333333',
+      lease_token: '44444444-4444-4444-8444-444444444444',
+      endpoint_id: '55555555-5555-4555-8555-555555555555',
+      endpoint_url: 'https://hooks.example.com/agent', endpoint_secret: 'secret',
+      event_type: 'agent.updated',
+      wire_event_id: '11111111-1111-4111-8111-111111111111',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+      payload_text: payloadText, attempt_number: 0,
+    };
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [
+      { data: { delivery_id: 'invalid-secret-value' }, error: null },
+      { data: validClaim, error: null },
+      { data: null, error: null },
+    ];
+    mockFetch.mockResolvedValue({ ok: true, status: 204, text: () => Promise.resolve('') });
+
+    await expect(processAgentWebhookOutbox()).resolves.toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(mockRpc).toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.objectContaining({
+      p_delivery_id: validClaim.delivery_id, p_outcome: 'success',
+    }));
   });
 
   it('retains the terminal cancellation sentinel without HTTP or completion', async () => {

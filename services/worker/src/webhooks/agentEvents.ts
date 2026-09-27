@@ -1,4 +1,4 @@
-import { dispatchWebhookEvent } from "./delivery.js";
+import { dispatchWebhookEvent, processAgentWebhookOutbox } from "./delivery.js";
 import { logger } from "../utils/logger.js";
 import { Sentry } from "../utils/sentry.js";
 
@@ -65,4 +65,21 @@ export function emitAgentEvent(input: AgentEventInput): void {
         tags: { subsystem: "webhooks", event_type: input.eventType },
       });
     });
+}
+
+/** Best-effort latency hint; the scheduled drainer remains authoritative. */
+let promptDrainScheduled = false;
+export function hintAgentWebhookDrain(): void {
+  if (promptDrainScheduled) return;
+  promptDrainScheduled = true;
+  queueMicrotask(() => {
+    void processAgentWebhookOutbox().catch(() => {
+      logger.error('Agent webhook prompt drain failed; scheduled recovery remains pending');
+      Sentry.captureMessage('agent_webhook_prompt_drain_failed', {
+        level: 'error', tags: { subsystem: 'webhooks' },
+      });
+    }).finally(() => {
+      promptDrainScheduled = false;
+    });
+  });
 }

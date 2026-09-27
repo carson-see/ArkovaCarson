@@ -7,6 +7,9 @@ The read-only fixed-A compatibility build keeps `processAgentWebhookOutbox()` in
 rows created by Build B while legacy retry selection excludes outbox-owned delivery rows. Focused
 tests pin the mounted schedule entrypoint to `processWebhookRetries` and exercise a Build-B-owned
 row through that same function; this is local integration evidence, not a live Scheduler claim.
+Malformed claim results are reported with only the safe delivery id when available and skipped so
+one corrupt lease cannot stop later valid deliveries in the same drain. Raw claim bodies, endpoint
+secrets, and payloads are never included in that diagnostic.
 
 
 Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sign, Microsoft Graph, Drive, Checkr, ATS) live elsewhere — see `services/worker/src/api/v1/webhooks/` for those.

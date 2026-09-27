@@ -20,7 +20,7 @@ import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, scopeSatisfies } from '../apiScopes.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
 import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
-import { emitAgentEvent } from '../../webhooks/agentEvents.js';
+import { emitAgentEvent, hintAgentWebhookDrain } from '../../webhooks/agentEvents.js';
 
 // agents table not yet in database.types.ts — use untyped client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -377,7 +377,9 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     // One database transaction owns the terminal status, every associated key,
     // and the success audit. Migration 0488 locks the same parent row used by
     // 0448's active-key trigger, closing concurrent mint and stale-resume races.
-    const rpcName = caller.kind === 'user' ? 'revoke_agent_and_keys' : 'revoke_agent_and_keys_as_api_key';
+    const rpcName = caller.kind === 'user'
+      ? 'revoke_agent_and_keys_with_outbox'
+      : 'revoke_agent_and_keys_as_api_key_with_outbox';
     const rpcArgs = caller.kind === 'user'
       ? { p_org_id: orgId, p_agent_id: agentId, p_actor_id: caller.userId }
       : { p_org_id: orgId, p_agent_id: agentId, p_actor_api_key_id: caller.apiKeyId };
@@ -394,8 +396,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     }
 
     logger.info({ agentId }, 'Agent revoked');
-    if ((revokeResult as { changed?: boolean }).changed === true) emitAgentEvent({ eventType: 'agent.revoked',
-      orgId, agentId, source: 'api', eventId: agentId, status: 'revoked' });
+    if ((revokeResult as { changed?: boolean }).changed === true) hintAgentWebhookDrain();
     res.json({ status: 'revoked', agent_id: agentId });
   } catch (err) {
     logger.error({ error: err }, 'Agent revocation failed');

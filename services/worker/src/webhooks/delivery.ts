@@ -1580,7 +1580,23 @@ export async function processAgentWebhookOutbox(): Promise<number> {
     if (error) throw new Error('agent webhook claim failed');
     if (data === null) break;
     if (isCancelledAgentDelivery(data)) continue;
-    if (!isClaimedAgentDelivery(data)) throw new Error('agent webhook claim returned an invalid shape');
+    if (!isClaimedAgentDelivery(data)) {
+      const deliveryId = typeof data === 'object' && data !== null
+        && typeof (data as { delivery_id?: unknown }).delivery_id === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          .test((data as { delivery_id: string }).delivery_id)
+        ? (data as { delivery_id: string }).delivery_id
+        : undefined;
+      logger.error(
+        deliveryId ? { deliveryId } : {},
+        'Agent webhook claim returned an invalid shape',
+      );
+      Sentry.captureException(new Error('agent webhook claim returned an invalid shape'), {
+        tags: { subsystem: 'agent-webhook-outbox', operation: 'claim-validation' },
+        ...(deliveryId ? { extra: { deliveryId } } : {}),
+      });
+      continue;
+    }
     if (await deliverClaimedAgentWebhook(data)) completed += 1;
   }
   return completed;

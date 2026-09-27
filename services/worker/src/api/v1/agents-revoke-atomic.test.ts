@@ -3,10 +3,11 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
-const { dbFromMock, rpcMock, auditMock } = vi.hoisted(() => ({
+const { dbFromMock, rpcMock, auditMock, hintMock } = vi.hoisted(() => ({
   dbFromMock: vi.fn(),
   rpcMock: vi.fn(),
   auditMock: vi.fn(),
+  hintMock: vi.fn(),
 }));
 
 vi.mock('../../utils/db.js', () => ({
@@ -16,6 +17,7 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: auditMock }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: vi.fn(), hintAgentWebhookDrain: hintMock }));
 
 import { agentsRouter } from './agents.js';
 
@@ -55,13 +57,13 @@ beforeEach(() => {
 describe('DELETE /api/v1/agents/:agentId atomic revocation', () => {
   it('commits revocation through one service RPC and performs no route-level writes or audit', async () => {
     const { agents, apiKeys } = setup();
-    rpcMock.mockResolvedValue({ data: { found: true, status: 'revoked' }, error: null });
+    rpcMock.mockResolvedValue({ data: { found: true, changed: true, status: 'revoked' }, error: null });
 
     const response = await request(app()).delete(`/api/v1/agents/${AGENT_ID}`);
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'revoked', agent_id: AGENT_ID });
-    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys', {
+    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys_with_outbox', {
       p_org_id: ORG_ID,
       p_agent_id: AGENT_ID,
       p_actor_id: USER_ID,
@@ -69,6 +71,7 @@ describe('DELETE /api/v1/agents/:agentId atomic revocation', () => {
     expect(agents.update).not.toHaveBeenCalled();
     expect(apiKeys.update).not.toHaveBeenCalled();
     expect(auditMock).not.toHaveBeenCalled();
+    expect(hintMock).toHaveBeenCalledOnce();
   });
 
   it('returns 500 and never reports success when the transaction fails', async () => {

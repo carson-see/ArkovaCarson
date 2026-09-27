@@ -14,12 +14,13 @@ function rejectCompatibilityFloorMutation(_req: Request, res: Response): void {
 }
 
 // This immutable compatibility artifact serves reads and drains durable
-// webhook work while holding every generic lifecycle mutation before its
-// handler can query or write. Authentication remains outside this router and
-// therefore runs first at the /agents mount in router.ts.
+// webhook work while holding non-terminal generic lifecycle mutations before
+// their handlers can query or write. Authentication remains outside this
+// router and therefore runs first at the /agents mount in router.ts. DELETE is
+// intentionally delegated to the canonical handler: its outbox-backed RPC is
+// the compatibility build's safe emergency credential-revocation path.
 router.post('/', rejectCompatibilityFloorMutation);
 router.patch('/:agentId', rejectCompatibilityFloorMutation);
-router.delete('/:agentId', rejectCompatibilityFloorMutation);
 router.post('/:agentId/key', rejectCompatibilityFloorMutation);
 router.use(agentsRouter);
 
