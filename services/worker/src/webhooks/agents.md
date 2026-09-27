@@ -10,6 +10,9 @@ row through that same function; this is local integration evidence, not a live S
 Malformed claim results are reported with only the safe delivery id when available and skipped so
 one corrupt lease cannot stop later valid deliveries in the same drain. Raw claim bodies, endpoint
 secrets, and payloads are never included in that diagnostic.
+Terminal materialization failures are likewise reported without serializing the RPC body: the
+diagnostic includes only a validated outbox UUID when present, and still emits a generic alert when
+the returned identifier is malformed. Retryable materialization remains owned by the SQL budget.
 
 
 Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sign, Microsoft Graph, Drive, Checkr, ATS) live elsewhere — see `services/worker/src/api/v1/webhooks/` for those.

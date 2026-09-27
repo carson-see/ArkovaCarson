@@ -1812,6 +1812,38 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
     expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
   });
 
+  it('reports terminal materialization failure without exposing an untrusted result body', async () => {
+    const outboxId = '22222222-2222-4222-8222-222222222222';
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [
+      { data: { outbox_id: outboxId, state: 'materialization_failed', private: 'do-not-log' }, error: null },
+      { data: { outbox_id: 'not-a-uuid', state: 'materialization_failed', private: 'also-private' }, error: null },
+      { data: null, error: null },
+    ];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: null, error: null }];
+
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      { outboxId },
+      'Agent webhook event reached terminal materialization failure',
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      {},
+      'Agent webhook event reached terminal materialization failure',
+    );
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'agent webhook event reached terminal materialization failure' }),
+      {
+        tags: { component: 'agent-webhook-outbox', operation: 'materialize' },
+        extra: { outboxId },
+      },
+    );
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('do-not-log');
+    expect(JSON.stringify(mockSentry.captureException.mock.calls)).not.toContain('do-not-log');
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('also-private');
+    expect(mockSentry.captureException).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ['scalar', 42],
     ['empty object', {}],
