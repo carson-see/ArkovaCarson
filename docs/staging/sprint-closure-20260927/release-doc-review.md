@@ -31,3 +31,17 @@ The packet correctly:
 - removes GitHub wiki publication from current requirements.
 
 The roadmap replacement payload is also consistent: it says an external reviewer still must be assigned, calls tag-search behavior reviewed source rather than live/released behavior, retains strict UAT timing, and reserves staging/soak for the separate user-started operator session.
+
+## Subsequent review-fix supplement
+
+The receipt above is historical for its listed hashes. External Medium+ review is now in progress per the founder; reviewer identity, reviewed SHA and final verdict remain unconfirmed. Fixed-A source correction `0ff11a14e4e85ab8c7931b6df3cfe5cca761ca2d` has passed independent internal source and final test-delta review. It is not operationally admitted.
+
+The updated operator packet was independently reviewed, including the subsequent source-identity checkpoint and narrow historical-wording corrections. Root verified the changes and these file hashes:
+
+- README: `c3553d1b35025c30586e3b261c9c11434cf4f6d35fc3acc7f48bf35c55208444`
+- Release plan: `684a7824e2551e5b3372f0fb29853bd5e8c1e295fd40e56f4eeb6e282449a3d6`
+- Operator runbook: `c8596fc0a7db2018725692b98db63f3473b8672e19b7df6bc1ca93f97e223ea5`
+
+Verdict: **PASS for publication and external re-review.** The packet provides a build-only Linux/amd64 image procedure, digest-bound identity checks without booting the worker, workflow-equivalent image scanning, and explicit unresolved operator inputs. It correctly limits the recipient flag to bulk/self-service linking. Emergency DELETE is a bounded producer: every incompatible older worker/job must be quiesced before the first such request or Build B producer request. Register, all PATCH updates and key mint remain held.
+
+Root validation passed 21 documentation tests, 2,008 file references and syntax-only checks on all ten runbook shell blocks. No commands in the operator runbook were executed. The named acceptance matrix is unchanged. Source qualification, external review, image publication, staging, production observation, partner acceptance and release remain distinct states.
