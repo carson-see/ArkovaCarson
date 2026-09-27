@@ -32,6 +32,12 @@ import {
   type DriveSubscriptionRenewalSummary,
   type DriveSubscriptionRow,
 } from '../integrations/connectors/drive-subscription-renewal.js';
+import {
+  DRIVE_FOLDER_RECONCILIATION_RUN_BUDGET_MS,
+  DriveFolderReconciliationError,
+  runDriveFolderReconciliation,
+  type DriveFolderReconciliationSummary,
+} from '../integrations/connectors/drive-folder-reconciliation.js';
 import { DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, withRunLease } from './run-lease.js';
 
 const GOOGLE_DRIVE_PROVIDER = 'google_drive';
@@ -273,6 +279,7 @@ export interface DriveSubscriptionRenewalRunResult extends DriveSubscriptionRene
    * was `skipped` (the renewal lease was held elsewhere, so nothing ran).
    */
   reconciliation?: { scanned: number; ran: number; skipped: number; errored: number };
+  folderReconciliation?: DriveFolderReconciliationSummary;
 }
 
 const EMPTY_RENEWAL_SUMMARY: DriveSubscriptionRenewalSummary = {
@@ -297,15 +304,23 @@ export async function runDriveSubscriptionRenewal(
   options: DriveSubscriptionRenewalDepOptions = {},
 ): Promise<DriveSubscriptionRenewalRunResult> {
   const leaseClient = options.db ?? (defaultDb as AnyDb);
+  const runStartedAtMs = performance.now();
   const outcome = await withRunLease(
     { ...DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, client: leaseClient },
     async () => {
-      const summary = await renewDriveSubscriptions({
-        db: makeDriveSubscriptionRenewalDb(options),
-        client: makeDriveSubscriptionRenewalClient(options),
-        alert: alertDriveSubscriptionRenewal,
-        logger,
-      });
+      let summary = EMPTY_RENEWAL_SUMMARY;
+      let renewalError: unknown;
+      try {
+        summary = await renewDriveSubscriptions({
+          db: makeDriveSubscriptionRenewalDb(options),
+          client: makeDriveSubscriptionRenewalClient(options),
+          alert: alertDriveSubscriptionRenewal,
+          logger,
+        });
+      } catch (error) {
+        renewalError = error;
+        logger.error({ error }, 'drive subscription renewal failed; continuing reconciliation before failing the run');
+      }
       // Fix-round item 3, second half: periodic reconciliation, same
       // lease-held pass, right after renewal — see
       // DriveSubscriptionRenewalRunResult.reconciliation's doc comment.
@@ -323,7 +338,25 @@ export async function runDriveSubscriptionRenewal(
       } catch (error) {
         logger.error({ error }, 'drive reconciliation sweep: threw — renewal summary still returned');
       }
-      return { ...summary, reconciliation };
+      let folderReconciliation: DriveSubscriptionRenewalRunResult['folderReconciliation'];
+      try {
+        folderReconciliation = await runDriveFolderReconciliation({
+          db: leaseClient,
+          logger,
+          deadlineAtMs: runStartedAtMs + DRIVE_FOLDER_RECONCILIATION_RUN_BUDGET_MS,
+        });
+      } catch (error) {
+        logger.error(
+          { error, summary: error instanceof DriveFolderReconciliationError ? error.summary : undefined },
+          'drive-folder reconciliation scan failed',
+        );
+        if (!renewalError) renewalError = error;
+      }
+      // All independent repair passes were attempted. Re-throw afterwards so
+      // the HTTP route returns 500 and Cloud Scheduler retries instead of a
+      // renewal or folder-scan failure being hidden behind a partial summary.
+      if (renewalError) throw renewalError;
+      return { ...summary, reconciliation, folderReconciliation };
     },
   );
   return outcome.acquired ? outcome.result : { ...EMPTY_RENEWAL_SUMMARY, skipped: true };

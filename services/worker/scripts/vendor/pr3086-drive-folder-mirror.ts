@@ -136,11 +136,15 @@ export function extractDriveFoldersToMirror(
   triggerConfig: Record<string, unknown> | null | undefined,
 ): DriveFolderToMirror[] {
   const raw = triggerConfig && typeof triggerConfig === 'object' ? (triggerConfig as Record<string, unknown>).drive_folders : undefined;
-  if (!Array.isArray(raw)) return [];
 
   const seen = new Set<string>();
   const out: DriveFolderToMirror[] = [];
-  for (const entry of raw) {
+  const legacyFolderId = (triggerConfig as Record<string, unknown> | null | undefined)?.folder_id;
+  if (typeof legacyFolderId === 'string' && legacyFolderId.length > 0) {
+    seen.add(legacyFolderId);
+    out.push({ folderId: legacyFolderId, folderName: null });
+  }
+  for (const entry of Array.isArray(raw) ? raw : []) {
     if (!entry || typeof entry !== 'object') continue;
     const folderId = (entry as Record<string, unknown>).folder_id;
     if (typeof folderId !== 'string' || folderId.length === 0 || seen.has(folderId)) continue;
@@ -217,16 +221,27 @@ async function refreshConnectionIfStale(
   currentConnectionId: string | null,
   connectionId: string,
   logger: DriveFolderMirrorDeps['logger'],
-): Promise<void> {
-  if (currentConnectionId === connectionId) return;
-  const { error } = await db
+): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  if (currentConnectionId === connectionId) return { ok: true };
+  const { error, count } = await db
     .from('folders')
-    .update({ connector_connection_id: connectionId })
+    .update({ connector_connection_id: connectionId }, { count: 'exact' })
     .eq('id', folderId)
     .eq('org_id', orgId);
-  if (error) {
-    logger?.warn?.({ error, orgId, folderId }, 'drive-folder-mirror: connection refresh failed');
+  if (error || count !== 1) {
+    const failure = error ?? new Error(`connection refresh affected ${String(count)} rows`);
+    logger?.warn?.({ error: failure, orgId, folderId }, 'drive-folder-mirror: connection refresh failed');
+    return { ok: false, error: failure };
   }
+  return { ok: true };
+}
+
+function mirrorErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
 }
 
 /** Finds or creates the ORG-scoped Arkova mirror folder for ONE connected Drive
@@ -235,7 +250,7 @@ async function refreshConnectionIfStale(
  * re-selecting the winner's row rather than erroring. */
 async function upsertOne(
   db: DriveFolderMirrorDb,
-  args: { orgId: string; actorUserId: string; connectionId: string; folder: DriveFolderToMirror },
+  args: { orgId: string; actorUserId: string | null; connectionId: string; folder: DriveFolderToMirror },
   logger: DriveFolderMirrorDeps['logger'],
 ): Promise<MirrorConnectedDriveFolderResult> {
   const { orgId, actorUserId, connectionId, folder } = args;
@@ -246,7 +261,17 @@ async function upsertOne(
     return { folderId: '', driveFolderId: folder.folderId, outcome: 'error', error: String(selectError) };
   }
   if (existing?.id) {
-    await refreshConnectionIfStale(db, orgId, existing.id, existing.connector_connection_id, connectionId, logger);
+    const refresh = await refreshConnectionIfStale(
+      db, orgId, existing.id, existing.connector_connection_id, connectionId, logger,
+    );
+    if (!refresh.ok) {
+      return {
+        folderId: existing.id,
+        driveFolderId: folder.folderId,
+        outcome: 'error',
+        error: mirrorErrorText(refresh.error),
+      };
+    }
     return { folderId: existing.id, driveFolderId: folder.folderId, outcome: 'existing' };
   }
 
@@ -270,6 +295,12 @@ async function upsertOne(
     if (code === UNIQUE_VIOLATION) {
       const { data: winner, error: reselectError } = await findExistingMirror(db, orgId, folder.folderId);
       if (!reselectError && winner?.id) {
+        const refresh = await refreshConnectionIfStale(
+          db, orgId, winner.id, winner.connector_connection_id, connectionId, logger,
+        );
+        if (!refresh.ok) {
+          return { folderId: winner.id, driveFolderId: folder.folderId, outcome: 'error', error: mirrorErrorText(refresh.error) };
+        }
         return { folderId: winner.id, driveFolderId: folder.folderId, outcome: 'existing' };
       }
     }
@@ -293,7 +324,7 @@ async function upsertOne(
  */
 export async function mirrorConnectedDriveFolders(
   deps: DriveFolderMirrorDeps,
-  args: { orgId: string; actorUserId: string; folders: DriveFolderToMirror[] },
+  args: { orgId: string; actorUserId: string | null; folders: DriveFolderToMirror[] },
 ): Promise<MirrorConnectedDriveFolderResult[]> {
   const { orgId, actorUserId, folders } = args;
   if (folders.length === 0) return [];
