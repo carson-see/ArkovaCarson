@@ -100,7 +100,7 @@ const {
     contains: endpointsContains,
   };
 
-  // Retry logs chain: .select().eq().lte().order().limit()
+  // Retry logs chain: .select().eq().is().lte().order().limit()
   // SCRUM-2250 review-fix (defect #2): processWebhookRetries now inserts an
   // `.order('payload->sequence', { ascending: true, nullsFirst: true })` step
   // between `.lte()` and `.limit()` so the 50-row window is the globally-oldest
@@ -109,10 +109,12 @@ const {
   const retryLogsLimit = vi.fn();
   const retryLogsOrder = vi.fn(() => ({ limit: retryLogsLimit }));
   const retryLogsLte = vi.fn(() => ({ order: retryLogsOrder }));
-  const retryLogsEq = vi.fn(() => ({ lte: retryLogsLte }));
+  const retryLogsIs = vi.fn(() => ({ lte: retryLogsLte }));
+  const retryLogsEq = vi.fn(() => ({ is: retryLogsIs, lte: retryLogsLte }));
   const retryLogsSelect = {
     select: vi.fn((_columns?: string) => ({ eq: retryLogsEq })),
     eq: retryLogsEq,
+    is: retryLogsIs,
     lte: retryLogsLte,
     order: retryLogsOrder,
     limit: retryLogsLimit,
@@ -144,12 +146,19 @@ const {
     flag: { data: unknown };
     seq: number;
     seqOverride: { data: unknown; error?: unknown } | null;
-  } = { flag: { data: true }, seq: 0, seqOverride: null };
+    agent: Record<string, Array<{ data: unknown; error: unknown }>>;
+  } = { flag: { data: true }, seq: 0, seqOverride: null, agent: {} };
   const mockRpc = vi.fn((fn: string) => {
     if (fn === 'next_webhook_sequence') {
       if (rpcState.seqOverride) return Promise.resolve(rpcState.seqOverride);
       rpcState.seq += 1;
       return Promise.resolve({ data: rpcState.seq, error: null });
+    }
+    if (fn === 'materialize_next_agent_webhook_event' || fn === 'claim_next_agent_webhook_delivery') {
+      return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: null, error: null });
+    }
+    if (fn === 'complete_agent_webhook_delivery') {
+      return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: true, error: null });
     }
     // get_flag (and any other rpc) → the flag slot. Tests drive this via
     // mockRpc.mockResolvedValue(...) (legacy) which is bridged onto the flag.
@@ -187,14 +196,15 @@ const {
 
 // Test helpers for the name-aware RPC mock (SCRUM-2250 review-fix). These read
 // the rpcState bridged onto mockRpc above.
-function rpcStateOf(): { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } {
-  return (mockRpc as unknown as { __rpcState: { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } }).__rpcState;
+function rpcStateOf(): { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null; agent: Record<string, Array<{ data: unknown; error: unknown }>> } {
+  return (mockRpc as unknown as { __rpcState: { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null; agent: Record<string, Array<{ data: unknown; error: unknown }>> } }).__rpcState;
 }
 /** Reset the strictly-increasing next_webhook_sequence counter + override. */
 function resetRpcSequence(): void {
   const s = rpcStateOf();
   s.seq = 0;
   s.seqOverride = null;
+  s.agent = {};
 }
 /** Force next_webhook_sequence to return a fixed value/error (replica-skew + failure tests). */
 function setRpcSequence(value: { data: unknown; error?: unknown } | null): void {
@@ -239,6 +249,7 @@ vi.stubGlobal('fetch', mockFetch);
 // indirectly through deliverToEndpoint and processWebhookRetries.
 import {
   dispatchWebhookEvent,
+  processAgentWebhookOutbox,
   processWebhookRetries,
   deriveResourceKey,
   __resetSequenceForTest,
@@ -1730,6 +1741,7 @@ describe('processWebhookRetries', () => {
 
     expect(retryLogsSelect.select).toHaveBeenCalledWith('*, webhook_endpoints(*)');
     expect(retryLogsSelect.eq).toHaveBeenCalledWith('status', 'retrying');
+    expect(retryLogsSelect.is).toHaveBeenCalledWith('agent_event_outbox_id', null);
   });
 
   it('limits query to 50 records', async () => {
@@ -1745,6 +1757,81 @@ describe('processWebhookRetries', () => {
     await processWebhookRetries();
 
     expect(retryLogsSelect.limit).toHaveBeenCalledWith(50);
+  });
+});
+
+describe('processAgentWebhookOutbox compatibility drainer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetRpcSequence();
+    rpcStateOf().flag = { data: true };
+    __resetWebhookFlagCacheForTest();
+    resetCircuitBreakers();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-27T16:30:00Z'));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('does not terminally suppress when the enablement read is unavailable', async () => {
+    rpcStateOf().flag = { data: null, error: { message: 'flag db unavailable' } } as never;
+    expect(await processAgentWebhookOutbox()).toBe(0);
+    expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
+  });
+
+  it('treats a non-boolean flag response as unavailable', async () => {
+    rpcStateOf().flag = { data: 'false' };
+    expect(await processAgentWebhookOutbox()).toBe(0);
+    expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
+  });
+
+  it('terminalizes an invalid stored envelope before signing or network I/O', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: {
+      delivery_id: '33333333-3333-4333-8333-333333333333',
+      lease_token: '44444444-4444-4444-8444-444444444444',
+      endpoint_id: '55555555-5555-4555-8555-555555555555',
+      endpoint_url: 'https://hooks.example.com/agent', endpoint_secret: 'sentinel-secret',
+      event_type: 'agent.updated',
+      wire_event_id: '11111111-1111-4111-8111-111111111111',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+      payload_text: '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-09-27T16:29:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-09-27T16:29:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":90,"secret":"must-not-ship"}',
+      attempt_number: 0,
+    }, error: null }, { data: null, error: null }];
+    expect(await processAgentWebhookOutbox()).toBe(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.objectContaining({
+      p_outcome: 'terminal', p_error_message: 'payload_refused_before_signing',
+    }));
+  });
+
+  it('reuses exact persisted body bytes and recomputes a valid fresh signature', async () => {
+    const payloadText = '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-09-27T16:29:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-09-27T16:29:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":90}';
+    const claim = {
+      delivery_id: '33333333-3333-4333-8333-333333333333',
+      lease_token: '44444444-4444-4444-8444-444444444444',
+      endpoint_id: '55555555-5555-4555-8555-555555555555',
+      endpoint_url: 'https://hooks.example.com/agent', endpoint_secret: 'secret',
+      event_type: 'agent.updated',
+      wire_event_id: '11111111-1111-4111-8111-111111111111',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+      payload_text: payloadText, attempt_number: 0,
+    };
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+    mockFetch.mockResolvedValue({ ok: true, status: 204, text: () => Promise.resolve('') });
+    expect(await processAgentWebhookOutbox()).toBe(1);
+    const first = mockFetch.mock.calls[0][1];
+    expect(first.body).toBe(payloadText);
+    expect(first.headers['X-Arkova-Signature']).toBe(signPayload(`${first.headers['X-Arkova-Timestamp']}.${payloadText}`, 'secret'));
+
+    vi.setSystemTime(new Date('2026-09-27T16:30:02Z'));
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: { ...claim, lease_token: '66666666-6666-4666-8666-666666666666', attempt_number: 1 }, error: null }, { data: null, error: null }];
+    expect(await processAgentWebhookOutbox()).toBe(1);
+    const second = mockFetch.mock.calls[1][1];
+    expect(second.body).toBe(payloadText);
+    expect(second.headers['X-Arkova-Timestamp']).not.toBe(first.headers['X-Arkova-Timestamp']);
+    expect(second.headers['X-Arkova-Signature']).toBe(signPayload(`${second.headers['X-Arkova-Timestamp']}.${payloadText}`, 'secret'));
   });
 });
 

@@ -316,3 +316,10 @@ force mint/revoke and resume/revoke lock orders; machine mode also proves a
 caller expiring while blocked on its row lock is denied without agent, key, or
 audit changes. The harness remains a focused local PostgreSQL fixture, not a
 full Supabase lineage replay.
+# AR20-13 agent webhook outbox native contract
+
+`test-agent-webhook-outbox-native.sql` runs against an isolated schema with
+0491 applied. It covers atomic register/outbox commit, payload exclusions,
+explicit flag/null guards, atomic materialization, live/stale lease CAS, and
+refusal to adopt a semantically-equal foreign legacy delivery row. The script
+wraps fixtures in a transaction and rolls them back.

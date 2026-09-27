@@ -2,6 +2,19 @@
 
 Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sign, Microsoft Graph, Drive, Checkr, ATS) live elsewhere — see `services/worker/src/api/v1/webhooks/` for those.
 
+## 2026-09-27 — AR20-13 agent outbox rollout floor
+
+Agent lifecycle events use migration 0491's private logical outbox and owned
+delivery leases. The compatibility build must be deployed everywhere after the
+additive migration and before any wrapper producer: its legacy retry query
+excludes `agent_event_outbox_id IS NOT NULL`, while `processAgentWebhookOutbox`
+can drain owned rows. Once an owned row exists, never roll back below that
+build. Claims are just-in-time, endpoint-active state is revalidated in the
+claim transaction, and every completion/retry/terminal write CASes the live
+lease token. External delivery remains at-least-once across a receiver-success /
+completion-write crash. `agent_payload_text` is the immutable signed body;
+retry timestamps and HMAC signatures are intentionally fresh.
+
 ## Files
 
 | File | Role |

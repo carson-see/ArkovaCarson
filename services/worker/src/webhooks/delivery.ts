@@ -5,6 +5,7 @@
  */
 
 import crypto from 'node:crypto';
+import { config } from '../config.js';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
@@ -99,10 +100,12 @@ export function __resetWebhookFlagCacheForTest(): void {
   outboundWebhookFlagCache = null;
 }
 
-async function isOutboundWebhooksEnabled(): Promise<boolean> {
+type OutboundWebhookFlagDecision = 'enabled' | 'disabled' | 'unavailable';
+
+async function getOutboundWebhookFlagDecision(): Promise<OutboundWebhookFlagDecision> {
   const now = Date.now();
   if (outboundWebhookFlagCache && outboundWebhookFlagCache.expiresAt > now) {
-    return outboundWebhookFlagCache.value;
+    return outboundWebhookFlagCache.value ? 'enabled' : 'disabled';
   }
   const { data: flag, error: flagError } = await db.rpc('get_flag', {
     p_flag_key: 'ENABLE_OUTBOUND_WEBHOOKS',
@@ -112,11 +115,22 @@ async function isOutboundWebhooksEnabled(): Promise<boolean> {
       { error: flagError, flagId: 'ENABLE_OUTBOUND_WEBHOOKS' },
       'Failed to read outbound webhook feature flag',
     );
-    return false; // fail closed — do not cache the failure
+    return 'unavailable'; // fail closed — do not cache the failure
   }
-  const value = Boolean(flag);
+  if (typeof flag !== 'boolean') {
+    logger.error(
+      { flagId: 'ENABLE_OUTBOUND_WEBHOOKS', valueType: typeof flag },
+      'Outbound webhook feature flag returned a non-boolean value',
+    );
+    return 'unavailable';
+  }
+  const value = flag;
   outboundWebhookFlagCache = { value, expiresAt: now + FLAG_CACHE_TTL_MS };
-  return value;
+  return value ? 'enabled' : 'disabled';
+}
+
+async function isOutboundWebhooksEnabled(): Promise<boolean> {
+  return (await getOutboundWebhookFlagDecision()) === 'enabled';
 }
 
 /**
@@ -1417,7 +1431,146 @@ export async function replayDelivery(
 /**
  * Process pending retries
  */
+interface ClaimedAgentDelivery {
+  delivery_id: string;
+  lease_token: string;
+  endpoint_id: string;
+  endpoint_url: string;
+  endpoint_secret: string;
+  event_type: string;
+  wire_event_id: string;
+  resource_key: string;
+  sequence: number;
+  payload_text: string;
+  attempt_number: number;
+}
+
+async function completeClaimedAgentDelivery(
+  claim: ClaimedAgentDelivery,
+  outcome: 'success' | 'retry' | 'terminal',
+  responseStatus?: number,
+  responseBody?: string,
+  errorMessage?: string,
+): Promise<boolean> {
+  const { data, error } = await (db as any).rpc('complete_agent_webhook_delivery', {
+    p_delivery_id: claim.delivery_id,
+    p_lease_token: claim.lease_token,
+    p_outcome: outcome,
+    p_response_status: responseStatus ?? null,
+    p_response_body: responseBody ?? null,
+    p_error_message: errorMessage ?? null,
+  });
+  if (error || data !== true) {
+    logger.error(
+      { deliveryId: claim.delivery_id, error: error ?? 'stale_or_expired_lease' },
+      'Agent webhook claimed-state update failed; lease expiry will recover it',
+    );
+    return false;
+  }
+  return true;
+}
+
+async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<boolean> {
+  let payload: WebhookPayload;
+  try {
+    const parsed = JSON.parse(claim.payload_text) as Partial<WebhookPayload>;
+    const allowedKeys = new Set(['event_type', 'event_id', 'timestamp', 'data', 'resource_key', 'sequence']);
+    if (
+      !parsed || typeof parsed !== 'object' || parsed.event_type !== claim.event_type
+      || Object.keys(parsed).some((key) => !allowedKeys.has(key))
+      || parsed.event_id !== claim.wire_event_id || typeof parsed.timestamp !== 'string'
+      || !parsed.data || typeof parsed.data !== 'object'
+      || parsed.resource_key !== claim.resource_key || parsed.sequence !== claim.sequence
+    ) throw new Error('invalid stored envelope');
+    const validation = validateWebhookPayload(parsed.event_type, parsed.data);
+    if (!validation.ok || validation.bypassed) throw new Error('stored payload is not strictly registered');
+    payload = parsed as WebhookPayload;
+  } catch {
+    return completeClaimedAgentDelivery(
+      claim, 'terminal', undefined, undefined, 'payload_refused_before_signing',
+    );
+  }
+  if (isCircuitOpen(claim.endpoint_id)) {
+    return completeClaimedAgentDelivery(claim, 'retry', undefined, undefined, 'circuit_open');
+  }
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signPayload(`${timestamp}.${claim.payload_text}`, claim.endpoint_secret);
+  try {
+    const response = await webhookFetch(claim.endpoint_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Arkova-Signature': signature,
+        'X-Arkova-Timestamp': timestamp,
+        'X-Arkova-Event': claim.event_type,
+      },
+      body: claim.payload_text,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = typeof response.arrayBuffer === 'function'
+      ? new TextDecoder().decode(await response.arrayBuffer())
+      : await response.text().catch(() => '');
+    if (response.ok) {
+      recordSuccess(claim.endpoint_id);
+      return completeClaimedAgentDelivery(claim, 'success', response.status, body);
+    }
+    recordFailure(claim.endpoint_id);
+    return completeClaimedAgentDelivery(
+      claim,
+      claim.attempt_number + 1 < MAX_RETRIES ? 'retry' : 'terminal',
+      response.status,
+      body,
+      `HTTP ${response.status}`,
+    );
+  } catch (error) {
+    const egress = formatEgressFailure(error);
+    recordFailure(claim.endpoint_id);
+    return completeClaimedAgentDelivery(
+      claim,
+      egress.permanent || claim.attempt_number + 1 >= MAX_RETRIES ? 'terminal' : 'retry',
+      undefined,
+      undefined,
+      egress.message,
+    );
+  }
+}
+
+/** Materialize and drain a small number of owned rows just-in-time. */
+export async function processAgentWebhookOutbox(): Promise<number> {
+  const flag = await getOutboundWebhookFlagDecision();
+  if (flag === 'unavailable') return 0;
+  for (let i = 0; i < 10; i += 1) {
+    const { data, error } = await (db as any).rpc('materialize_next_agent_webhook_event', {
+      p_flag_state: flag,
+      p_include_parent_fanout: config.enableSubOrgWebhookFanout,
+    });
+    if (error) throw new Error('agent webhook materialization failed');
+    if (data === null) break;
+  }
+  let completed = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const token = crypto.randomUUID();
+    const { data, error } = await (db as any).rpc('claim_next_agent_webhook_delivery', {
+      p_lease_token: token,
+    });
+    if (error) throw new Error('agent webhook claim failed');
+    if (data === null) break;
+    if ('cancelled_delivery_id' in (data as Record<string, unknown>)) continue;
+    if (await deliverClaimedAgentWebhook(data as ClaimedAgentDelivery)) completed += 1;
+  }
+  return completed;
+}
+
 export async function processWebhookRetries(): Promise<number> {
+  let ownedProcessed = 0;
+  let ownedError: unknown;
+  try {
+    ownedProcessed = await processAgentWebhookOutbox();
+  } catch (error) {
+    ownedError = error;
+    logger.error({ error }, 'Agent webhook outbox processing failed');
+  }
   // Get logs that need retry.
   //
   // REVIEW-FIX (defect #2): the limit(50) is applied to a backlog, so the
@@ -1440,17 +1593,22 @@ export async function processWebhookRetries(): Promise<number> {
     .from('webhook_delivery_logs')
     .select('*, webhook_endpoints(*)')
     .eq('status', 'retrying')
+    // AR20-13 compatibility floor: outbox-owned rows are claimed by the
+    // lease-aware agent drainer. The legacy sweep must never race that owner.
+    .is('agent_event_outbox_id', null)
     .lte('next_retry_at', new Date().toISOString())
     .order('payload->sequence', { ascending: true, nullsFirst: true })
     .limit(50);
 
   if (error) {
     logger.error({ error }, 'Failed to fetch retry logs');
-    return 0;
+    if (ownedError) throw ownedError;
+    return ownedProcessed;
   }
 
   if (!logs || logs.length === 0) {
-    return 0;
+    if (ownedError) throw ownedError;
+    return ownedProcessed;
   }
 
   // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering guard ─────
@@ -1594,5 +1752,6 @@ export async function processWebhookRetries(): Promise<number> {
   );
 
   // Count of resource head-rows handled this sweep (delivered or refused).
-  return headRows.length;
+  if (ownedError) throw ownedError;
+  return ownedProcessed + headRows.length;
 }
