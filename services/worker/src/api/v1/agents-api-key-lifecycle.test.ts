@@ -10,7 +10,7 @@ vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFrom
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: auditMock }));
 vi.mock('../../config.js', () => ({ config: { apiKeyHmacSecret: 'machine-test-hmac' } }));
-vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: agentEventMock }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: agentEventMock, hintAgentWebhookDrain: vi.fn() }));
 
 import { agentsRouter } from './agents.js';
 const ORG = '11111111-1111-1111-1111-111111111111';
@@ -51,10 +51,10 @@ describe('generic agent lifecycle API-key caller', () => {
     rpcMock.mockResolvedValue({ data: { found: true, changed: true }, error: null });
     const response = await request(app()).delete(`/api/v1/agents/${AGENT}`);
     expect(response.status).toBe(200);
-    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys_as_api_key', {
+    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys_as_api_key_with_outbox', {
       p_org_id: ORG, p_agent_id: AGENT, p_actor_api_key_id: KEY,
     });
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.revoked' }));
+    expect(agentEventMock).not.toHaveBeenCalled();
   });
   it('suppresses revocation when the RPC reports changed=false', async () => {
     const agents = builder({ data: { id: AGENT, org_id: ORG, status: 'revoked' } }); routeDbTables(dbFromMock, { agents });
@@ -65,11 +65,13 @@ describe('generic agent lifecycle API-key caller', () => {
   it('registers within the machine delegation ceiling with owner FK and machine audit', async () => {
     const row = { id: AGENT, org_id: ORG, registered_by: OWNER, name: 'bot', allowed_scopes: ['verify'] };
     const agents = builder({ data: row }); routeDbTables(dbFromMock, { agents });
+    rpcMock.mockResolvedValue({ data: { agent: row }, error: null });
     const response = await request(app()).post('/api/v1/agents').send({ name: 'bot', allowed_scopes: ['verify'] });
     expect(response.status).toBe(201);
-    expect(agents.insert).toHaveBeenCalledWith(expect.objectContaining({ org_id: ORG, registered_by: OWNER }));
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ actor_id: null, org_id: ORG, details: expect.stringContaining('"actor_api_key_id"') }));
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.registered' }));
+    expect(rpcMock).toHaveBeenCalledWith('register_agent_with_outbox', expect.objectContaining({
+      p_org_id: ORG, p_actor_kind: 'api_key', p_actor_id: KEY,
+    }));
+    expect(agentEventMock).not.toHaveBeenCalled();
   });
 
   it('gets one tenant-owned agent and its active key metadata', async () => {
@@ -85,22 +87,29 @@ describe('generic agent lifecycle API-key caller', () => {
   it('patches a tenant-owned agent within the caller scope ceiling', async () => {
     const agents = builder([{ data: { id: AGENT, org_id: ORG, status: 'active' } }, { data: { id: AGENT, org_id: ORG, name: 'renamed', status: 'active', updated_at: '2026-09-26T14:00:00.000Z' } }]);
     routeDbTables(dbFromMock, { agents });
+    rpcMock.mockResolvedValue({ data: { found: true, changed: true, agent: { id: AGENT, name: 'renamed', status: 'active' } }, error: null });
     const response = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ name: 'renamed', allowed_scopes: ['verify'] });
     expect(response.status).toBe(200);
-    expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed', allowed_scopes: ['verify'] }));
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ actor_id: null, org_id: ORG }));
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.updated' }));
+    expect(rpcMock).toHaveBeenCalledWith('update_agent_with_outbox', expect.objectContaining({
+      p_actor_kind: 'api_key', p_actor_id: KEY,
+      p_updates: { name: 'renamed', allowed_scopes: ['verify'] },
+    }));
+    expect(agentEventMock).not.toHaveBeenCalled();
   });
 
   it('mints a child key only when caller satisfies every agent scope', async () => {
     const agents = builder({ data: { id: AGENT, org_id: ORG, name: 'bot', status: 'active', allowed_scopes: ['verify'] } });
     const keys = builder({ data: { id: 'child', key_prefix: 'ak_live_child', scopes: ['verify'], created_at: 'now' } });
     routeDbTables(dbFromMock, { agents, api_keys: keys });
+    rpcMock.mockResolvedValue({ data: { found: true,
+      agent: { id: AGENT, org_id: ORG, name: 'bot', status: 'active', allowed_scopes: ['verify'] },
+      key: { id: 'child', key_prefix: 'ak_live_child', scopes: ['verify'], created_at: 'now' } }, error: null });
     const response = await request(app()).post(`/api/v1/agents/${AGENT}/key`);
     expect(response.status).toBe(201);
-    expect(keys.insert).toHaveBeenCalledWith(expect.objectContaining({ org_id: ORG, agent_id: AGENT, created_by: OWNER, scopes: ['verify'] }));
-    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ actor_id: null, org_id: ORG }));
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.key_created' }));
+    expect(rpcMock).toHaveBeenCalledWith('create_agent_key_with_outbox', expect.objectContaining({
+      p_org_id: ORG, p_agent_id: AGENT, p_actor_kind: 'api_key', p_actor_id: KEY,
+    }));
+    expect(agentEventMock).not.toHaveBeenCalled();
   });
 
   it('cannot manually resume a provider-suspended ComputeID agent', async () => {
@@ -135,9 +144,9 @@ describe('generic agent lifecycle API-key caller', () => {
     rpcMock.mockResolvedValue({ data: { found: true, changed: true, agent: { id: AGENT, status: 'suspended', name: 'paused', updated_at: '2026-09-26T14:00:00.000Z' } }, error: null });
     const response = await request(app(['agents:manage', 'orgs:manage'])).patch(`/api/v1/agents/${AGENT}`).send({ status: 'suspended', name: 'paused', allowed_scopes: ['read:orgs'] });
     expect(response.status).toBe(200);
-    expect(rpcMock).toHaveBeenCalledWith('apply_admin_agent_status_transition', expect.objectContaining({ p_actor_kind: 'api_key', p_actor_id: KEY, p_updates: { name: 'paused', allowed_scopes: ['read:orgs'] } }));
+    expect(rpcMock).toHaveBeenCalledWith('apply_admin_agent_status_transition_with_outbox', expect.objectContaining({ p_actor_kind: 'api_key', p_actor_id: KEY, p_updates: { name: 'paused', allowed_scopes: ['read:orgs'] } }));
     expect(agents.update).not.toHaveBeenCalled();
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.updated', status: 'suspended' }));
+    expect(agentEventMock).not.toHaveBeenCalled();
   });
 
   it('suppresses status notification when the authoritative RPC reports changed=false', async () => {

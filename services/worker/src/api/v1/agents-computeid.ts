@@ -24,7 +24,7 @@ import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
 import { loadPinnedCa, type PinnedCa } from '../../integrations/computeid/ca-cert.js';
 import { verifyComputeIdReceipt } from '../../integrations/computeid/receipt-verifier.js';
 import { ComputeIdAdmissionRequest, isRecord } from '../../integrations/computeid/schemas.js';
-import { emitAgentEvent } from '../../webhooks/agentEvents.js';
+import { hintAgentWebhookDrain } from '../../webhooks/agentEvents.js';
 
 export const agentsComputeIdRouter = Router();
 
@@ -67,15 +67,6 @@ function isAdmissionResult(data: Record<string, unknown>): data is Record<string
   return typeof data.key.id === 'string'
     && typeof data.key.key_prefix === 'string'
     && Array.isArray(data.key.scopes);
-}
-
-function emitAdmissionEvents(data: AdmissionResult, orgId: string): void {
-  emitAgentEvent({ eventType: 'agent.registered', orgId, agentId: data.agent.id,
-    source: 'computeid', eventId: data.agent.id, status: data.agent.status,
-    occurredAt: typeof data.agent.created_at === 'string' ? data.agent.created_at : undefined });
-  emitAgentEvent({ eventType: 'agent.key_created', orgId, agentId: data.agent.id,
-    keyId: data.key.id, source: 'computeid', eventId: data.key.id,
-    occurredAt: typeof data.key.created_at === 'string' ? data.key.created_at : undefined });
 }
 
 interface AdmissionContext {
@@ -143,7 +134,7 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
 
   try {
     const key = generateApiKey(hmacSecret);
-    const { data, error } = await db.rpc('admit_computeid_agent', {
+    const { data, error } = await db.rpc('admit_computeid_agent_with_outbox', {
       p_org_id: orgId,
       p_principal_id: principalUserId,
       p_passport_id: passportId,
@@ -162,7 +153,7 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       return;
     }
     if (!isAdmissionResult(data)) throw new Error('invalid_admission_result');
-    emitAdmissionEvents(data, orgId);
+    hintAgentWebhookDrain();
     // The same transaction wrote both security audit rows. No compensation:
     // an uncertain reply must preserve any committed agent/key and its audit.
     res.status(201).json({

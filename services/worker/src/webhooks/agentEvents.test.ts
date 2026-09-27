@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const dispatchMock = vi.hoisted(() => vi.fn());
-vi.mock("./delivery.js", () => ({ dispatchWebhookEvent: dispatchMock }));
+const drainMock = vi.hoisted(() => vi.fn());
+vi.mock("./delivery.js", () => ({ dispatchWebhookEvent: dispatchMock, processAgentWebhookOutbox: drainMock }));
 vi.mock("../utils/logger.js", () => ({ logger: { error: vi.fn() } }));
 vi.mock("../utils/sentry.js", () => ({ Sentry: { captureMessage: vi.fn() } }));
 import { PAYLOAD_SCHEMAS_BY_EVENT_TYPE } from "./payload-schemas.js";
-import { emitAgentEvent } from "./agentEvents.js";
+import { emitAgentEvent, hintAgentWebhookDrain } from "./agentEvents.js";
 import { logger } from "../utils/logger.js";
 import { Sentry } from "../utils/sentry.js";
 
@@ -18,6 +19,8 @@ beforeEach(() =>
       failures: [],
     }),
 );
+
+beforeEach(() => drainMock.mockReset().mockResolvedValue(0));
 
 describe("agent lifecycle outbound event registry (SCRUM-3983)", () => {
   it("registers all four app-visible agent lifecycle notifications", () => {
@@ -95,5 +98,13 @@ describe("agent lifecycle outbound event registry (SCRUM-3983)", () => {
       "SECRET",
     );
     expect(Sentry.captureMessage).toHaveBeenCalled();
+  });
+  it("coalesces prompt drains and isolates rejection for scheduled recovery", async () => {
+    drainMock.mockRejectedValueOnce(new Error('transient'));
+    expect(() => { hintAgentWebhookDrain(); hintAgentWebhookDrain(); }).not.toThrow();
+    await vi.waitFor(() => expect(drainMock).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      'agent_webhook_prompt_drain_failed', expect.any(Object),
+    ));
   });
 });

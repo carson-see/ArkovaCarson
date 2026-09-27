@@ -14,6 +14,7 @@ const { dbFromMock, rpcMock } = vi.hoisted(() => ({ dbFromMock: vi.fn(), rpcMock
 vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: rpcMock } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 import { agentsRouter } from './agents.js';
 
@@ -43,9 +44,12 @@ describe('PATCH /api/v1/agents/:agentId on a revoked agent', () => {
   it('still allows non-status edits (name) on a revoked agent', async () => {
     const agents = builder([{ data: revokedRow }, { data: { ...revokedRow, name: 'renamed' } }]);
     routeDbTables(dbFromMock, { profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_ADMIN' } }), agents });
+    rpcMock.mockResolvedValue({ data: { found: true, changed: true, agent: { ...revokedRow, name: 'renamed' } }, error: null });
     const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ name: 'renamed' });
     expect(res.status).toBe(200);
-    expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed' }));
+    expect(rpcMock).toHaveBeenCalledWith('update_agent_with_outbox', expect.objectContaining({
+      p_agent_id: AGENT_ID, p_updates: { name: 'renamed' },
+    }));
   });
 });
 

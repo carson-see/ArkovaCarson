@@ -15,6 +15,13 @@ lease token. External delivery remains at-least-once across a receiver-success /
 completion-write crash. `agent_payload_text` is the immutable signed body;
 retry timestamps and HMAC signatures are intentionally fresh.
 
+Build B switches the six real producers (generic register/update/revoke/key
+mint, ComputeID admission, and ComputeID provider transition) to the versioned
+wrapper RPCs unconditionally. `hintAgentWebhookDrain` coalesces prompt work;
+the cron retry route remains the durable recovery path. Deploy migration, then
+Build A everywhere, then Build B. After owned rows exist, Build A is the
+rollback floor.
+
 ## Files
 
 | File | Role |

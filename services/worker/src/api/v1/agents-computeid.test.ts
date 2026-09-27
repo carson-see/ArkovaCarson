@@ -28,7 +28,9 @@ vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn()
 vi.mock('../../utils/auditEvent.js', () => ({
   recordAuditEvent: (...args: unknown[]) => { auditMock(...args); return Promise.resolve(); },
 }));
-vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: (...args: unknown[]) => agentEventMock(...args) }));
+vi.mock('../../webhooks/agentEvents.js', () => ({
+  emitAgentEvent: (...args: unknown[]) => agentEventMock(...args), hintAgentWebhookDrain: vi.fn(),
+}));
 
 import { agentsComputeIdRouter, PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agents-computeid.js';
 import { requireScopeAnyAuth } from '../../middleware/requireScopeAnyAuth.js';
@@ -182,7 +184,7 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     expect(res.status).toBe(201);
     const raw: string = res.body.key;
     expect(raw.startsWith('ak_live_')).toBe(true);
-    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('admit_computeid_agent', expect.objectContaining({
+    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('admit_computeid_agent_with_outbox', expect.objectContaining({
       p_org_id: ORG_ID, p_principal_id: USER_ID, p_passport_id: PASSPORT,
       p_receipt_issued_at: r.issued_at, p_receipt_expires_at: r.expires_at,
       p_name: 'cortex-agent', p_scopes: ['verify', 'anchor:write'],
@@ -196,18 +198,17 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     expect(res.body.agent.registered_by).toBeUndefined();
     expect(res.body.binding).toMatchObject({ issuer: 'computeid', passport_id: PASSPORT });
     expect(res.body.key_id).toBe(KEY_ID);
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.registered', agentId: AGENT_ID }));
-    expect(agentEventMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'agent.key_created', keyId: KEY_ID }));
+    expect(agentEventMock).not.toHaveBeenCalled();
   });
   it('admits an uppercase UUID inside the actually signed payload and normalizes storage', async () => {
     const res = await admit(validBody({ passport_id: PASSPORT.toUpperCase(),
       verification_receipt: receipt(privateKey, { passport_id: PASSPORT.toUpperCase() }), allowed_scopes: ['write:anchors'] }));
     expect(res.status).toBe(201);
-    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent', expect.objectContaining({ p_passport_id: PASSPORT, p_scopes: ['write:anchors'] }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_with_outbox', expect.objectContaining({ p_passport_id: PASSPORT, p_scopes: ['write:anchors'] }));
   });
   it('defaults to verify and a passport-derived name', async () => {
     expect((await admit({ passport_id: PASSPORT, verification_receipt: receipt() })).status).toBe(201);
-    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent', expect.objectContaining({ p_scopes: ['verify'], p_name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_with_outbox', expect.objectContaining({ p_scopes: ['verify'], p_name: expect.stringContaining(PASSPORT.slice(0, 8)) }));
   });
   it('returns no key on transaction/audit failure, without issuing any compensating delete', async () => {
     dbRpcMock.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'audit insert failed' } });
@@ -243,7 +244,7 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     const res = await admit(validBody(), createApp({ apiKey: otherOrg }));
     expect(res.status).toBe(409);
     expect(res.body.key).toBeUndefined();
-    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent', expect.objectContaining({ p_org_id: otherOrg.orgId, p_passport_id: PASSPORT }));
+    expect(dbRpcMock).toHaveBeenCalledWith('admit_computeid_agent_with_outbox', expect.objectContaining({ p_org_id: otherOrg.orgId, p_passport_id: PASSPORT }));
   });
 });
 

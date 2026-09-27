@@ -1,4 +1,13 @@
 # services/worker/src/api/v1/agents.md
+
+## 2026-09-27 — transactional agent webhook producers (AR20-13)
+
+Generic register, update, revoke, and key-mint routes call migration 0491's
+versioned `*_with_outbox` RPCs. ComputeID admission and provider transitions
+do the same. The domain write, audit, and secret-free logical event commit in
+one database transaction. Routes return the authoritative RPC result and only
+hint the bounded drainer after commit; hint failure cannot hide a mutation or
+a one-time key, and `/cron/webhook-retries` owns scheduled recovery.
 PR #2904 review: `webhooks-self-service.test.ts` explicitly disables descendant fanout in its config seam while preserving the real delivery module used by signed-ping and replay assertions.
 
 

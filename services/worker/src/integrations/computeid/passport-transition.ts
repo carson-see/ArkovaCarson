@@ -27,7 +27,7 @@ import type { Json } from '../../types/database.types.js';
 import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { applyPassportEvent, type AgentStatus, type KeyEnforcement } from './binding.js';
 import type { ComputeIdPassportEvent } from './schemas.js';
-import { emitAgentEvent } from '../../webhooks/agentEvents.js';
+import { hintAgentWebhookDrain } from '../../webhooks/agentEvents.js';
 
 /** Page size for the bound-agent scan. Bounded so one passport cannot unbound-loop a request. */
 export const BOUND_AGENT_PAGE_SIZE = 200;
@@ -171,9 +171,10 @@ async function commitAgentTransition(
   update: Record<string, unknown>,
   keyEnforcement: KeyEnforcement,
   d: PassportDelivery,
+  emitEventType: 'agent.updated' | 'agent.revoked' | null,
 ): Promise<TransitionOutcome | null> {
   try {
-    const { data: applied, error } = await db.rpc('apply_computeid_agent_transition', {
+    const { data: result, error } = await db.rpc('apply_computeid_agent_transition_with_outbox', {
       p_org_id: agent.org_id,
       p_agent_id: agent.id,
       p_passport_id: d.passportId,
@@ -183,8 +184,11 @@ async function commitAgentTransition(
       p_key_enforcement: keyEnforcement,
       p_event: d.event,
       p_event_at: d.timestamp,
+      ...(emitEventType ? { p_emit_event_type: emitEventType } : {}),
     });
     if (error) throw error;
+    const applied = typeof result === 'object' && result !== null
+      ? (result as { applied?: unknown }).applied : undefined;
     if (applied === true) return null;
     if (applied !== false) throw new Error('invalid_agent_transition_result');
     logger.warn({ agentId: agent.id, event: d.event }, 'ComputeID: agent row changed underneath us — asking for redelivery');
@@ -214,14 +218,11 @@ export async function applyPassportEventToAgent(
   );
   if (!update) return { outcome: 'skipped' };
 
-  const failed = await commitAgentTransition(agent, update, keyEnforcement, d);
+  const emitEventType = decision.action === 'noop' ? null
+    : decision.action === 'revoke' ? 'agent.revoked' : 'agent.updated';
+  const failed = await commitAgentTransition(agent, update, keyEnforcement, d, emitEventType);
   if (failed) return failed;
   if (decision.action === 'noop') return { outcome: 'skipped' };
-  const eventBase = { orgId: agent.org_id, agentId: agent.id, source: 'computeid' as const,
-    eventId: `${agent.id}:${d.event}:${d.timestamp}`, occurredAt: d.timestamp };
-  if (decision.action === 'revoke') emitAgentEvent({ ...eventBase, eventType: 'agent.revoked',
-    eventId: agent.id, status: 'revoked' });
-  else emitAgentEvent({ ...eventBase, eventType: 'agent.updated',
-    status: (update.status as AgentStatus | undefined) ?? agent.status });
+  hintAgentWebhookDrain();
   return { outcome: 'applied' };
 }

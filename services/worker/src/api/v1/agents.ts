@@ -18,9 +18,8 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, scopeSatisfies } from '../apiScopes.js';
-import { recordAuditEvent } from '../../utils/auditEvent.js';
 import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
-import { emitAgentEvent } from '../../webhooks/agentEvents.js';
+import { hintAgentWebhookDrain } from '../../webhooks/agentEvents.js';
 
 // agents table not yet in database.types.ts — use untyped client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,12 +85,6 @@ async function resolveCaller(
     return null;
   }
   return { kind: 'user', userId, orgId: profile.org_id, role: profile.role ?? '', ownerUserId: userId };
-}
-
-function callerAudit(caller: AgentLifecycleCaller): { actor_id: string | null; details: Record<string, string> } {
-  return caller.kind === 'user'
-    ? { actor_id: caller.userId, details: { actor_kind: 'user', actor_user_id: caller.userId } }
-    : { actor_id: null, details: { actor_kind: 'api_key', actor_api_key_id: caller.apiKeyId, actor_key_prefix: caller.keyPrefix } };
 }
 
 function missingDelegatedScopes(caller: AgentLifecycleCaller, scopes: string[]): string[] {
@@ -190,7 +183,7 @@ async function applyAgentUpdate(
   const updates: Record<string, unknown> = { ...update };
   delete updates.status;
   if (update.status) {
-    const { data: transition, error } = await dbAny.rpc('apply_admin_agent_status_transition', {
+    const { data: transition, error } = await dbAny.rpc('apply_admin_agent_status_transition_with_outbox', {
       p_org_id: orgId, p_agent_id: agentId, p_next_status: update.status, p_updates: updates,
       p_actor_kind: caller.kind,
       p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
@@ -211,16 +204,19 @@ async function applyAgentUpdate(
     };
   }
   if (Object.keys(updates).length === 0) return { agent: existing, changed: false };
-  const { data: agent, error } = await dbAny.from('agents').update(updates)
-    .eq('id', agentId).eq('org_id', orgId).select().single();
-  if (error || !agent) {
+  const { data: transition, error } = await dbAny.rpc('update_agent_with_outbox', {
+    p_org_id: orgId, p_agent_id: agentId, p_actor_kind: caller.kind,
+    p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+    p_updates: updates,
+  });
+  if (error || !(transition as { found?: boolean } | null)?.found) {
     res.status(404).json({ error: 'Agent not found or update failed' });
     return null;
   }
-  void recordAuditEvent({ actor_id: callerAudit(caller).actor_id, org_id: orgId,
-    event_type: 'AGENT_UPDATED', event_category: 'SYSTEM', target_type: 'agent', target_id: agentId,
-    details: JSON.stringify({ ...callerAudit(caller).details, changes: updates }) });
-  return { agent, changed: true };
+  return {
+    agent: (transition as { agent: Record<string, unknown> }).agent,
+    changed: (transition as { changed?: boolean }).changed === true,
+  };
 }
 
 // ─── POST /api/v1/agents — Register a new agent ─────────────────
@@ -239,32 +235,28 @@ router.post('/', async (req: Request, res: Response) => {
     const missing = missingDelegatedScopes(caller, parsed.data.allowed_scopes);
     if (missing.length) { res.status(403).json({ error: 'delegation_scope_exceeded', missing }); return; }
 
-    const { data: agent, error } = await dbAny.from('agents').insert({
-      org_id: caller.orgId,
-      registered_by: caller.ownerUserId,
-      ...parsed.data,
-    }).select().single();
+    const { data: registered, error } = await dbAny.rpc('register_agent_with_outbox', {
+      p_org_id: caller.orgId,
+      p_actor_kind: caller.kind,
+      p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+      p_name: parsed.data.name,
+      p_agent_type: parsed.data.agent_type,
+      p_allowed_scopes: parsed.data.allowed_scopes,
+      p_description: parsed.data.description ?? null,
+      p_framework: parsed.data.framework ?? null,
+      p_version: parsed.data.version ?? null,
+      p_callback_url: parsed.data.callback_url ?? null,
+    });
+    const agent = (registered as { agent?: Record<string, unknown> } | null)?.agent;
 
-    if (error) {
+    if (error || !agent) {
       logger.error({ error }, 'Failed to create agent');
       res.status(500).json({ error: 'Failed to create agent' });
       return;
     }
 
-    // Audit event
-    void recordAuditEvent({
-      actor_id: callerAudit(caller).actor_id,
-      event_type: 'AGENT_REGISTERED',
-      event_category: 'SYSTEM',
-      target_type: 'agent',
-      target_id: agent.id,
-      org_id: caller.orgId,
-      details: JSON.stringify({ ...callerAudit(caller).details, name: parsed.data.name, agent_type: parsed.data.agent_type }),
-    });
-
     logger.info({ agentId: agent.id, name: parsed.data.name, type: parsed.data.agent_type }, 'Agent registered');
-    emitAgentEvent({ eventType: 'agent.registered', orgId: caller.orgId, agentId: agent.id,
-      source: 'api', eventId: agent.id, status: agent.status, occurredAt: agent.created_at });
+    hintAgentWebhookDrain();
     res.status(201).json(toPublicAgent(agent));
   } catch (err) {
     logger.error({ error: err }, 'Agent registration failed');
@@ -349,9 +341,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
     if (!result) return;
     const { agent, changed } = result;
 
-    if (changed && typeof agent.updated_at === 'string') emitAgentEvent({ eventType: 'agent.updated', orgId,
-      agentId, source: 'api', eventId: `${agentId}:${agent.updated_at}`,
-      status: agent.status as 'active' | 'suspended' | 'revoked', occurredAt: agent.updated_at });
+    if (changed) hintAgentWebhookDrain();
 
     res.json(toPublicAgent(agent));
   } catch (err) {
@@ -377,7 +367,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     // One database transaction owns the terminal status, every associated key,
     // and the success audit. Migration 0488 locks the same parent row used by
     // 0448's active-key trigger, closing concurrent mint and stale-resume races.
-    const rpcName = caller.kind === 'user' ? 'revoke_agent_and_keys' : 'revoke_agent_and_keys_as_api_key';
+    const rpcName = caller.kind === 'user' ? 'revoke_agent_and_keys_with_outbox' : 'revoke_agent_and_keys_as_api_key_with_outbox';
     const rpcArgs = caller.kind === 'user'
       ? { p_org_id: orgId, p_agent_id: agentId, p_actor_id: caller.userId }
       : { p_org_id: orgId, p_agent_id: agentId, p_actor_api_key_id: caller.apiKeyId };
@@ -394,8 +384,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     }
 
     logger.info({ agentId }, 'Agent revoked');
-    if ((revokeResult as { changed?: boolean }).changed === true) emitAgentEvent({ eventType: 'agent.revoked',
-      orgId, agentId, source: 'api', eventId: agentId, status: 'revoked' });
+    if ((revokeResult as { changed?: boolean }).changed === true) hintAgentWebhookDrain();
     res.json({ status: 'revoked', agent_id: agentId });
   } catch (err) {
     logger.error({ error: err }, 'Agent revocation failed');
@@ -439,15 +428,12 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
     // Generate key scoped to agent's allowed scopes
     const { raw, hash, prefix } = generateApiKey(hmacSecret);
 
-    const { data: key, error: insertError } = await dbAny.from('api_keys').insert({
-      org_id: agent.org_id,
-      key_prefix: prefix,
-      key_hash: hash,
-      name: `${agent.name} — auto-generated`,
-      scopes: agent.allowed_scopes,
-      agent_id: agentId,
-      created_by: caller.ownerUserId,
-    }).select('id, name, key_prefix, scopes, created_at').single();
+    const { data: mintResult, error: insertError } = await dbAny.rpc('create_agent_key_with_outbox', {
+      p_org_id: orgId, p_agent_id: agentId, p_actor_kind: caller.kind,
+      p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+      p_key_hash: hash, p_key_prefix: prefix,
+    });
+    const key = (mintResult as { key?: Record<string, unknown> } | null)?.key;
 
     if (insertError || !key) {
       logger.error({ error: insertError }, 'Failed to create agent API key');
@@ -455,18 +441,7 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
       return;
     }
 
-    void recordAuditEvent({
-      actor_id: callerAudit(caller).actor_id,
-      event_type: 'AGENT_KEY_CREATED',
-      event_category: 'SYSTEM',
-      target_type: 'api_key',
-      target_id: key.id,
-      org_id: agent.org_id,
-      details: JSON.stringify({ ...callerAudit(caller).details, agent_name: agent.name, scopes: agent.allowed_scopes }),
-    });
-
-    emitAgentEvent({ eventType: 'agent.key_created', orgId: agent.org_id, agentId: String(agentId),
-      keyId: key.id, source: 'api', eventId: key.id, occurredAt: key.created_at });
+    hintAgentWebhookDrain();
 
     // Return raw key ONCE (Constitution 1.4: never stored after creation)
     res.status(201).json({

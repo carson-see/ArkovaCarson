@@ -14,6 +14,7 @@ import { API_KEY_SCOPES } from '../apiScopes.js';
 vi.mock('../../utils/db.js', () => ({
   db: { from: vi.fn() },
 }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 vi.mock('../../utils/logger.js', () => ({
   logger: {
