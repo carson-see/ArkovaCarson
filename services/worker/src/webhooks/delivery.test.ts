@@ -1555,6 +1555,34 @@ describe('processWebhookRetries', () => {
     expect(result).toBe(0);
   });
 
+  it('drains a Build-B-owned pending row through the scheduled retry entrypoint', async () => {
+    resetRpcSequence();
+    rpcStateOf().flag = { data: true };
+    const payloadText = '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-03-10T11:59:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-03-10T11:59:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":42}';
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [
+      { data: { state: 'materialized', outbox_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', targets: 1 }, error: null },
+      { data: null, error: null },
+    ];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: {
+      delivery_id: '33333333-3333-4333-8333-333333333333',
+      lease_token: '44444444-4444-4444-8444-444444444444',
+      endpoint_id: '55555555-5555-4555-8555-555555555555',
+      endpoint_url: 'https://hooks.example.com/agent', endpoint_secret: 'fixture-secret',
+      event_type: 'agent.updated', wire_event_id: '11111111-1111-4111-8111-111111111111',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 42,
+      payload_text: payloadText, attempt_number: 0,
+    }, error: null }, { data: null, error: null }];
+    retryLogsSelect.limit.mockResolvedValue({ data: [], error: null });
+    setupDbRouting();
+    mockFetch.mockResolvedValue({ ok: true, status: 204, text: () => Promise.resolve('') });
+
+    expect(await processWebhookRetries()).toBe(1);
+    expect(mockRpc).toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.any(Object));
+    expect(mockRpc).toHaveBeenCalledWith('claim_next_agent_webhook_delivery', expect.any(Object));
+    expect(mockRpc).toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.objectContaining({ p_outcome: 'success' }));
+    expect(mockFetch).toHaveBeenCalledWith('https://hooks.example.com/agent', expect.objectContaining({ body: payloadText }));
+  });
+
   it('returns 0 when query returns null data', async () => {
     retryLogsSelect.limit.mockResolvedValue({ data: null, error: null });
 

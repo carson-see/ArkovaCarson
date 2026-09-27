@@ -1,4 +1,15 @@
 # services/worker/src/api/v1/agents.md
+
+## 2026-09-27 — fixed-A lifecycle maintenance boundary
+
+`agents-maintenance.ts` is the compatibility rollback artifact for the durable agent-webhook
+outbox rollout. The v1 router still runs `requireAgentLifecycleAuth` first, then the wrapper returns
+`503 compatibility_floor_read_only` with `Retry-After: 300` for generic register, update, revoke,
+and key-mint requests. List and detail reads continue through `agentsRouter`; the outbox drainer and
+scheduled retry route remain available. This build is only a read/drain compatibility floor:
+operators must also keep `ENABLE_COMPUTEID_INTEGRATION=false`, and it is not a general production
+candidate for agent mutations.
+
 PR #2904 review: `webhooks-self-service.test.ts` explicitly disables descendant fanout in its config seam while preserving the real delivery module used by signed-ping and replay assertions.
 
 

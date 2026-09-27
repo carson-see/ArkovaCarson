@@ -96,7 +96,7 @@ import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { grcRouter } from './grc.js';
 import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
 import { oracleRouter } from './oracle.js';
-import { agentsRouter } from './agents.js';
+import { agentsMaintenanceRouter } from './agents-maintenance.js';
 import { requireAgentLifecycleAuth } from '../../middleware/agentLifecycleAuth.js';
 import { agentsComputeIdRouter } from './agents-computeid.js';
 import { orgSubOrgsApiRouter } from './orgSubOrgsApiKey.js';
@@ -535,7 +535,7 @@ router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webho
 // MUST precede the generic '/agents' mount so provider admission retains its
 // feature gate, rate limit, and handler contract.
 router.use('/agents/computeid', computeidGate, batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
-router.use('/agents', requireAgentLifecycleAuth, agentsRouter);
+router.use('/agents', requireAgentLifecycleAuth, agentsMaintenanceRouter);
 
 // SCRUM-5142: folder management is available to AAL2 browser sessions and
 // scoped SDK/API keys. When both credentials are presented, both are checked.

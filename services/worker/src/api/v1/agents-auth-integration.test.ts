@@ -10,10 +10,10 @@ vi.mock('../../auth.js', () => ({ verifyAuthToken: vi.fn() }));
 vi.mock('../../config.js', () => ({ config: {} }));
 import { apiKeyAuth, hashApiKey } from '../../middleware/apiKeyAuth.js';
 import { requireAgentLifecycleAuth } from '../../middleware/agentLifecycleAuth.js';
-import { agentsRouter } from './agents.js';
+import { agentsMaintenanceRouter } from './agents-maintenance.js';
 const SECRET = 'integration-hmac'; const RAW = 'ak_live_integration';
 const ORG = '11111111-1111-1111-1111-111111111111';
-function app() { const a=express(); a.use(express.json()); a.use(apiKeyAuth(SECRET)); a.use('/api/v1/agents', requireAgentLifecycleAuth, agentsRouter); return a; }
+function app() { const a=express(); a.use(express.json()); a.use(apiKeyAuth(SECRET)); a.use('/api/v1/agents', requireAgentLifecycleAuth, agentsMaintenanceRouter); return a; }
 function authRow(scopes: string[]) { return { id:'key', org_id:ORG, created_by:'owner', scopes, rate_limit_tier:'paid', key_prefix:'ak_live_int', is_active:true, expires_at:null, revoked_at:null, key_hash:hashApiKey(RAW,SECRET) }; }
 beforeEach(()=>{ vi.clearAllMocks(); dbFromMock.mockReset(); });
 describe('real API-key auth to generic lifecycle wiring',()=>{
@@ -31,5 +31,25 @@ describe('real API-key auth to generic lifecycle wiring',()=>{
     const keys=builder({data:null,error:{message:'not found'}}); routeDbTables(dbFromMock,{api_keys:keys});
     const res=await request(app()).get('/api/v1/agents').set('X-API-Key','ak_live_bad');
     expect(res.status).toBe(401); expect(dbFromMock).not.toHaveBeenCalledWith('agents');
+  });
+  it('still authenticates before the compatibility maintenance boundary',async()=>{
+    const res=await request(app()).post('/api/v1/agents').send({name:'x'});
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).not.toBe('compatibility_floor_read_only');
+    expect(dbFromMock).not.toHaveBeenCalledWith('agents');
+  });
+  it.each([
+    ['post','/api/v1/agents',{name:'x'}],
+    ['patch','/api/v1/agents/22222222-2222-4222-8222-222222222222',{name:'x'}],
+    ['delete','/api/v1/agents/22222222-2222-4222-8222-222222222222',undefined],
+    ['post','/api/v1/agents/22222222-2222-4222-8222-222222222222/key',undefined],
+  ] as const)('returns the immutable maintenance response for %s %s without an agent write',async(method,url,body)=>{
+    const keys=builder({data:authRow(['agents:manage'])}); routeDbTables(dbFromMock,{api_keys:keys});
+    const call=request(app())[method](url).set('X-API-Key',RAW);
+    const res=body===undefined?await call:await call.send(body);
+    expect(res.status).toBe(503);
+    expect(res.headers['retry-after']).toBe('300');
+    expect(res.body).toEqual({error:{code:'compatibility_floor_read_only',message:'Agent lifecycle mutations are temporarily unavailable during compatibility maintenance.'}});
+    expect(dbFromMock).not.toHaveBeenCalledWith('agents');
   });
 });
