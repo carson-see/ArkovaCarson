@@ -323,3 +323,17 @@ full Supabase lineage replay.
 explicit flag/null guards, atomic materialization, live/stale lease CAS, and
 refusal to adopt a semantically-equal foreign legacy delivery row. The script
 wraps fixtures in a transaction and rolls them back.
+
+## 2026-09-27 — full-schema generic-agent revoke concurrency
+
+`test-agent-revoke-concurrency-full-schema.sh` accepts only an explicit
+loopback `UAT03_DATABASE_URL` for an already-reset disposable Supabase
+database. It does not start PostgreSQL or replay migrations. Separate psql
+sessions force and observe both mint/revoke and actual status-RPC/revoke lock
+orders through `pg_stat_activity`/`pg_locks`; elapsed sleeps never establish
+ordering. It also proves audit-failure rollback and retry idempotency through
+the current outbox wrappers. Every backend and operational fixture is cleaned
+on exit. Audit rows are immutable, and deleting their referenced org/profile
+would itself require a forbidden audit UPDATE, so those rows plus their single
+auth/profile/org identity remain only in the disposable database and are
+reported as counts.

@@ -877,6 +877,19 @@ the already-masked local bootstrap-admin URL, is bounded to 180 seconds, withhol
 and participates in the job's aggregate outcome gate. It does not start another database, access a
 hosted environment, or run the standalone reduced-schema revoke concurrency harness.
 
+## 2026-09-27 — agent revoke concurrency uses the reset full schema
+
+The same `Tests` job runs
+`services/worker/scripts/test-agent-revoke-concurrency-full-schema.sh` after a
+successful local Supabase reset. It reuses the masked bootstrap-admin URL and
+already-running database; it starts no cluster and applies no migration. The
+driver observes both mint/revoke and resume/revoke lock orders through the
+current route-facing RPC wrappers, plus audit rollback and clean retry. Output
+is withheld on failure and the result participates in the aggregate gate.
+Append-only audit rows and the three identity rows their foreign keys require
+remain only in the disposable CI database; agent, key, and outbox fixtures are
+always removed.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
