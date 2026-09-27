@@ -1445,6 +1445,31 @@ interface ClaimedAgentDelivery {
   attempt_number: number;
 }
 
+function isJsonRecord(value: Json): value is { [key: string]: Json | undefined } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isClaimedAgentDelivery(value: Json): value is Json & ClaimedAgentDelivery {
+  if (!isJsonRecord(value)) return false;
+  return typeof value.delivery_id === 'string'
+    && typeof value.lease_token === 'string'
+    && typeof value.endpoint_id === 'string'
+    && typeof value.endpoint_url === 'string'
+    && typeof value.endpoint_secret === 'string'
+    && typeof value.event_type === 'string'
+    && typeof value.wire_event_id === 'string'
+    && typeof value.resource_key === 'string'
+    && typeof value.sequence === 'number'
+    && typeof value.payload_text === 'string'
+    && typeof value.attempt_number === 'number';
+}
+
+function isCancelledAgentDelivery(value: Json): boolean {
+  return isJsonRecord(value)
+    && Object.keys(value).length === 1
+    && typeof value.cancelled_delivery_id === 'string';
+}
+
 async function completeClaimedAgentDelivery(
   claim: ClaimedAgentDelivery,
   outcome: 'success' | 'retry' | 'terminal',
@@ -1452,13 +1477,13 @@ async function completeClaimedAgentDelivery(
   responseBody?: string,
   errorMessage?: string,
 ): Promise<boolean> {
-  const { data, error } = await (db as any).rpc('complete_agent_webhook_delivery', {
+  const { data, error } = await db.rpc('complete_agent_webhook_delivery', {
     p_delivery_id: claim.delivery_id,
     p_lease_token: claim.lease_token,
     p_outcome: outcome,
-    p_response_status: responseStatus ?? null,
-    p_response_body: responseBody ?? null,
-    p_error_message: errorMessage ?? null,
+    p_response_status: responseStatus,
+    p_response_body: responseBody,
+    p_error_message: errorMessage,
   });
   if (error || data !== true) {
     logger.error(
@@ -1471,7 +1496,6 @@ async function completeClaimedAgentDelivery(
 }
 
 async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<boolean> {
-  let payload: WebhookPayload;
   try {
     const parsed = JSON.parse(claim.payload_text) as Partial<WebhookPayload>;
     const allowedKeys = new Set(['event_type', 'event_id', 'timestamp', 'data', 'resource_key', 'sequence']);
@@ -1484,7 +1508,6 @@ async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<
     ) throw new Error('invalid stored envelope');
     const validation = validateWebhookPayload(parsed.event_type, parsed.data);
     if (!validation.ok || validation.bypassed) throw new Error('stored payload is not strictly registered');
-    payload = parsed as WebhookPayload;
   } catch {
     return completeClaimedAgentDelivery(
       claim, 'terminal', undefined, undefined, 'payload_refused_before_signing',
@@ -1541,7 +1564,7 @@ export async function processAgentWebhookOutbox(): Promise<number> {
   const flag = await getOutboundWebhookFlagDecision();
   if (flag === 'unavailable') return 0;
   for (let i = 0; i < 10; i += 1) {
-    const { data, error } = await (db as any).rpc('materialize_next_agent_webhook_event', {
+    const { data, error } = await db.rpc('materialize_next_agent_webhook_event', {
       p_flag_state: flag,
       p_include_parent_fanout: config.enableSubOrgWebhookFanout,
     });
@@ -1551,13 +1574,14 @@ export async function processAgentWebhookOutbox(): Promise<number> {
   let completed = 0;
   for (let i = 0; i < 10; i += 1) {
     const token = crypto.randomUUID();
-    const { data, error } = await (db as any).rpc('claim_next_agent_webhook_delivery', {
+    const { data, error } = await db.rpc('claim_next_agent_webhook_delivery', {
       p_lease_token: token,
     });
     if (error) throw new Error('agent webhook claim failed');
     if (data === null) break;
-    if ('cancelled_delivery_id' in (data as Record<string, unknown>)) continue;
-    if (await deliverClaimedAgentWebhook(data as ClaimedAgentDelivery)) completed += 1;
+    if (isCancelledAgentDelivery(data)) continue;
+    if (!isClaimedAgentDelivery(data)) throw new Error('agent webhook claim returned an invalid shape');
+    if (await deliverClaimedAgentWebhook(data)) completed += 1;
   }
   return completed;
 }

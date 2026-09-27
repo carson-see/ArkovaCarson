@@ -24,6 +24,12 @@ lease token. External delivery remains at-least-once across a receiver-success /
 completion-write crash. `agent_payload_text` is the immutable signed body;
 retry timestamps and HMAC signatures are intentionally fresh.
 
+The outbox RPC calls use the generated database function types. Claim results
+are untrusted `Json`: accept only the complete delivery shape or the exact
+one-key `{ cancelled_delivery_id }` terminal sentinel. A scalar, partial, or
+mixed shape fails before HTTP and completion so lease expiry can recover it;
+do not restore unchecked RPC casts here.
+
 ## Files
 
 | File | Role |
