@@ -19,7 +19,7 @@ Source code for `arkova` (PH1-SDK-01 + INT-01).
 - `client.getMerkleProof(publicId)` → `MerkleProofResponse` (calls `GET /api/v1/verify/:publicId/proof`). Maps wire snake_case → camelCase.
 - New types in `types.ts`: `MerkleProofResponse`, `MerkleProofEntry`, `ProofBundle`, `ProofBundleSignature`. `proofBundle` is additive + nullable (frozen schema, Constitution §1.8) — `null` when the proof is incomplete.
 - `ProofBundle.leafCount` (added in Carson-P1 rework): total leaves in the batch tree; with `merkleIndex` arms the CVE-2012-2459 guard. Always present in a complete bundle. Canonical `opReturnPayload` = `ARKV`(41524b56)+32-byte root hex, NO version byte. `signature` is RESERVED/always-null on the unsigned path (signed envelope is the outer `?format=signed` wrapper).
-- Bundle is non-null ONLY when ALL hold: tx_id/block_height/block_timestamp present, block_header = exactly 160 hex, block_hash = exactly 64 hex, canonical ARKV op_return, merkle_index + leaf_count present.
+- The producer requires receipt evidence, a 160-hex header, 64-hex observed identifier, canonical ARKV payload, index and leaf count. The SDK mapper checks required field types and branch shape; it does not enforce every producer semantic or verify the evidence. See the decoding/verification boundary below.
 
 ## 2026-08-31 — B3: `mapProofBundle` no longer drops the bitcoin-tree half
 
@@ -43,29 +43,19 @@ the transaction->block half of the proof LOCALLY instead of asking a Bitcoin nod
 - No `proofSchemaVersion` bump: `packages/verifier-cli/src/verify.ts` fails closed
   on anything but 1.
 
-### Open question (NOT resolved here): `[]` means different things to the two branches
+### Singleton branch decision (2026-09-26; reviewed again 2026-09-27)
 
-`mapProofBundle` fails the WHOLE bundle closed when `merkleProof.length === 0`
-(an empty app-tree branch is treated as unverifiable), while `txInclusionBranch`
-treats `[]` as COMPLETE evidence — a single-transaction block genuinely has no
-siblings, which is also how the API reader, the writer, `sourceProofInput` and
-the verifier CLI read it.
+The rescue tech lead accepted the existing producer/verifier contract for the
+candidate: `[]` is a complete application-tree branch only for a coherent
+singleton (`leaf_count=1`, `merkle_index=0`, case-insensitive hexadecimal
+root=fingerprint). Missing/null and incoherent empty branches fail closed.
+A zero-leaf empty branch is invalid. This source decision does not waive
+release evidence or claim the candidate has been published.
 
-Both readings are defensible and they are inconsistent with each other. The
-app-tree behaviour is PRE-EXISTING (it predates migration 0427 and is asserted
-by `client.test.ts`), so it was deliberately left alone rather than changed in
-passing: flipping it would alter what `proofBundle !== null` guarantees for
-single-leaf records, which is an SDK contract decision and wants an explicit
-ruling plus its own soak — not a drive-by edit inside a review-fix commit.
-
-If you are here to settle it, the question is: for a SINGLE-LEAF app tree, is
-`merkleProof: []` an honest complete branch (root == leaf) or an unverifiable
-one? The bitcoin-tree side has already answered the analogous question with
-"complete". Whichever way it goes, the two should end up agreeing.
-
-Settled 2026-09-26: `[]` is complete only for a coherent singleton bundle
-(`leaf_count=1`, `merkle_index=0`, case-insensitive root=fingerprint). The
-mapper keeps missing/null branches and every incoherent empty branch fail-closed.
+Bundle decoding is a typed transport operation, not proof verification. The
+mapper does not recompute inclusion or bind the payload to the network receipt.
+Use the independent verifier before treating a decoded bundle as verified.
+A non-null bundle alone is never a positive verification verdict.
 
 ## DI-775 / SCRUM-3538 — `WebhookEventType` mirrors the worker allowlist
 
@@ -158,3 +148,12 @@ the wire's `recipient_link_failed` never leaks onto the typed surface next to it
 camelCase twin; a missing field reads as 0.
 
 Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## Agent permission-denial recovery
+
+Both flat and nested worker errors retain bounded `required`, `granted`,
+`missing` and `permitted` scope fields. Each token is 1–80 ASCII scope
+characters; lists are at most 32 entries and are omitted whole when malformed,
+so a filtered list cannot misstate authority. Unknown keys and signed receipt
+fields are never copied. This is diagnostic information, not permission to
+retry a mutation or change the caller credential automatically.

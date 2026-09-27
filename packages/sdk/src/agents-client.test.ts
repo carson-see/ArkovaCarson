@@ -94,6 +94,27 @@ describe('agent lifecycle client parity', () => {
     expect(JSON.stringify(error)).not.toContain('ak_secret');
   });
 
+  it.each([false, true])('preserves safe scope recovery details (nested=%s)', async nested => {
+    const fields = { required: 'agents:manage', granted: ['verify'], missing: ['keys:manage'], permitted: ['verify'], key: 'ak_secret', receipt_payload: 'private-receipt' };
+    const body = nested ? { error: { code: 'insufficient_scope', ...fields } } : { error: 'insufficient_scope', ...fields };
+    fetchMock.mockResolvedValueOnce(Response.json(body, { status: 403 }));
+    const error = await new Arkova({ apiKey: 'ak_caller' }).agents.createKey(AGENT.id).catch(value => value as ArkovaError);
+    expect(error).toMatchObject({ code: 'insufficient_scope', details: { required: 'agents:manage', granted: ['verify'], missing: ['keys:manage'], permitted: ['verify'] } });
+    expect(JSON.stringify(error)).not.toContain('ak_secret');
+    expect(JSON.stringify(error)).not.toContain('private-receipt');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { required: ['verify'], missing: ['verify', 7], granted: 'verify', permitted: ['verify', {}] },
+    { required: 'a'.repeat(81), missing: ['verify\n'], granted: Array(33).fill('verify'), permitted: [null] },
+  ])('omits invalid scope recovery fields without manufacturing a partial list', async fields => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: { code: 'insufficient_scope', ...fields } }, { status: 403 }));
+    const error = await new Arkova({ apiKey: 'ak_caller' }).agents.createKey(AGENT.id).catch(value => value as ArkovaError);
+    expect(error).toBeInstanceOf(ArkovaError);
+    expect((error as ArkovaError).details).toEqual({ code: 'insufficient_scope' });
+  });
+
   it('rejects unsafe agent and admission inputs before fetch', async () => {
     const client = new Arkova({ apiKey: 'ak', baseUrl: 'https://api.example.test' });
     await expect(client.agents.register({ name: 'x', callbackUrl: 'http://unsafe.test' })).rejects.toMatchObject({ code: 'invalid_request' });

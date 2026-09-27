@@ -93,3 +93,14 @@ Focused negatives pin missing/null branches, multi-leaf empties, wrong indexes,
 and root mismatches as fail-closed `None` results.
 
 Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## Agent permission-denial recovery
+
+Both flat and nested worker errors retain bounded `required`, `granted`,
+`missing` and `permitted` scope fields. Each token is 1–80 ASCII scope
+characters; lists are at most 32 entries and are omitted whole when malformed,
+so a filtered list cannot misstate authority. Unknown keys and signed receipt
+fields are never copied. This is diagnostic information, not permission to
+retry a mutation or change the caller credential automatically.
+
+Singleton proof negatives explicitly include zero leaves with an empty branch. SDK decoding does not replace the independent proof verifier.

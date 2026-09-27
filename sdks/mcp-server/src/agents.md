@@ -10,6 +10,7 @@ Arkova MCP Server source (PH2-AGENT-06 / SCRUM-403; NCE-19; npm publication prep
 - **`index.test.ts`** — colocated tests with mocked fetch. Pins the exact 9-tool name list (exact-name ratchet — adding/removing a tool must update it deliberately), the §1.3 + credential-scrub terminology guards, the redirect-refusal transport test, and per-tool behavior (attestation required-fields, disabled-capability disclosure, batch cap, folder CRUD/reparent/connector/bulk-move). Gated by root CI (`Tests` job, `sdk-tests` step: `node_modules/.bin/vitest run --root sdks`) and independently runnable standalone via `npm ci --ignore-scripts && npm test` in this package directory.
 - **`cli.ts`** — the npm `bin` entrypoint; wires `TOOL_DEFINITIONS`/`handleToolCall` onto a real `@modelcontextprotocol/sdk` stdio `Server`. See `sdks/mcp-server/agents.md` for why this is a separate file from `index.ts`, and for the P0 symlink-entrypoint fix (2026-08-18) — the guard is `isRunAsScript()` now, not a plain `import.meta.url` string compare.
 - **`cli.test.ts`** — drives `cli.ts`'s `createServer()` over the SDK's `InMemoryTransport` + `Client`, i.e. through the real MCP protocol (list/call), not by reaching into private handler maps. Cannot, by construction, catch an argv-vs-symlink entrypoint bug — see `cli.bin.test.ts`.
+  It also pins the server version returned by the initialize handshake to the package's current release candidate version, preventing installed clients and support logs from reporting a stale protocol identity.
 - **`cli.bin.test.ts`** (2026-08-18) — builds `dist/cli.js`, symlinks it into a temp dir the way `node_modules/.bin/` does, and spawns a real `node` process against the symlink, driving an actual stdio JSON-RPC session (`initialize` + `tools/list`) and asserting the `ARKOVA_API_KEY`-unset stderr warning. This is the test that would have caught the P0 entrypoint bug; `cli.test.ts`'s in-process tests could not have.
 
 ## Conventions
@@ -82,3 +83,12 @@ count moved 6 → 9 across these two changes; see the exact-name ratchet in `ind
 Admission response binding compares passport UUIDs case-insensitively, because the worker canonicalizes them to lowercase. Preserve the original request and signed verification receipt; never rewrite signed content to fix a response check. A different UUID still fails closed without exposing the one-time key. Both MCP implementations have positive and mismatched-binding regressions; mutations still make one request only.
 
 Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on generic agent reads so one older row cannot make list/get fail. Generic reads still reject arrays, strings and numbers. ComputeID admission retains its existing minimal projection validation, where metadata is not required; this repair does not add a post-commit rejection for optional admission metadata or rewrite the signed receipt. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## Agent permission-denial recovery
+
+Both flat and nested worker errors retain bounded `required`, `granted`,
+`missing` and `permitted` scope fields. Each token is 1–80 ASCII scope
+characters; lists are at most 32 entries and are omitted whole when malformed,
+so a filtered list cannot misstate authority. Unknown keys and signed receipt
+fields are never copied. This is diagnostic information, not permission to
+retry a mutation or change the caller credential automatically.

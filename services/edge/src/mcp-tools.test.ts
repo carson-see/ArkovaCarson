@@ -108,6 +108,26 @@ describe('generic agent lifecycle worker proxy', () => {
     expect(result.content[0].text).not.toContain('ak_once');
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
+  it.each([false, true])('preserves bounded scope recovery details (nested=%s)', async nested => {
+    const fields = { required:'agents:manage', granted:['verify'], missing:['keys:manage'], permitted:['verify'], key:'ak_secret', receipt_payload:'private-receipt' };
+    mockFetch.mockResolvedValueOnce(Response.json(nested ? {error:{code:'insufficient_scope',...fields}} : {error:'insufficient_scope',...fields}, {status:403}));
+    const result = await handleAgentLifecycle('create_key', {agent_id:agent.id}, config);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({code:'insufficient_scope',required:'agents:manage',granted:['verify'],missing:['keys:manage'],permitted:['verify']});
+    expect(result.content[0].text).not.toContain('ak_secret');
+    expect(result.content[0].text).not.toContain('private-receipt');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    {required:['verify'],missing:['verify',7],granted:'verify',permitted:['verify',{}]},
+    {required:'a'.repeat(81),missing:['verify\n'],granted:Array(33).fill('verify'),permitted:[null]},
+  ])('omits malformed scope recovery fields without partial lists', async fields => {
+    mockFetch.mockResolvedValueOnce(Response.json({error:{code:'insufficient_scope',...fields}}, {status:403}));
+    const result = await handleAgentLifecycle('create_key', {agent_id:agent.id}, config);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.code).toBe('insufficient_scope');
+    for (const field of ['required','missing','granted','permitted']) expect(payload).not.toHaveProperty(field);
+  });
   it('forwards only a verified bearer and preserves safe nested admission fields', async () => {
     mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'no_permitted_scopes',message:'Admission requires an organization API key.',reason:'scope_ceiling',permitted:['verify']}}),{status:403}));
     const result=await handleAgentLifecycle('admit_computeid',{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}},{...CONFIG,workerBaseUrl:'https://worker.test',callerAuthorization:'Bearer jwt'});

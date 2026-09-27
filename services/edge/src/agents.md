@@ -401,3 +401,12 @@ the identical function.
 Admission response binding compares passport UUIDs case-insensitively, because the worker canonicalizes them to lowercase. Preserve the original request and signed verification receipt; never rewrite signed content to fix a response check. A different UUID still fails closed without exposing the one-time key. Both MCP implementations have positive and mismatched-binding regressions; mutations still make one request only.
 
 Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on generic agent reads so one older row cannot make list/get fail. Generic reads still reject arrays, strings and numbers. ComputeID admission retains its existing minimal projection validation, where metadata is not required; this repair does not add a post-commit rejection for optional admission metadata or rewrite the signed receipt. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## Agent permission-denial recovery
+
+Both flat and nested worker errors retain bounded `required`, `granted`,
+`missing` and `permitted` scope fields. Each token is 1–80 ASCII scope
+characters; lists are at most 32 entries and are omitted whole when malformed,
+so a filtered list cannot misstate authority. Unknown keys and signed receipt
+fields are never copied. This is diagnostic information, not permission to
+retry a mutation or change the caller credential automatically.

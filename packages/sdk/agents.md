@@ -204,3 +204,5 @@ downgraded the version, never dropped the newer status sets or folder events) an
 ## 2026-09-26 — agent lifecycle webhook subscription types
 
 The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized; the combined candidate includes the singleton proof repair and still requires qualification.
+
+The singleton candidate widens `ProofBundle.merkleProof` from a non-empty tuple to an array; consumers must check length. Bundle decoding is not a cryptographic verification verdict.

@@ -1186,6 +1186,21 @@ function getHeader(response: Response, name: string): string | null {
  * Parse a fetch Response as JSON; throw a typed ArkovaError with the
  * server's machine-readable `error` code if the status is not 2xx.
  */
+// Keep permission-denial recovery useful without reflecting arbitrary response data.
+function scopeErrorDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const isScope = (scope: unknown): scope is string => typeof scope === 'string' && scope.length > 0 && scope.length <= 80 && !/[^a-z0-9:._-]/i.test(scope);
+  const details: Record<string, unknown> = {};
+  if (isScope(source.required)) details.required = source.required;
+  for (const field of ['granted', 'missing', 'permitted']) {
+    const scopes = source[field];
+    // Omit a malformed list as a whole: a partial list misstates authority.
+    if (Array.isArray(scopes) && scopes.length <= 32 && scopes.every(isScope)) details[field] = scopes;
+  }
+  return details;
+}
+
 async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise<T> {
   const decoded: unknown = await response.json().catch(() => ({}));
   const json = (decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}) as {
@@ -1211,14 +1226,14 @@ async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise
     // Prefer server `message`, fall back to legacy endpoints that only send `error`,
     // then to a generic label. Code field is carried on the error for programmatic checks.
     const nestedRaw = typeof json.error === 'object' && json.error !== null ? json.error : undefined;
+    const scopeDetails = scopeErrorDetails(nestedRaw ?? json);
     const nestedError: Record<string, unknown> | undefined = nestedRaw ? {
       ...(typeof nestedRaw.code === 'string' ? { code: nestedRaw.code } : {}),
       ...(typeof nestedRaw.message === 'string' ? { message: nestedRaw.message } : {}),
       ...(typeof nestedRaw.reason === 'string' ? { reason: nestedRaw.reason } : {}),
       ...(typeof nestedRaw.agent_id === 'string' ? { agent_id: nestedRaw.agent_id } : {}),
-      ...(Array.isArray(nestedRaw.permitted) && nestedRaw.permitted.every((v) => typeof v === 'string')
-        ? { permitted: nestedRaw.permitted } : {}),
-    } : undefined;
+      ...scopeDetails,
+    } : Object.keys(scopeDetails).length > 0 ? scopeDetails : undefined;
     const legacyError = typeof json.error === 'string' ? json.error : undefined;
     throw new ArkovaError(
       problem?.detail ?? (typeof nestedError?.message === 'string' ? nestedError.message : undefined) ?? json.message ?? legacyError ?? `${failureLabel}: HTTP ${response.status}`,

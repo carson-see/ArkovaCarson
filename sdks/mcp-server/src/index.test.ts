@@ -450,6 +450,26 @@ describe('agent lifecycle tools', () => {
   it('forwards callback_url null to clear it',async()=>{mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(agent),{status:200}));await handleToolCall('arkova_update_agent',{agent_id:agentId,callback_url:null});expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({callback_url:null});expect(TOOL_DEFINITIONS.find(t=>t.name==='arkova_update_agent')?.inputSchema.properties.callback_url.type).toEqual(['string','null']);});
   it('fails closed once when a one-time key response is lost or malformed',async()=>{mockFetch.mockResolvedValueOnce(new Response('{}',{status:201}));const result=await handleToolCall('arkova_create_agent_key',{agent_id:agentId});expect(result.isError).toBe(true);expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');expect(mockFetch).toHaveBeenCalledTimes(1);});
   it.each([['arkova_create_agent_key',{...key}],['arkova_admit_computeid_agent',{...key,agent,binding:null}],['arkova_admit_computeid_agent',{...key,agent,binding:{issuer:'computeid',passport_id:'wrong',bound_at:'now',receipt_expires_at:'later'}}]])('rejects incomplete %s one-time-key success envelopes',async(tool,response)=>{mockFetch.mockResolvedValueOnce(Response.json(response,{status:201}));const args=tool==='arkova_create_agent_key'?{agent_id:agentId}:{passport_id:agentId,verification_receipt:{passport_id:agentId,status:'active',issued_at:'2026-09-26',expires_at:'2026-09-27',key_id:'0123456789abcdef',receipt_signature:'sig',receipt_algorithm:'ed25519',receipt_payload:'{}'}};const result=await handleToolCall(tool,args);expect(result.isError).toBe(true);expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');expect(mockFetch).toHaveBeenCalledTimes(1);});
+  it.each([false, true])('preserves bounded scope recovery details (nested=%s)', async nested => {
+    const fields = { required:'agents:manage', granted:['verify'], missing:['keys:manage'], permitted:['verify'], key:'ak_secret', receipt_payload:'private-receipt' };
+    mockFetch.mockResolvedValueOnce(Response.json(nested ? {error:{code:'insufficient_scope',...fields}} : {error:'insufficient_scope',...fields}, {status:403}));
+    const result = await handleToolCall('arkova_create_agent_key', {agent_id:agentId});
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text.replace(/^Error: /, ''))).toMatchObject({code:'insufficient_scope',required:'agents:manage',granted:['verify'],missing:['keys:manage'],permitted:['verify']});
+    expect(result.content[0].text).not.toContain('ak_secret');
+    expect(result.content[0].text).not.toContain('private-receipt');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    {required:['verify'],missing:['verify',7],granted:'verify',permitted:['verify',{}]},
+    {required:'a'.repeat(81),missing:['verify\n'],granted:Array(33).fill('verify'),permitted:[null]},
+  ])('omits malformed scope recovery fields without partial lists', async fields => {
+    mockFetch.mockResolvedValueOnce(Response.json({error:{code:'insufficient_scope',...fields}}, {status:403}));
+    const result = await handleToolCall('arkova_create_agent_key', {agent_id:agentId});
+    const payload = JSON.parse(result.content[0].text.replace(/^Error: /, ''));
+    expect(payload.code).toBe('insufficient_scope');
+    for (const field of ['required','missing','granted','permitted']) expect(payload).not.toHaveProperty(field);
+  });
   it('scrubs thrown transport details',async()=>{mockFetch.mockRejectedValueOnce(new Error('https://internal/ak_caller_secret'));const result=await handleToolCall('arkova_list_agents',{});expect(result.isError).toBe(true);expect(result.content[0].text).toContain('AGENT_TRANSPORT_ERROR');expect(result.content[0].text).not.toContain('ak_caller_secret');});
   it.each([
     ['arkova_register_agent',{name:'Agent',metadata:{computeid:{}}}], ['arkova_update_agent',{agent_id:agentId}],

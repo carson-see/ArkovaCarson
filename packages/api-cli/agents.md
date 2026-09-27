@@ -62,3 +62,5 @@ See `packages/sdk/agents.md`, `packages/embed/agents.md`, `sdks/langchain-ts/age
 ## 2026-09-26 — agent lifecycle parity
 
 The private CLI exposes generic agent lifecycle and ComputeID admission through the sibling SDK. Validate request files and flags before the SDK call, and add returned one-time keys to the redaction set before stdout serialization. The `file:../sdk` dependency remains a release limitation.
+
+An agent update with no fields is a local usage error: exit 2 without invoking the SDK or network. Keep the machine-readable help's register/update flags complete. API failures may expose only the bounded SDK detail allowlist (`code`, `reason`, `permitted`, `agent_id`, `request_id`, `retryable`, `required`, `granted`, `missing`); arbitrary detail keys and secret-like values must never reach stderr.

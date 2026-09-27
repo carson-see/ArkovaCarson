@@ -218,6 +218,21 @@ def _plain_error_body(response: httpx.Response) -> dict[str, Any] | None:
     return body if isinstance(body, dict) else None
 
 
+def _scope_error_details(source: dict[str, Any]) -> dict[str, Any]:
+    """Bounded permission details; never turn a malformed list into partial authority."""
+    def is_scope(value: object) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9:._-]{1,80}", value) is not None
+
+    details: dict[str, Any] = {}
+    if is_scope(source.get("required")):
+        details["required"] = source["required"]
+    for field in ("granted", "missing", "permitted"):
+        scopes = source.get(field)
+        if isinstance(scopes, list) and len(scopes) <= 32 and all(is_scope(value) for value in scopes):
+            details[field] = scopes
+    return details
+
+
 def _raise_for_error(response: httpx.Response) -> None:
     if response.status_code < 400:
         return
@@ -242,10 +257,9 @@ def _raise_for_error(response: httpx.Response) -> None:
     nested_raw = raw_code if isinstance(raw_code, dict) else None
     nested = ({key: value for key in ("code", "message", "reason", "agent_id")
         if isinstance((value := nested_raw.get(key)), str)} if nested_raw is not None else None)
-    if nested_raw is not None and isinstance(nested_raw.get("permitted"), list) and all(
-        isinstance(value, str) for value in nested_raw["permitted"]
-    ):
-        nested = {**(nested or {}), "permitted": nested_raw["permitted"]}
+    scope_details = _scope_error_details(nested_raw if nested_raw is not None else body)
+    if scope_details:
+        nested = {**(nested or {}), **scope_details}
     code = raw_code if isinstance(raw_code, str) else (
         nested.get("code") if nested and isinstance(nested.get("code"), str) else None
     )

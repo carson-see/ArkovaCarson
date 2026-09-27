@@ -344,6 +344,21 @@ export interface AgentLifecycleInput {
 
 /** Canonical worker proxy for all agent operations. It never substitutes the
  * edge service credential and never forwards two caller credentials. */
+// Keep permission-denial recovery useful without reflecting arbitrary response data.
+function scopeErrorDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const isScope = (scope: unknown): scope is string => typeof scope === 'string' && scope.length > 0 && scope.length <= 80 && !/[^a-z0-9:._-]/i.test(scope);
+  const details: Record<string, unknown> = {};
+  if (isScope(source.required)) details.required = source.required;
+  for (const field of ['granted', 'missing', 'permitted']) {
+    const scopes = source[field];
+    // Omit a malformed list as a whole: a partial list misstates authority.
+    if (Array.isArray(scopes) && scopes.length <= 32 && scopes.every(isScope)) details[field] = scopes;
+  }
+  return details;
+}
+
 export async function handleAgentLifecycle(
   operation: 'register'|'list'|'get'|'update'|'revoke'|'create_key'|'admit_computeid',
   input: AgentLifecycleInput,
@@ -381,9 +396,9 @@ export async function handleAgentLifecycle(
       const reason = typeof error?.reason === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.reason) ? error.reason : undefined;
       const safeMessageCodes = new Set(['api_key_required','vendor_gated','invalid_request','receipt_invalid','no_permitted_scopes','passport_revoked','passport_already_bound','admission_failed','ambiguous_caller','insufficient_scope','delegation_scope_exceeded','provider_scope_ceiling_exceeded']);
       const message = safeMessageCodes.has(code) && typeof error?.message === 'string' && error.message.length <= 500 && !/[\r\n\x00-\x1f]/.test(error.message) ? error.message : undefined;
-      const permitted = Array.isArray(error?.permitted) ? error.permitted.filter((v): v is string => typeof v === 'string' && /^[a-z0-9:._-]{1,80}$/i.test(v)).slice(0, 32) : undefined;
+      const scopeDetails = scopeErrorDetails(error);
       const agentId = typeof error?.agent_id === 'string' && /^[0-9a-f-]{36}$/i.test(error.agent_id) ? error.agent_id : undefined;
-      return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code, ...(message ? { message } : {}), ...(reason ? { reason } : {}), ...(permitted ? { permitted } : {}), ...(agentId ? { agent_id: agentId } : {}) }));
+      return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code, ...(message ? { message } : {}), ...(reason ? { reason } : {}), ...scopeDetails, ...(agentId ? { agent_id: agentId } : {}) }));
     }
     const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
     const agent = (value: unknown, requireMetadata = true): boolean => {

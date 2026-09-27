@@ -13,6 +13,18 @@ describe('built arkova binary', () => {
     expect(help).toMatchObject({ command: 'arkova', output: 'json' });
     expect(help.usage).toContain('arkova status <public-id>');
     expect(help.usage).toContain('arkova agent computeid admit --request-json file');
+    expect(help.usage).toContain('arkova agent update <agent-id> [--name name] [--description text] [--scope value] [--status active|suspended] [--framework value] [--version value] [--callback-url https-url|--clear-callback-url]');
+  });
+
+  it('returns usage exit 2 for an empty agent update before network access', () => {
+    const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'agent', 'update', 'agent-1'], {
+      cwd: resolve('.'), encoding: 'utf8', env: { PATH: process.env.PATH ?? '', ARKOVA_API_KEY: 'ak_test_never_sent' },
+    });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: { code: 'usage_error', message: 'agent update requires at least one field' },
+    });
+    expect(result.stdout).toBe('');
   });
 
   it('rejects invalid lifecycle input in the built binary before network access', () => {

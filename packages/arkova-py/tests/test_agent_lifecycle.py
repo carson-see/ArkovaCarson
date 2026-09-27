@@ -217,3 +217,45 @@ def test_non_object_agent_metadata_remains_invalid(metadata: object) -> None:
         pytest.raises(ArkovaError),
     ):
         client.list_agents()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+def test_scope_recovery_details(asynchronous: bool, nested: bool) -> None:
+    fields = {"required": "agents:manage", "granted": ["verify"], "missing": ["keys:manage"],
+              "permitted": ["verify"], "key": "ak_secret", "receipt_payload": "private-receipt"}
+    body = {"error": {"code": "insufficient_scope", **fields}} if nested else {"error": "insufficient_scope", **fields}
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(403, json=body)
+
+    async def run_async() -> None:
+        async with AsyncArkova(api_key="ak_caller", transport=httpx.MockTransport(handler)) as client:
+            await client.create_agent_key(AGENT_ID)
+
+    with pytest.raises(ArkovaError) as raised:
+        if asynchronous:
+            asyncio.run(run_async())
+        else:
+            with Arkova(api_key="ak_caller", transport=httpx.MockTransport(handler)) as client:
+                client.create_agent_key(AGENT_ID)
+    assert raised.value.code == "insufficient_scope"
+    assert raised.value.details is not None
+    for key in ("required", "granted", "missing", "permitted"):
+        assert raised.value.details[key] == fields[key]
+    assert "ak_secret" not in json.dumps(raised.value.details)
+    assert "private-receipt" not in json.dumps(raised.value.details)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("fields", [
+    {"required": ["verify"], "missing": ["verify", 7], "granted": "verify", "permitted": ["verify", {}]},
+    {"required": "a" * 81, "missing": ["verify\n"], "granted": ["verify"] * 33, "permitted": [None]},
+])
+def test_scope_recovery_omits_malformed_fields(fields: dict) -> None:
+    transport = httpx.MockTransport(lambda _request: httpx.Response(403, json={"error": {"code": "insufficient_scope", **fields}}))
+    with Arkova(api_key="ak_caller", transport=transport) as client, pytest.raises(ArkovaError) as raised:
+        client.create_agent_key(AGENT_ID)
+    assert raised.value.details == {"code": "insufficient_scope"}

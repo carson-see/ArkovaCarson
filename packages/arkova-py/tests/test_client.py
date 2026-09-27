@@ -761,6 +761,7 @@ _COHERENT_SINGLETON_WIRE_BUNDLE = {
         {"block_header": None},
         {"merkle_proof": "nope"},
         {"merkle_proof": []},
+        {"merkle_proof": [], "leaf_count": 0, "merkle_index": 0},
         {"merkle_proof": [], "leaf_count": 1, "merkle_index": 1},
         {"merkle_proof": [], "leaf_count": 1, "merkle_index": 0},
         {

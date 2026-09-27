@@ -2129,6 +2129,7 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
     ['non-array merkle_proof', { ...COMPLETE_WIRE_BUNDLE, merkle_proof: 'nope' }],
     ['missing singleton merkle_proof', { ...COHERENT_SINGLETON_WIRE_BUNDLE, merkle_proof: undefined }],
     ['null singleton merkle_proof', { ...COHERENT_SINGLETON_WIRE_BUNDLE, merkle_proof: null }],
+    ['empty zero-leaf merkle_proof', { ...COHERENT_SINGLETON_WIRE_BUNDLE, leaf_count: 0 }],
     [
       'empty singleton merkle_proof with equal non-hex leaf and root',
       { ...COHERENT_SINGLETON_WIRE_BUNDLE, fingerprint: 'not-hex', merkle_root: 'not-hex' },

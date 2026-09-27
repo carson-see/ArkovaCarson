@@ -13,6 +13,7 @@ package.
 - Preserve complete single-leaf proof bundles. An empty Merkle branch is
   accepted only when `leaf_count=1`, `merkle_index=0`, and the fingerprint
   equals the root; incoherent empty branches still fail closed to `null`.
+- `ProofBundle.merkleProof` is now `MerkleProofEntry[]`, replacing the non-empty tuple type. Check its length before reading `[0]`; a valid single-record bundle has no sibling entry. Decoding a bundle does not verify its cryptographic evidence.
 
 ## 3.2.0
 

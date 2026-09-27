@@ -55,8 +55,9 @@ const HELP = {
     'arkova folder connector <folder-id> (--provider google_drive|docusign --source-id id --connection-id id|--clear)',
     'arkova folder delete <folder-id>',
     'arkova folder move --record-id id [--record-id id] (--folder-id id|--root)',
-    'arkova agent register --name name [--scope value] [--metadata-json file]',
-    'arkova agent list | get <agent-id> | update <agent-id> | revoke <agent-id>',
+    'arkova agent register --name name [--description text] [--type value] [--scope value] [--framework value] [--version value] [--callback-url https-url] [--metadata-json file]',
+    'arkova agent list | get <agent-id> | revoke <agent-id>',
+    'arkova agent update <agent-id> [--name name] [--description text] [--scope value] [--status active|suspended] [--framework value] [--version value] [--callback-url https-url|--clear-callback-url]',
     'arkova agent key create <agent-id>',
     'arkova agent computeid admit --request-json file',
   ],
@@ -179,7 +180,9 @@ async function runAgent(args: string[], client: CliClient, readLocalFile: (path:
     Object.assign(input, name !== undefined ? { name } : {}, description !== undefined ? { description } : {},
       scopes.length ? { allowedScopes: scopes as AgentScope[] } : {}, status ? { status } : {}, framework ? { framework } : {},
       version ? { version } : {}, callbackUrl ? { callbackUrl } : {}, clearCallback ? { callbackUrl: null } : {});
-    noExtra(args); return client.agents.update(id, input);
+    noExtra(args);
+    if (Object.keys(input).length === 0) throw new UsageError('agent update requires at least one field');
+    return client.agents.update(id, input);
   }
   throw new UsageError(`Unknown agent action: ${action}`);
 }
@@ -424,14 +427,33 @@ function redact(value: string, secrets: string[]): string {
   return secrets.reduce((text, secret) => secret ? text.split(secret).join('[REDACTED]') : text, value);
 }
 
-function errorPayload(error: unknown, secrets: string[]): { error: { code: string; message: string; status?: number } } {
+function safeErrorDetails(value: Readonly<Record<string, unknown>> | undefined, secrets: string[]): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const result: Record<string, unknown> = {};
+  const token = (candidate: unknown, max = 80): candidate is string => typeof candidate === 'string'
+    && candidate.length >= 1 && candidate.length <= max && !/[^a-z0-9:._-]/i.test(candidate);
+  for (const key of ['code', 'reason', 'required'] as const) {
+    if (token(value[key])) result[key] = redact(value[key], secrets);
+  }
+  for (const key of ['permitted', 'granted', 'missing'] as const) {
+    if (Array.isArray(value[key]) && value[key].length <= 32
+      && value[key].every((item) => token(item))) result[key] = value[key].map((item) => redact(item, secrets));
+  }
+  if (typeof value.agent_id === 'string' && /^[0-9a-f-]{36}$/i.test(value.agent_id)) result.agent_id = value.agent_id;
+  if (token(value.request_id, 128)) result.request_id = redact(value.request_id, secrets);
+  if (typeof value.retryable === 'boolean') result.retryable = value.retryable;
+  return Object.keys(result).length ? result : undefined;
+}
+
+function errorPayload(error: unknown, secrets: string[]): { error: { code: string; message: string; status?: number; details?: Record<string, unknown> } } {
   if (error instanceof UsageError) {
     return { error: { code: 'usage_error', message: redact(error.message, secrets).slice(0, 256) } };
   }
   if (error instanceof ArkovaError) {
     const candidate = redact(error.code || '', secrets);
     const code = /^[a-z][a-z0-9_]{0,63}$/.test(candidate) ? candidate : 'api_error';
-    return { error: { code, message: 'Arkova API request failed', status: error.statusCode } };
+    const details = safeErrorDetails(error.details, secrets);
+    return { error: { code, message: 'Arkova API request failed', status: error.statusCode, ...(details ? { details } : {}) } };
   }
   return { error: { code: 'unexpected_error', message: 'Command failed' } };
 }

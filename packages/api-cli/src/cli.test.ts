@@ -77,6 +77,35 @@ describe('agent lifecycle commands', () => {
     expect(api.agents.admitComputeId).not.toHaveBeenCalled();
   });
 
+  it('treats an empty agent update as usage error without calling the SDK', async () => {
+    const api = client(); const output = io();
+    expect(await main(['agent', 'update', 'agent-1'], output.value, { client: api })).toBe(2);
+    expect(JSON.parse(output.stderr())).toEqual({
+      error: { code: 'usage_error', message: 'agent update requires at least one field' },
+    });
+    expect(api.agents.update).not.toHaveBeenCalled();
+  });
+
+  it('returns only bounded safe API error details', async () => {
+    const api = client(); const output = io({ ARKOVA_API_KEY: 'ak_caller' });
+    vi.mocked(api.agents.list).mockRejectedValue(new ArkovaError(
+      'denied', 403, 'insufficient_scope', undefined, undefined,
+      { required: 'agents:manage', granted: ['verify'], missing: ['agents:manage'], retryable: false,
+        request_id: 'ak_caller', reason: 'bad\n', secret: 'ak_must_not_escape',
+        permitted: Array.from({ length: 33 }, () => 'verify'), arbitrary: { raw: true } },
+    ));
+    expect(await main(['agent', 'list'], output.value, { client: api })).toBe(1);
+    expect(JSON.parse(output.stderr())).toEqual({ error: {
+      code: 'insufficient_scope', message: 'Arkova API request failed', status: 403,
+      details: { required: 'agents:manage', granted: ['verify'], missing: ['agents:manage'],
+        retryable: false, request_id: '[REDACTED]' },
+    } });
+    expect(output.stderr()).not.toContain('ak_must_not_escape');
+    expect(output.stderr()).not.toContain('arbitrary');
+    expect(output.stderr()).not.toContain('ak_caller');
+    expect(output.stderr()).not.toContain('bad\\n');
+  });
+
   it('redacts a returned one-time key if stdout fails after success', async () => {
     const api = client(); const secret = 'ak_once_returned'; let stderr = '';
     vi.mocked(api.agents.createKey).mockResolvedValue({ key: secret } as never);
@@ -95,7 +124,10 @@ describe('arkova API CLI', () => {
     const output = io({});
     const code = await main(['--help'], output.value);
     expect(code).toBe(0);
-    expect(JSON.parse(output.stdout())).toMatchObject({ command: 'arkova', output: 'json' });
+    const help = JSON.parse(output.stdout()) as { command: string; output: string; usage: string[] };
+    expect(help).toMatchObject({ command: 'arkova', output: 'json' });
+    expect(help.usage).toContain('arkova agent register --name name [--description text] [--type value] [--scope value] [--framework value] [--version value] [--callback-url https-url] [--metadata-json file]');
+    expect(help.usage).toContain('arkova agent update <agent-id> [--name name] [--description text] [--scope value] [--status active|suspended] [--framework value] [--version value] [--callback-url https-url|--clear-callback-url]');
     expect(output.stderr()).toBe('');
   });
 
