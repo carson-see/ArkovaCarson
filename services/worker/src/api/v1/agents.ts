@@ -92,6 +92,28 @@ function missingDelegatedScopes(caller: AgentLifecycleCaller, scopes: string[]):
   return scopes.filter((required) => !scopeSatisfies(caller.scopes, required));
 }
 
+function respondToLifecycleRpcError(
+  res: Response,
+  error: { code?: string; message?: string },
+  fallback: string,
+): void {
+  if (error.code === '42501') {
+    res.status(403).json({ error: error.message === 'delegation_scope_exceeded'
+      ? 'delegation_scope_exceeded' : 'forbidden' });
+    return;
+  }
+  if (error.code === '55P03' || error.code === '40P01') {
+    res.set('Retry-After', '5').status(503).json({ error: 'agent_lifecycle_temporarily_unavailable' });
+    return;
+  }
+  res.status(500).json({ error: fallback });
+}
+
+const PUBLIC_AGENT_POLICY_CONFLICTS = new Set([
+  'agent_revocation_is_terminal',
+  'computeid_provider_suspension_active',
+]);
+
 /** Helper: verify agent belongs to caller's org */
 async function verifyAgentOwnership(agentId: string, orgId: string, res: Response): Promise<Record<string, unknown> | null> {
   const { data: agent, error } = await dbAny
@@ -194,15 +216,14 @@ async function applyAgentUpdate(
       p_actor_kind: caller.kind,
       p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
     });
-    if (error?.code === '23514') { res.status(409).json({ error: error.message }); return null; }
-    if (error?.code === '42501') {
-      res.status(403).json({ error: error.message === 'delegation_scope_exceeded'
-        ? 'delegation_scope_exceeded' : 'forbidden' });
+    if (error?.code === '23514') {
+      res.status(409).json({ error: PUBLIC_AGENT_POLICY_CONFLICTS.has(error.message)
+        ? error.message : 'agent_transition_conflict' });
       return null;
     }
     if (error) {
-      logger.error({ agentId, error }, 'Atomic agent status transition failed');
-      res.status(500).json({ error: 'Failed to change agent status' });
+      logger.error({ agentId, errorCode: error.code }, 'Atomic agent status transition failed');
+      respondToLifecycleRpcError(res, error, 'Failed to change agent status');
       return null;
     }
     if (!(transition as { found?: boolean } | null)?.found) {
@@ -220,7 +241,12 @@ async function applyAgentUpdate(
     p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
     p_updates: updates,
   });
-  if (error || !(transition as { found?: boolean } | null)?.found) {
+  if (error) {
+    logger.error({ agentId, errorCode: error.code }, 'Atomic agent update failed');
+    respondToLifecycleRpcError(res, error, 'Failed to update agent');
+    return null;
+  }
+  if (!(transition as { found?: boolean } | null)?.found) {
     res.status(404).json({ error: 'Agent not found or update failed' });
     return null;
   }
@@ -261,8 +287,13 @@ router.post('/', async (req: Request, res: Response) => {
     });
     const agent = (registered as { agent?: Record<string, unknown> } | null)?.agent;
 
-    if (error || !agent) {
-      logger.error({ error }, 'Failed to create agent');
+    if (error) {
+      logger.error({ errorCode: error.code }, 'Failed to create agent');
+      respondToLifecycleRpcError(res, error, 'Failed to create agent');
+      return;
+    }
+    if (!agent) {
+      logger.error('Agent registration returned no agent');
       res.status(500).json({ error: 'Failed to create agent' });
       return;
     }
@@ -386,8 +417,8 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     const { data: revokeResult, error } = await dbAny.rpc(rpcName, rpcArgs);
 
     if (error) {
-      logger.error({ agentId, error }, 'Atomic agent revocation failed');
-      res.status(500).json({ error: 'Failed to revoke agent' });
+      logger.error({ agentId, errorCode: error.code }, 'Atomic agent revocation failed');
+      respondToLifecycleRpcError(res, error, 'Failed to revoke agent');
       return;
     }
     if (!(revokeResult as { found?: boolean } | null)?.found) {
@@ -447,8 +478,13 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
     });
     const key = (mintResult as { key?: Record<string, unknown> } | null)?.key;
 
-    if (insertError || !key) {
-      logger.error({ error: insertError }, 'Failed to create agent API key');
+    if (insertError) {
+      logger.error({ agentId, errorCode: insertError.code }, 'Failed to create agent API key');
+      respondToLifecycleRpcError(res, insertError, 'Failed to create API key');
+      return;
+    }
+    if (!key) {
+      logger.error('Agent key creation returned no key');
       res.status(500).json({ error: 'Failed to create API key' });
       return;
     }

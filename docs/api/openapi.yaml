@@ -605,6 +605,16 @@ paths:
         "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
         "403": { $ref: "#/components/responses/AgentForbidden" }
         "409": { $ref: "#/components/responses/AmbiguousCaller" }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } }
   /agents/{agentId}:
     parameters:
       - { name: agentId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -644,6 +654,11 @@ paths:
         "403": { $ref: "#/components/responses/AgentForbidden" }
         "404": { description: Agent not found in caller tenant }
         "409": { description: Terminal revocation or provider-owned suspension blocks the transition }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { type: object, required: [error], properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } } } } }
     delete:
       operationId: revokeAgent
       summary: Terminally revoke an agent and its keys
@@ -661,6 +676,11 @@ paths:
         "403": { $ref: "#/components/responses/AgentForbidden" }
         "404": { description: Agent not found in caller tenant }
         "409": { $ref: "#/components/responses/AmbiguousCaller" }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { type: object, required: [error], properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } } } } }
   /agents/{agentId}/key:
     post:
       operationId: mintAgentKey
@@ -679,6 +699,11 @@ paths:
         "403": { $ref: "#/components/responses/AgentForbidden" }
         "404": { description: Agent not found in caller tenant }
         "409": { description: Agent is suspended or terminally revoked }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { type: object, required: [error], properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } } } } }
 
   /agents/computeid/admit:
     post:

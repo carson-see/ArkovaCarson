@@ -3,11 +3,11 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
-const { dbFromMock, rpcMock, auditMock, agentEventMock } = vi.hoisted(() => ({
-  dbFromMock: vi.fn(), rpcMock: vi.fn(), auditMock: vi.fn(), agentEventMock: vi.fn(),
+const { dbFromMock, rpcMock, auditMock, agentEventMock, loggerErrorMock } = vi.hoisted(() => ({
+  dbFromMock: vi.fn(), rpcMock: vi.fn(), auditMock: vi.fn(), agentEventMock: vi.fn(), loggerErrorMock: vi.fn(),
 }));
 vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: rpcMock } }));
-vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
+vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: loggerErrorMock, debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: auditMock }));
 vi.mock('../../config.js', () => ({ config: { apiKeyHmacSecret: 'machine-test-hmac' } }));
 vi.mock('../../webhooks/agentEvents.js', () => ({ emitAgentEvent: agentEventMock, hintAgentWebhookDrain: vi.fn() }));
@@ -176,6 +176,71 @@ describe('generic agent lifecycle API-key caller', () => {
     const response = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ status: 'active' });
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: 'forbidden' });
+  });
+
+  it.each(['55P03', '40P01'])('maps transient status-transition %s failures to a bounded retry hint', async (code) => {
+    routeDbTables(dbFromMock, { agents: builder({ data: { id: AGENT, org_id: ORG, status: 'active', metadata: {} } }) });
+    rpcMock.mockResolvedValue({ data: null, error: { code, message: 'private SQL detail' } });
+    const response = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ status: 'suspended' });
+    expect(response.status).toBe(503);
+    expect(response.headers['retry-after']).toBe('5');
+    expect(response.body).toEqual({ error: 'agent_lifecycle_temporarily_unavailable' });
+    expect(JSON.stringify(response.body)).not.toContain('private SQL detail');
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain('private SQL detail');
+  });
+
+  it.each(['42501', '55P03', '40P01'])('maps non-status RPC %s without misreporting it as not found', async (code) => {
+    routeDbTables(dbFromMock, { agents: builder({ data: { id: AGENT, org_id: ORG, status: 'active', metadata: {} } }) });
+    rpcMock.mockResolvedValue({ data: null, error: { code, message: 'private SQL detail' } });
+    const response = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ name: 'renamed' });
+    expect(response.status).toBe(code === '42501' ? 403 : 503);
+    expect(response.body).toEqual({ error: code === '42501' ? 'forbidden' : 'agent_lifecycle_temporarily_unavailable' });
+    if (code !== '42501') expect(response.headers['retry-after']).toBe('5');
+    expect(JSON.stringify(response.body)).not.toContain('private SQL detail');
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain('private SQL detail');
+  });
+
+  it.each([
+    ['register', () => request(app()).post('/api/v1/agents').send({ name: 'bot', allowed_scopes: ['verify'] })],
+    ['revoke', () => request(app()).delete(`/api/v1/agents/${AGENT}`)],
+    ['mint', () => request(app()).post(`/api/v1/agents/${AGENT}/key`)],
+  ] as const)('maps transient %s RPC failures without leaking SQL details', async (_operation, invoke) => {
+    routeDbTables(dbFromMock, { agents: builder({ data: { id: AGENT, org_id: ORG, name: 'bot', status: 'active', allowed_scopes: ['verify'] } }) });
+    for (const code of ['55P03', '40P01']) {
+      rpcMock.mockResolvedValueOnce({ data: null, error: { code, message: 'private SQL detail' } });
+      const response = await invoke();
+      expect(response.status).toBe(503);
+      expect(response.headers['retry-after']).toBe('5');
+      expect(response.body).toEqual({ error: 'agent_lifecycle_temporarily_unavailable' });
+      expect(JSON.stringify(response.body)).not.toContain('private SQL detail');
+      expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain('private SQL detail');
+    }
+  });
+
+  it.each([
+    ['register', () => request(app()).post('/api/v1/agents').send({ name: 'bot', allowed_scopes: ['verify'] })],
+    ['revoke', () => request(app()).delete(`/api/v1/agents/${AGENT}`)],
+    ['mint', () => request(app()).post(`/api/v1/agents/${AGENT}/key`)],
+  ] as const)('maps authoritative %s RPC denials without leaking SQL details', async (_operation, invoke) => {
+    routeDbTables(dbFromMock, { agents: builder({ data: { id: AGENT, org_id: ORG, name: 'bot', status: 'active', allowed_scopes: ['verify'] } }) });
+    rpcMock.mockResolvedValue({ data: null, error: { code: '42501', message: 'private SQL detail' } });
+    const response = await invoke();
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: 'forbidden' });
+    expect(JSON.stringify(response.body)).not.toContain('private SQL detail');
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain('private SQL detail');
+  });
+
+  it('scrubs unknown database policy conflicts while preserving known public policy errors', async () => {
+    routeDbTables(dbFromMock, { agents: builder({ data: { id: AGENT, org_id: ORG, status: 'active', metadata: {} } }) });
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: { code: '23514', message: 'private SQL detail' } })
+      .mockResolvedValueOnce({ data: null, error: { code: '23514', message: 'agent_revocation_is_terminal' } });
+    const unknown = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ status: 'suspended' });
+    const known = await request(app()).patch(`/api/v1/agents/${AGENT}`).send({ status: 'suspended' });
+    expect(unknown.status).toBe(409);
+    expect(unknown.body).toEqual({ error: 'agent_transition_conflict' });
+    expect(known.body).toEqual({ error: 'agent_revocation_is_terminal' });
   });
 
 });

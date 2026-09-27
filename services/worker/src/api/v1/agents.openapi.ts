@@ -23,6 +23,21 @@ const commonErrors = {
   "403": { $ref: "#/components/responses/AgentForbidden" },
   "409": { $ref: "#/components/responses/AmbiguousCaller" },
 };
+const transientMutationError = {
+  description: "Lifecycle mutation temporarily unavailable; the client may retry after the indicated delay but must not retry automatically",
+  headers: {
+    "Retry-After": { schema: { type: "integer", minimum: 1 }, description: "Delay in seconds before a manual retry" },
+  },
+  content: {
+    "application/json": {
+      schema: {
+        type: "object",
+        required: ["error"],
+        properties: { error: { type: "string", enum: ["agent_lifecycle_temporarily_unavailable"] } },
+      },
+    },
+  },
+};
 
 export const agentOpenApiPaths = {
   "/agents": {
@@ -58,6 +73,7 @@ export const agentOpenApiPaths = {
         "201": response("Agent", "Agent registered"),
         "400": { $ref: "#/components/responses/AgentBadRequest" },
         ...commonErrors,
+        "503": transientMutationError,
       },
     },
   },
@@ -101,6 +117,7 @@ export const agentOpenApiPaths = {
           description:
             "Ambiguous credentials, terminal revocation, or provider-owned suspension blocks the update",
         },
+        "503": transientMutationError,
       },
     },
     delete: {
@@ -115,6 +132,7 @@ export const agentOpenApiPaths = {
         "200": response("AgentRevocationResult", "Agent revoked atomically"),
         ...commonErrors,
         "404": { description: "Agent not found in caller tenant" },
+        "503": transientMutationError,
       },
     },
   },
@@ -136,6 +154,7 @@ export const agentOpenApiPaths = {
           description:
             "Ambiguous credentials or an inactive agent blocks key creation",
         },
+        "503": transientMutationError,
       },
     },
   },
