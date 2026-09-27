@@ -173,6 +173,7 @@ bundle describes the one valid empty-branch case: `leaf_count=1`,
 and root-mismatch empty branches still map to `proofBundle = null`.
 The repair is packaged as 3.2.1 for a concrete release artifact but is not
 published here.
+
 ## 2026-09-19 — Finality webhook event types
 
 The SDK webhook union includes `anchor.revocation_anchored` and
