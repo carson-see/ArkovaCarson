@@ -406,6 +406,18 @@ describe('agent lifecycle tools', () => {
     ['arkova_get_agent','GET',`/api/v1/agents/${agentId}`,{agent_id:agentId}], ['arkova_update_agent','PATCH',`/api/v1/agents/${agentId}`,{agent_id:agentId,status:'suspended'}],
     ['arkova_revoke_agent','DELETE',`/api/v1/agents/${agentId}`,{agent_id:agentId}], ['arkova_create_agent_key','POST',`/api/v1/agents/${agentId}/key`,{agent_id:agentId}],
   ])('%s calls the exact route once',async (tool,method,path,args)=>{ const success=tool==='arkova_list_agents'?{agents:[]}:tool==='arkova_revoke_agent'?{status:'revoked',agent_id:agentId}:tool==='arkova_create_agent_key'?{...key,agent_id:agentId,agent_name:'Agent',created_at:'2026-09-26T00:00:00Z'}:agent; mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(success),{status:200})); const result=await handleToolCall(tool,args); expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1); expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining(path),expect.objectContaining({method,redirect:'error'})); });
+  it('lists agents with null metadata without hiding the entire list',async()=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata:null},agent]}));
+    const result=await handleToolCall('arkova_list_agents',{});
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text).agents).toEqual([{...agent,metadata:{}},agent]);
+  });
+  it.each([[], 'invalid', 7])('rejects non-object agent metadata %j',async metadata=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata}]}));
+    const result=await handleToolCall('arkova_list_agents',{});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
   it('preserves the complete signed receipt and accepts the actual 0448 admission projection',async()=>{ const passport='bbbbbbbb-0000-4000-8000-000000000001'; const receipt={passport_id:passport,status:'active',issued_at:'2026-09-26',expires_at:'2026-09-27',key_id:'0123456789abcdef',receipt_signature:'sentinel-signature',receipt_algorithm:'ed25519',receipt_payload:'sentinel-payload',extra_signed:'kept'}; const {metadata:_metadata,...admissionAgent}=agent; mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({...key,agent:admissionAgent,binding:{issuer:'computeid',passport_id:passport,bound_at:'2026-09-26T00:00:00Z',receipt_expires_at:'2026-09-27T00:00:00Z'}}),{status:201})); const result=await handleToolCall('arkova_admit_computeid_agent',{passport_id:passport,verification_receipt:receipt});expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1); expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({passport_id:passport,verification_receipt:receipt}); });
   it('preserves the one-time admission key when the worker canonicalizes an uppercase passport UUID',async()=>{
     const passportUpper='BBBBBBBB-0000-4000-8000-000000000001';

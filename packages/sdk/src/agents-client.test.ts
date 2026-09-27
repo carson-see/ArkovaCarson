@@ -13,6 +13,21 @@ describe('agent lifecycle client parity', () => {
   const fetchMock = vi.fn();
   beforeEach(() => { fetchMock.mockReset(); vi.stubGlobal('fetch', fetchMock); });
 
+  it('keeps a nullable-metadata agent reachable through list and get', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({agents:[{...AGENT,metadata:null},AGENT]}))
+      .mockResolvedValueOnce(Response.json({...AGENT,metadata:null}));
+    const client = new Arkova({apiKey:'ak_caller',baseUrl:'https://api.example.test'});
+    const agents = await client.agents.list();
+    expect(agents).toHaveLength(2);
+    expect(agents[0].metadata).toEqual({});
+    expect((await client.agents.get(AGENT.id)).metadata).toEqual({});
+  });
+
+  it.each([[], 'invalid', 7])('rejects non-object agent metadata %j', async metadata => {
+    fetchMock.mockResolvedValueOnce(Response.json({agents:[{...AGENT,metadata}]}));
+    await expect(new Arkova({apiKey:'ak_caller'}).agents.list()).rejects.toMatchObject({code:'unexpected_response'});
+  });
+
   it('maps all six generic operations to their exact non-retrying wire calls', async () => {
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify(AGENT), { status: 201 }))

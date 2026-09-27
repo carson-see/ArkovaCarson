@@ -434,7 +434,12 @@ async function handleAgentOperation(name: string, args: Record<string, unknown>)
     return errorResult(JSON.stringify({ status:res.status, code, ...(message?{message}:{}), ...(reason?{reason}:{}), ...(permitted?{permitted}:{}), ...(agentId?{agent_id:agentId}:{}) }));
   }
   const record=(value:unknown):value is Record<string,unknown>=>typeof value==='object'&&value!==null&&!Array.isArray(value);
-  const agent=(value:unknown,requireMetadata=true):boolean=>record(value)&&typeof value.id==='string'&&value.id.length>0&&typeof value.name==='string'&&typeof value.agent_type==='string'&&typeof value.status==='string'&&Array.isArray(value.allowed_scopes)&&value.allowed_scopes.every(scope=>typeof scope==='string')&&(!requireMetadata||record(value.metadata));
+  const agent=(value:unknown,requireMetadata=true):boolean=> {
+    if (!record(value)) return false;
+    // The stored metadata column is nullable; an absent value carries no metadata.
+    if (value.metadata === null) value.metadata = {};
+    return typeof value.id==='string'&&value.id.length>0&&typeof value.name==='string'&&typeof value.agent_type==='string'&&typeof value.status==='string'&&Array.isArray(value.allowed_scopes)&&value.allowed_scopes.every(scope=>typeof scope==='string')&&(!requireMetadata||record(value.metadata));
+  };
   const keyFields=(value:Record<string,unknown>):boolean=>typeof value.key==='string'&&value.key.length>0&&typeof value.key_id==='string'&&value.key_id.length>0&&typeof value.key_prefix==='string'&&value.key_prefix.length>0&&Array.isArray(value.scopes)&&value.scopes.every(scope=>typeof scope==='string')&&typeof value.warning==='string'&&value.warning.length>0;
   // UUID spelling is case-insensitive; preserve signed request bytes while accepting the worker's canonical binding.
   const binding=(value:unknown):boolean=>record(value)&&value.issuer==='computeid'&&typeof value.passport_id==='string'&&typeof args.passport_id==='string'&&value.passport_id.toLowerCase()===args.passport_id.toLowerCase()&&typeof value.bound_at==='string'&&value.bound_at.length>0&&typeof value.receipt_expires_at==='string'&&value.receipt_expires_at.length>0;

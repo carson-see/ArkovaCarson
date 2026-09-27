@@ -156,7 +156,7 @@ function mapAgentKeySummary(value: Record<string, unknown>): AgentKeySummary {
 function mapAgent(value: WireAgent): Agent {
   if (!recordValue(value)) unexpectedAgentResponse();
   const scopes = stringArray(value.allowed_scopes);
-  const metadata = value.metadata === undefined ? {} : recordValue(value.metadata);
+  const metadata = value.metadata == null ? {} : recordValue(value.metadata);
   if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.agent_type !== 'string'
       || !['active', 'suspended', 'revoked'].includes(String(value.status)) || !scopes || !metadata) unexpectedAgentResponse();
   if (value.api_keys !== undefined && (!Array.isArray(value.api_keys) || value.api_keys.some((v) => !recordValue(v)))) unexpectedAgentResponse();

@@ -186,3 +186,34 @@ def test_invalid_inputs_make_no_request() -> None:
     with pytest.raises(ArkovaError): client.update_agent(AGENT_ID, status="revoked")
     with pytest.raises(ArkovaError): client.admit_computeid_agent(passport_id=AGENT_ID, verification_receipt={})
     assert calls == 0
+
+
+def test_null_agent_metadata_does_not_hide_list_sync_or_async() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        row = {**AGENT, "metadata": None}
+        return httpx.Response(200, json={"agents": [row, AGENT]} if request.url.path.endswith("/agents") else row)
+
+    with Arkova(api_key="ak_caller", transport=httpx.MockTransport(handler)) as client:
+        rows = client.list_agents().agents
+        assert len(rows) == 2
+        assert rows[0].metadata == {}
+        assert client.get_agent(AGENT_ID).metadata == {}
+
+    async def check() -> None:
+        async with AsyncArkova(api_key="ak_caller", transport=httpx.MockTransport(handler)) as client:
+            rows = (await client.list_agents()).agents
+            assert len(rows) == 2
+            assert rows[0].metadata == {}
+            assert (await client.get_agent(AGENT_ID)).metadata == {}
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("metadata", [[], "invalid", 7])
+def test_non_object_agent_metadata_remains_invalid(metadata: object) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"agents": [{**AGENT, "metadata": metadata}]})
+    with (
+        Arkova(api_key="ak_caller", transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError),
+    ):
+        client.list_agents()

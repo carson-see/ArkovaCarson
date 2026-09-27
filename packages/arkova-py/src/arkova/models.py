@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SearchType = Literal["all", "org", "record", "fingerprint", "document"]
 SearchResultType = Literal["org", "record", "fingerprint", "document"]
@@ -104,6 +104,11 @@ class Agent(ArkovaModel):
     callback_url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     api_keys: list[AgentKeySummary] | None = None
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_nullable_metadata(cls, value: Any) -> Any:
+        return {} if value is None else value
 
 
 class AgentList(ArkovaModel):

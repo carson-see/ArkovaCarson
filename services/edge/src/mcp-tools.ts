@@ -386,9 +386,14 @@ export async function handleAgentLifecycle(
       return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code, ...(message ? { message } : {}), ...(reason ? { reason } : {}), ...(permitted ? { permitted } : {}), ...(agentId ? { agent_id: agentId } : {}) }));
     }
     const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-    const agent = (value: unknown, requireMetadata = true): boolean => record(value) && typeof value.id === 'string' && value.id.length > 0
+    const agent = (value: unknown, requireMetadata = true): boolean => {
+    if (!record(value)) return false;
+    // The stored metadata column is nullable; an absent value carries no metadata.
+    if (value.metadata === null) value.metadata = {};
+    return typeof value.id === 'string' && value.id.length > 0
       && typeof value.name === 'string' && typeof value.agent_type === 'string' && typeof value.status === 'string'
       && Array.isArray(value.allowed_scopes) && value.allowed_scopes.every(scope => typeof scope === 'string') && (!requireMetadata || record(value.metadata));
+  };
     const keyFields = (value: Record<string, unknown>): boolean => typeof value.key === 'string' && value.key.length > 0
       && typeof value.key_id === 'string' && value.key_id.length > 0 && typeof value.key_prefix === 'string' && value.key_prefix.length > 0
       && Array.isArray(value.scopes) && value.scopes.every(scope => typeof scope === 'string') && typeof value.warning === 'string' && value.warning.length > 0;

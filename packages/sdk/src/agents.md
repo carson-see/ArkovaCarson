@@ -156,3 +156,5 @@ UAT-23 `anchorImport()` is additive and distinct from legacy `anchorBulk()`: 1â€
 `anchorImport()` now maps the response field-by-field instead of spreading, so
 the wire's `recipient_link_failed` never leaks onto the typed surface next to its
 camelCase twin; a missing field reads as 0.
+
+Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.

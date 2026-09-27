@@ -137,3 +137,5 @@ single-leaf tree (`leaf_count=1`, `merkle_index=0`, root equals fingerprint).
 All other empty branches still fail closed to `proof_bundle=None`. The repair
 was first packaged as 2.5.1 and is folded into the unreleased 2.6.0 combined
 candidate; publishing is not authorized here.
+
+Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.

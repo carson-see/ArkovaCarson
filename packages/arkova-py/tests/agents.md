@@ -91,3 +91,5 @@ Sync and async proof readers accept the producer's complete singleton shape:
 empty branch, count one, index zero, and case-insensitive root=fingerprint.
 Focused negatives pin missing/null branches, multi-leaf empties, wrong indexes,
 and root mismatches as fail-closed `None` results.
+
+Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.

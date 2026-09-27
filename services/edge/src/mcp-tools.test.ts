@@ -70,6 +70,18 @@ describe('generic agent lifecycle worker proxy', () => {
     expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(`https://worker.test${path}`,expect.objectContaining({method,redirect:'manual',headers:expect.objectContaining({'X-API-Key':'ak_test_caller'})}));
   });
+  it('lists agents with null metadata without hiding the entire list',async()=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata:null},agent]}));
+    const result=await handleAgentLifecycle('list',{},config);
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text).agents).toEqual([{...agent,metadata:{}},agent]);
+  });
+  it.each([[], 'invalid', 7])('rejects non-object agent metadata %j',async metadata=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata}]}));
+    const result=await handleAgentLifecycle('list',{},config);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
   it('preserves the one-time admission key when the worker canonicalizes an uppercase passport UUID', async () => {
     const passportUpper = 'BBBBBBBB-0000-4000-8000-000000000001';
     const passportCanonical = passportUpper.toLowerCase();

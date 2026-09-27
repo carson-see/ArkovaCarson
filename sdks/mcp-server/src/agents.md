@@ -80,3 +80,5 @@ count moved 6 → 9 across these two changes; see the exact-name ratchet in `ind
 ## ComputeID admission UUID identity
 
 Admission response binding compares passport UUIDs case-insensitively, because the worker canonicalizes them to lowercase. Preserve the original request and signed verification receipt; never rewrite signed content to fix a response check. A different UUID still fails closed without exposing the one-time key. Both MCP implementations have positive and mismatched-binding regressions; mutations still make one request only.
+
+Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on generic agent reads so one older row cannot make list/get fail. Generic reads still reject arrays, strings and numbers. ComputeID admission retains its existing minimal projection validation, where metadata is not required; this repair does not add a post-commit rejection for optional admission metadata or rewrite the signed receipt. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
