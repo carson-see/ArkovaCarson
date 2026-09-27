@@ -64,6 +64,108 @@ connector_artifact.anchor_id backlink, which IS correct).
 Tests: `connector-artifact-drain.test.ts`, describe block "defaultMaterializeAnchor — connector
 document-update supersession (founder decision 2026-09-25)".
 
+## 2026-09-26 — PR #3088 review fix (P1): `enqueueSignedDocument` now reconciles a same-envelope declared-hash SIBLING, not just its own row
+
+Follow-up to the entry directly below (content-addressed `external_revision`).
+That change gave the outbound (measured) and inbound (declared) DocuSign
+producers DIFFERENT `enqueue_connector_artifact` dedupe-key slots for the
+SAME envelope — pre-fix, both always wrote `external_revision: null`, so they
+collided on ONE row and the existing F1 conflict/audit/heal block (the
+read-back right after this function's own RPC call) could observe that
+collision directly. Post-content-addressing, that read-back only ever sees
+THIS call's own just-written row (its key can no longer collide with the
+other producer's), so F1 alone stopped detecting anything — an inbound
+declared-hash sibling could persist as a wholly separate, unreconciled row,
+eligible for its own independent drain into its own anchor.
+
+Fix: after the existing F1 block, a NEW lookup queries for any OTHER
+`connector_artifact` row with the same `(org_id, source, external_ref)` but a
+DIFFERENT `external_revision`. When found and eligible (`_direction:
+'inbound'` in its metadata, `anchor_id IS NULL` — the same
+measured-beats-declared precedence and never-touch-a-live-anchor guards F1-
+heal already used), `reconcileDeclaredSibling` retires it: `status='skipped'`
+— pulled out of `connector-artifact-drain.ts`'s `DRAINABLE_STATUSES`
+(`['pending','queued']`) — never a fingerprint/`external_revision` rewrite,
+since that pair is the sibling's own dedupe-key identity and must stay
+stable. Always audits via `audit_events` (`docusign_connector_artifact_
+provenance_superseded` / `..._conflict_unresolved`), and throws (job
+retries) when the sibling isn't provably declared/inbound or can't be
+retired — same fail-closed posture as the pre-existing F1-heal path, just
+applied to a genuinely separate row instead of a shared one.
+
+Symmetric fix on the inbound side (`api/v1/webhooks/docusign.ts`'s
+`enqueueInboundDeclaredHashArtifact` — see that folder's `agents.md`): when
+inbound runs AFTER an already-existing verified-outbound sibling, it retires
+ITS OWN row, never the outbound one — declared can never supersede measured,
+in either arrival order.
+
+TDD: `docusign-envelope-completed.test.ts`'s new `F2 — content-addressed
+dedupe key: inbound-then-outbound sibling reconciliation` describe block
+builds a REAL in-memory `connector_artifact` store that enforces the actual
+`(org_id, source, external_ref, COALESCE(external_revision,''))` unique key
+— the pre-existing mock always handed back whichever row a test configured
+regardless of the key actually written, which is what hid this regression —
+and drives the real, unmodified `enqueueSignedDocument` against it. Confirmed
+red against the pre-fix code (inbound sibling stayed `'pending'`, no audit
+row written); green after the fix. `webhooks/docusign.test.ts`'s stale
+"outbound-then-inbound ordering" test (which assumed `ON CONFLICT DO
+NOTHING` still collapsed both producers onto one row — no longer true post
+content-addressing) was rewritten to assert the new self-retire behavior.
+
+P2 (same PR, migration `0487` review finding): its `-- ROLLBACK:` comment's
+claim that `AND external_revision = fingerprint_sha256` makes a blanket
+`UPDATE ... SET external_revision = NULL WHERE source='docusign'` cohort-
+specific is FALSE once this fix is live (both producers now set that
+equality for every NEW row too) — documented in `supabase/migrations/
+agents.md`'s `0487` review-response addendum rather than in the migration
+file itself, since `.claude/hooks/check-constitution-on-edit.sh`'s never-
+modify-an-existing-migration rule (CLAUDE.md §1.2) blocked the in-file edit
+even though `0487` is confirmed applied nowhere.
+
+## 2026-09-25 — fix/docusign-content-addressed-revision: `docusign-envelope-completed.ts`'s `enqueueSignedDocument` now writes a real `external_revision`
+
+`enqueueSignedDocument`'s call to `enqueue_connector_artifact` (mig 0343) passed
+`p_external_revision: null` unconditionally. In prod this meant every `docusign`
+`connector_artifact` row (27/27) had `external_revision IS NULL`, vs 8/8 populated
+for `google_drive` — degenerating the dedupe key
+`(org_id, source, external_ref, COALESCE(external_revision,''))` from per-VERSION
+to per-ENVELOPE for the whole source. DocuSign Connect's envelope-completed
+payload (`DocusignEnvelopeCompleted`, `integrations/connectors/schemas.ts`) has
+no native revision token (no `documentIdGuid`/`statusChangedDateTime`/
+`completedDateTime`/`sentDateTime`/ETag), and DocuSign itself has no "new
+version of a completed envelope" concept — an amendment is a new envelope. So
+`external_revision` is now set to the SAME server-measured `fingerprint`
+(computed a few lines above, already in scope) this call sends as
+`p_fingerprint_sha256` — content-addressed identity, mirroring the precedent
+Drive already uses for a source with no native revision
+(`DRIVE_REVISION_KINDS` synthetic tokens, `integrations/connectors/
+drive-artifact-producer.ts`). The paired webhook-side inbound call
+(`api/v1/webhooks/docusign.ts`'s `enqueueInboundDeclaredHashArtifact`, see that
+folder's `agents.md`) gets the identical treatment, keyed off the DECLARED hash
+instead of a measured one.
+
+Paired compensating migration `supabase/migrations/
+0484_docusign_content_addressed_external_revision_backfill.sql`
+(`UPDATE connector_artifact SET external_revision = fingerprint_sha256 WHERE
+source='docusign' AND external_revision IS NULL`) is MANDATORY, not optional:
+without it, a genuine post-fix event for one of the 27 pre-existing envelopes
+computes a dedupe key that no longer matches its own existing row's key,
+producing a spurious duplicate. **NOT applied anywhere** (no rig, no staging,
+no prod) — see that migration's header and `supabase/migrations/agents.md`'s
+`(PR #TBD — fix/docusign-content-addressed-revision)` entry.
+
+New tests in `docusign-envelope-completed.test.ts` (`enqueueSignedDocument —
+DS-03 …` describe block): the pre-existing "computes a server-side SHA-256…"
+test's `p_external_revision` assertion changed from `null` to the fingerprint;
+two new cases assert (a) two different documents for the SAME envelope
+produce distinct `external_revision` values and both persist as separate
+rows, and (b) replaying the SAME envelope+fingerprint computes an IDENTICAL
+dedupe key both times (RPC `ON CONFLICT DO NOTHING` collapses it to one row).
+Drive's own call site (`drive-file-changed.ts` / `drive-artifact-producer.ts`)
+is untouched — already populates its own `external_revision` and is
+structurally independent of this change; its test suites were re-run
+unmodified as a regression check (26/26 green, unchanged).
+
 ## 2026-09-13 — SCRUM-4514: `webhook-dlq-report.ts` — first reader of `webhook_dlq`
 
 New job, `POST /jobs/webhook-dlq-report` (Cloud Scheduler HTTP trigger only, same shape as
