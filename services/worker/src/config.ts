@@ -311,6 +311,8 @@ const ConfigSchema = z.object({
    * logged. VALUE is Carson/RTE-provisioned in Secret Manager.
    */
   recipientIdentifierPepper: z.string().min(16).optional(),
+  /** Separate rollout gate: binding the identity key alone must not provision recipients. */
+  enableBulkRecipientProvisioning: boolFlag(false),
   /**
    * Server pepper for keyed HMAC-SHA256 of caller IPs in audit logs
    * (`audit_events.details.querying_ip_hash`). The DPA warrants "hashed IP
@@ -1258,6 +1260,7 @@ function loadConfig(): Config {
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
     recipientIdentifierPepper: process.env.RECIPIENT_IDENTIFIER_PEPPER,
+    enableBulkRecipientProvisioning: process.env.ENABLE_BULK_RECIPIENT_PROVISIONING,
     ipHashPepper: process.env.IP_HASH_PEPPER,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,
@@ -1430,4 +1433,3 @@ export function getNetworkDisplayName(network: 'signet' | 'testnet' | 'testnet4'
 export function adminRateLimitBypassActive(): boolean {
   return config.e2eAdminRateLimitBypass === true && config.nodeEnv !== 'production';
 }
-

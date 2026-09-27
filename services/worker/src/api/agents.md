@@ -1,5 +1,12 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-27 — fixed-A recipient rollback gate
+
+`linkBulkRecipient` checks the default-off `ENABLE_BULK_RECIPIENT_PROVISIONING`
+configuration before hashing, anchor lookup, auth/profile creation, recipient
+linking, or activation email. Fixed-A deliberately retains the stable pepper
+binding for identity compatibility while this switch blocks new effects.
+
 ## 2026-09-21 — `connector-health.ts` gains `reconnect_required_scope_change` (SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)
 
 New `HealthReason`, added alongside the `oauth/drive.ts` cutover from `drive.file` to `drive.readonly`

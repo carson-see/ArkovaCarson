@@ -248,6 +248,20 @@ async function withConfig<T>(
   });
 }
 
+describe('bulk recipient rollout configuration', () => {
+  it.each([undefined, 'false', 'typo'])('does not enable provisioning for %s', async (value) => {
+    await withEnv({ ENABLE_BULK_RECIPIENT_PROVISIONING: value }, async () => {
+      expect((await import('./config.js')).config.enableBulkRecipientProvisioning).toBe(false);
+    });
+  });
+
+  it('requires an explicit true value to enable provisioning', async () => {
+    await withEnv({ ENABLE_BULK_RECIPIENT_PROVISIONING: 'true' }, async () => {
+      expect((await import('./config.js')).config.enableBulkRecipientProvisioning).toBe(true);
+    });
+  });
+});
+
 /**
  * IP_HASH_PEPPER — DPA Schedules 1 + 2 warrant that caller IPs are processed in
  * HASHED form. The public verify + CTDL audit writers pseudonymise `req.ip`
