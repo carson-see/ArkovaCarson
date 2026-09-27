@@ -111,6 +111,7 @@ describe('bin invocation via a real npm-style symlink', () => {
       'arkova_get_submission_status',
       'arkova_import_rows',
       'arkova_list_agents',
+      'arkova_list_anchors',
       'arkova_manage_folders',
       'arkova_register_agent',
       'arkova_revoke_agent',

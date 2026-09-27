@@ -225,10 +225,22 @@ export const agentGetFingerprintSchema = z
 
 export const agentGetDocumentSchema = agentGetAnchorSchema;
 
+export const listAnchorsSchema = z.object({
+  since: z.string().datetime({ offset: true }).optional(),
+  until: z.string().datetime({ offset: true }).optional(),
+  tag: z.string().min(1).max(64).optional(),
+  tag_scope: z.enum(['user', 'organization']).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  cursor: z.string().min(1).max(2048).optional(),
+}).strict().refine((value) => (value.tag === undefined) === (value.tag_scope === undefined), {
+  message: 'tag and tag_scope must be provided together', path: ['tag'],
+});
+
 // ── Registry ─────────────────────────────────────────────────────────────
 export const MCP_TOOL_SCHEMAS = {
   arkova_verify_anchor: verifyCredentialSchema,
   arkova_search_anchors: searchCredentialsSchema,
+  arkova_list_anchors: listAnchorsSchema,
   nessie_query: nessieQuerySchema,
   arkova_anchor_document: anchorDocumentSchema,
   arkova_get_submission_status: submissionStatusSchema,

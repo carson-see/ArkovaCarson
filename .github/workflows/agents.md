@@ -1032,3 +1032,7 @@ collecting a result without iterating it silently drops that suite from the gate
 ## 2026-09-19 — stop rerunning migration drift on PR-body edits
 
 `migration-drift.yml` no longer subscribes to `pull_request.edited`. The workflow reads the checked-out migration tree and live production state; it never reads PR-body evidence. A body edit leaves the head SHA and its existing required-check result unchanged, while `staging-evidence.yml` remains subscribed to `edited` because that workflow does consume the body. This removes repeated WIF, Secret Manager, Supabase API, dependency-install, and ledger-audit jobs without dropping a source, base, or evidence validation. The old Mergify status-edit isolation remains necessary only in `staging-evidence.yml`.
+
+## 2026-09-27 — pinned recipient identity metadata preflight
+
+Worker deploy binds `recipient-identifier-pepper:1` and checks that exact version is ENABLED using metadata only. Missing or disabled versions fail before build; metadata permission failures retain the existing warning/Cloud Run backstop policy. No secret payload is fetched. The separate default-off bulk recipient flag controls activation.

@@ -130,7 +130,8 @@ const UNIQUE_VIOLATION = '23505';
  * tolerant of the picker's current shape and defensive against a malformed
  * or absent `drive_folders` array (e.g. any non-Drive `trigger_config`,
  * which returns `[]` — those rules are entirely unaffected by this module).
- * De-dupes by folder id, keeping the first occurrence.
+ * De-dupes by folder id. Named array selections win because they carry the
+ * user-visible name; the legacy field is accepted only for drive_folder.
  */
 export function extractDriveFoldersToMirror(
   triggerConfig: Record<string, unknown> | null | undefined,
@@ -139,11 +140,6 @@ export function extractDriveFoldersToMirror(
 
   const seen = new Set<string>();
   const out: DriveFolderToMirror[] = [];
-  const legacyFolderId = (triggerConfig as Record<string, unknown> | null | undefined)?.folder_id;
-  if (typeof legacyFolderId === 'string' && legacyFolderId.length > 0) {
-    seen.add(legacyFolderId);
-    out.push({ folderId: legacyFolderId, folderName: null });
-  }
   for (const entry of Array.isArray(raw) ? raw : []) {
     if (!entry || typeof entry !== 'object') continue;
     const folderId = (entry as Record<string, unknown>).folder_id;
@@ -154,6 +150,11 @@ export function extractDriveFoldersToMirror(
       folderId,
       folderName: typeof folderNameRaw === 'string' && folderNameRaw.trim().length > 0 ? folderNameRaw : null,
     });
+  }
+  const config = triggerConfig as Record<string, unknown> | null | undefined;
+  const legacyFolderId = config?.folder_id;
+  if (config?.type === 'drive_folder' && typeof legacyFolderId === 'string' && legacyFolderId.length > 0 && !seen.has(legacyFolderId)) {
+    out.push({ folderId: legacyFolderId, folderName: null });
   }
   return out;
 }

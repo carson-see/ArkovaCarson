@@ -78,6 +78,7 @@ function isConnectorManagedActionConfig(actionConfig: unknown): boolean {
 async function mirrorDriveFoldersForRuleWrite(
   orgId: string,
   actorUserId: string,
+  ruleId: string,
   triggerType: string,
   triggerConfig: unknown,
   actionConfig: unknown,
@@ -88,7 +89,7 @@ async function mirrorDriveFoldersForRuleWrite(
   try {
     return await mirrorConnectedDriveFolders(
       { db: db as unknown as DriveFolderMirrorDb, logger },
-      { orgId, actorUserId, folders },
+      { orgId, actorUserId, ruleId, folders },
     );
   } catch (error: unknown) {
     logger.warn({ error, orgId }, 'drive-folder-mirror wiring failed');
@@ -774,6 +775,7 @@ export async function handleCreateRule(
       mirrorResults = await mirrorDriveFoldersForRuleWrite(
         orgId,
         userId,
+        newId,
         parsed.data.trigger_type,
         parsed.data.trigger_config,
         parsed.data.action_config,
@@ -1099,7 +1101,7 @@ export async function handleUpdateRule(
     if (parsed.patch.trigger_config) {
       const triggerType = validation.currentTriggerType;
       if (triggerType) {
-        mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, triggerType, parsed.patch.trigger_config, actionConfig);
+        mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, parsed.ruleId, triggerType, parsed.patch.trigger_config, actionConfig);
       }
     }
     res.json(mirrorResults !== null ? { ok: true, drive_folder_mirror: mirrorResults } : { ok: true });

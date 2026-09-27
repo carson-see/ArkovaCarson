@@ -86,7 +86,7 @@ A healthy server replies with its `serverInfo` and all 17 tool definitions. The 
 
 ## Tools
 
-17 tools total. The server reads `ARKOVA_API_KEY` once for authentication, and each tool calls the configured Arkova API endpoint. Tools do not read local files or other stored secrets.
+18 tools total. The server reads `ARKOVA_API_KEY` once for authentication, and each tool calls the configured Arkova API endpoint. Tools do not read local files or other stored secrets.
 
 | Tool | Description |
 |------|-------------|
@@ -95,6 +95,7 @@ A healthy server replies with its `serverInfo` and all 17 tool definitions. The 
 | `arkova_verify_anchor` | Verify an anchored record's authenticity and network anchor status by public ID |
 | `arkova_anchor_status` | Get anchor status and proof details for an anchored record |
 | `arkova_search_anchors` | Search the Arkova public registry by subject name, issuing institution, or record type |
+| `arkova_list_anchors` | List private organization-visible records with time and scoped private-tag filters; requires `read:records` |
 | `arkova_create_attestation` | Create a third-party attestation (requires `attester_name` and a non-empty `claims` array; any authenticated API key, not just org admins) |
 | `arkova_batch_verify` | Verify up to 20 public IDs at once; results returned inline |
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |

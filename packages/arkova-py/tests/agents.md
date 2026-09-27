@@ -5,6 +5,7 @@ Tests for the Arkova Python SDK.
 ## Files
 - **`conftest.py`** — puts `src/` on `sys.path` for repo-checkout runs (no `pip install -e .` needed).
 - **`test_client.py`** — pytest tests for sync/async clients: search, verify, `anchor()`/`anchor_bulk()` write path (HAKI-REQ-02 — cap boundary, mixed fingerprint+data rows, dry-run, per-row errors, 409/402 error codes), auth header, User-Agent (tracks installed package version, "unknown" in uninstalled checkouts), error handling, retry logic. Its last block (search `BUG-2026-08-12-007`) is the
+- `list_anchors()` tests pin sync/async `/api/v1/anchors` projection, paired private-tag filters, timezone validation, pagination, and zero-network client validation failures.
   wire-contract ratchet for `compliance_controls`: a prod-shaped
   `GET /api/v1/verify/{public_id}` body built from the worker source (not a
   sample response), the omitted / explicit-null control paths that kept working

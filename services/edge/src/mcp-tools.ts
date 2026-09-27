@@ -93,6 +93,8 @@ export interface ToolInputSchemaProperty {
   maxItems?: number;
   minLength?: number;
   maxLength?: number;
+  minimum?: number;
+  maximum?: number;
   pattern?: string;
   properties?: Record<string, ToolInputSchemaProperty>;
   required?: string[];
@@ -367,6 +369,9 @@ export async function handleAgentLifecycle(
   if (!config.workerBaseUrl || (!!config.callerApiKey === !!config.callerAuthorization)) {
     return errorResult(JSON.stringify({ error: 'agent_operation_unavailable', code: 'AUTH_FORWARDING_REQUIRED' }));
   }
+  if (['register', 'create_key', 'admit_computeid'].includes(operation) && !config.callerApiKey) {
+    return errorResult(JSON.stringify({ error: 'agent_operation_unavailable', code: 'API_KEY_AUTH_REQUIRED' }));
+  }
   const id = input.agent_id ? encodeURIComponent(input.agent_id) : '';
   const route = operation === 'register' || operation === 'list' ? '/api/v1/agents'
     : operation === 'admit_computeid' ? '/api/v1/agents/computeid/admit'
@@ -431,6 +436,59 @@ export async function handleAgentLifecycle(
     // network errors. The stable code is sufficient for callers and telemetry.
     void error;
     return errorResult(JSON.stringify({ error:'agent_operation_failed', code:'AGENT_TRANSPORT_ERROR' }));
+  }
+}
+
+export interface AnchorListInput {
+  since?: string; until?: string; tag?: string; tag_scope?: 'user'|'organization';
+  limit?: number; cursor?: string;
+}
+
+export async function handleListAnchors(input: AnchorListInput, config: SupabaseConfig): Promise<ToolResult> {
+  if (!config.workerBaseUrl || !config.callerApiKey || config.callerAuthorization) {
+    return errorResult(JSON.stringify({ error: 'anchor_list_unavailable', code: 'API_KEY_REQUIRED' }));
+  }
+  const params = new URLSearchParams({ limit: String(input.limit ?? 50) });
+  for (const key of ['since','until','tag','tag_scope','cursor'] as const) {
+    const value = input[key]; if (value !== undefined) params.set(key, String(value));
+  }
+  try {
+    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}/api/v1/anchors?${params}`, {
+      method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS),
+      headers: { 'X-API-Key': config.callerApiKey },
+    });
+    if (response.status >= 300 && response.status < 400) return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_REDIRECT' }));
+    const raw = await response.text();
+    if (raw.length > 262_144) return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_RESPONSE_TOO_LARGE' }));
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_INVALID_RESPONSE' })); }
+    if (!response.ok) {
+      const source = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+      const nested = source.error && typeof source.error === 'object' ? source.error as Record<string, unknown> : source;
+      const code = typeof nested.code === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(nested.code) ? nested.code : 'UPSTREAM_ERROR';
+      return errorResult(JSON.stringify({ error: 'anchor_list_failed', status: response.status, code }));
+    }
+    const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    const anchors = record?.anchors;
+    const valid = (value: unknown): boolean => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const row = value as Record<string, unknown>;
+      const allowed = new Set(['public_id','status','created_at','updated_at','filename','description']);
+      const statuses = new Set(['PENDING','BROADCASTING','SUBMITTED','SECURED','REVOKED','EXPIRED','SUPERSEDED','PENDING_RESOLUTION']);
+      const zoned = (item: unknown): item is string => typeof item === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(item);
+      return Object.keys(row).every(key => allowed.has(key)) && typeof row.public_id === 'string'
+        && typeof row.status === 'string' && statuses.has(row.status) && zoned(row.created_at) && zoned(row.updated_at)
+        && typeof row.filename === 'string'
+        && (row.description === null || row.description === undefined || typeof row.description === 'string');
+    };
+    if (!Array.isArray(anchors) || !anchors.every(valid)
+      || (record?.next_cursor !== null && record?.next_cursor !== undefined && typeof record?.next_cursor !== 'string')
+      || Object.keys(record ?? {}).some(key => key !== 'anchors' && key !== 'next_cursor')) {
+      return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_INVALID_RESPONSE' }));
+    }
+    return textResult(record);
+  } catch {
+    return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'ANCHOR_LIST_TRANSPORT_ERROR' }));
   }
 }
 
@@ -921,11 +979,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: [],
     },
   },
-  { name:'arkova_register_agent', description:'Register a generic agent. Requires agents:manage; metadata.computeid is provider-managed.', inputSchema:{ type:'object', properties:{ name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Optional description.',maxLength:1000},agent_type:{type:'string',description:'Agent type.',enum:['llm_agent','ats_integration','hr_platform','compliance_tool','custom']},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:'string',description:'HTTPS callback URL.'},metadata:{type:'object',description:'Generic metadata without computeid.'}},required:['name']} },
+  {
+    name: 'arkova_list_anchors',
+    description: 'List private anchored records visible to the caller organization API key. Requires read:records. Private tag filters require tag and tag_scope together; tags and internal identifiers are never returned.',
+    inputSchema: { type: 'object', properties: {
+      since: { type: 'string', description: 'Inclusive RFC3339 timestamp with timezone.' }, until: { type: 'string', description: 'Exclusive RFC3339 timestamp with timezone.' },
+      tag: { type: 'string', description: 'Exact private tag, 1-64 characters.', minLength: 1, maxLength: 64 }, tag_scope: { type: 'string', enum: ['user','organization'], description: 'Private tag scope.' },
+      limit: { type: 'integer', description: 'Page size, 1-100.', minimum: 1, maximum: 100 }, cursor: { type: 'string', description: 'Opaque cursor from the previous response.', maxLength: 2048 },
+    }, required: [] },
+  },
+  { name:'arkova_register_agent', description:'Register a generic agent. Hosted MCP requires API-key authentication with agents:manage; metadata.computeid is provider-managed.', inputSchema:{ type:'object', properties:{ name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Optional description.',maxLength:1000},agent_type:{type:'string',description:'Agent type.',enum:['llm_agent','ats_integration','hr_platform','compliance_tool','custom']},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:'string',description:'HTTPS callback URL.'},metadata:{type:'object',description:'Generic metadata without computeid.'}},required:['name']} },
   { name:'arkova_get_agent', description:'Get one generic agent and active key summaries.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
   { name:'arkova_update_agent', description:'Update or suspend/resume a generic agent. Revocation is terminal.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'},name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Description.',maxLength:1000},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},status:{type:'string',description:'Status.',enum:['active','suspended']},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:['string','null'],description:'HTTPS callback URL or null.'}},required:['agent_id']} },
   { name:'arkova_revoke_agent', description:'Permanently revoke a generic agent and its keys.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
-  { name:'arkova_create_agent_key', description:'Create a key for an active generic agent. The returned key is a one-time secret; capture it directly into a secret store.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  { name:'arkova_create_agent_key', description:'Create a key for an active generic agent. Hosted MCP requires API-key authentication. The returned key is a one-time secret; capture it directly into a secret store.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
   {
     name: 'arkova_admit_computeid_agent',
     description: 'Admit a provider-bound agent using a signed ComputeID verification receipt. Requires an organization API key. The returned key is a one-time secret.',

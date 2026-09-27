@@ -30,8 +30,11 @@ export type ConnectorHealthReason =
   | 'changes_list_never_succeeded'
   | 'file_access_not_granted'
   | 'changes_gap'
+  | 'folder_mirror_failed'
   | 'fetch_job_failures'
   | 'processing_failure'
+  | 'oauth_client_mismatch'
+  | 'reconnect_required_scope_change'
   | 'none';
 
 /**
@@ -46,6 +49,9 @@ export interface ConnectorHealthEntry {
   state: ConnectorHealthState;
   health_reason: ConnectorHealthReason | null;
   last_error: string | null;
+  last_event_at: string | null;
+  last_renewal_at: string | null;
+  next_expires_at: string | null;
 }
 
 const UNKNOWN_HEALTH = (id: string): ConnectorHealthEntry => ({
@@ -53,6 +59,9 @@ const UNKNOWN_HEALTH = (id: string): ConnectorHealthEntry => ({
   state: 'unknown',
   health_reason: null,
   last_error: null,
+  last_event_at: null,
+  last_renewal_at: null,
+  next_expires_at: null,
 });
 
 const KNOWN_STATES = new Set(['connected', 'degraded', 'disconnected']);
@@ -62,6 +71,9 @@ function isHealthRow(value: unknown): value is {
   state: 'connected' | 'degraded' | 'disconnected';
   health_reason: unknown;
   last_error: unknown;
+  last_event_at?: unknown;
+  last_renewal_at?: unknown;
+  next_expires_at?: unknown;
 } {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
@@ -105,6 +117,9 @@ export function useConnectorHealth() {
           state: row.state,
           health_reason: (row.health_reason as ConnectorHealthReason | null) ?? null,
           last_error: typeof row.last_error === 'string' ? row.last_error : null,
+          last_event_at: typeof row.last_event_at === 'string' ? row.last_event_at : null,
+          last_renewal_at: typeof row.last_renewal_at === 'string' ? row.last_renewal_at : null,
+          next_expires_at: typeof row.next_expires_at === 'string' ? row.next_expires_at : null,
         });
       }
       setById(next);
@@ -155,10 +170,16 @@ export function describeConnectorHealthReason(reason: ConnectorHealthReason | nu
       return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_FILE_ACCESS_NOT_GRANTED;
     case 'changes_gap':
       return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_CHANGES_GAP;
+    case 'folder_mirror_failed':
+      return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_FOLDER_MIRROR_FAILED;
     case 'fetch_job_failures':
       return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_FETCH_JOB_FAILURES;
     case 'processing_failure':
       return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_PROCESSING_FAILURE;
+    case 'oauth_client_mismatch':
+      return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_OAUTH_CLIENT_MISMATCH;
+    case 'reconnect_required_scope_change':
+      return CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_RECONNECT_REQUIRED_SCOPE_CHANGE;
     case 'none':
     case null:
     default:

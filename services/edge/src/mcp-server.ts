@@ -49,6 +49,7 @@ import {
   handleAgentGetOrganization,
   handleManageFolders,
   handleAgentLifecycle,
+  handleListAnchors,
   type SupabaseConfig,
   type ToolResult,
   type ImportRowsInput,
@@ -197,8 +198,14 @@ export interface RequestTelemetryContext {
 type AnyArgs = Record<string, any>;
 const LIFECYCLE_TOOL_NAMES = new Set(['arkova_register_agent','arkova_list_agents','arkova_get_agent','arkova_update_agent','arkova_revoke_agent','arkova_create_agent_key','arkova_admit_computeid_agent']);
 export function projectMcpAuditArgs(toolName: string, args: AnyArgs): Record<string, unknown> {
+  if (toolName === 'arkova_list_anchors') {
+    return {
+      ...(typeof args?.tag_scope === 'string' ? { tag_scope: args.tag_scope } : {}),
+      ...(typeof args?.limit === 'number' ? { limit: args.limit } : {}),
+    };
+  }
   if (!LIFECYCLE_TOOL_NAMES.has(toolName)) return args;
-  const uuid = (value: unknown): string | undefined => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : undefined;
+  const uuid = (value: unknown): string | undefined => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : undefined;
   if (toolName === 'arkova_admit_computeid_agent') return uuid(args?.passport_id) ? { passport_id: args.passport_id } : {};
   return uuid(args?.agent_id) ? { agent_id: args.agent_id } : {};
 }
@@ -665,6 +672,15 @@ export function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetr
   ];
   for (const [name, shape, operation] of agentTools) tool(name, TOOL_DESC[name], shape,
     withTelemetry(name, async (args) => handleAgentLifecycle(operation, args, config), telemetry));
+
+  tool('arkova_list_anchors', TOOL_DESC.arkova_list_anchors, {
+    since:z.string().datetime({offset:true}).optional(), until:z.string().datetime({offset:true}).optional(),
+    tag:z.string().min(1).max(64).optional(), tag_scope:z.enum(['user','organization']).optional(),
+    limit:z.number().int().min(1).max(100).default(50), cursor:z.string().min(1).max(2048).optional(),
+  }, withTelemetry('arkova_list_anchors', async (args) => {
+    if ((args.tag === undefined) !== (args.tag_scope === undefined)) return { content:[{type:'text' as const,text:JSON.stringify({error:'INVALID_ARGS',message:'tag and tag_scope must be provided together'})}],isError:true };
+    return handleListAnchors(args, config);
+  }, telemetry));
 
   tool(
     'arkova_manage_folders',

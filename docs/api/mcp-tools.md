@@ -57,6 +57,7 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 13 | **`arkova_verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
 | 14 | `arkova_oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
 | 15 | `arkova_list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
+| 15a | `arkova_list_anchors` | API-key-only private record listing with time and scoped private-tag filters | Client parity |
 | 16 | **`arkova_manage_folders`** | **List and manage nested personal or organization record folders** | **SCRUM-5142** |
 | 17 | **`arkova_get_submission_status`** | **Read caller-scoped durable queue/instant state; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-12** |
 | 18 | `arkova_anchor_document` | Submit a client-computed fingerprint; hosted edge registration is conditional on `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus `write:anchors` or `anchor:write` | UAT-12 |

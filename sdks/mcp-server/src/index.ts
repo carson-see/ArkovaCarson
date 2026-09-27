@@ -33,7 +33,7 @@ interface McpToolDefinition {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: string | string[]; description: string; enum?: string[]; format?: string; items?: { type: string }; properties?: Record<string, unknown>; additionalProperties?: boolean }>;
+    properties: Record<string, { type: string | string[]; description: string; enum?: string[]; format?: string; maxLength?: number; items?: { type: string }; properties?: Record<string, unknown>; additionalProperties?: boolean }>;
     required: string[];
   };
 }
@@ -226,6 +226,22 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: 'arkova_list_anchors',
+    description: 'List private anchored records visible to the configured organization API key. Requires read:records. Private tag filters require both tag and tag_scope; tags are never returned.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        since: { type: 'string', description: 'Inclusive RFC3339 timestamp with timezone' },
+        until: { type: 'string', description: 'Exclusive RFC3339 timestamp with timezone' },
+        tag: { type: 'string', description: 'Exact private tag (1-64 characters)' },
+        tag_scope: { type: 'string', enum: ['user', 'organization'], description: 'Private tag ownership scope' },
+        limit: { type: 'integer', description: 'Page size from 1 to 100 (default 50)' },
+        cursor: { type: 'string', description: 'Opaque cursor returned by the previous page', maxLength: 2048 },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'arkova_create_attestation',
     description: 'Create a third-party attestation that a record or entity has been verified. Any authenticated API key may create one — this does not require organization admin privileges.',
     inputSchema: {
@@ -344,6 +360,8 @@ export async function handleToolCall(
         return await handleGetCredentialStatus(stringArgs.public_id);
       case 'arkova_search_anchors':
         return await handleSearchCredentials(stringArgs.query, parseLimit(stringArgs.limit));
+      case 'arkova_list_anchors':
+        return await handleListAnchors(args);
       case 'arkova_create_attestation':
         return await handleCreateAttestation(stringArgs);
       case 'arkova_batch_verify':
@@ -364,6 +382,60 @@ export async function handleToolCall(
   }
 }
 
+function validRfc3339(value: unknown): value is string {
+  return typeof value === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+async function handleListAnchors(args: Record<string, unknown>): Promise<McpToolResult> {
+  const { since, until, tag, tag_scope: tagScope, cursor } = args;
+  const rawLimit = args.limit;
+  const limit = rawLimit === undefined ? 50
+    : typeof rawLimit === 'number' ? rawLimit
+      : typeof rawLimit === 'string' && /^\d{1,3}$/.test(rawLimit) ? Number(rawLimit) : Number.NaN;
+  if ((since !== undefined && !validRfc3339(since)) || (until !== undefined && !validRfc3339(until))
+      || !Number.isInteger(limit) || limit < 1 || limit > 100
+      || (tag === undefined) !== (tagScope === undefined)
+      || (tag !== undefined && (typeof tag !== 'string' || tag.length < 1 || tag.length > 64))
+      || (tagScope !== undefined && tagScope !== 'user' && tagScope !== 'organization')
+      || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 2048))) {
+    return errorResult('Invalid private anchor list filters');
+  }
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (since) params.set('since', since as string);
+  if (until) params.set('until', until as string);
+  if (tag) { params.set('tag', tag as string); params.set('tag_scope', tagScope as string); }
+  if (cursor) params.set('cursor', cursor as string);
+  try {
+    const response = await arkovaFetch(`/api/v1/anchors?${params.toString()}`);
+    const raw = await response.text();
+    if (raw.length > 262_144) return errorResult('Anchor list response was too large');
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return errorResult('Anchor list returned an invalid response'); }
+    if (!response.ok) return errorResult(`Anchor list failed with HTTP ${response.status}`);
+    const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+    const anchors = record?.anchors;
+    const validItem = (item: unknown): boolean => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const row = item as Record<string, unknown>;
+      const allowed = new Set(['public_id','status','created_at','updated_at','filename','description']);
+      const statuses = new Set(['PENDING','BROADCASTING','SUBMITTED','SECURED','REVOKED','EXPIRED','SUPERSEDED','PENDING_RESOLUTION']);
+      return Object.keys(row).every(key => allowed.has(key))
+        && typeof row.public_id === 'string' && typeof row.status === 'string' && statuses.has(row.status)
+        && validRfc3339(row.created_at) && validRfc3339(row.updated_at)
+        && typeof row.filename === 'string'
+        && (row.description === null || row.description === undefined || typeof row.description === 'string');
+    };
+    if (!record || !Array.isArray(anchors) || !anchors.every(validItem)
+        || (record?.next_cursor !== null && record?.next_cursor !== undefined && typeof record?.next_cursor !== 'string')) {
+      return errorResult('Anchor list returned an invalid response');
+    }
+    if (Object.keys(record).some(key => key !== 'anchors' && key !== 'next_cursor')) return errorResult('Anchor list returned an invalid response');
+    return textResult(JSON.stringify(record));
+  } catch {
+    return errorResult('Anchor list request failed');
+  }
+}
+
 async function handleSubmissionStatus(publicId: string): Promise<McpToolResult> {
   if (!publicId) return errorResult('public_id is required');
   const res = await arkovaFetch(`/api/v1/anchor/${encodeURIComponent(publicId)}/submission-status`);
@@ -377,7 +449,7 @@ async function handleSubmissionStatus(publicId: string): Promise<McpToolResult> 
 
 const AGENT_SCOPES = new Set(['read:records','read:orgs','read:search','write:anchors','admin:rules','verify','verify:batch','usage:read','keys:manage','compliance:read','compliance:write','oracle:read','oracle:write','anchor:write','anchor:read','attestations:write','attestations:read','webhooks:manage','agents:manage','keys:read','orgs:manage']);
 const COMPUTEID_SCOPES = new Set(['verify','verify:batch','anchor:write','write:anchors','anchor:read','read:records','read:search']);
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Keep permission-denial recovery useful without reflecting arbitrary response data.
 function scopeErrorDetails(value: unknown): Record<string, unknown> {

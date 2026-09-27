@@ -334,6 +334,54 @@ paths:
         "503":
           description: ENABLE_VERIFICATION_API is off (worker-wide gate)
 
+  /anchors:
+    get:
+      operationId: listAnchors
+      summary: List private organization anchors
+      description: Lists anchors for the organization bound to the current API key. Since is inclusive and until is exclusive. Tags and fingerprints are never returned.
+      tags: [Anchoring]
+      x-arkova-required-scopes: ["read:records"]
+      security:
+        - apiKey: []
+      parameters:
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { name: tag, in: query, schema: { type: string, minLength: 1, maxLength: 64 } }
+        - name: tag_scope
+          in: query
+          description: Required with tag; tag is required with tag_scope.
+          schema: { type: string, enum: [user, organization] }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+      responses:
+        "200":
+          description: A page of private organization anchors
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [anchors, next_cursor]
+                properties:
+                  anchors:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [public_id, status, created_at, updated_at, filename, description]
+                      properties:
+                        public_id: { type: string }
+                        status: { type: string }
+                        created_at: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
+                        filename: { type: string }
+                        description: { type: string, nullable: true }
+                  next_cursor: { type: string, nullable: true }
+        "400": { description: Invalid filter or cursor }
+        "401": { description: API key required }
+        "403": { description: Current key scope or organization access denied }
+        "503": { description: Anchor list temporarily unavailable }
+
   /anchor:
     post:
       operationId: anchorDocument

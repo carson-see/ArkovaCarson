@@ -24,6 +24,7 @@ import {
   handleGetSubmissionStatus,
   handleImportRows,
   handleAgentLifecycle,
+  handleListAnchors,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -50,6 +51,24 @@ const mockFetch = vi.fn();
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
+});
+
+describe('private anchor list worker proxy', () => {
+  const config = { ...CONFIG, workerBaseUrl: 'https://worker.test', callerApiKey: 'ak_test_caller' };
+  it('forwards one API key and returns only the canonical projection', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [{ public_id:'ARK-1',status:'SECURED',created_at:'2026-09-27T10:00:00Z',updated_at:'2026-09-27T11:00:00Z',filename:'proof.pdf',description:null }], next_cursor:null }));
+    const result = await handleListAnchors({ tag:'audit',tag_scope:'organization',limit:25 }, config);
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith('https://worker.test/api/v1/anchors?limit=25&tag=audit&tag_scope=organization', expect.objectContaining({ method:'GET',headers:{'X-API-Key':'ak_test_caller'} }));
+    expect(result.content[0].text).not.toContain('tag');
+  });
+  it('requires API-key-only forwarding and rejects unsafe response fields', async () => {
+    expect((await handleListAnchors({}, {...config,callerAuthorization:'Bearer jwt'})).isError).toBe(true);
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [{ public_id:'ARK-1',status:'SECURED',created_at:'now',updated_at:'now',filename:'proof.pdf',description:null,org_id:'secret' }],next_cursor:null }));
+    const result=await handleListAnchors({},config);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
 });
 
 describe('generic agent lifecycle worker proxy', () => {
@@ -128,11 +147,12 @@ describe('generic agent lifecycle worker proxy', () => {
     expect(payload.code).toBe('insufficient_scope');
     for (const field of ['required','missing','granted','permitted']) expect(payload).not.toHaveProperty(field);
   });
-  it('forwards only a verified bearer and preserves safe nested admission fields', async () => {
-    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'no_permitted_scopes',message:'Admission requires an organization API key.',reason:'scope_ceiling',permitted:['verify']}}),{status:403}));
-    const result=await handleAgentLifecycle('admit_computeid',{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}},{...CONFIG,workerBaseUrl:'https://worker.test',callerAuthorization:'Bearer jwt'});
-    expect(mockFetch).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({headers:expect.objectContaining({Authorization:'Bearer jwt'})}));
-    expect(result.content[0].text).toContain('no_permitted_scopes'); expect(result.content[0].text).toContain('Admission requires an organization API key.'); expect(result.content[0].text).toContain('verify');
+  it.each(['register','create_key','admit_computeid'] as const)('keeps raw-key-sensitive %s unavailable to hosted JWT callers', async operation => {
+    const input = operation === 'register' ? {name:'Agent'} : operation === 'create_key' ? {agent_id:agent.id} : {passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}};
+    const result=await handleAgentLifecycle(operation,input,{...CONFIG,workerBaseUrl:'https://worker.test',callerAuthorization:'Bearer jwt'});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('API_KEY_AUTH_REQUIRED');
+    expect(mockFetch).not.toHaveBeenCalled();
   });
   it('does not log a caller key embedded in a transport exception', async () => { const spy=vi.spyOn(console,'error').mockImplementation(()=>{}); mockFetch.mockRejectedValueOnce(new Error('ak_test_caller https://internal')); const result=await handleAgentLifecycle('list',{},config); expect(result.content[0].text).toContain('AGENT_TRANSPORT_ERROR'); expect(spy.mock.calls.flat().join(' ')).not.toContain('ak_test_caller'); spy.mockRestore(); });
   it('fails closed once when a one-time key response is lost', async () => { mockFetch.mockResolvedValueOnce(new Response('{}',{status:201})); const result=await handleAgentLifecycle('create_key',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'},config); expect(result.isError).toBe(true); expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE'); expect(mockFetch).toHaveBeenCalledTimes(1); });

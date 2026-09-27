@@ -344,6 +344,23 @@
       }
     },
     {
+      "name": "arkova_list_anchors",
+      "description": "List private anchored records visible to the caller organization API key. Requires read:records. Private tag filters require tag and tag_scope together; tags and internal identifiers are never returned.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": { "type": "string" },
+          "until": { "type": "string" },
+          "tag": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "tag_scope": { "type": "string", "enum": ["user", "organization"] },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "cursor": { "type": "string", "maxLength": 2048 }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "nessie_query",
       "description": "DISABLED. Arkova's Nessie intelligence engine is not currently served: this tool returns an explicit `nessie_disabled` error, never results. It does not search, and an empty answer from it must not be read as \"no matching documents\". Use `arkova_search` or `arkova_search_anchors` for record lookup instead.",
       "inputSchema": {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 — unreleased candidate
+
+- Add explicit private anchor listing with date, private-tag scope, limit, and cursor filters. This remains part of the private candidate and is not a public CLI release.
+
 All notable changes to the `arkova-api-cli` package. This file starts at 0.2.0;
 for anything earlier, see `git log -- packages/api-cli/`. Versions are released
 independently from the `arkova` TypeScript SDK, the `arkova-mcp-server` npm

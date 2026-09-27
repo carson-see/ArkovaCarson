@@ -51,7 +51,8 @@ timestamp (§1.5 — measured vs asserted).
 - Zero runtime dependencies (only `node:crypto`). Keep it that way — the whole
   point is a verifier that runs anywhere with no Arkova coupling.
 - Never throws on a failed/uncooperative node — every failure maps to a
-  `ConfirmInclusionStatus`. The result reports what was actually found on chain
+  `ConfirmInclusionStatus`. Transport exceptions and HTTP 401/403/408/429/5xx map to
+  `node_unavailable`, never to a cryptographic/absence status. The result reports what was actually found on chain
   (e.g. the real extracted root on a payload mismatch) per §1.5 honesty.
 
 ## Esplora endpoints used (read-only)

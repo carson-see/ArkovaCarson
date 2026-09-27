@@ -272,8 +272,10 @@ meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0
   the key or full URL. Bearer callers (no raw key) degrade to text fallback.
 - **Graceful degrade:** any worker network/HTTP/shape failure → `null` →
   `nessieTextFallback` (PR-1 lowercase sources). The tool never throws.
-- **New env var `WORKER_BASE_URL`** (`env.ts`, `wrangler.toml`): OPTIONAL.
-  When unset (local dev / preview) nessie_query stays on text fallback. Set the
+- **New env var `WORKER_BASE_URL`** (`env.ts`, `wrangler.toml`): optional only
+  for the Nessie text fallback; required for all seven agent lifecycle tools.
+  When unset (local dev / preview) nessie_query stays on text fallback and
+  agent lifecycle tools return `AUTH_FORWARDING_REQUIRED`. Set the
   prod value at deploy — NOT hardcoded in source:
   `wrangler deploy --var WORKER_BASE_URL:https://api.arkova.ai`.
 - **Tests (`mcp-tools.test.ts`, `describe('handleNessieQuery worker proxy')`):**
@@ -438,7 +440,7 @@ Cloudflare Workers deployment at `edge.arkova.ai`. Handles MCP server, AI fallba
 - All internal routes require `X-Cron-Secret` header
 - Secret comparison uses constant-time algorithm to prevent timing attacks
 - No public ports — ingress via Cloudflare only
-- MCP server: API key (`X-API-Key`) OR Supabase JWT (`Authorization: Bearer`). `validateApiKey` + `validateBearer` race in parallel; first success wins. `validateBearer` verifies the Supabase JWT locally with `SUPABASE_JWT_SECRET` (`HS256`, `exp`, `iat`, `aud=authenticated`, `iss={SUPABASE_URL}/auth/v1`) before it calls `/auth/v1/user`, then rejects any response whose `user.id` does not match the JWT `sub`. User-id is threaded into a `ScopedConfig` object and passed to every tool handler so tools can org-scope (see `get_agents_for_user` pattern below).
+- MCP server: API key (`X-API-Key`) OR Supabase JWT (`Authorization: Bearer`). Presenting both distinct credentials is rejected; an exact duplicate API key in both supported header forms is normalized once. Validation waits for every presented credential and fails closed on any invalid or ambiguous combination. Hosted `register_agent`, `create_agent_key`, and `admit_computeid_agent` require API-key authentication so a one-time secret is never returned into a JWT-backed model session. `validateBearer` verifies the Supabase JWT locally with `SUPABASE_JWT_SECRET` (`HS256`, `exp`, `iat`, `aud=authenticated`, `iss={SUPABASE_URL}/auth/v1`) before it calls `/auth/v1/user`, then rejects any response whose `user.id` does not match the JWT `sub`. User-id is threaded into a `ScopedConfig` object and passed to every tool handler so tools can org-scope (see `get_agents_for_user` pattern below).
 - MCP tool errors: pass through `safeErrorText(err, context)` — never return `String(err)` directly (stack traces + URLs leak). Detail goes to `console.error`; clients get `{error, code: 'TOOL_ERROR'}`.
 
 ## MCP — rogue-agent posture (2026-04-20 audit)

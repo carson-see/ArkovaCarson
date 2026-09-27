@@ -273,7 +273,7 @@ pre-confirmation instant states are available through authenticated submission-s
 must not promise it for `POST /api/v1/anchor`. The strict lifecycle payload schemas continue to ban
 fingerprints, private tags, metadata, and internal ids.
 
-Hosted MCP declares 15 default plus 3 conditionally registered write tools; registry, server card, schemas, live registration, and reference docs must change together.
+Hosted MCP currently declares 25 tools. Registry, server card, schemas, live registration, and reference docs must change together; the manifest parity test pins the exact set.
 
 ## 2026-09-19 — Finality webhook contracts
 

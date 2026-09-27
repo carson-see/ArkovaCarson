@@ -54,6 +54,10 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   the Python verifier (`packages/arkova-py/src/arkova/proofs.py`). Append-only:
   never rename/reorder; bump `reason_enum_version`; `test/manifest.test.ts`
   pins the freeze and requires every code to be exercised by a fixture.
+- **Availability is not a negative proof.** Transport exceptions and HTTP
+  429/5xx render `INDETERMINATE`, carry `availabilityCode=NETWORK_UNAVAILABLE`,
+  and exit 3. They do not consume or reinterpret the frozen NOT-VERIFIED reason
+  enum. `ok` remains false for backward compatibility.
 - **Adversarial fixtures are authored FROM SPEC, never from the builder.**
   `fixtures/adversarial-vectors.json` is emitted by
   `fixtures/author-adversarial.py` — a clean-room Python implementation of the

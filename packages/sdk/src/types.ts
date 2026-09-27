@@ -464,6 +464,28 @@ export interface SearchResponse {
   nextCursor: string | null;
 }
 
+export type PrivateAnchorTagScope = 'user' | 'organization';
+export interface ListAnchorsOptions {
+  since?: string;
+  until?: string;
+  tag?: string;
+  tagScope?: PrivateAnchorTagScope;
+  limit?: number;
+  cursor?: string;
+}
+export interface PrivateAnchorSummary {
+  publicId: string;
+  status: AnchorLifecycleStatus;
+  createdAt: string;
+  updatedAt: string;
+  filename: string;
+  description: string | null;
+}
+export interface ListAnchorsResponse {
+  anchors: PrivateAnchorSummary[];
+  nextCursor: string | null;
+}
+
 export interface FingerprintVerification extends RichVerificationFields {
   verified: boolean;
   status: string;
@@ -506,12 +528,17 @@ export interface ProofBundleSignature {
 }
 
 /**
- * PROOF-05 (SCRUM-2338): self-contained, independently-checkable two-layer
- * proof bundle. Carries only cryptographic evidence — never raw document
+ * PROOF-05 (SCRUM-2338): structurally complete, decoded two-layer proof
+ * bundle. Carries only cryptographic evidence — never raw document
  * content or PII. `null` on the parent response when the proof is incomplete
  * (the API only emits it when ALL fields below are present + well-formed:
  * receipt txid/height/timestamp, 160-hex header, 64-hex block hash, canonical
  * ARKV OP_RETURN, merkleIndex AND leafCount).
+ *
+ * Non-null means the SDK accepted the wire shape and singleton constraints;
+ * it does not mean the SDK cryptographically verified the branches, header,
+ * or that `opReturnPayload` commits `merkleRoot`. Use the independent verifier
+ * for that guarantee.
  *
  * Field names are camelCase per SDK convention; the wire form is snake_case.
  */

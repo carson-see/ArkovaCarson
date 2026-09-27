@@ -331,8 +331,15 @@ loopback `UAT03_DATABASE_URL` for an already-reset disposable Supabase
 database. It does not start PostgreSQL or replay migrations. Separate psql
 sessions force and observe both mint/revoke and actual status-RPC/revoke lock
 orders through `pg_stat_activity`/`pg_locks`; elapsed sleeps never establish
-ordering. It also proves audit-failure rollback and retry idempotency through
-the current outbox wrappers. Every backend and operational fixture is cleaned
+ordering. The API-key case specifically forces the former machine mint/self-
+revoke inversion with two backends. It also proves lifecycle and physical-
+delete audit-failure rollback and retry idempotency through the current outbox
+wrappers, ratchets target-agent-before-caller mint order, and proves an
+internal physical delete cannot orphan a live/resumable key or
+overwrite an unrelated compromise reason. Audit/outbox failure deliberately
+rolls back revocation too: an operator must retry or escalate a failed call,
+because the key remains active rather than committing an unaudited revoke.
+Every backend and operational fixture is cleaned
 on exit. Audit rows are immutable, and deleting their referenced org/profile
 would itself require a forbidden audit UPDATE, so those rows plus their single
 auth/profile/org identity remain only in the disposable database and are

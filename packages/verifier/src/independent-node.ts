@@ -59,6 +59,8 @@ const HEADER_HEX_RE = /^[0-9a-fA-F]{160}$/;
 export interface IndependentNodeResponse {
   ok: boolean;
   status?: number;
+  /** True only when no HTTP response was received. */
+  transportError?: boolean;
   json?: unknown;
   text?: string;
 }
@@ -103,6 +105,7 @@ export interface ConfirmInclusionOptions {
 
 export type ConfirmInclusionStatus =
   | 'confirmed'
+  | 'node_unavailable'
   | 'bad_request'
   | 'tx_not_found'
   | 'txid_mismatch'
@@ -171,10 +174,13 @@ export async function confirmInclusion(
 
   // ── 1. Fetch the tx ──
   const txResp = await safeFetch(fetch, `/tx/${txId}`);
-  if (!txResp || !txResp.ok || !isEsploraTx(txResp.json)) {
+  if (txResp.unavailable) {
+    return reject('node_unavailable', txId, 'independent node was unavailable while fetching the transaction');
+  }
+  if (!txResp.response?.ok || !isEsploraTx(txResp.response.json)) {
     return reject('tx_not_found', txId, 'transaction not found on the independent node');
   }
-  const tx = txResp.json;
+  const tx = txResp.response.json;
 
   // ── 1a. TXID-BINDING GUARD (Carson P1) ──
   // Bind the returned body to the txid we actually requested BEFORE reading any
@@ -227,7 +233,10 @@ export async function confirmInclusion(
 
   // Independent height→hash index must point at the same block (reorg guard).
   const heightResp = await safeFetch(fetch, `/block-height/${req.blockHeight}`);
-  const heightHash = heightResp?.ok ? (heightResp.text ?? '').trim().toLowerCase() : '';
+  if (heightResp.unavailable) {
+    return { ...reject('node_unavailable', txId, 'independent node was unavailable while resolving the block height'), blockHeight, blockHash, extractedMerkleRoot: extracted };
+  }
+  const heightHash = heightResp.response?.ok ? (heightResp.response.text ?? '').trim().toLowerCase() : '';
   if (!HEX64_RE.test(heightHash)) {
     return {
       ...reject('block_hash_mismatch', txId, 'could not resolve the stated height to a block hash'),
@@ -247,7 +256,10 @@ export async function confirmInclusion(
 
   // ── 4. Header integrity ──
   const headerResp = await safeFetch(fetch, `/block/${blockHash}/header`);
-  const headerHex = headerResp?.ok ? (headerResp.text ?? '').trim().toLowerCase() : '';
+  if (headerResp.unavailable) {
+    return { ...reject('node_unavailable', txId, 'independent node was unavailable while fetching the block header'), blockHeight, blockHash, extractedMerkleRoot: extracted };
+  }
+  const headerHex = headerResp.response?.ok ? (headerResp.response.text ?? '').trim().toLowerCase() : '';
   if (!HEADER_HEX_RE.test(headerHex)) {
     return {
       ...reject('header_unavailable', txId, 'block header is not 80 bytes (160-hex) or unavailable'),
@@ -272,7 +284,10 @@ export async function confirmInclusion(
 
   // ── 5. Inclusion proof: recompute → header merkleroot, bound to THIS txid ──
   const proofResp = await safeFetch(fetch, `/tx/${txId}/merkle-proof`);
-  if (!proofResp || !proofResp.ok || !isMerkleProof(proofResp.json)) {
+  if (proofResp.unavailable) {
+    return { ...reject('node_unavailable', txId, 'independent node was unavailable while fetching the inclusion proof'), blockHeight, blockHash, extractedMerkleRoot: extracted, blockMerkleRoot: headerMerkleRoot, observedTime };
+  }
+  if (!proofResp.response?.ok || !isMerkleProof(proofResp.response.json)) {
     return {
       ...reject('inclusion_failed', txId, 'merkle proof unavailable'),
       blockHeight,
@@ -282,7 +297,7 @@ export async function confirmInclusion(
       observedTime,
     };
   }
-  const proof = proofResp.json;
+  const proof = proofResp.response.json;
   if (proof.block_height !== req.blockHeight) {
     return {
       ...reject('inclusion_failed', txId, 'merkle proof block_height does not match the stated height'),
@@ -341,7 +356,7 @@ export function createEsploraFetch(
     try {
       resp = await httpFetch(url);
     } catch {
-      return { ok: false };
+      return { ok: false, transportError: true };
     }
     if (!resp.ok) {
       return { ok: false, status: resp.status };
@@ -484,11 +499,18 @@ function isMerkleProof(v: unknown): v is EsploraMerkleProof {
 async function safeFetch(
   fetch: IndependentNodeFetch,
   path: string,
-): Promise<IndependentNodeResponse | null> {
+): Promise<{ response: IndependentNodeResponse | null; unavailable: boolean }> {
   try {
-    return await fetch(path);
+    const response = await fetch(path);
+    return {
+      response,
+      unavailable: response.transportError === true || (!response.ok && (
+        response.status == null || response.status === 401 || response.status === 403 ||
+        response.status === 408 || response.status === 429 || response.status >= 500
+      )),
+    };
   } catch {
-    return null;
+    return { response: null, unavailable: true };
   }
 }
 

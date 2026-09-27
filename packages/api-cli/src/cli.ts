@@ -5,13 +5,14 @@ import { pathToFileURL } from 'node:url';
 import { Arkova, ArkovaError, type Agent, type AgentKeyCreated, type AgentRevocation, type AgentScope, type AgentType,
   type AnchorDetails, type ArkovaConfig, type ComputeIdAdmissionInput,
   type ComputeIdAdmissionResult, type CreateAgentInput, type UpdateAgentInput,
-  type VerificationResult } from 'arkova';
+  type ListAnchorsOptions, type ListAnchorsResponse, type VerificationResult } from 'arkova';
 
 export interface CliClient {
   request<T = unknown>(path: string, init?: RequestInit, options?: { idempotent?: boolean }): Promise<T>;
   getAnchor(publicId: string): Promise<AnchorDetails>;
   verify(publicId: string): Promise<VerificationResult>;
   fingerprint(data: string | ArrayBuffer): Promise<string>;
+  listAnchors(options?: ListAnchorsOptions): Promise<ListAnchorsResponse>;
   agents: {
     register(input: CreateAgentInput): Promise<Agent>;
     list(): Promise<Agent[]>;
@@ -34,6 +35,7 @@ interface Dependencies {
   client?: CliClient;
   clientFactory?: (config: ArkovaConfig) => CliClient;
   readFile?: (path: string) => Promise<Buffer>;
+  now?: () => Date;
 }
 
 class UsageError extends Error {}
@@ -46,6 +48,7 @@ const HELP = {
     'arkova read <public-id>',
     'arkova verify <public-id>',
     'arkova status <public-id>',
+    'arkova anchors list [--since RFC3339|Nh] [--until RFC3339] [--tag value --tag-scope user|organization] [--limit 1-100] [--cursor value]',
     'arkova probe <public-id> [--org-id id]',
     'arkova anchor <local-file> [--action queue|instant] [--description text] [--tag value] [--org-tag value]',
     'arkova import <rows-json-file> --action queue|instant [--description text] [--tag value] [--org-tag value]',
@@ -125,7 +128,7 @@ function validateAdmission(value: Record<string, unknown>): asserts value is Rec
   const receipt = value.verification_receipt;
   const scopes = value.allowed_scopes;
   if (Object.keys(value).some((key) => !['passport_id', 'verification_receipt', 'name', 'description', 'allowed_scopes'].includes(key))
-      || typeof value.passport_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.passport_id)
+      || typeof value.passport_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.passport_id)
       || !receipt || typeof receipt !== 'object' || Array.isArray(receipt)
       || (receipt as Record<string, unknown>).passport_id !== value.passport_id
       || !['status', 'issued_at', 'expires_at', 'key_id', 'receipt_signature', 'receipt_algorithm', 'receipt_payload'].every((key) => typeof (receipt as Record<string, unknown>)[key] === 'string' && ((receipt as Record<string, unknown>)[key] as string).length > 0)
@@ -236,7 +239,7 @@ async function loadConfig(args: string[], io: CliIo): Promise<ArkovaConfig> {
   return { ...(apiKey ? { apiKey } : {}), ...(baseUrl ? { baseUrl } : {}) };
 }
 
-async function runCommand(args: string[], client: CliClient, readLocalFile: (path: string) => Promise<Buffer>): Promise<{ value: unknown; exitCode?: number }> {
+async function runCommand(args: string[], client: CliClient, readLocalFile: (path: string) => Promise<Buffer>, now: () => Date): Promise<{ value: unknown; exitCode?: number }> {
   const command = args.shift();
   if (command === 'agent') return { value: await runAgent(args, client, readLocalFile) };
   if (command === 'health') {
@@ -262,6 +265,29 @@ async function runCommand(args: string[], client: CliClient, readLocalFile: (pat
         `/api/v1/anchor/${encodeURIComponent(publicId)}/submission-status`,
       ),
     };
+  }
+  if (command === 'anchors') {
+    if (required(args.shift(), 'anchors action') !== 'list') throw new UsageError('anchors action must be list');
+    const sinceRaw = takeOption(args, '--since'); const until = takeOption(args, '--until');
+    const tag = takeOption(args, '--tag'); const tagScope = takeOption(args, '--tag-scope');
+    const limitRaw = takeOption(args, '--limit'); const cursor = takeOption(args, '--cursor');
+    if ((tag !== undefined) !== (tagScope !== undefined)) throw new UsageError('--tag and --tag-scope must be provided together');
+    if (tagScope && tagScope !== 'user' && tagScope !== 'organization') throw new UsageError('--tag-scope must be user or organization');
+    if (tag !== undefined && (tag.trim().length < 1 || tag.trim().length > 64)) throw new UsageError('--tag must be 1-64 characters');
+    if (cursor !== undefined && cursor.length < 1) throw new UsageError('--cursor must not be empty');
+    const limit = limitRaw === undefined ? undefined : Number(limitRaw);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 100)) throw new UsageError('--limit must be an integer from 1 to 100');
+    let since = sinceRaw;
+    if (sinceRaw && /^\d+h$/.test(sinceRaw)) {
+      if (cursor) throw new UsageError('relative --since cannot be reused with --cursor; use the resolved query.since timestamp from the previous result');
+      const hours = Number(sinceRaw.slice(0, -1));
+      if (!Number.isSafeInteger(hours) || hours < 1 || hours > 8760) throw new UsageError('--since relative hours must be 1h-8760h');
+      since = new Date(now().getTime() - hours * 3_600_000).toISOString();
+    }
+    noExtra(args);
+    const query = { ...(since ? { since } : {}), ...(until ? { until } : {}), ...(tag !== undefined ? { tag: tag.trim(), tagScope: tagScope as 'user' | 'organization' } : {}), ...(limit !== undefined ? { limit } : {}) };
+    const page = await client.listAnchors({ ...query, ...(cursor ? { cursor } : {}) });
+    return { value: { ...page, query, nextPageOptions: page.nextCursor ? { ...query, cursor: page.nextCursor } : null } };
   }
   if (command === 'probe') {
     const publicId = required(args.shift(), 'public-id');
@@ -481,7 +507,7 @@ export async function main(argv: string[], io: CliIo = defaultIo, dependencies: 
     if (config.apiKey && !secrets.includes(config.apiKey)) secrets.push(config.apiKey);
     if (!config.apiKey && args[0] !== 'health') throw new UsageError('ARKOVA_API_KEY or stdin config apiKey is required');
     const client = dependencies.client ?? (dependencies.clientFactory ?? ((value) => new Arkova(value)))(config);
-    const result = await runCommand(args, client, dependencies.readFile ?? readFile);
+    const result = await runCommand(args, client, dependencies.readFile ?? readFile, dependencies.now ?? (() => new Date()));
     if (result.value && typeof result.value === 'object' && !Array.isArray(result.value)) {
       const returnedKey = (result.value as Record<string, unknown>).key;
       if (typeof returnedKey === 'string' && !secrets.includes(returnedKey)) secrets.push(returnedKey);

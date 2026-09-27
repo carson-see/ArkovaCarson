@@ -18,6 +18,7 @@ Python 3.10 or newer is supported.
 - `search(q, type="all", cursor=None, limit=50)`
 - `verify(public_id)`
 - `verify_fingerprint(fingerprint)`
+- `list_anchors(...)` for API-key-scoped private record listing with pagination and optional time or private-tag filters
 - `get_anchor(public_id)`
 - `get_anchor_submission_status(public_id)`
 - `list_orgs()`

@@ -109,6 +109,7 @@ export type HealthReason =
   // first. See `DRIVE_CHANGES_GAP_LOOKBACK_MS` for the bounded lookback
   // window and `DRIVE_HEALTH_PRIORITY` for the exact ranking.
   | 'changes_gap'
+  | 'folder_mirror_failed'
   // SCRUM-5287 follow-up (2026-09-21 drive.readonly cutover, task 2): this
   // connection's stored `scope` is exactly (a subset of) the scope set
   // Arkova requested BEFORE the cutover (`DRIVE_LEGACY_REQUESTED_SCOPES` —
@@ -633,9 +634,44 @@ interface DriveHealthSignals {
    * already happened regardless of whether a rule is enabled right now.
    */
   gap?: DriveGapSignal;
+  /** At least one enabled Drive rule's latest durable mirror state is failed. */
+  folderMirrorFailed?: boolean;
 }
 
 type ClassifyResult = { state: ConnectorState; reason: HealthReason | null; lastError: string | null };
+
+async function loadLatestDriveMirrorStates(
+  db: unknown,
+  orgId: string,
+  ruleIds: string[],
+): Promise<Map<string, string>> {
+  const latest = new Map<string, string>();
+  const concurrency = 10;
+  const signal = AbortSignal.timeout(3_000);
+  for (let offset = 0; offset < ruleIds.length; offset += concurrency) {
+    if (signal.aborted) throw new Error('Drive folder mirror health state deadline exceeded');
+    const chunk = ruleIds.slice(offset, offset + concurrency);
+    const rows = await Promise.all(chunk.map(async (ruleId) => {
+      // Exact per-rule limit avoids one noisy rule hiding another unresolved failure.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await (db as any).from('audit_events').select('event_type')
+        .eq('org_id', orgId).eq('target_type', 'organization_rules').eq('target_id', ruleId)
+        .in('event_type', ['drive_folder_mirror_failed', 'drive_folder_mirror_recovered'])
+        .order('created_at', { ascending: false }).limit(1).abortSignal(signal);
+      if (result.error) throw new Error('Drive folder mirror health state unavailable');
+      if (!Array.isArray(result.data) || result.data.length > 1) {
+        throw new Error('Drive folder mirror health state malformed');
+      }
+      const eventType = (result.data[0] as { event_type?: unknown } | undefined)?.event_type;
+      if (result.data.length === 1 && eventType !== 'drive_folder_mirror_failed' && eventType !== 'drive_folder_mirror_recovered') {
+        throw new Error('Drive folder mirror health state malformed');
+      }
+      return { ruleId, eventType };
+    }));
+    for (const row of rows) if (typeof row.eventType === 'string') latest.set(row.ruleId, row.eventType);
+  }
+  return latest;
+}
 
 // SCRUM-5287 (P1 security, fix-round item 5): checked BEFORE every other
 // reason — a security exposure on a live, active grant outranks an
@@ -713,6 +749,13 @@ function classifyDriveOperationalIssue(driveSignals: DriveHealthSignals | undefi
       state: 'degraded',
       reason: 'changes_gap',
       lastError: `Drive changes were missed ${bounds} — a cursor re-bootstrap could not recover them (Drive does not allow enumerating a window after the token expires)`,
+    };
+  }
+  if (driveSignals?.folderMirrorFailed) {
+    return {
+      state: 'degraded',
+      reason: 'folder_mirror_failed',
+      lastError: 'One or more selected Drive folders could not be prepared in Arkova. Automatic retry remains active.',
     };
   }
   // SCRUM-5287 follow-up (2026-09-21 cutover, task 2): checked BEFORE
@@ -808,7 +851,7 @@ const DRIVE_HEALTH_PRIORITY: Record<HealthReason, number> = {
   // connector signal above (a gap is a past, already-recovered-from event)
   // but ABOVE the retryable fetch-failure signals below (lost data outranks
   // a fetch that can simply be retried) — see the HealthReason doc comment.
-  changes_gap: 5,
+  changes_gap: 5, folder_mirror_failed: 4,
   // SCRUM-5287 follow-up (2026-09-21 cutover, task 2): below changes_gap
   // (this grant still lists changes; a gap is an independent, more urgent
   // failure when it co-occurs) but ABOVE file_access_not_granted (a legacy
@@ -848,7 +891,7 @@ export async function handleConnectorHealth(
   }
 
   let integrations: IntegrationRow[];
-  let driveRuleRows: Array<{ trigger_config: unknown }>;
+  let driveRuleRows: Array<{ id: string; trigger_config: unknown }>;
   try {
     // Complete means an empty terminal page, not a short PostgREST response.
     // These are request budgets, not a claimed account/rule product limit.
@@ -862,9 +905,9 @@ export async function handleConnectorHealth(
           .eq('org_id', orgId)
           .order('created_at', { ascending: true }).order('id', { ascending: true })
           .range(offset, offset + limit - 1).abortSignal(signal), budget),
-      scanAllPages<{ trigger_config: unknown }>((offset, limit) =>
+      scanAllPages<{ id: string; trigger_config: unknown }>((offset, limit) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (db as any).from('organization_rules').select('trigger_config')
+        (db as any).from('organization_rules').select('id, trigger_config')
           .eq('org_id', orgId).eq('trigger_type', 'WORKSPACE_FILE_MODIFIED').eq('enabled', true)
           .order('id', { ascending: true }).range(offset, offset + limit - 1).abortSignal(signal), budget),
     ]);
@@ -956,6 +999,16 @@ export async function handleConnectorHealth(
   ]);
 
   const hasEnabledDriveRules = driveRuleRows.some((row) => driveFolderIds(row.trigger_config).length > 0);
+  const enabledDriveRuleIds = new Set(driveRuleRows.filter((row) => driveFolderIds(row.trigger_config).length > 0).map((row) => row.id));
+  let latestMirrorStateByRule: Map<string, string>;
+  try {
+    latestMirrorStateByRule = await loadLatestDriveMirrorStates(db, orgId, [...enabledDriveRuleIds]);
+  } catch {
+    res.setHeader?.('Cache-Control', 'no-store, max-age=0');
+    res.status(503).json({ error: { code: 'connector_health_unavailable', message: 'Unable to load complete connector health' } });
+    return;
+  }
+  const folderMirrorFailed = [...enabledDriveRuleIds].some((ruleId) => latestMirrorStateByRule.get(ruleId) === 'drive_folder_mirror_failed');
   const driveFetchJobFailureCount = driveFetchFailureRows.length;
   // Fix-round item 6: a SUBSET of those failures whose recorded reason is
   // specifically "the grant does not cover this file" (DriveFileAccessError)
@@ -1034,6 +1087,7 @@ export async function handleConnectorHealth(
         legacyGrant: isDriveLegacyGrant(integration.scope),
         oauthClientMismatch: oauthClientMismatchOrUndefined(integration.last_renewal_error),
         gap: driveGapByIntegrationId.get(integration.id),
+        folderMirrorFailed,
       }
       : undefined;
     let classification = classify(entry, integration, subscription, lastFailed, driveSignals);
@@ -1053,6 +1107,7 @@ export async function handleConnectorHealth(
             legacyGrant: isDriveLegacyGrant(row.scope),
             oauthClientMismatch: oauthClientMismatchOrUndefined(row.last_renewal_error),
             gap: driveGapByIntegrationId.get(row.id),
+            folderMirrorFailed,
           }),
         };
       }).sort(compareDriveHealth);

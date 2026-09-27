@@ -60,10 +60,11 @@ interface AdmissionResult {
   binding: Record<string, unknown>;
 }
 
-function isAdmissionResult(data: Record<string, unknown>): data is Record<string, unknown> & AdmissionResult {
+function hasCommittedAdmissionCore(data: Record<string, unknown>): data is Record<string, unknown> & Omit<AdmissionResult, 'agent'|'binding'> & { agent: Record<string, unknown>; binding: unknown } {
   if (!isRecord(data.agent) || !isRecord(data.key) || !isRecord(data.binding)) return false;
-  if (typeof data.agent.id !== 'string' || typeof data.agent.status !== 'string') return false;
-  if (!['active', 'suspended', 'revoked'].includes(data.agent.status)) return false;
+  if (typeof data.agent.id !== 'string' || typeof data.agent.name !== 'string'
+    || typeof data.agent.agent_type !== 'string' || !Array.isArray(data.agent.allowed_scopes)
+    || typeof data.agent.created_at !== 'string') return false;
   return typeof data.key.id === 'string'
     && typeof data.key.key_prefix === 'string'
     && Array.isArray(data.key.scopes);
@@ -162,13 +163,25 @@ agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
       res.status(409).json({ error: { code: data.error, ...(typeof data.agent_id === 'string' ? { agent_id: data.agent_id } : {}) } });
       return;
     }
-    if (!isAdmissionResult(data)) throw new Error('invalid_admission_result');
+    if (!hasCommittedAdmissionCore(data)) throw new Error('invalid_admission_result');
+    const status = typeof data.agent.status === 'string' && ['active', 'suspended', 'revoked'].includes(data.agent.status)
+      ? data.agent.status as AdmissionAgentStatus : 'active';
+    const binding = isRecord(data.binding) && data.binding.issuer === 'computeid'
+      && typeof data.binding.passport_id === 'string'
+      && data.binding.passport_id.toLowerCase() === passportId.toLowerCase()
+      && typeof data.binding.bound_at === 'string'
+      ? data.binding
+      : { issuer: 'computeid', passport_id: passportId, bound_at: new Date().toISOString(),
+        ...(issuedAt ? { receipt_issued_at: issuedAt.toISOString() } : {}), receipt_expires_at: expiresAt.toISOString() };
+    if (status !== data.agent.status || binding !== data.binding) {
+      logger.error({ agentId: data.agent.id }, 'ComputeID admission committed with malformed ancillary projection');
+    }
     hintAgentWebhookDrain();
     // The same transaction wrote both security audit rows. No compensation:
     // an uncertain reply must preserve any committed agent/key and its audit.
     res.status(201).json({
-      agent: toPublicAgent(data.agent),
-      binding: data.binding,
+      agent: toPublicAgent({ ...data.agent, status }),
+      binding,
       key: key.raw,
       key_id: data.key.id,
       key_prefix: data.key.key_prefix,

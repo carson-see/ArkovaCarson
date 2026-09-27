@@ -23,12 +23,42 @@ function client(): CliClient {
     getAnchor: vi.fn(),
     verify: vi.fn(),
     fingerprint: vi.fn(),
+    listAnchors: vi.fn(),
     agents: {
       register: vi.fn(), list: vi.fn(), get: vi.fn(), update: vi.fn(), revoke: vi.fn(),
       createKey: vi.fn(), admitComputeId: vi.fn(),
     },
   };
 }
+
+describe('private anchor list command', () => {
+  it('translates relative time and forwards explicit tag scope without public search fallback', async () => {
+    const api = client(); const output = io();
+    vi.mocked(api.listAnchors).mockResolvedValue({ anchors: [], nextCursor: 'next' });
+    expect(await main(['anchors', 'list', '--since', '24h', '--tag', 'acme', '--tag-scope', 'organization', '--limit', '100'], output.value, { client: api, now: () => new Date('2026-09-27T12:00:00Z') })).toBe(0);
+    expect(api.listAnchors).toHaveBeenCalledWith({ since: '2026-09-26T12:00:00.000Z', tag: 'acme', tagScope: 'organization', limit: 100 });
+    expect(output.stdout()).toContain('"nextCursor":"next"');
+    expect(output.stdout()).toContain('"since":"2026-09-26T12:00:00.000Z"');
+    expect(output.stdout()).toContain('"nextPageOptions"');
+    expect(api.request).not.toHaveBeenCalled();
+  });
+
+  it('does not silently recompute a relative window on a later cursor page', async () => {
+    const api = client(); const output = io();
+    expect(await main(['anchors', 'list', '--since', '24h', '--cursor', 'next'], output.value, { client: api, now: () => new Date('2026-09-28T12:00:00Z') })).toBe(2);
+    expect(output.stderr()).toContain('use the resolved query.since timestamp');
+    expect(api.listAnchors).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous tags and invalid limits before any request', async () => {
+    const api = client();
+    expect(await main(['anchors', 'list', '--tag', 'acme'], io().value, { client: api })).toBe(2);
+    expect(await main(['anchors', 'list', '--tag', '', '--tag-scope', 'organization'], io().value, { client: api })).toBe(2);
+    expect(await main(['anchors', 'list', '--cursor', ''], io().value, { client: api })).toBe(2);
+    expect(await main(['anchors', 'list', '--limit', '101'], io().value, { client: api })).toBe(2);
+    expect(api.listAnchors).not.toHaveBeenCalled();
+  });
+});
 
 describe('agent lifecycle commands', () => {
   it('calls every generic SDK operation and prints JSON', async () => {

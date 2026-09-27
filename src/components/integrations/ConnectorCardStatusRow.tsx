@@ -41,7 +41,12 @@ import { CONNECTIONS_LABELS, CONNECTORS_LABELS } from '@/lib/copy';
  */
 export type ConnectorHealthDisplay =
   | { kind: 'connected' }
-  | { kind: 'degraded'; reasonText: string }
+  | {
+      kind: 'degraded';
+      reasonText: string;
+      details?: Array<{ label: string; value: string }>;
+      action?: { label: string; onClick: () => void; loading?: boolean };
+    }
   | { kind: 'unknown' };
 
 interface ConnectorCardStatusRowProps {
@@ -107,10 +112,32 @@ export function ConnectorCardStatusRow({
               className="mt-2 flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/40 dark:text-amber-200"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>
+              <div>
                 <span className="font-medium">{CONNECTORS_LABELS.CONNECTOR_HEALTH_NEEDS_ATTENTION}:</span>{' '}
                 {health.reasonText}
-              </span>
+                {health.details && health.details.length > 0 && (
+                  <dl className="mt-2 space-y-1">
+                    {health.details.map(({ label, value }) => (
+                      <div key={label} className="flex flex-wrap gap-x-1">
+                        <dt className="font-medium">{label}:</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                {health.action && (
+                  <Button
+                    className="mt-2"
+                    variant="outline"
+                    size="sm"
+                    onClick={health.action.onClick}
+                    disabled={health.action.loading}
+                  >
+                    {health.action.loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+                    {health.action.label}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
           {showHealth && health.kind === 'unknown' && (

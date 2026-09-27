@@ -2099,10 +2099,19 @@ export const CONNECTORS_LABELS = {
     'Some files could not be retrieved because access to them was not granted. Reconnect to grant access, or check the file was shared correctly.',
   CONNECTOR_HEALTH_REASON_CHANGES_GAP:
     'Some file changes were missed during a recent interruption and could not be recovered. New changes are being picked up normally.',
+  CONNECTOR_HEALTH_REASON_FOLDER_MIRROR_FAILED:
+    'One or more selected folders could not be prepared. Arkova will retry automatically.',
   CONNECTOR_HEALTH_REASON_FETCH_JOB_FAILURES:
     'Some files could not be retrieved. Arkova will keep retrying automatically.',
   CONNECTOR_HEALTH_REASON_PROCESSING_FAILURE:
     'The most recent document from this connector could not be processed.',
+  CONNECTOR_HEALTH_REASON_OAUTH_CLIENT_MISMATCH:
+    'The Google Drive connection settings changed. Reconnect to restore this connector.',
+  CONNECTOR_HEALTH_REASON_RECONNECT_REQUIRED_SCOPE_CHANGE:
+    'Google Drive access requirements changed. Reconnect and approve the updated access request.',
+  CONNECTOR_HEALTH_LAST_SOURCE_EVENT: 'Last source event',
+  CONNECTOR_HEALTH_LAST_CHANNEL_RENEWAL: 'Last channel renewal',
+  CONNECTOR_HEALTH_CHANNEL_EXPIRES: 'Push channel expires',
   CONNECTOR_HEALTH_REASON_GENERIC: 'This connector needs attention. Reconnect, or contact support if this continues.',
 } as const;
 

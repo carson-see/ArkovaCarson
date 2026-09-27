@@ -950,6 +950,24 @@ describe('API v2 agent methods', () => {
     expect(result.subType).toBe('executed_contract');
   });
 
+  it('lists private organization anchors with filters and maps the bounded response', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ anchors: [{ public_id: 'ARK-1', status: 'SECURED', created_at: '2026-09-27T10:00:00Z', updated_at: '2026-09-27T11:00:00Z', filename: 'a.pdf', description: null }], next_cursor: 'next' }) });
+    await expect(client.listAnchors({ since: '2026-09-26T00:00:00Z', tag: 'acme', tagScope: 'organization', limit: 20 })).resolves.toEqual({ anchors: [{ publicId: 'ARK-1', status: 'SECURED', createdAt: '2026-09-27T10:00:00Z', updatedAt: '2026-09-27T11:00:00Z', filename: 'a.pdf', description: null }], nextCursor: 'next' });
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/anchors?since=2026-09-26T00%3A00%3A00Z&tag=acme&tag_scope=organization&limit=20'), expect.anything());
+  });
+
+  it('fails closed on malformed private anchor list responses and incomplete tag filters', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    await expect(client.listAnchors({ tag: 'acme' })).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(client.listAnchors({ limit: 101 })).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(client.listAnchors({ since: 'yesterday' })).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(client.listAnchors({ cursor: '' })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(mockFetch).not.toHaveBeenCalled();
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ anchors: [{ public_id: 'ARK-1', status: 'UNKNOWN' }], next_cursor: null }) });
+    await expect(client.listAnchors()).rejects.toMatchObject({ statusCode: 502, code: 'unexpected_response' });
+  });
+
   it('gets public anchor details with rich fields', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValueOnce({

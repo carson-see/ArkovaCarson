@@ -5,7 +5,7 @@
  * pinned explicitly in the "test 10" case below via the `.eq('org_id', ...)`
  * call recorded on the mock chain, alongside the column-pinning assertion.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -41,6 +41,9 @@ vi.mock('@/lib/workerClient', () => ({
   workerFetch: (...args: unknown[]) => workerFetch(...args),
   WORKER_URL: 'https://worker.test',
 }));
+
+const originalLocation = window.location;
+let assignSpy: ReturnType<typeof vi.fn>;
 
 interface OrgIntegrationsFixture {
   google_drive?: { id: string; connected_at: string } | null;
@@ -140,6 +143,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   installOrgIntegrations({});
   installRules([]);
+  assignSpy = vi.fn();
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { ...originalLocation, assign: assignSpy, href: 'https://app.test/organization/connectors' },
+  });
+});
+
+afterEach(() => {
+  Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
 });
 
 describe('ConnectorsPage', () => {
@@ -327,6 +339,81 @@ describe('ConnectorsPage', () => {
           CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_CURSOR_STALE,
         );
       });
+    });
+
+    it('starts OAuth once with the exact org and return URL, then redirects', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, { connectors: [{
+        id: 'google_drive', state: 'degraded', health_reason: 'reconnect_required_scope_change', last_error: 'do not render me',
+        last_event_at: '2026-09-27T10:00:00Z', last_renewal_at: '2026-09-27T11:00:00Z', next_expires_at: '2026-10-01T11:00:00Z',
+      }] });
+      workerFetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/api/connectors/health') return { ok: true, status: 200, json: async () => ({ connectors: [{ id: 'google_drive', state: 'degraded', health_reason: 'reconnect_required_scope_change', last_error: 'do not render me', last_event_at: '2026-09-27T10:00:00Z', last_renewal_at: '2026-09-27T11:00:00Z', next_expires_at: '2026-10-01T11:00:00Z' }] }) } as Response;
+        if (endpoint === '/api/rules') return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+        if (endpoint === '/api/v1/integrations/google_drive/oauth/start') return { ok: true, status: 200, json: async () => ({ authorizationUrl: 'https://accounts.google.com/oauth' }) } as Response;
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      });
+      renderPage();
+      expect(await screen.findByText(CONNECTORS_LABELS.CONNECTOR_HEALTH_REASON_RECONNECT_REQUIRED_SCOPE_CHANGE)).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`^${CONNECTORS_LABELS.CONNECTOR_HEALTH_LAST_SOURCE_EVENT}:`))).toBeInTheDocument();
+      expect(screen.queryByText('do not render me')).not.toBeInTheDocument();
+      const reconnect = screen.getByRole('button', { name: CONNECTORS_LABELS.CONNECTOR_RECONNECT_BUTTON });
+      fireEvent.click(reconnect);
+      fireEvent.click(reconnect);
+      await waitFor(() => expect(workerFetch).toHaveBeenCalledWith(
+        '/api/v1/integrations/google_drive/oauth/start',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ org_id: 'org-1', return_to: 'https://app.test/organization/connectors' }),
+        }),
+      ));
+      expect(workerFetch.mock.calls.filter(([endpoint]) => endpoint === '/api/v1/integrations/google_drive/oauth/start')).toHaveLength(1);
+      expect(assignSpy).toHaveBeenCalledWith('https://accounts.google.com/oauth');
+    });
+
+    it('rejects missing or unsafe OAuth URLs and resets the single-flight guard for retry', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, { connectors: [{ id: 'google_drive', state: 'degraded', health_reason: 'vendor_auth_revoked' }] });
+      const oauthBodies = [
+        {},
+        { authorizationUrl: 'javascript:alert(1)' },
+        { authorizationUrl: 'http://accounts.google.com/oauth' },
+        { authorizationUrl: 'https://attacker.test/oauth' },
+      ];
+      workerFetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/api/connectors/health') return { ok: true, status: 200, json: async () => ({ connectors: [{ id: 'google_drive', state: 'degraded', health_reason: 'vendor_auth_revoked' }] }) } as Response;
+        if (endpoint === '/api/rules') return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+        if (endpoint === '/api/v1/integrations/google_drive/oauth/start') {
+          const body = oauthBodies.shift() ?? {};
+          return { ok: true, status: 200, json: async () => body } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      });
+      renderPage();
+      const reconnect = await screen.findByRole('button', { name: CONNECTORS_LABELS.CONNECTOR_RECONNECT_BUTTON });
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        fireEvent.click(reconnect);
+        await waitFor(() => expect(workerFetch.mock.calls.filter(([endpoint]) => endpoint === '/api/v1/integrations/google_drive/oauth/start')).toHaveLength(attempt));
+        expect(reconnect).toBeEnabled();
+      }
+      expect(toast.error).toHaveBeenCalledTimes(4);
+      expect(assignSpy).not.toHaveBeenCalled();
+    });
+
+    it('resets the single-flight guard when OAuth startup rejects', async () => {
+      installOrgIntegrations({ google_drive: { id: 'int-1', connected_at: '2026-09-01T00:00:00Z' } });
+      installRules([], {}, { connectors: [{ id: 'google_drive', state: 'degraded', health_reason: 'oauth_client_mismatch' }] });
+      workerFetch.mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/api/connectors/health') return { ok: true, status: 200, json: async () => ({ connectors: [{ id: 'google_drive', state: 'degraded', health_reason: 'oauth_client_mismatch' }] }) } as Response;
+        if (endpoint === '/api/rules') return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+        if (endpoint === '/api/v1/integrations/google_drive/oauth/start') throw new Error('network');
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      });
+      renderPage();
+      const reconnect = await screen.findByRole('button', { name: CONNECTORS_LABELS.CONNECTOR_RECONNECT_BUTTON });
+      fireEvent.click(reconnect);
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(CONNECTORS_LABELS.DRIVE_TOAST_ERROR));
+      expect(reconnect).toBeEnabled();
     });
 
     // TRUE in prod today for the one connected org (~32 granted scopes) —

@@ -606,6 +606,7 @@ Top-level page components rendered by react-router-dom routes. Each page compose
 - 2026-03-11 SonarQube sprint: `MyRecordsPage.tsx`, `OrganizationPage.tsx`, `SettingsPage.tsx` — S3358 (nested ternary → if/else), S6582 (optional chaining). No behavioral changes.
 - 2026-03-07 Code-review fixes: `DashboardPage.tsx` — surfaced `revokeError` from `useRevokeAnchor` with dismissible Alert; used `recordDetailPath()` instead of hardcoded path; corrected docstring.
 - 2026-03-07 P3-TS-01: `DashboardPage.tsx` — replaced `useState<Record[]>([])` mock with `useAnchors()` hook for real Supabase data. Wired `handleRevokeRecord` to `useRevokeAnchor`. Removed `Math.random()` fingerprints and `console.log` stubs.
+- 2026-09-27 private tag lookup parity: `MyRecordsPage` exposes a generic user/organization private-tag filter backed by the JWT/RLS `usePrivateAnchorList` relational query. Organization scope is unavailable without an active org; member reads retain the existing user-owned anchor restriction. Results page 25 at a time with truthful Previous/Next controls.
 - 2026-03-07 P4-TS-03: Created `RecordDetailPage.tsx` — extracts `:id` from URL params, uses `useAnchor` hook, renders `AssetDetailView` with real Supabase data. Wired into App.tsx route.
 
 ## Do / Don't Rules
@@ -971,3 +972,7 @@ against the pre-fix handler (`expected null not to be null`).
 
 **If you add a third export path, give it its own spec.** A mock that
 destructures one handler silently proves nothing about the others.
+
+## 2026-09-27 — Drive health last hop
+
+`ConnectorsPage` maps backend source-event, channel-renewal, and channel-expiry timestamps to exact labels and offers the existing Google OAuth flow only for auth-recoverable health reasons. The same OAuth callback replaces the folder picker's former close-and-refresh no-op. “Last synced” remains the separate page-token advance watermark owned by `DriveConnectorCard`; no scheduler-health or cursor-lag claim is fabricated.

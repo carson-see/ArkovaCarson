@@ -22,23 +22,19 @@ describe('driveFolderReconciliationPage', () => {
 });
 
 describe('runDriveFolderReconciliation', () => {
-  it('reports a configured rule with no active Drive connection as non-green', async () => {
+  it('reports a configured rule with no active Drive connection without failing the shared job', async () => {
     const candidate = driveRule({ created_by_user_id: '00000000-0000-4000-8000-000000000020' });
-    let error: unknown;
-    try {
-      await runDriveFolderReconciliation({
+    const result = await runDriveFolderReconciliation({
         db: { from: vi.fn() },
         listCandidates: async () => ({ rows: [candidate], count: 1 }),
         readCurrentRule: async () => candidate,
         mirror: async () => [{ folderId: '', driveFolderId: 'f1', outcome: 'skipped_no_connection' }],
       });
-    } catch (caught) { error = caught; }
-    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
-    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ skipped: 1, errored: 1 });
+    expect(result).toMatchObject({ skipped: 1, errored: 0 });
   });
   it('queries only enabled workspace rules in stable id order', async () => {
     const chain: Record<string, ReturnType<typeof vi.fn>> = {};
-    chain.select = vi.fn(() => chain); chain.eq = vi.fn(() => chain);
+    chain.select = vi.fn(() => chain); chain.eq = vi.fn(() => chain); chain.contains = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.range = vi.fn(async () => ({ data: [], count: 0, error: null }));
     const from = vi.fn(() => chain);
@@ -46,6 +42,7 @@ describe('runDriveFolderReconciliation', () => {
     expect(from).toHaveBeenCalledWith('organization_rules');
     expect(chain.eq).toHaveBeenNthCalledWith(1, 'enabled', true);
     expect(chain.eq).toHaveBeenNthCalledWith(2, 'trigger_type', 'WORKSPACE_FILE_MODIFIED');
+    expect(chain.contains).toHaveBeenCalledWith('action_config', { tag: 'connector-google_drive' });
     expect(chain.order).toHaveBeenCalledWith('id', { ascending: true });
     expect(chain.range).toHaveBeenCalledWith(0, 99);
   });
@@ -90,17 +87,16 @@ describe('runDriveFolderReconciliation', () => {
     expect(result).toMatchObject({ scanned: 3, eligible: 1, existing: 1 });
   });
 
-  it('rejects malformed/over-cap persisted JSON without partially mirroring it', async () => {
+  it('reports malformed/over-cap persisted JSON without failing other tenants or partially mirroring it', async () => {
     const overCap = driveRule({ trigger_config: {
       drive_folders: [1, 2, 3, 4].map((n) => ({ type: 'drive_folder', folder_id: `folder-${n}` })),
     } });
     const mirror = vi.fn();
-    const error = await runDriveFolderReconciliation({
+    const result = await runDriveFolderReconciliation({
       db: {} as never, listCandidates: async () => ({ rows: [overCap], count: 1 }),
       readCurrentRule: current, mirror, now: () => new Date(0),
-    }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
-    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ invalid: 1, errored: 1 });
+    });
+    expect(result).toMatchObject({ invalid: 1, errored: 0 });
     expect(mirror).not.toHaveBeenCalled();
   });
 
@@ -110,23 +106,21 @@ describe('runDriveFolderReconciliation', () => {
       drive_folders: [1, 2, 3].map((n) => ({ type: 'drive_folder', folder_id: `folder-${n}` })),
     } });
     const mirror = vi.fn();
-    const error = await runDriveFolderReconciliation({
+    const result = await runDriveFolderReconciliation({
       db: {} as never, listCandidates: async () => ({ rows: [mixed], count: 1 }),
       readCurrentRule: current, mirror, now: () => new Date(0),
-    }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
-    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ invalid: 1, errored: 1 });
+    });
+    expect(result).toMatchObject({ invalid: 1, errored: 0 });
     expect(mirror).not.toHaveBeenCalled();
   });
 
-  it('keeps a null-creator rule visibly non-green as needs_admin_repair without attempting an impossible mirror', async () => {
+  it('keeps a null-creator rule visibly non-green without failing other tenants', async () => {
     const mirror = vi.fn();
-    const error = await runDriveFolderReconciliation({
+    const result = await runDriveFolderReconciliation({
       db: {} as never, listCandidates: async () => ({ rows: [driveRule({ created_by_user_id: null })], count: 1 }),
       readCurrentRule: current, mirror, now: () => new Date(0),
-    }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(DriveFolderReconciliationError);
-    expect((error as DriveFolderReconciliationError).summary).toMatchObject({ needsAdminRepair: 1, errored: 1 });
+    });
+    expect(result).toMatchObject({ needsAdminRepair: 1, errored: 0 });
     expect(mirror).not.toHaveBeenCalled();
   });
 

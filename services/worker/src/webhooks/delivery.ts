@@ -1562,7 +1562,11 @@ async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<
 /** Materialize and drain a small number of owned rows just-in-time. */
 export async function processAgentWebhookOutbox(): Promise<number> {
   const flag = await getOutboundWebhookFlagDecision();
-  if (flag === 'unavailable') return 0;
+  if (flag === 'unavailable') {
+    const { error } = await db.rpc('cleanup_terminal_agent_webhook_outbox', { p_limit: 500 });
+    if (error) throw new Error('agent webhook retention cleanup failed');
+    return 0;
+  }
   for (let i = 0; i < 10; i += 1) {
     const { data, error } = await db.rpc('materialize_next_agent_webhook_event', {
       p_flag_state: flag,
@@ -1580,9 +1584,23 @@ export async function processAgentWebhookOutbox(): Promise<number> {
     if (error) throw new Error('agent webhook claim failed');
     if (data === null) break;
     if (isCancelledAgentDelivery(data)) continue;
-    if (!isClaimedAgentDelivery(data)) throw new Error('agent webhook claim returned an invalid shape');
+    if (!isClaimedAgentDelivery(data)) {
+      const deliveryId = typeof data === 'object' && data !== null && !Array.isArray(data)
+        && typeof (data as Record<string, unknown>).delivery_id === 'string'
+        ? (data as Record<string, unknown>).delivery_id : undefined;
+      logger.error({ ...(deliveryId ? { deliveryId } : {}) }, 'Agent webhook claim returned an invalid shape');
+      Sentry.captureException(new Error('agent webhook claim returned an invalid shape'), {
+        tags: { component: 'agent-webhook-outbox', operation: 'claim' },
+        ...(deliveryId ? { extra: { deliveryId } } : {}),
+      });
+      continue;
+    }
     if (await deliverClaimedAgentWebhook(data)) completed += 1;
   }
+  const { error: cleanupError } = await db.rpc('cleanup_terminal_agent_webhook_outbox', {
+    p_limit: 500,
+  });
+  if (cleanupError) throw new Error('agent webhook retention cleanup failed');
   return completed;
 }
 

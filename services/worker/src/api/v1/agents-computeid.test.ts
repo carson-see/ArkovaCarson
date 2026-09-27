@@ -246,11 +246,21 @@ describe('POST /api/v1/agents/computeid/admit — atomic admission', () => {
     expect(dbRpcMock).toHaveBeenCalledTimes(1);
   });
   it.each([undefined, null, 'revoked_typo', ['active'], { value: 'active' }])(
-    'rejects malformed committed status without fabricating a notification (%s)', async (status) => {
+    'preserves the one-time key after commit when the ancillary status is malformed (%s)', async (status) => {
       dbRpcMock.mockResolvedValue({ data: { ...admissionResult(), agent: { ...insertedAgent(), status } }, error: null });
-      expect((await admit(validBody())).status).toBe(500);
+      const res = await admit(validBody());
+      expect(res.status).toBe(201);
+      expect(res.body.key).toMatch(/^ak_live_/);
+      expect(res.body.agent.status).toBe('active');
       expect(agentEventMock).not.toHaveBeenCalled();
     });
+  it('preserves the one-time key and reconstructs bounded binding fields after a malformed ancillary binding', async () => {
+    dbRpcMock.mockResolvedValue({ data: { ...admissionResult(), binding: { issuer: 'wrong' } }, error: null });
+    const res = await admit(validBody());
+    expect(res.status).toBe(201);
+    expect(res.body.key).toMatch(/^ak_live_/);
+    expect(res.body.binding).toMatchObject({ issuer: 'computeid', passport_id: PASSPORT, receipt_expires_at: expect.any(String) });
+  });
   it('preserves a possibly committed key when the RPC reply is lost', async () => {
     dbRpcMock.mockRejectedValue(new Error('transport response lost'));
     const res = await admit(validBody());

@@ -43,6 +43,7 @@ describe('Tool Definitions', () => {
       'arkova_verify_anchor',
       'arkova_anchor_status',
       'arkova_search_anchors',
+      'arkova_list_anchors',
       'arkova_create_attestation',
       'arkova_batch_verify',
       'arkova_verify_signature',
@@ -288,7 +289,7 @@ describe('Tool Definitions', () => {
       expect(tool.name).toBeTruthy();
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema.type).toBe('object');
-      if (tool.name === 'arkova_list_agents') expect(tool.inputSchema.required).toEqual([]);
+      if (tool.name === 'arkova_list_agents' || tool.name === 'arkova_list_anchors') expect(tool.inputSchema.required).toEqual([]);
       else expect(tool.inputSchema.required.length).toBeGreaterThan(0);
     }
   });
@@ -629,6 +630,33 @@ describe('handleToolCall', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain('ARK-1');
+  });
+
+  it('lists private anchors with paired tag filters and validates the response', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ anchors: [{ public_id: 'ARK-1', status: 'SECURED', created_at: '2026-09-27T10:00:00Z', updated_at: '2026-09-27T11:00:00Z', filename: 'proof.pdf', description: null }], next_cursor: null }), { status: 200 }));
+    const result = await handleToolCall('arkova_list_anchors', { tag: 'audit', tag_scope: 'organization', limit: '25' });
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('ARK-1');
+    expect(String(mockFetch.mock.calls[0][0])).toContain('/api/v1/anchors?limit=25&tag=audit&tag_scope=organization');
+  });
+
+  it('rejects unpaired private tag filters without a request', async () => {
+    const result = await handleToolCall('arkova_list_anchors', { tag: 'audit' });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([true, [1], '1.5'])('rejects a non-integer limit %j without a request', async (limit) => {
+    const result = await handleToolCall('arkova_list_anchors', { limit });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects private or internal fields in a successful upstream envelope', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ anchors: [{ public_id:'ARK-1',status:'SECURED',created_at:'now',updated_at:'now',filename:'proof.pdf',description:null,metadata:{secret:true} }],next_cursor:null }),{status:200}));
+    const result=await handleToolCall('arkova_list_anchors',{});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('secret');
   });
 
   // F3 — a disabled semantic-search capability must not read as an empty

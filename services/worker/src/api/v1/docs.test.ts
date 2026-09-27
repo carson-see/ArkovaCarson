@@ -167,6 +167,10 @@ describe('OpenAPI spec', () => {
   });
 
   it('documents required scopes for anchor submit and usage endpoints', () => {
+    expect(openApiSpec.paths['/anchors'].get['x-arkova-required-scopes']).toEqual(['read:records']);
+    expect(openApiSpec.paths['/anchors'].get.security).toEqual([{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }]);
+    expect(openApiSpec.paths['/anchors'].get.responses['200'].content['application/json'].schema
+      .properties.anchors.items.additionalProperties).toBe(false);
     expect(openApiSpec.paths['/anchor'].post['x-arkova-required-scopes']).toEqual([
       'anchor:write',
       'write:anchors',

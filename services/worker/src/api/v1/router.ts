@@ -105,6 +105,7 @@ import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
 import { provenanceRouter } from './provenance.js';
+import { anchorListRouter } from './anchor-list.js';
 import { complianceTrendsRouter } from './complianceTrends.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
 import { keyInventoryRouter } from './key-inventory.js';
@@ -535,6 +536,10 @@ router.use('/webhooks', batchRateLimiter, requireScope('webhooks:manage'), webho
 // MUST precede the generic '/agents' mount so provider admission retains its
 // feature gate, rate limit, and handler contract.
 router.use('/agents/computeid', computeidGate, batchRateLimiter, requireScopeAnyAuth('agents:manage'), agentsComputeIdRouter);
+// Credential-creating lifecycle mutations share the bounded batch limiter;
+// reads and ordinary status updates retain the normal per-key limiter.
+router.post('/agents', batchRateLimiter);
+router.post('/agents/:agentId/key', batchRateLimiter);
 router.use('/agents', requireAgentLifecycleAuth, agentsRouter);
 
 // SCRUM-5142: folder management is available to AAL2 browser sessions and
@@ -609,6 +614,7 @@ router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // SCRUM-1273: mutating anchor writes require the explicit anchor:write scope.
+router.use('/anchors', requireScope('read:records'), anchorListRouter);
 router.post('/anchor/import', requireScope('anchor:write'), batchRateLimiter, handleAnchorImport);
 router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
 // SCRUM-2911 (W1, founder P0 2026-07-28): dashboard bridge for mixed-format

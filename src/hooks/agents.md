@@ -313,6 +313,7 @@ the query; account switches and AAL downgrades mask cached data immediately.
 strictly and fail closed. Status reads use the selected exact organization or an
 explicit personal scope, poll only active instant intents, and refresh on focus.
 `usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
+`usePrivateAnchorList` is the corresponding authenticated record lookup. It uses an `anchor_private_tags!inner` relational filter so it never enumerates tag IDs through a capped client-side `.in(...)` list. User scope explicitly binds `owner_user_id` and `org_id IS NULL`; organization scope binds the active org. The anchor query retains the existing exact-org/user role predicates and RLS, fetches 26 rows for a 25-row page, and exposes only `hasMore` rather than inventing an API cursor.
 its query key includes both user and selected organization to prevent stale scope
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
 
@@ -376,3 +377,7 @@ despite the reported failure), or `null` when the readback itself also
 failed. `undefined` (the default) means no readback was attempted. Deleted
 `refresh` — it was byte-identical to `invalidate` and unused outside this
 file.
+
+## 2026-09-27 — Connector health keeps operational evidence
+
+`useConnectorHealth` now preserves the backend's `last_event_at`, `last_renewal_at`, and `next_expires_at` fields instead of discarding them, and recognizes `oauth_client_mismatch` plus `reconnect_required_scope_change`. These timestamps retain their backend meanings; callers must not rename them to “last poll” or infer scheduler health.

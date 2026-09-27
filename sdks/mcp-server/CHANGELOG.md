@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `arkova_list_anchors`, an API-key-only `read:records` listing tool with time, cursor, and paired private-tag filters.
+
 All notable changes to the `arkova-mcp-server` npm package (the stdio MCP
 server). This file starts at 3.2.0; for anything earlier, see
 `git log -- sdks/mcp-server/`. Versions are released independently from the

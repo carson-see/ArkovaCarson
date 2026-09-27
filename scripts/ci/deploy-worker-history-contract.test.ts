@@ -277,6 +277,10 @@ describe('Deploy Worker Secret Manager preflight coverage', () => {
 
     expect(recipientPepper).toBe('recipient-identifier-pepper:1');
     expect(preflight).toContain('recipient-identifier-pepper');
+    expect(preflight).toContain('gcloud secrets versions describe 1');
+    expect(preflight).toContain('--secret=recipient-identifier-pepper');
+    expect(preflight).toContain('ENABLED');
+    expect(preflight).toContain('Pinned recipient key version unavailable');
   });
 
   it('only an unambiguous NOT_FOUND fails the deploy', () => {

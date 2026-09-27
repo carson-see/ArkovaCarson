@@ -2004,3 +2004,16 @@ responses retain the deprecated `credential_recipient_hash` property as
 `evidence_package_hash` cannot act as a secondary comparison channel. The
 private self-link remains `buildSelfImportRecipientHash(userId)` and must not be
 replaced with an extracted external recipient identifier.
+
+## 2026-09-27 — private anchor list contract
+
+`GET /api/v1/anchors` is API-key-only and requires `read:records`. It rechecks
+the current key, its current scopes, creator, bound organization, and the
+creator's present organization membership before reading. The query derives
+the tenant from that authority, excludes deleted and non-public-ID rows, and
+uses a stable `created_at,public_id` cursor and a `[since, until)` interval.
+Private user tags are creator-owned rows
+whose `org_id` is NULL; organization tags are bound to the exact key org. Tag
+filters stay in the anchor query as an inner relation. Responses expose only
+the public ID, state, timestamps, filename, and description—never tag values,
+fingerprints, metadata, recipient data, or internal IDs.

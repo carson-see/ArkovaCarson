@@ -1266,7 +1266,7 @@ describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', (
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledTimes(1);
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledWith(
       expect.objectContaining({ db: expect.anything() }),
-      { orgId: ORG_ID, actorUserId: USER_ID, folders: [{ folderId: 'drv-1', folderName: 'Invoices' }] },
+      { orgId: ORG_ID, actorUserId: USER_ID, ruleId: RULE_ID, folders: [{ folderId: 'drv-1', folderName: 'Invoices' }] },
     );
   });
 
@@ -1428,7 +1428,7 @@ describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', (
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledTimes(1);
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).toHaveBeenCalledWith(
       expect.objectContaining({ db: expect.anything() }),
-      { orgId: ORG_ID, actorUserId: USER_ID, folders: [{ folderId: 'drv-2', folderName: 'Contracts' }] },
+      { orgId: ORG_ID, actorUserId: USER_ID, ruleId: RULE_ID, folders: [{ folderId: 'drv-2', folderName: 'Contracts' }] },
     );
     const claimUpdate = creatorClaim.calls.find((call) => call.method === 'update');
     expect(claimUpdate?.args[0]).toEqual({ created_by_user_id: USER_ID });

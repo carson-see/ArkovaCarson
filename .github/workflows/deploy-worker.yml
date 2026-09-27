@@ -337,6 +337,26 @@ jobs:
               echo "::warning title=Secret Manager preflight skipped for ${secret}::gcloud could not describe ${secret} in ${{ env.PROJECT_ID }}, and this is NOT a not-found — most likely the deploy service account lacks secretmanager.secrets.get (grant roles/secretmanager.viewer to make this check meaningful). Continuing: Cloud Run will still reject the revision if the secret is genuinely absent. gcloud said: ${ERR}"
             fi
           done
+          # Recipient identities pin version 1; a usable latest version does not
+          # prove that the pinned version can boot. Metadata only, never payloads.
+          ERR_FILE="$(mktemp)"
+          if PINNED_STATE="$(gcloud secrets versions describe 1 \
+               --secret=recipient-identifier-pepper --project=${{ env.PROJECT_ID }} \
+               --format='value(state)' 2>"${ERR_FILE}")"; then
+            if [ "${PINNED_STATE}" != "ENABLED" ]; then
+              echo "::error title=Pinned recipient key version unavailable::recipient-identifier-pepper version 1 is not ENABLED. Restore the reviewed version; do not substitute latest or rotate the identity key."
+              STATUS=1
+            fi
+          else
+            ERR="$(tr '\n' ' ' <"${ERR_FILE}")"
+            if printf '%s' "${ERR}" | grep -qiE 'NOT_FOUND|was not found|does not (or may not )?exist'; then
+              echo "::error title=Pinned recipient key version unavailable::recipient-identifier-pepper version 1 does not exist. Provision the reviewed version before deploy."
+              STATUS=1
+            else
+              echo "::warning title=Pinned recipient key metadata unavailable::Cannot verify version 1 state; Cloud Run remains the deployment backstop. Grant metadata read permission to make preflight authoritative."
+            fi
+          fi
+          rm -f "${ERR_FILE}"
           if [ "${STATUS}" -ne 0 ]; then exit 1; fi
           echo "Secret Manager preflight complete."
 

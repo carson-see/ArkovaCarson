@@ -1136,6 +1136,36 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     // ── Phase 1.5 Paid API Endpoints ──────────────────────────────────
+    '/anchors': {
+      get: {
+        summary: 'List private organization anchors',
+        description: 'Lists anchors for the organization bound to the current API key. Results use a stable created-at cursor, apply an inclusive since and exclusive until interval, and may be filtered by a private user or organization tag. Tags and fingerprints are never returned.',
+        operationId: 'listAnchors',
+        tags: ['Anchoring'],
+        'x-arkova-required-scopes': ['read:records'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [
+          { name: 'since', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'until', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'tag', in: 'query', schema: { type: 'string', minLength: 1, maxLength: 64 } },
+          { name: 'tag_scope', in: 'query', schema: { type: 'string', enum: ['user', 'organization'] }, description: 'Required when tag is present; tag is required when this is present.' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } },
+          { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 2048 } },
+        ],
+        responses: {
+          '200': { description: 'A page of private organization anchors', content: { 'application/json': { schema: { type: 'object', required: ['anchors', 'next_cursor'], additionalProperties: false, properties: {
+            anchors: { type: 'array', items: { type: 'object', required: ['public_id', 'status', 'created_at', 'updated_at', 'filename', 'description'], additionalProperties: false, properties: {
+              public_id: { type: 'string' }, status: { type: 'string' }, created_at: { type: 'string', format: 'date-time' }, updated_at: { type: 'string', format: 'date-time' }, filename: { type: 'string' }, description: { type: 'string', nullable: true },
+            } } },
+            next_cursor: { type: 'string', nullable: true },
+          } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
     '/anchor': {
       post: {
         summary: 'Submit credential for anchoring',

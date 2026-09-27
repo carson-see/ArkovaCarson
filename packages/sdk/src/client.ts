@@ -59,6 +59,8 @@ import type {
   UpdateAgentInput,
   ComputeIdAdmissionInput,
   ComputeIdAdmissionResult,
+  ListAnchorsOptions,
+  ListAnchorsResponse,
 } from './types';
 import { BULK_ANCHOR_CREDENTIAL_TYPES } from './types';
 
@@ -129,7 +131,7 @@ function validateCallback(value: unknown): void {
 }
 function validateReceipt(passportId: unknown, receipt: unknown): void {
   const value = recordValue(receipt);
-  if (typeof passportId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(passportId)
+  if (typeof passportId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(passportId)
       || !value || typeof value.passport_id !== 'string' || value.passport_id.toLowerCase() !== passportId.toLowerCase()
       || typeof value.status !== 'string' || value.status.length < 1 || value.status.length > 32
       || (value.signature_valid !== undefined && value.signature_valid !== null && typeof value.signature_valid !== 'boolean')
@@ -611,6 +613,38 @@ export class Arkova {
     };
   }
 
+  /** List private anchors in the API key's current organization. Requires `read:records`. */
+  async listAnchors(options: ListAnchorsOptions = {}): Promise<ListAnchorsResponse> {
+    if (Boolean(options.tag) !== Boolean(options.tagScope)) throw new ArkovaError('tag and tagScope must be provided together', 400, 'invalid_request');
+    if (options.tag !== undefined && (options.tag.trim().length < 1 || options.tag.trim().length > 64)) throw new ArkovaError('tag must be 1-64 characters', 400, 'invalid_request');
+    if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new ArkovaError('limit must be an integer from 1 to 100', 400, 'invalid_request');
+    if (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 2048)) throw new ArkovaError('cursor must be 1-2048 characters', 400, 'invalid_request');
+    const zonedDate = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+    if ((options.since && (!zonedDate.test(options.since) || Number.isNaN(new Date(options.since).valueOf())))
+      || (options.until && (!zonedDate.test(options.until) || Number.isNaN(new Date(options.until).valueOf())))
+      || (options.since && options.until && new Date(options.since) >= new Date(options.until))) throw new ArkovaError('since and until must define a valid [since, until) RFC3339 interval', 400, 'invalid_request');
+    const params = new URLSearchParams();
+    if (options.since) params.set('since', options.since);
+    if (options.until) params.set('until', options.until);
+    if (options.tag) params.set('tag', options.tag);
+    if (options.tagScope) params.set('tag_scope', options.tagScope);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.cursor) params.set('cursor', options.cursor);
+    const response = await this.fetch(`/api/v1/anchors${params.size ? `?${params}` : ''}`);
+    const data = await jsonOrThrow<{ anchors?: unknown; next_cursor?: unknown }>(response, 'Anchor list failed');
+    if (!Array.isArray(data.anchors) || !(data.next_cursor === null || typeof data.next_cursor === 'string')) unexpectedAgentResponse();
+    const wireAnchors = data.anchors as unknown[];
+    const nextCursor = data.next_cursor as string | null;
+    const anchors = wireAnchors.map((value) => {
+      const row = recordValue(value) ?? unexpectedAgentResponse();
+      if (typeof row.public_id !== 'string' || !isAnchorLifecycleStatus(row.status)
+        || typeof row.created_at !== 'string' || typeof row.updated_at !== 'string'
+        || typeof row.filename !== 'string' || !(row.description === null || typeof row.description === 'string')) unexpectedAgentResponse();
+      return { publicId: row.public_id as string, status: row.status as AnchorLifecycleStatus, createdAt: row.created_at as string, updatedAt: row.updated_at as string, filename: row.filename as string, description: row.description as string | null };
+    });
+    return { anchors, nextCursor };
+  }
+
   /**
    * Verify a SHA-256 document fingerprint through API v2.
    * Requires a key with `read:records`.
@@ -634,8 +668,10 @@ export class Arkova {
   /**
    * PROOF-05 (SCRUM-2338): fetch the Merkle inclusion proof for a batch-anchored
    * document, including the additive nullable {@link ProofBundle} — the
-   * self-contained, independently-checkable two-layer proof. `proofBundle` is
-   * `null` when the proof is incomplete (e.g. not yet block-confirmed).
+   * structurally complete decoded two-layer proof. `proofBundle` is `null`
+   * when the wire shape is incomplete (e.g. not yet block-confirmed). A
+   * non-null value is not a cryptographic-verification result; use the
+   * independent verifier to check both inclusion layers and payload binding.
    *
    * Anonymous or `verify`-scoped.
    */

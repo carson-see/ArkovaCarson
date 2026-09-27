@@ -242,6 +242,30 @@ class SearchResponse(ArkovaModel):
     next_cursor: str | None = None
 
 
+class AnchorListItem(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    public_id: str
+    status: Literal["PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "EXPIRED", "SUPERSEDED", "PENDING_RESOLUTION"]
+    created_at: str
+    updated_at: str
+    filename: str
+    description: str | None = None
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def timestamp_is_rfc3339(cls, value: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})", value):
+            raise ValueError("timestamp must be RFC3339 with a timezone")
+        return value
+
+
+class AnchorListResponse(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    anchors: list[AnchorListItem]
+    next_cursor: str | None = None
+
+
+
 class RichVerificationFields(ArkovaModel):
     description: str | None = None
     # SCRUM-2227 / BUG-2026-08-12-007: the API emits this as a LIST of control-ID
@@ -359,6 +383,11 @@ class ProofBundle(ArkovaModel):
 
     Canonical op_return_payload shape: "ARKV" (41524b56) + 32-byte app root
     (64 hex), NO version byte, optional trailing metadata hash.
+
+    A non-None model means the SDK accepted the wire shape and singleton
+    constraints. It does not mean the SDK cryptographically verified either
+    inclusion branch, the block header, or that op_return_payload commits
+    merkle_root; use the independent verifier for that guarantee.
     """
 
     # strict=True so a wrong-typed member (e.g. leaf_count="4") is REJECTED, not
@@ -369,7 +398,7 @@ class ProofBundle(ArkovaModel):
 
     # CodeRabbit (SCRUM-2338): every required member is NON-nullable with NO
     # default. A complete (non-None) bundle must satisfy the
-    # ``proof_bundle is not None ⇒ independently verifiable`` contract, so a
+    # ``proof_bundle is not None ⇒ structurally complete`` contract, so a
     # malformed payload (missing/wrong-typed member, or an incoherent empty proof)
     # must NOT validate into a valid-looking bundle. The parent response coerces
     # any such failure to ``proof_bundle = None`` (see the validator below)

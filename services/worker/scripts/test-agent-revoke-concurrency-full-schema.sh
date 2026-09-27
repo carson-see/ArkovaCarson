@@ -152,6 +152,26 @@ SELECT set_config('request.jwt.claim.role','',true);
 COMMIT;
 SQL
 
+# Ratchet the repaired lock contract itself. The behavioral cases below prove
+# both parent-lock orderings; this definition check ensures an API-key caller
+# cannot reintroduce the former caller-key -> target-agent inversion.
+"${psql_base[@]}" <<'SQL' >/dev/null
+DO $$
+DECLARE v_definition text;
+BEGIN
+  SELECT pg_get_functiondef(
+    'public.create_agent_key_with_outbox(uuid,uuid,text,uuid,text,text)'::regprocedure
+  ) INTO v_definition;
+  IF position('SELECT * INTO v_agent FROM public.agents' IN v_definition) = 0
+     OR position('v_actor:=public.resolve_agent_manager' IN v_definition) = 0
+     OR position('SELECT * INTO v_agent FROM public.agents' IN v_definition)
+        > position('v_actor:=public.resolve_agent_manager' IN v_definition) THEN
+    RAISE EXCEPTION 'create-agent-key lock order is not target-agent then caller';
+  END IF;
+END;
+$$;
+SQL
+
 new_agent() {
   local agent_id key_id label
   agent_id="$(python3 - <<'PY'
@@ -288,6 +308,55 @@ assert_revoked "$agent"
 [[ "$(scalar "SELECT count(*) FROM public.api_keys WHERE agent_id='$agent' AND key_prefix='$prefix'")" == 0 ]]
 grep -q '"inactive": true' "$scratch/mint-after-revoke.out"
 
+# Exercise the former API-key-specific inversion with two real backends. The
+# revoke transaction owns the target agent before it proceeds to its attached
+# caller key. A concurrent mint must wait on that target without first owning
+# the caller key; revoke can then complete, and mint observes terminal state.
+new_agent machine_lock_inversion
+agent="$current_agent"; key="$current_key"
+"${psql_base[@]}" -v agent="$agent" -v key="$key" <<'SQL' >/dev/null
+UPDATE public.agents SET allowed_scopes=ARRAY['agents:manage','verify'] WHERE id=:'agent';
+UPDATE public.api_keys SET scopes=ARRAY['agents:manage','verify'] WHERE id=:'key';
+SQL
+prefix="ak_live_$(printf '%s' "$run_slug" | cut -c9-12)"
+gate=$((gate_base+5))
+start_gate machine_lock_inversion "$gate"
+first_app="${app_prefix}_machine_revoke"
+PGAPPNAME="$first_app" "${psql_base[@]}" -v org="$org_id" -v agent="$agent" \
+  -v key="$key" -v gate="$gate" <<'SQL' >"$scratch/machine-revoke.out" 2>&1 &
+BEGIN;
+SET LOCAL ROLE service_role;
+SELECT 1 FROM public.agents WHERE id=:'agent' AND org_id=:'org' FOR UPDATE;
+SELECT pg_advisory_lock(:'gate');
+SELECT public.revoke_agent_and_keys_as_api_key_with_outbox(:'org',:'agent',:'key');
+COMMIT;
+SQL
+revoke_pid=$!; background_pids+=("$revoke_pid")
+wait_for_blocked_lock "$first_app"
+second_app="${app_prefix}_machine_mint"
+PGAPPNAME="$second_app" "${psql_base[@]}" -v org="$org_id" -v actor="$key" \
+  -v agent="$agent" -v prefix="$prefix" >"$scratch/machine-mint.out" 2>&1 <<'SQL' &
+SET ROLE service_role;
+SELECT public.create_agent_key_with_outbox(:'org',:'agent','api_key',:'actor',repeat('9',64),:'prefix');
+SQL
+mint_pid=$!; background_pids+=("$mint_pid")
+wait_for_blocked_lock "$second_app"
+release_gate machine_lock_inversion
+wait "$revoke_pid"
+if wait "$mint_pid"; then
+  grep -q '"inactive": true' "$scratch/machine-mint.out"
+else
+  # The revocation includes the attached caller key. Depending on the row
+  # version observed after the wait, mint may revalidate that caller and deny.
+  grep -q 'agent manager required' "$scratch/machine-mint.out"
+fi
+assert_revoked "$agent"
+if grep -qi 'deadlock detected' "$scratch/machine-revoke.out" "$scratch/machine-mint.out" \
+  || [[ "$(scalar "SELECT count(*) FROM public.api_keys WHERE agent_id='$agent' AND key_prefix='$prefix'")" != 0 ]]; then
+  echo "machine mint/revoke lock order deadlocked or minted after revoke" >&2
+  exit 1
+fi
+
 # The actual current resume wrapper commits first; revoke then sweeps its key.
 new_agent resume_first
 agent="$current_agent"; key="$current_key"
@@ -398,5 +467,79 @@ SELECT public.revoke_agent_and_keys_with_outbox(:'org',:'agent',:'actor');
 SQL
 assert_revoked "$agent"
 [[ "$(scalar "SELECT count(*) FROM public.agent_webhook_outbox WHERE event_type='agent.revoked' AND agent_id='$agent'")" == 1 ]]
+
+# The physical-delete guard is atomic too. If its required audit cannot be
+# written, neither the agent delete nor its key rewrite may commit.
+new_agent service_delete_rollback
+agent="$current_agent"; key="$current_key"
+"${psql_base[@]}" -v trigger_name="$trigger_name" -v trigger_function="$trigger_function" \
+  -v agent="$agent" <<'SQL' >/dev/null
+SELECT format(
+  'CREATE FUNCTION public.%I() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN RAISE EXCEPTION ''forced physical-delete audit failure''; END $fn$',
+  :'trigger_function') \gexec
+SELECT format(
+  'CREATE TRIGGER %I BEFORE INSERT ON public.audit_events FOR EACH ROW WHEN (NEW.event_type=''AGENT_REVOKED'' AND NEW.target_id=%L) EXECUTE FUNCTION public.%I()',
+  :'trigger_name', :'agent', :'trigger_function') \gexec
+SQL
+if "${psql_base[@]}" -v org="$org_id" -v agent="$agent" >"$scratch/delete-audit-rollback.out" 2>&1 <<'SQL'
+SET ROLE service_role;
+DELETE FROM public.agents WHERE id=:'agent' AND org_id=:'org';
+SQL
+then
+  echo "forced physical-delete audit failure unexpectedly committed" >&2
+  exit 1
+fi
+grep -q 'forced physical-delete audit failure' "$scratch/delete-audit-rollback.out"
+if [[ "$(scalar "SELECT count(*) FROM public.agents WHERE id='$agent'")" != 1 ]] \
+  || [[ "$(scalar "SELECT is_active||':'||COALESCE(revocation_reason,'') FROM public.api_keys WHERE id='$key'")" != "true:" ]] \
+  || [[ "$(scalar "SELECT count(*) FROM public.audit_events WHERE event_type='AGENT_REVOKED' AND target_id='$agent'")" != 0 ]]; then
+  echo "physical-delete audit failure did not roll back agent and key state" >&2
+  exit 1
+fi
+"${psql_base[@]}" -v trigger_name="$trigger_name" -v trigger_function="$trigger_function" <<'SQL' >/dev/null
+SELECT format('DROP TRIGGER %I ON public.audit_events', :'trigger_name') \gexec
+SELECT format('DROP FUNCTION public.%I()', :'trigger_function') \gexec
+SQL
+
+# An internal physical delete may remove the agent row, but it must never leave
+# a live or resumable credential behind when the FK clears agent_id.
+new_agent service_delete
+agent="$current_agent"; key="$current_key"
+compromised_key="$(python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+)"
+admin_resumable_key="$(python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+)"
+provider_resumable_key="$(python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+)"
+"${psql_base[@]}" -v org="$org_id" -v actor="$actor_id" -v agent="$agent" \
+  -v compromised_key="$compromised_key" -v admin_key="$admin_resumable_key" \
+  -v provider_key="$provider_resumable_key" <<'SQL' >/dev/null
+INSERT INTO public.api_keys(id,org_id,key_prefix,key_hash,name,created_by,agent_id,is_active,revoked_at,revocation_reason,scopes)
+VALUES (:'compromised_key',:'org','ak_live_dead',repeat('d',64),'compromised fixture',:'actor',
+    :'agent',false,clock_timestamp(),'security:compromised',ARRAY['verify']),
+  (:'admin_key',:'org','ak_live_admn',repeat('e',64),'admin-resumable fixture',:'actor',
+    :'agent',false,clock_timestamp(),'admin:agent.suspended',ARRAY['verify']),
+  (:'provider_key',:'org','ak_live_comp',repeat('f',64),'provider-resumable fixture',:'actor',
+    :'agent',false,clock_timestamp(),'computeid:passport.suspended',ARRAY['verify']);
+SET ROLE service_role;
+DELETE FROM public.agents WHERE id=:'agent' AND org_id=:'org';
+SQL
+if [[ "$(scalar "SELECT count(*) FROM public.agents WHERE id='$agent'")" != 0 ]] \
+  || [[ "$(scalar "SELECT is_active||':'||COALESCE(revocation_reason,'')||':'||(agent_id IS NULL) FROM public.api_keys WHERE id='$key'")" != "false:system:agent.deleted:true" ]] \
+  || [[ "$(scalar "SELECT is_active||':'||COALESCE(revocation_reason,'')||':'||(agent_id IS NULL) FROM public.api_keys WHERE id='$compromised_key'")" != "false:security:compromised:true" ]] \
+  || [[ "$(scalar "SELECT string_agg(is_active||':'||COALESCE(revocation_reason,'')||':'||(agent_id IS NULL),',' ORDER BY id) FROM public.api_keys WHERE id IN ('$admin_resumable_key','$provider_resumable_key')")" != "false:system:agent.deleted:true,false:system:agent.deleted:true" ]] \
+  || [[ "$(scalar "SELECT count(*) FROM public.audit_events WHERE event_type='AGENT_REVOKED' AND target_id='$agent' AND details::jsonb->>'reason'='physical_delete'")" != 1 ]]; then
+  echo "physical agent delete left an active/resumable key or lacked its audit" >&2
+  exit 1
+fi
 
 echo "agent revoke full-schema concurrency contract passed"

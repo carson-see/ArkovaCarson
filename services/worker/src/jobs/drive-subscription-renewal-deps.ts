@@ -304,10 +304,12 @@ export async function runDriveSubscriptionRenewal(
   options: DriveSubscriptionRenewalDepOptions = {},
 ): Promise<DriveSubscriptionRenewalRunResult> {
   const leaseClient = options.db ?? (defaultDb as AnyDb);
-  const runStartedAtMs = performance.now();
   const outcome = await withRunLease(
     { ...DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, client: leaseClient },
     async () => {
+      // Lease waiting is outside the run budget; renewal and both repair passes
+      // share the Scheduler attempt once this process actually owns the lease.
+      const runStartedAtMs = performance.now();
       let summary = EMPTY_RENEWAL_SUMMARY;
       let renewalError: unknown;
       try {

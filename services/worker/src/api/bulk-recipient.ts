@@ -213,6 +213,7 @@ export async function resolveBulkRecipientProfile(
 }
 
 export async function linkBulkRecipient(input: BulkRecipientInput): Promise<void> {
+  if (!config.enableBulkRecipientProvisioning) throw new Error('recipient_provisioning_disabled');
   // Fail before creating any auth/profile state when the required secret is absent.
   const emailHash = hashRecipientEmail(input.email, config.recipientIdentifierPepper);
   if (!emailHash) throw new Error('recipient_email_invalid');

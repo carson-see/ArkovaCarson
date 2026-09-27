@@ -31,7 +31,8 @@ import { verifyBundleSignature, type SignatureResult } from './lib/signature.js'
 import { chainReasonCode, recomputeReasonCode, type ReasonCode } from './lib/reason-codes.js';
 import type { IndependentNode, ProofPacket, PublishedKeys, SignedProofBundle } from './types.js';
 
-export type StepStatus = 'pass' | 'fail' | 'skipped';
+export type StepStatus = 'pass' | 'fail' | 'unavailable' | 'skipped';
+export type VerifyVerdict = 'VERIFIED' | 'NOT_VERIFIED' | 'INDETERMINATE';
 
 /** The one proof schema version this verifier understands (PROOF-08 stamp). */
 export const SUPPORTED_PROOF_SCHEMA_VERSION = 1;
@@ -44,11 +45,13 @@ export interface VerifyStep {
   detail: string;
   /** Frozen machine reason code — present ONLY on failing steps (S3-B). */
   code?: ReasonCode;
+  availabilityCode?: 'NETWORK_UNAVAILABLE';
 }
 
 export interface VerifyReport {
-  /** Overall verdict: true only when every REQUIRED step passed. */
+  /** True only when every required step passed; false for negative and indeterminate runs. */
   ok: boolean;
+  verdict: VerifyVerdict;
   fingerprint: string;
   merkleRoot: string;
   /** Network receipt id (tx_id), or null. */
@@ -105,6 +108,7 @@ export interface VerifyReport {
    * signature check failed. Null when VERIFIED.
    */
   reasonCode: ReasonCode | null;
+  availabilityCode: 'NETWORK_UNAVAILABLE' | null;
 }
 
 export interface VerifyOptions {
@@ -176,12 +180,17 @@ export async function verifyProof(
   // signature or an unresolvable signer identity (S3-B).
   const signature = verifyBundleSignature(opts.signedBundle, opts.publicKeyPem, opts.publishedKeys);
 
-  // Required steps are everything not 'skipped'. ok = no failures among them
-  // AND no failure of an explicitly-requested signature check.
-  const ok = steps.every((s) => s.status !== 'fail') && signature.status !== 'failed';
+  // Required steps are everything not 'skipped'. A definitive failure produces
+  // NOT_VERIFIED; unavailable evidence produces INDETERMINATE unless a separate
+  // required check has already failed definitively.
+  const hasFailure = steps.some((s) => s.status === 'fail') || signature.status === 'failed';
+  const hasUnavailable = steps.some((s) => s.status === 'unavailable');
+  const verdict: VerifyVerdict = hasFailure ? 'NOT_VERIFIED' : hasUnavailable ? 'INDETERMINATE' : 'VERIFIED';
+  const ok = verdict === 'VERIFIED';
 
   return {
     ok,
+    verdict,
     fingerprint: packet.fingerprint,
     merkleRoot: packet.merkle_root,
     receiptId: packet.tx_id,
@@ -194,7 +203,8 @@ export async function verifyProof(
     signature,
     serverClaimedVerified: typeof packet.verified === 'boolean' ? packet.verified : null,
     packetTxInclusion: readPacketTxInclusion(packet),
-    reasonCode: ok ? null : selectReasonCode(steps, signature),
+    reasonCode: hasFailure ? selectReasonCode(steps, signature) : null,
+    availabilityCode: !hasFailure && hasUnavailable ? 'NETWORK_UNAVAILABLE' : null,
   };
 }
 
@@ -336,6 +346,7 @@ async function runChainPhase(
     result.measuredObservedTime,
     chain.label,
     result.headerMeasured,
+    result.unavailable,
   );
   return {
     steps: [result.opReturnStep, result.blockStep, tsStep.step],
@@ -397,7 +408,20 @@ function buildTimestampStep(
   measured: string | null,
   label: string,
   headerMeasured: boolean,
+  unavailable = false,
 ): { step: VerifyStep; agrees: boolean | null } {
+  if (unavailable && (!headerMeasured || measured == null)) {
+    return {
+      step: {
+        id: 'timestamp_honesty',
+        label: TIMESTAMP_LABEL,
+        status: 'unavailable',
+        detail: `Network Observed Time could not be measured because the independent node (${label}) was unavailable.`,
+        availabilityCode: 'NETWORK_UNAVAILABLE',
+      },
+      agrees: null,
+    };
+  }
   // No independent header → cannot back any claim. If the on-chain step reached
   // a header we always have `measured`; absence means an earlier on-chain failure.
   if (!headerMeasured || measured == null) {
@@ -488,6 +512,7 @@ interface OnChainResult {
   measuredObservedTime: string | null;
   /** True iff confirmInclusion actually read + validated an independent header. */
   headerMeasured: boolean;
+  unavailable: boolean;
 }
 
 /**
@@ -511,21 +536,35 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     );
   } catch (err) {
     const detail = `Could not confirm the receipt against the independent node (${chain.label}): ${errMsg(err)}`;
-    // Defensive: confirmInclusion never throws by contract; a thrown transport
-    // bug means the receipt could not be fetched — the honest bucket is
-    // TX_NOT_FOUND (nothing on the independent node corroborates the packet).
+    // Defensive: a thrown dependency bug means the check is unavailable, not failed.
     return {
-      opReturnStep: { id: 'op_return', label: OP_RETURN_LABEL, status: 'fail', detail, code: 'TX_NOT_FOUND' },
+      opReturnStep: { id: 'op_return', label: OP_RETURN_LABEL, status: 'unavailable', detail, availabilityCode: 'NETWORK_UNAVAILABLE' },
       blockStep: {
         id: 'block_confirm',
         label: BLOCK_LABEL,
-        status: 'fail',
+        status: 'unavailable',
         detail: 'Not checked because the independent confirmation could not run.',
-        code: 'TX_NOT_FOUND',
+        availabilityCode: 'NETWORK_UNAVAILABLE',
       },
       blockHeight: null,
       measuredObservedTime: null,
       headerMeasured: false,
+      unavailable: true,
+    };
+  }
+
+  if (result.status === 'node_unavailable') {
+    const detail = `Independent verification is temporarily unavailable via ${chain.label}: ${result.reason ?? 'independent node unavailable'}`;
+    const opReturnProven = result.extractedMerkleRoot === packet.merkle_root.toLowerCase();
+    return {
+      opReturnStep: opReturnProven
+        ? { id: 'op_return', label: OP_RETURN_LABEL, status: 'pass', detail: `The receipt fetched from ${chain.label} commits exactly the published root in its embedded data.` }
+        : { id: 'op_return', label: OP_RETURN_LABEL, status: 'unavailable', detail, availabilityCode: 'NETWORK_UNAVAILABLE' },
+      blockStep: { id: 'block_confirm', label: BLOCK_LABEL, status: 'unavailable', detail, availabilityCode: 'NETWORK_UNAVAILABLE' },
+      blockHeight: result.blockHeight ?? null,
+      measuredObservedTime: result.observedTime,
+      headerMeasured: result.observedTime != null,
+      unavailable: true,
     };
   }
 
@@ -537,7 +576,7 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
 
   // The frozen machine code for whatever failed on-chain (undefined when clean).
   const failureCode =
-    result.confirmed ? undefined : chainReasonCode(result.status as Exclude<ConfirmInclusionResult['status'], 'confirmed'>);
+    result.confirmed ? undefined : chainReasonCode(result.status as Exclude<ConfirmInclusionResult['status'], 'confirmed' | 'node_unavailable'>);
 
   // Step 2 (OP_RETURN payload) passes once we reach a payload-clean status: the
   // tx exists, carries a canonical Arkova OP_RETURN, and it commits the expected
@@ -570,6 +609,7 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     blockHeight,
     measuredObservedTime,
     headerMeasured,
+    unavailable: false,
   };
 }
 

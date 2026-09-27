@@ -24,6 +24,7 @@ from .models import (
     Anchor,
     AnchorImportResponse,
     AnchorImportRow,
+    AnchorListResponse,
     AnchorReceipt,
     AnchorSubmissionStatus,
     BulkAnchorDuplicateStrategy,
@@ -80,6 +81,39 @@ _UNSET = _Unset()
 _AGENT_TYPES = {"llm_agent", "ats_integration", "hr_platform", "compliance_tool", "custom"}
 _AGENT_SCOPES = {"read:records", "read:orgs", "read:search", "write:anchors", "admin:rules", "verify", "verify:batch", "usage:read", "keys:manage", "compliance:read", "compliance:write", "oracle:read", "oracle:write", "anchor:write", "anchor:read", "attestations:write", "attestations:read", "webhooks:manage", "agents:manage", "keys:read", "orgs:manage"}
 _COMPUTEID_SCOPES = {"verify", "verify:batch", "anchor:write", "write:anchors", "anchor:read", "read:records", "read:search"}
+_ZONED_RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$")
+
+
+def _anchor_list_params(
+    since: str | None, until: str | None, tag: str | None,
+    tag_scope: Literal["user", "organization"] | None, limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+        raise ArkovaError("limit must be between 1 and 100", status_code=400, code="invalid_anchor_list_query")
+    if (tag is None) != (tag_scope is None):
+        raise ArkovaError("tag and tag_scope must be provided together", status_code=400, code="invalid_anchor_list_query")
+    if tag is not None and (not isinstance(tag, str) or not 1 <= len(tag) <= 64):
+        raise ArkovaError("tag must contain 1 to 64 characters", status_code=400, code="invalid_anchor_list_query")
+    if tag_scope is not None and tag_scope not in {"user", "organization"}:
+        raise ArkovaError("tag_scope must be user or organization", status_code=400, code="invalid_anchor_list_query")
+    params: dict[str, Any] = {"limit": limit}
+    for field, value in (("since", since), ("until", until)):
+        if value is not None:
+            if not isinstance(value, str) or not _ZONED_RFC3339.fullmatch(value):
+                raise ArkovaError(f"{field} must be an RFC3339 timestamp with a timezone", status_code=400, code="invalid_anchor_list_query")
+            try:
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ArkovaError(f"{field} must be an RFC3339 timestamp with a timezone", status_code=400, code="invalid_anchor_list_query") from exc
+            params[field] = value
+    if tag is not None:
+        params.update({"tag": tag, "tag_scope": tag_scope})
+    if cursor is not None:
+        if not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048:
+            raise ArkovaError("cursor must be a non-empty string", status_code=400, code="invalid_anchor_list_query")
+        params["cursor"] = cursor
+    return params
 
 
 def _validate_agent_values(*, name: str | None = None, agent_type: str | None = None,
@@ -613,6 +647,16 @@ class Arkova:
             params["cursor"] = cursor
         return _parse_json(self._request("GET", "/search", params=params), SearchResponse)
 
+    def list_anchors(
+        self, *, since: str | None = None, until: str | None = None,
+        tag: str | None = None, tag_scope: Literal["user", "organization"] | None = None,
+        limit: int = 50, cursor: str | None = None,
+    ) -> AnchorListResponse:
+        """List private anchors visible to this API key's current organization."""
+        params = _anchor_list_params(since, until, tag, tag_scope, limit, cursor)
+        path = _versioned_path(str(self._client.base_url), "v1", "/anchors")
+        return _parse_json(self._request("GET", path, params=params), AnchorListResponse)
+
     def verify(self, public_id: str) -> VerificationResult:
         path = _versioned_path(
             str(self._client.base_url),
@@ -916,6 +960,16 @@ class AsyncArkova:
         if cursor:
             params["cursor"] = cursor
         return _parse_json(await self._request("GET", "/search", params=params), SearchResponse)
+
+    async def list_anchors(
+        self, *, since: str | None = None, until: str | None = None,
+        tag: str | None = None, tag_scope: Literal["user", "organization"] | None = None,
+        limit: int = 50, cursor: str | None = None,
+    ) -> AnchorListResponse:
+        """List private anchors visible to this API key's current organization."""
+        params = _anchor_list_params(since, until, tag, tag_scope, limit, cursor)
+        path = _versioned_path(str(self._client.base_url), "v1", "/anchors")
+        return _parse_json(await self._request("GET", path, params=params), AnchorListResponse)
 
     async def verify(self, public_id: str) -> VerificationResult:
         path = _versioned_path(

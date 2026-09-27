@@ -160,6 +160,9 @@ const {
     if (fn === 'complete_agent_webhook_delivery') {
       return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: true, error: null });
     }
+    if (fn === 'cleanup_terminal_agent_webhook_outbox') {
+      return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: 0, error: null });
+    }
     // get_flag (and any other rpc) → the flag slot. Tests drive this via
     // mockRpc.mockResolvedValue(...) (legacy) which is bridged onto the flag.
     return Promise.resolve(rpcState.flag);
@@ -1784,17 +1787,40 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
     expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
   });
 
+  it('runs bounded terminal-outbox retention after the owned drain', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: null, error: null }];
+
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
+
+    expect(mockRpc).toHaveBeenCalledWith('cleanup_terminal_agent_webhook_outbox', {
+      p_limit: 500,
+    });
+  });
+
+  it('surfaces terminal-outbox retention failure without leaking the database error', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: null, error: null }];
+    rpcStateOf().agent.cleanup_terminal_agent_webhook_outbox = [{
+      data: null,
+      error: { message: 'private retention sentinel' },
+    }];
+
+    await expect(processAgentWebhookOutbox()).rejects.toThrow('agent webhook retention cleanup failed');
+  });
+
   it.each([
     ['scalar', 42],
     ['empty object', {}],
     ['missing lease token', { cancelled_delivery_id: null, delivery_id: '33333333-3333-4333-8333-333333333333' }],
     ['mixed cancellation and delivery', { cancelled_delivery_id: '33333333-3333-4333-8333-333333333333', delivery_id: '44444444-4444-4444-8444-444444444444' }],
-  ])('fails closed on a %s claim response before HTTP or completion', async (_label, claim) => {
+  ])('skips a %s claim response before HTTP or completion and continues the tick', async (_label, claim) => {
     rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
-    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }];
-    await expect(processAgentWebhookOutbox()).rejects.toThrow('agent webhook claim returned an invalid shape');
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockRpc).not.toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.anything());
+    expect(mockSentry.captureException).toHaveBeenCalledWith(expect.objectContaining({ message: 'agent webhook claim returned an invalid shape' }), expect.objectContaining({ tags: { component: 'agent-webhook-outbox', operation: 'claim' } }));
   });
 
   it('retains the terminal cancellation sentinel without HTTP or completion', async () => {

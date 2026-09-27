@@ -19,6 +19,7 @@ Source code for `arkova` (PH1-SDK-01 + INT-01).
 - `client.getMerkleProof(publicId)` → `MerkleProofResponse` (calls `GET /api/v1/verify/:publicId/proof`). Maps wire snake_case → camelCase.
 - New types in `types.ts`: `MerkleProofResponse`, `MerkleProofEntry`, `ProofBundle`, `ProofBundleSignature`. `proofBundle` is additive + nullable (frozen schema, Constitution §1.8) — `null` when the proof is incomplete.
 - `ProofBundle.leafCount` (added in Carson-P1 rework): total leaves in the batch tree; with `merkleIndex` arms the CVE-2012-2459 guard. Always present in a complete bundle. Canonical `opReturnPayload` = `ARKV`(41524b56)+32-byte root hex, NO version byte. `signature` is RESERVED/always-null on the unsigned path (signed envelope is the outer `?format=signed` wrapper).
+- A non-null `proofBundle` is a decoder/shape result, not a cryptographic-verification result. The mapper does not prove that `opReturnPayload` commits `merkleRoot`; consumers needing that guarantee must run the independent verifier.
 - The producer requires receipt evidence, a 160-hex header, 64-hex observed identifier, canonical ARKV payload, index and leaf count. The SDK mapper checks required field types and branch shape; it does not enforce every producer semantic or verify the evidence. See the decoding/verification boundary below.
 
 ## 2026-08-31 — B3: `mapProofBundle` no longer drops the bitcoin-tree half
@@ -148,6 +149,10 @@ the wire's `recipient_link_failed` never leaks onto the typed surface next to it
 camelCase twin; a missing field reads as 0.
 
 Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## 2026-09-27 — private anchor listing candidate
+
+`listAnchors()` maps the authenticated `/api/v1/anchors` contract. It accepts date, private-tag scope, page limit and opaque cursor filters, and returns only the bounded private list projection plus `nextCursor`. It is distinct from public v2 `search()` and must never fall back to that corpus. Source version 3.3.0 remains an unreleased candidate.
 
 ## Agent permission-denial recovery
 

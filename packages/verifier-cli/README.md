@@ -64,7 +64,10 @@ arkova-verify <proof.json> [--rpc <url>] [--key <keys.json>] [--offline] [--json
 | `--offline` | Skip on-chain confirmation (recompute-only). The report states honestly that the on-chain step was not run. |
 | `--json` | Emit the machine-readable report. |
 
-Exit codes: `0` VERIFIED · `1` NOT VERIFIED · `2` usage/input error.
+Exit codes: `0` VERIFIED · `1` NOT VERIFIED · `2` usage/input error ·
+`3` INDETERMINATE (the independent node was unavailable). JSON output retains
+`ok: false` for backward compatibility and adds the three-state `verdict` plus
+`availabilityCode: "NETWORK_UNAVAILABLE"`; existing negative reason codes are unchanged.
 
 ## How offline verification works (the 4 steps)
 
