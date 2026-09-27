@@ -274,7 +274,11 @@ must not promise it for `POST /api/v1/anchor`. The strict lifecycle payload sche
 fingerprints, private tags, metadata, and internal ids.
 
 Hosted MCP declares 15 default plus 3 conditionally registered write tools; registry, server card, schemas, live registration, and reference docs must change together.
+
 ## 2026-09-19 — Finality webhook contracts
 
 The public guide documents subscribable `anchor.revocation_anchored` and
 `attestation.active` events and their public-id-only payload semantics.
+## Agent lifecycle OpenAPI contract
+
+The distributed YAML and the worker-served specification both describe the six generic agent lifecycle operations and API-key-only ComputeID admission. Keep the signed receipt passthrough schema, one-time-key response, nullable stored metadata, `agents:manage` requirement, provider allowlist, and caller delegation ceiling aligned with the runtime routes. The colocated worker contract test parses both specifications and verifies full structural parity for the owned paths, schemas, responses, and component references.

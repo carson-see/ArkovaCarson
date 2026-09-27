@@ -20,6 +20,7 @@ import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatu
 // order is stated and the array is frozen.
 import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
 import { ANCHOR_CREDENTIAL_TYPES } from '../../lib/credential-evidence.js';
+import { agentOpenApiPaths, agentOpenApiResponses, agentOpenApiSchemas } from './agents.openapi.js';
 
 const router = Router();
 
@@ -381,6 +382,7 @@ export const openApiSpec: Record<string, any> = {
   ],
   security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
   paths: {
+    ...agentOpenApiPaths,
     '/verify/{publicId}': {
       get: {
         summary: 'Verify a credential',
@@ -2666,6 +2668,7 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     schemas: {
+      ...agentOpenApiSchemas,
       Folder: {
         type: 'object', required: ['id', 'public_id', 'name', 'owner_scope', 'created_at', 'updated_at'],
         properties: {
@@ -3435,6 +3438,7 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     responses: {
+      ...agentOpenApiResponses,
       BadRequest: {
         description: 'Invalid request',
         content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
@@ -3488,6 +3492,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Attestations', description: 'Attestation claims (create, verify, revoke)' },
     { name: 'Compliance', description: 'Regulatory lookups, CLE verification, compliance checks' },
     { name: 'Webhooks', description: 'Webhook management, testing, and delivery logs' },
+    { name: 'Agents', description: 'Tenant-scoped agent lifecycle and ComputeID passport admission' },
     { name: 'Folders', description: 'Nested personal and organization record folders' },
     { name: 'Organizations', description: 'Sub-organization management over an organization API key (orgs:manage)' },
     { name: 'Jobs', description: 'Async batch job polling' },

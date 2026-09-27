@@ -1,5 +1,9 @@
 # services/worker/src/api/v1/agents.md
 
+## Agent lifecycle OpenAPI contract
+
+`agents.openapi.ts` supplies the six generic lifecycle operations and API-key-only ComputeID admission to the served specification. `agents.openapi.test.ts` exercises the real docs router and checks the published YAML mirror, security boundary, signed receipt passthrough, one-time-key response, nullable metadata, and component references. Keep it aligned with `agents.ts`, `agents-computeid.ts`, and `integrations/computeid/schemas.ts`.
+
 ## 2026-09-27 — transactional agent webhook producers (AR20-13)
 
 Generic register, update, revoke, and key-mint routes call migration 0491's
