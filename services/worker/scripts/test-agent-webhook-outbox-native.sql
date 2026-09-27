@@ -205,6 +205,78 @@ BEGIN
   END IF;
 END $$;
 
+DO $$
+DECLARE
+  v_agent uuid;
+  v_active_key uuid;
+  v_provider_inactive_key uuid;
+  v_details jsonb;
+  v_audits bigint;
+BEGIN
+  INSERT INTO public.agents(org_id,registered_by,name,status,agent_type,allowed_scopes)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+    'structured audit fixture','active','custom',ARRAY['verify'])
+  RETURNING id INTO v_agent;
+  INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('d',64),'ak_live_dddd',
+    'active audit key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',true)
+  RETURNING id INTO v_active_key;
+  INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
+  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('e',64),'ak_live_eeee',
+    'provider inactive audit key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',
+    false,clock_timestamp(),'computeid:passport.suspended')
+  RETURNING id INTO v_provider_inactive_key;
+
+  PERFORM public.apply_admin_agent_status_transition(
+    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'suspended',
+    jsonb_build_object('name','structured audit fixture'),'user',
+    '11111111-1111-4111-8111-111111111111');
+  SELECT details::jsonb INTO STRICT v_details FROM public.audit_events
+    WHERE target_id=v_agent::text AND event_type='AGENT_SUSPENDED'
+    ORDER BY created_at DESC LIMIT 1;
+  IF NOT (v_details ?& ARRAY['actor_kind','actor_user_id','previous_status','next_status',
+       'changed_fields','keys_deactivated','keys_restored'])
+     OR jsonb_typeof(v_details->'changed_fields') IS DISTINCT FROM 'array'
+     OR v_details->>'actor_kind' IS DISTINCT FROM 'user'
+     OR v_details->>'previous_status' IS DISTINCT FROM 'active'
+     OR v_details->>'next_status' IS DISTINCT FROM 'suspended'
+     OR (v_details->>'keys_deactivated')::integer IS DISTINCT FROM 1
+     OR (v_details->>'keys_restored')::integer IS DISTINCT FROM 0
+     OR (v_details->'changed_fields' ? 'name') IS DISTINCT FROM false
+     OR (v_details->'changed_fields' ?& ARRAY['status','metadata','suspended_at']) IS DISTINCT FROM true
+     OR (v_details ?| ARRAY['metadata_value','allowed_scopes','key_hash','passport_id']) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'admin suspension audit details were incomplete, inflated, or exposed values: %',v_details;
+  END IF;
+  IF ((v_details - 'keys_deactivated') ?& ARRAY['actor_kind','actor_user_id','previous_status',
+       'next_status','changed_fields','keys_deactivated','keys_restored']) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'missing-field audit mutation was not rejected by the required-key predicate';
+  END IF;
+
+  PERFORM public.apply_admin_agent_status_transition(
+    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'active','{}','user',
+    '11111111-1111-4111-8111-111111111111');
+  SELECT details::jsonb INTO STRICT v_details FROM public.audit_events
+    WHERE target_id=v_agent::text AND event_type='AGENT_UPDATED'
+    ORDER BY created_at DESC LIMIT 1;
+  IF NOT (v_details ?& ARRAY['previous_status','next_status','changed_fields',
+       'keys_deactivated','keys_restored'])
+     OR jsonb_typeof(v_details->'changed_fields') IS DISTINCT FROM 'array'
+     OR v_details->>'previous_status' IS DISTINCT FROM 'suspended'
+     OR v_details->>'next_status' IS DISTINCT FROM 'active'
+     OR (v_details->>'keys_deactivated')::integer IS DISTINCT FROM 0
+     OR (v_details->>'keys_restored')::integer IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'admin resume audit details lost the actual restored-key count: %',v_details;
+  END IF;
+
+  SELECT count(*) INTO v_audits FROM public.audit_events WHERE target_id=v_agent::text;
+  PERFORM public.apply_admin_agent_status_transition(
+    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'active','{}','user',
+    '11111111-1111-4111-8111-111111111111');
+  IF (SELECT count(*) FROM public.audit_events WHERE target_id=v_agent::text)<>v_audits THEN
+    RAISE EXCEPTION 'authoritative admin no-op emitted a misleading transition audit';
+  END IF;
+END $$;
+
 CREATE TEMP TABLE broad_agent AS
 SELECT (public.register_agent_with_outbox(
   'aaaaaaaa-0000-4000-8000-000000000001','user',
@@ -277,6 +349,23 @@ BEGIN
      OR (SELECT is_active FROM public.api_keys WHERE id=v_broad)
      OR NOT (SELECT is_active FROM public.api_keys WHERE id=v_eligible) THEN
     RAISE EXCEPTION 'provider reinstatement restored a key outside the current agent scope ceiling';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.audit_events
+    WHERE target_id=v_agent::text AND event_type='AGENT_PASSPORT_REINSTATED'
+      AND actor_id IS NULL
+      AND details::jsonb ?& ARRAY['actor_kind','event','previous_status','next_status',
+        'changed_fields','keys_deactivated','keys_restored']
+      AND jsonb_typeof(details::jsonb->'changed_fields')='array'
+      AND details::jsonb @> jsonb_build_object(
+        'actor_kind','computeid','event','passport.reinstated',
+        'previous_status','suspended','next_status','active',
+        'keys_deactivated',0,'keys_restored',1)
+      AND (details::jsonb->'changed_fields' ?& ARRAY['status','metadata']) IS TRUE
+      AND (details::jsonb->'changed_fields' ? 'suspended_at') IS FALSE
+      AND (details::jsonb ?| ARRAY['passport_id','metadata_value','key_hash']) IS FALSE
+  ) THEN
+    RAISE EXCEPTION 'ComputeID reinstatement audit lost structured value-free transition detail';
   END IF;
 END $$;
 
