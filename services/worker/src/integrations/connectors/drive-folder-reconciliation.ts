@@ -58,6 +58,79 @@ async function readPersistedCurrentRule(db: DriveFolderMirrorDb, candidate: Driv
   return (data as DriveFolderRuleCandidate | null) ?? null;
 }
 
+interface PreparedDriveFolderRule {
+  rule: DriveFolderRuleCandidate;
+  folders: ReturnType<typeof extractDriveFoldersToMirror>;
+}
+
+async function prepareDriveFolderRule(args: {
+  candidate: DriveFolderRuleCandidate;
+  reread: (candidate: DriveFolderRuleCandidate) => Promise<DriveFolderRuleCandidate | null>;
+  summary: DriveFolderReconciliationSummary;
+  logger?: Logger;
+}): Promise<PreparedDriveFolderRule | null> {
+  let rule: DriveFolderRuleCandidate | null;
+  try { rule = await args.reread(args.candidate); } catch (error) {
+    args.summary.errored += 1;
+    args.logger?.error(
+      { error, ruleId: args.candidate.id, orgId: args.candidate.org_id },
+      'drive-folder reconciliation: authoritative rule reread failed',
+    );
+    return null;
+  }
+  if (!rule || !shouldMirrorDriveFoldersForRule('WORKSPACE_FILE_MODIFIED', rule.action_config)) return null;
+  const parsed = TriggerConfigWorkspaceFileModified.safeParse(rule.trigger_config);
+  if (!parsed.success) {
+    args.summary.invalid += 1; args.summary.errored += 1;
+    args.logger?.error(
+      { ruleId: rule.id, orgId: rule.org_id, issueCount: parsed.error.issues.length },
+      'drive-folder reconciliation: persisted rule config is invalid; refusing partial mirror',
+    );
+    return null;
+  }
+  const folders = extractDriveFoldersToMirror(parsed.data);
+  if (folders.length === 0) return null;
+  if (folders.length > DRIVE_FOLDER_BINDING_CAP) {
+    args.summary.invalid += 1; args.summary.errored += 1;
+    return null;
+  }
+  return { rule, folders };
+}
+
+function applyDriveFolderMirrorOutcome(
+  summary: DriveFolderReconciliationSummary,
+  outcome: MirrorConnectedDriveFolderResult,
+): void {
+  if (outcome.outcome === 'created') summary.created += 1;
+  else if (outcome.outcome === 'existing') summary.existing += 1;
+  else if (outcome.outcome === 'skipped_no_connection') summary.skipped += 1;
+  else summary.errored += 1;
+}
+
+async function mirrorPreparedDriveFolderRule(args: {
+  db: DriveFolderMirrorDb;
+  logger?: Logger;
+  mirror: typeof mirrorConnectedDriveFolders;
+  prepared: PreparedDriveFolderRule;
+  summary: DriveFolderReconciliationSummary;
+}): Promise<void> {
+  const { rule, folders } = args.prepared;
+  let outcomes: MirrorConnectedDriveFolderResult[];
+  try {
+    outcomes = await args.mirror({ db: args.db, logger: args.logger }, {
+      orgId: rule.org_id, actorUserId: rule.created_by_user_id, folders,
+    });
+  } catch (error) {
+    args.summary.errored += folders.length;
+    args.logger?.error(
+      { error, ruleId: rule.id, orgId: rule.org_id },
+      'drive-folder reconciliation: one rule threw; continuing',
+    );
+    return;
+  }
+  for (const outcome of outcomes) applyDriveFolderMirrorOutcome(args.summary, outcome);
+}
+
 export async function runDriveFolderReconciliation(deps: ReconciliationDeps): Promise<DriveFolderReconciliationSummary> {
   const wallNow = deps.now?.() ?? new Date();
   const monotonicNow = deps.monotonicNowMs ?? (() => performance.now());
@@ -95,50 +168,15 @@ export async function runDriveFolderReconciliation(deps: ReconciliationDeps): Pr
       break;
     }
     summary.scanned += 1;
-    let rule: DriveFolderRuleCandidate | null;
-    try { rule = await reread(candidate); } catch (error) {
-      summary.errored += 1;
-      deps.logger?.error({ error, ruleId: candidate.id, orgId: candidate.org_id }, 'drive-folder reconciliation: authoritative rule reread failed');
-      continue;
-    }
-    if (!rule || !shouldMirrorDriveFoldersForRule('WORKSPACE_FILE_MODIFIED', rule.action_config)) continue;
-    const parsed = TriggerConfigWorkspaceFileModified.safeParse(rule.trigger_config);
-    if (!parsed.success) {
-      summary.invalid += 1; summary.errored += 1;
-      deps.logger?.error(
-        { ruleId: rule.id, orgId: rule.org_id, issueCount: parsed.error.issues.length },
-        'drive-folder reconciliation: persisted rule config is invalid; refusing partial mirror',
-      );
-      continue;
-    }
-    const folders = extractDriveFoldersToMirror(parsed.data);
-    if (folders.length === 0) continue;
-    if (folders.length > DRIVE_FOLDER_BINDING_CAP) {
-      summary.invalid += 1; summary.errored += 1;
-      continue;
-    }
+    const prepared = await prepareDriveFolderRule({ candidate, reread, summary, logger: deps.logger });
+    if (!prepared) continue;
     if (monotonicNow() >= deadlineAt) {
       summary.deadlineExceeded = true;
       summary.errored += listed.rows.length - summary.scanned + 1;
       break;
     }
     summary.eligible += 1;
-    let outcomes: MirrorConnectedDriveFolderResult[];
-    try {
-      outcomes = await mirror({ db: deps.db, logger: deps.logger }, {
-        orgId: rule.org_id, actorUserId: rule.created_by_user_id, folders,
-      });
-    } catch (error) {
-      summary.errored += folders.length;
-      deps.logger?.error({ error, ruleId: rule.id, orgId: rule.org_id }, 'drive-folder reconciliation: one rule threw; continuing');
-      continue;
-    }
-    for (const outcome of outcomes) {
-      if (outcome.outcome === 'created') summary.created += 1;
-      else if (outcome.outcome === 'existing') summary.existing += 1;
-      else if (outcome.outcome === 'skipped_no_connection') summary.skipped += 1;
-      else summary.errored += 1;
-    }
+    await mirrorPreparedDriveFolderRule({ db: deps.db, logger: deps.logger, mirror, prepared, summary });
   }
   deps.logger?.warn({ summary }, 'drive-folder reconciliation pass complete');
   if (summary.errored > 0 || summary.invalid > 0 || summary.deadlineExceeded) {
