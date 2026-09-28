@@ -2418,6 +2418,33 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/webhooks/outbox/{id}/retry-materialization': {
+      post: {
+        summary: 'Recover terminal agent-webhook materialization',
+        description: 'ORG_ADMIN operator recovery for one agent webhook outbox event that exhausted materialization. Repair the endpoint or configuration cause first. The request UUID makes an identical retry idempotent; one different recovery request is rejected. This operation only re-arms durable work and never sends inline.',
+        operationId: 'retryAgentWebhookMaterialization',
+        tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Terminal agent webhook outbox ID' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: {
+            type: 'object', additionalProperties: false, required: ['request_id'],
+            properties: { request_id: { type: 'string', format: 'uuid', description: 'Caller-retained idempotency UUID for this one recovery' } },
+          } } },
+        },
+        responses: {
+          '202': { description: 'Outbox event re-armed or the same recovery request acknowledged', content: { 'application/json': { schema: { type: 'object', required: ['outbox_id', 'recovery_id', 'state', 'rearmed', 'idempotent'], properties: { outbox_id: { type: 'string', format: 'uuid' }, recovery_id: { type: 'string', format: 'uuid' }, state: { type: 'string' }, rearmed: { type: 'boolean' }, idempotent: { type: 'boolean' } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key lacks `webhooks:manage` (`insufficient_scope`), its actor is not a current ORG_ADMIN, or transaction-time authority was lost.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '404': { description: 'Outbox event not found in the caller organization', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '409': { description: 'Wrong state or the one recovery was already consumed by a different request UUID', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '503': { description: 'Recovery transaction unavailable', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
     '/webhooks/dlq': {
       get: {
         summary: 'List dead-lettered webhook deliveries',

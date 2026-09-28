@@ -19,6 +19,14 @@ It deliberately **ignores** the proof package's own `verified` field — that
 field is verdict-from-status on the server side. This verifier trusts only its
 own recomputation.
 
+When a package supplies a complete transaction-inclusion branch, index, and
+80-byte network header, the CLI also folds that branch locally and requires it
+to match the header. A malformed or altered claimed proof fails verification.
+Independent-node confirmation separately binds that same header to the
+network; the local check alone does not establish proof-of-work or canonical
+chain membership. Legacy packages that claim no transaction proof remain
+supported, and `--offline` never claims independent chain membership.
+
 ## Install
 
 > **Not yet published to npm** — `npm view arkova-verifier-cli` currently returns 404. Until it
@@ -119,7 +127,7 @@ cp ../../services/worker/src/utils/{merkle-verify,merkle,canonical-json}.ts src/
 ## Tests (clean-room — no network)
 
 ```bash
-npm test          # 130 tests across 8 files, fully offline
+npm test          # 182 tests across 10 files, fully offline
 npm run lint
 npm run typecheck
 npm run parity    # three-way agreement: TS == Python == manifest (needs python3 >= 3.9)

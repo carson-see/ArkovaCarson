@@ -983,4 +983,199 @@ BEGIN
   END IF;
 END $$;
 
+-- A terminal materialization failure has exactly one audited operator re-arm.
+-- Replaying the same request UUID is idempotent after the row progresses;
+-- another request cannot consume a second recovery.
+UPDATE public.api_keys SET scopes=array_append(scopes,'webhooks:manage')
+ WHERE id='55555555-5555-4555-8555-555555555555'
+   AND NOT ('webhooks:manage'=ANY(scopes));
+CREATE TEMP TABLE materialization_recovery_result AS
+SELECT public.retry_failed_agent_webhook_materialization(
+  'fa960000-0000-4000-8000-000000000001',
+  (SELECT outbox_id FROM terminal_materialization_fixture),
+  '55555555-5555-4555-8555-555555555555',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') AS value;
+DO $$
+DECLARE v_id uuid := (SELECT outbox_id FROM terminal_materialization_fixture);
+  v_recovery uuid; v_again jsonb;
+BEGIN
+  SELECT id INTO STRICT v_recovery FROM public.agent_webhook_materialization_recoveries
+   WHERE outbox_id=v_id;
+  IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox WHERE id=v_id
+       AND state='pending' AND materialization_attempts=0 AND resolved_at IS NULL
+       AND last_error IS NULL)
+     OR NOT EXISTS (SELECT 1 FROM public.agent_webhook_materialization_recoveries
+       WHERE id=v_recovery AND previous_state='materialization_failed'
+         AND previous_attempts=8 AND previous_last_error LIKE '%ownership conflict%'
+         AND previous_resolved_at IS NOT NULL)
+     OR NOT EXISTS (SELECT 1 FROM public.audit_events
+       WHERE event_type='AGENT_WEBHOOK_MATERIALIZATION_REARMED'
+         AND actor_id IS NULL AND target_id=v_id::text
+         AND details::jsonb @> jsonb_build_object('recovery_id',v_recovery,
+           'actor_api_key_id','55555555-5555-4555-8555-555555555555',
+           'previous_state','materialization_failed','previous_attempts',8)) THEN
+    RAISE EXCEPTION 'terminal materialization recovery did not preserve snapshot, audit, or pending re-arm';
+  END IF;
+  -- Repair the demonstrated cause through the supported endpoint boundary:
+  -- quarantine the endpoint with foreign/conflicting evidence and add one
+  -- valid owned target. Recovery does not take over the immutable foreign row.
+  UPDATE public.webhook_endpoints SET is_active=false
+   WHERE id='22222222-2222-4222-8222-222222222222';
+  INSERT INTO public.webhook_endpoints(id,org_id,url,secret_hash,events,is_active,public_id)
+  VALUES('99999999-9999-4999-8999-999999999999',
+    'fa960000-0000-4000-8000-000000000001','https://example.test/ar20-recovery','secret',
+    ARRAY['agent.updated'],true,'WHK-AR20-RECOVERY');
+  PERFORM public.materialize_next_agent_webhook_event('enabled',false);
+  v_again:=public.retry_failed_agent_webhook_materialization(
+    'fa960000-0000-4000-8000-000000000001',v_id,
+    '55555555-5555-4555-8555-555555555555','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  IF (v_again->>'idempotent')::boolean IS DISTINCT FROM true
+     OR v_again->>'state' IS DISTINCT FROM 'materialized'
+     OR (SELECT count(*) FROM public.agent_webhook_materialization_recoveries WHERE outbox_id=v_id)<>1
+     OR (SELECT count(*) FROM public.audit_events WHERE event_type='AGENT_WEBHOOK_MATERIALIZATION_REARMED'
+           AND target_id=v_id::text)<>1
+     OR (SELECT count(*) FROM public.webhook_delivery_logs
+           WHERE agent_event_outbox_id=v_id
+             AND endpoint_id='99999999-9999-4999-8999-999999999999'
+             AND idempotency_key='agent-outbox-99999999-9999-4999-8999-999999999999-'||v_id::text
+             AND agent_payload_text=(SELECT payload_text FROM public.agent_webhook_outbox WHERE id=v_id))<>1
+     OR NOT EXISTS (SELECT 1 FROM public.webhook_delivery_logs
+           WHERE endpoint_id='22222222-2222-4222-8222-222222222222'
+             AND idempotency_key='agent-outbox-22222222-2222-4222-8222-222222222222-'||v_id::text
+             AND agent_event_outbox_id IS NULL) THEN
+    RAISE EXCEPTION 'same recovery request was not idempotent after state progression';
+  END IF;
+  BEGIN
+    PERFORM public.retry_failed_agent_webhook_materialization(
+      'fa960000-0000-4000-8000-000000000001',v_id,
+      '55555555-5555-4555-8555-555555555555','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    RAISE EXCEPTION 'second recovery request exceeded cap';
+  EXCEPTION WHEN unique_violation THEN NULL; END;
+END $$;
+UPDATE public.webhook_endpoints SET is_active=true
+ WHERE id='22222222-2222-4222-8222-222222222222';
+DELETE FROM public.webhook_delivery_logs
+ WHERE endpoint_id='99999999-9999-4999-8999-999999999999';
+DELETE FROM public.webhook_endpoints
+ WHERE id='99999999-9999-4999-8999-999999999999';
+
+-- Audit failure must roll back both the immutable snapshot and the re-arm.
+CREATE TEMP TABLE recovery_audit_failure_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()) AS outbox_id;
+UPDATE public.agent_webhook_outbox SET state='materialization_failed',materialization_attempts=8,
+  resolved_at=clock_timestamp(),last_error='fixture terminal failure'
+ WHERE id=(SELECT outbox_id FROM recovery_audit_failure_fixture);
+CREATE FUNCTION pg_temp.reject_recovery_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF NEW.event_type='AGENT_WEBHOOK_MATERIALIZATION_REARMED' THEN
+  RAISE EXCEPTION 'fixture audit rejection'; END IF; RETURN NEW; END $$;
+CREATE TRIGGER reject_recovery_audit BEFORE INSERT ON public.audit_events
+  FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_recovery_audit();
+DO $$
+DECLARE v_id uuid := (SELECT outbox_id FROM recovery_audit_failure_fixture);
+BEGIN
+  BEGIN
+    PERFORM public.retry_failed_agent_webhook_materialization(
+      'fa960000-0000-4000-8000-000000000001',v_id,
+      '55555555-5555-4555-8555-555555555555','cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    RAISE EXCEPTION 'audit failure did not abort recovery';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM='audit failure did not abort recovery' THEN RAISE; END IF;
+  END;
+  IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox WHERE id=v_id
+       AND state='materialization_failed' AND materialization_attempts=8
+       AND last_error='fixture terminal failure')
+     OR EXISTS (SELECT 1 FROM public.agent_webhook_materialization_recoveries WHERE outbox_id=v_id) THEN
+    RAISE EXCEPTION 'audit rejection did not roll back recovery atomically';
+  END IF;
+END $$;
+DROP TRIGGER reject_recovery_audit ON public.audit_events;
+
+-- Every transaction-time authority dimension must deny without disclosing or
+-- mutating the target.
+CREATE FUNCTION pg_temp.assert_recovery_denied(p_label text,p_org uuid DEFAULT
+  'fa960000-0000-4000-8000-000000000001') RETURNS void LANGUAGE plpgsql AS $$
+DECLARE v_id uuid := (SELECT outbox_id FROM recovery_audit_failure_fixture);
+  v_recoveries bigint := (SELECT count(*) FROM public.agent_webhook_materialization_recoveries);
+  v_audits bigint := (SELECT count(*) FROM public.audit_events
+    WHERE event_type='AGENT_WEBHOOK_MATERIALIZATION_REARMED');
+BEGIN
+  BEGIN
+    PERFORM public.retry_failed_agent_webhook_materialization(
+      p_org,v_id,'55555555-5555-4555-8555-555555555555',gen_random_uuid());
+    RAISE EXCEPTION 'authority test unexpectedly recovered: %',p_label;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'authority test unexpectedly recovered:%' THEN RAISE; END IF;
+  END;
+  IF (SELECT count(*) FROM public.agent_webhook_materialization_recoveries)<>v_recoveries
+     OR (SELECT count(*) FROM public.audit_events
+          WHERE event_type='AGENT_WEBHOOK_MATERIALIZATION_REARMED')<>v_audits
+     OR NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox WHERE id=v_id
+       AND state='materialization_failed' AND materialization_attempts=8) THEN
+    RAISE EXCEPTION 'denied recovery changed state: %',p_label;
+  END IF;
+END $$;
+UPDATE public.api_keys SET is_active=false WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('inactive key');
+UPDATE public.api_keys SET is_active=true,revoked_at=clock_timestamp()
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('revoked key');
+UPDATE public.api_keys SET revoked_at=NULL,expires_at=clock_timestamp()-interval '1 second'
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('expired key');
+UPDATE public.api_keys SET expires_at=NULL,scopes=array_remove(scopes,'webhooks:manage')
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('missing scope');
+UPDATE public.api_keys SET scopes=array_append(scopes,'webhooks:manage')
+ WHERE id='55555555-5555-4555-8555-555555555555';
+INSERT INTO auth.users(id,email) VALUES
+  ('eeeeeeee-0001-4000-8000-000000000001','ar20-nonadmin@example.test'),
+  ('eeeeeeee-0002-4000-8000-000000000002','ar20-inactive@example.test'),
+  ('eeeeeeee-0003-4000-8000-000000000003','ar20-deleted@example.test');
+SELECT set_config('request.jwt.claim.role','service_role',true);
+UPDATE public.profiles SET role='INDIVIDUAL',org_id='fa960000-0000-4000-8000-000000000001'
+ WHERE id='eeeeeeee-0001-4000-8000-000000000001';
+UPDATE public.profiles SET role='ORG_ADMIN',org_id='fa960000-0000-4000-8000-000000000001',status='DEACTIVATED'
+ WHERE id='eeeeeeee-0002-4000-8000-000000000002';
+UPDATE public.profiles SET role='ORG_ADMIN',org_id='fa960000-0000-4000-8000-000000000001',deleted_at=clock_timestamp()
+ WHERE id='eeeeeeee-0003-4000-8000-000000000003';
+UPDATE public.api_keys SET created_by='eeeeeeee-0001-4000-8000-000000000001'
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('non-admin profile');
+UPDATE public.api_keys SET created_by='eeeeeeee-0002-4000-8000-000000000002'
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('inactive profile');
+UPDATE public.api_keys SET created_by='eeeeeeee-0003-4000-8000-000000000003'
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('deleted profile');
+UPDATE public.api_keys SET created_by='11111111-1111-4111-8111-111111111111'
+ WHERE id='55555555-5555-4555-8555-555555555555';
+SELECT pg_temp.assert_recovery_denied('wrong organization',
+  'fa960000-0000-4000-8000-000000000002');
+SELECT set_config('request.jwt.claim.role','',true);
+
+DO $$
+BEGIN
+  IF has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','INSERT')
+     OR has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','UPDATE')
+     OR has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','DELETE')
+     OR NOT has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','SELECT') THEN
+    RAISE EXCEPTION 'recovery ledger ACL permits mutation or denies service readback';
+  END IF;
+END $$;
+SET LOCAL ROLE service_role;
+DO $$
+BEGIN
+  BEGIN
+    UPDATE public.agent_webhook_materialization_recoveries SET previous_attempts=0;
+    RAISE EXCEPTION 'service_role directly updated immutable recovery evidence';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  BEGIN
+    DELETE FROM public.agent_webhook_materialization_recoveries;
+    RAISE EXCEPTION 'service_role directly deleted immutable recovery evidence';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+END $$;
+RESET ROLE;
+
 ROLLBACK;

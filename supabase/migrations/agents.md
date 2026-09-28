@@ -2107,3 +2107,15 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
   Native coverage forces the real ownership-conflict exception at seven prior
   attempts and asserts that stored and returned state are both terminal; a
   sibling case pins persisted/returned `pending`, increment and future backoff.
+
+- `0498_scrum5294_agent_webhook_materialization_recovery.sql` adds a
+  service-only immutable recovery ledger and one transaction-time-authorized
+  re-arm RPC for a real terminal outbox failure (attempt 8). It follows the
+  profile → API key → outbox lock order, rechecks a live `ORG_ADMIN` owner and
+  `webhooks:manage`, snapshots the exact private failure, and writes the audit
+  atomically. One outbox can be re-armed once; the same request UUID stays
+  idempotent after materializer progress, while another UUID conflicts.
+  Snapshot identifiers deliberately are not restrictive foreign keys, so
+  terminal retention, key cleanup, and org offboarding cannot delete the
+  evidence or become blocked by it. `service_role` has SELECT only; the
+  SECURITY DEFINER RPC owns inserts. This migration is forward-only.

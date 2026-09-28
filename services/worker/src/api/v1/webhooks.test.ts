@@ -14,16 +14,19 @@ vi.mock('../../webhooks/delivery.js', () => ({
 }));
 
 const mockDbFrom = vi.fn();
+const mockDbRpc = vi.fn();
+const mockLoggerError = vi.fn();
 
 vi.mock('../../utils/db.js', () => ({
   db: {
     from: mockDbFrom,
+    rpc: mockDbRpc,
   },
 }));
 
 vi.mock('../../utils/logger.js', () => ({
   logger: {
-    error: vi.fn(),
+    error: mockLoggerError,
     warn: vi.fn(),
     info: vi.fn(),
     debug: vi.fn(),
@@ -103,6 +106,72 @@ describe('webhooks self-service DLQ routes', () => {
 
     expect(mockResolveDlqEntry).toHaveBeenCalledWith('dlq-001', 'org-001');
     expect(res.body).toEqual({ resolved: true, id: 'dlq-001' });
+  });
+});
+
+describe('POST /webhooks/outbox/:id/retry-materialization', () => {
+  const outboxId = '11111111-1111-4111-8111-111111111111';
+  const requestId = '22222222-2222-4222-8222-222222222222';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProfileRole('ORG_ADMIN');
+    mockDbRpc.mockResolvedValue({
+      data: { outbox_id: outboxId, state: 'pending', rearmed: true, idempotent: false },
+      error: null,
+    });
+  });
+
+  it('delegates the atomic re-arm to the service RPC and returns 202', async () => {
+    const res = await request(buildApp())
+      .post(`/api/v1/webhooks/outbox/${outboxId}/retry-materialization`)
+      .send({ request_id: requestId })
+      .expect(202);
+
+    expect(mockDbRpc).toHaveBeenCalledWith('retry_failed_agent_webhook_materialization', {
+      p_org_id: 'org-001', p_outbox_id: outboxId, p_actor_api_key_id: 'key-1', p_request_id: requestId,
+    });
+    expect(res.body).toMatchObject({ state: 'pending', rearmed: true });
+  });
+
+  it('rejects malformed identifiers before any database write', async () => {
+    await request(buildApp())
+      .post('/api/v1/webhooks/outbox/not-a-uuid/retry-materialization')
+      .send({ request_id: requestId })
+      .expect(400);
+    expect(mockDbRpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown body fields to match the served strict request schema', async () => {
+    await request(buildApp())
+      .post(`/api/v1/webhooks/outbox/${outboxId}/retry-materialization`)
+      .send({ request_id: requestId, force: true })
+      .expect(400);
+    expect(mockDbRpc).not.toHaveBeenCalled();
+  });
+
+  it.each([['P0002', 404], ['42501', 403], ['23505', 409], ['55000', 409]])(
+    'maps SQL code %s without leaking database details', async (code, status) => {
+      mockDbRpc.mockResolvedValue({ data: null, error: { code, message: 'private database detail' } });
+      const res = await request(buildApp())
+        .post(`/api/v1/webhooks/outbox/${outboxId}/retry-materialization`)
+        .send({ request_id: requestId })
+        .expect(status);
+      expect(JSON.stringify(res.body)).not.toContain('private database detail');
+    },
+  );
+
+  it('logs only a bounded error code when the recovery RPC fails unexpectedly', async () => {
+    mockDbRpc.mockResolvedValue({ data: null, error: { code: 'XX999', message: 'private terminal detail' } });
+    await request(buildApp())
+      .post(`/api/v1/webhooks/outbox/${outboxId}/retry-materialization`)
+      .send({ request_id: requestId })
+      .expect(503);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      { errorCode: 'XX999', outboxId },
+      'agent webhook materialization recovery failed',
+    );
+    expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain('private terminal detail');
   });
 });
 

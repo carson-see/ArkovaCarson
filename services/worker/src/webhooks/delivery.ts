@@ -9,6 +9,7 @@ import { config } from '../config.js';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
+import { readTextBounded } from '../utils/body-read-timeout.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
@@ -1539,9 +1540,11 @@ async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<
       redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
     });
-    const body = typeof response.arrayBuffer === 'function'
-      ? new TextDecoder().decode(await response.arrayBuffer())
-      : await response.text().catch(() => '');
+    // The pinned adapter buffers the production response before returning.
+    // Still bound this consumer independently so an alternate/test adapter
+    // cannot strand the owned delivery lease on a stalled body. Never include
+    // the endpoint URL, which may contain credentials, in the timeout error.
+    const body = await readTextBounded(response, 'agent webhook response', 10_000);
     if (response.ok) {
       recordSuccess(claim.endpoint_id);
       return completeClaimedAgentDelivery(claim, 'success', response.status, body);

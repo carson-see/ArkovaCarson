@@ -2017,3 +2017,15 @@ whose `org_id` is NULL; organization tags are bound to the exact key org. Tag
 filters stay in the anchor query as an inner relation. Responses expose only
 the public ID, state, timestamps, filename, and description—never tag values,
 fingerprints, metadata, recipient data, or internal IDs.
+
+## 2026-09-28 — terminal agent-webhook materialization recovery
+
+`POST /api/v1/webhooks/outbox/:id/retry-materialization` is an API-key-only
+`webhooks:manage` operator path. It accepts a caller-generated `request_id`
+UUID and delegates authority, one-use, immutable-snapshot, and audit work to
+0498. It returns `202` after re-arming the row for the existing materializer;
+it never materializes or sends inline. Cross-tenant targets are `404`, an
+exhausted recovery or wrong state is `409`, and logs contain only a validated
+outbox UUID plus a bounded SQL code—never payload, secret, or stored failure
+text. The in-process webhook retry timer may claim the row after commit, so
+operators must record state promptly rather than expect it to remain pending.

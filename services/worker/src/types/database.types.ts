@@ -109,6 +109,45 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_webhook_materialization_recoveries: {
+        Row: {
+          actor_api_key_id: string
+          created_at: string
+          id: string
+          org_id: string
+          outbox_id: string
+          previous_attempts: number
+          previous_last_error: string | null
+          previous_resolved_at: string | null
+          previous_state: string
+          request_id: string
+        }
+        Insert: {
+          actor_api_key_id: string
+          created_at?: string
+          id?: string
+          org_id: string
+          outbox_id: string
+          previous_attempts: number
+          previous_last_error?: string | null
+          previous_resolved_at?: string | null
+          previous_state: string
+          request_id: string
+        }
+        Update: {
+          actor_api_key_id?: string
+          created_at?: string
+          id?: string
+          org_id?: string
+          outbox_id?: string
+          previous_attempts?: number
+          previous_last_error?: string | null
+          previous_resolved_at?: string | null
+          previous_state?: string
+          request_id?: string
+        }
+        Relationships: []
+      }
       agent_webhook_outbox: {
         Row: {
           agent_id: string
@@ -7709,6 +7748,15 @@ export type Database = {
       }
       materialize_next_agent_webhook_event: {
         Args: { p_flag_state: string; p_include_parent_fanout?: boolean }
+        Returns: Json
+      }
+      retry_failed_agent_webhook_materialization: {
+        Args: {
+          p_actor_api_key_id: string
+          p_org_id: string
+          p_outbox_id: string
+          p_request_id: string
+        }
         Returns: Json
       }
       register_agent_with_outbox: {

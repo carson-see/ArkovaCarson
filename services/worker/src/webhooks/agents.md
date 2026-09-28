@@ -476,3 +476,13 @@ containing only a validated logical-outbox UUID when one is present. Payload,
 endpoint, tenant, malformed identifiers, and SQL error material are excluded.
 Retryable materialization remains owned by the SQL retry budget; the terminal
 alert does not retry or duplicate the domain mutation.
+
+## 2026-09-28 — claimed agent delivery response deadline
+
+The claimed agent delivery consumer uses `readTextBounded` with a ten-second
+deadline and a fixed, credential-free diagnostic label. The production pinned
+adapter already returns a buffered Response; the independent consumer deadline
+also covers alternate adapters and prevents a stalled read from leaving the
+owned claim unresolved. A timeout follows the existing retry/terminal attempt
+budget with the same delivery ID and lease token; it never records success.
+Focused fake-clock regressions cover an initial attempt and the final attempt.

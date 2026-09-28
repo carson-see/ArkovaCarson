@@ -190,7 +190,7 @@ describe('OpenAPI spec', () => {
     // the scope-gated management router. When `docs.routeParity.test.ts` widens
     // the served spec to them, this test must keep saying the truth about them
     // rather than pressure someone into declaring a scope that is not required.
-    const MANAGEMENT_PREFIX = /^\/webhooks(\/(\{id\}|test|deliveries|dlq)(\/.*)?)?$/;
+    const MANAGEMENT_PREFIX = /^\/webhooks(\/(\{id\}|test|deliveries|dlq|outbox)(\/.*)?)?$/;
     const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
     const webhookPaths = Object.keys(openApiSpec.paths).filter((p) => MANAGEMENT_PREFIX.test(p));
     expect(webhookPaths.length).toBeGreaterThan(0);
@@ -209,9 +209,9 @@ describe('OpenAPI spec', () => {
         expect(responses['403'].description).toContain('insufficient_scope');
       }
     }
-    // Matches the 10 routes webhooksRouter registers (webhooks-scope.test.ts
+    // Matches the 11 routes webhooksRouter registers (webhooks-scope.test.ts
     // asserts the same count off the Express stack).
-    expect(operationCount).toBe(10);
+    expect(operationCount).toBe(11);
   });
 
   it('/anchor/submit requestBody mirrors /anchor requestBody', () => {

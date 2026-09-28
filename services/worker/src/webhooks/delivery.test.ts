@@ -1891,6 +1891,41 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
     }));
   });
 
+  it.each([[0, 'retry'], [4, 'terminal']] as const)(
+    'settles a stalled response body at attempt %i without losing its lease identity',
+    async (attempt, outcome) => {
+      const claim = {
+        delivery_id: '33333333-3333-4333-8333-333333333333',
+        lease_token: '44444444-4444-4444-8444-444444444444',
+        endpoint_id: '55555555-5555-4555-8555-555555555555',
+        endpoint_url: 'https://hooks.example.com/private-token', endpoint_secret: 'secret',
+        event_type: 'agent.updated',
+        wire_event_id: '11111111-1111-4111-8111-111111111111',
+        resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+        payload_text: JSON.stringify({
+          event_type: 'agent.updated', event_id: '11111111-1111-4111-8111-111111111111',
+          timestamp: '2026-09-27T16:29:00Z',
+          data: { agent_id: '22222222-2222-4222-8222-222222222222', source: 'api', occurred_at: '2026-09-27T16:29:00Z', status: 'active' },
+          resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+        }),
+        attempt_number: attempt,
+      };
+      rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+      rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => new Promise(() => {}), body: { cancel } });
+      const draining = processAgentWebhookOutbox();
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(mockRpc).toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.objectContaining({
+        p_delivery_id: claim.delivery_id, p_lease_token: claim.lease_token, p_outcome: outcome,
+        p_error_message: 'Body read for agent webhook response did not complete within 10000ms',
+      }));
+      expect(await draining).toBe(1);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(JSON.stringify(mockRpc.mock.calls)).not.toContain('private-token');
+    },
+  );
+
   it('reuses exact persisted body bytes and recomputes a valid fresh signature', async () => {
     const payloadText = '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-09-27T16:29:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-09-27T16:29:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":90}';
     const claim = {
