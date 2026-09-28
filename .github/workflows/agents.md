@@ -1041,3 +1041,7 @@ collecting a result without iterating it silently drops that suite from the gate
 ## 2026-09-27 — pinned recipient identity metadata preflight
 
 Worker deploy binds `recipient-identifier-pepper:1` and checks that exact version is ENABLED using metadata only. Missing or disabled versions fail before build; metadata permission failures retain the existing warning/Cloud Run backstop policy. No secret payload is fetched. The separate default-off bulk recipient flag controls activation.
+
+## 2026-09-28 — SheetJS lockfile source
+
+The root lockfile integrity gate permits only the reviewed official SheetJS 0.20.3 archive URL alongside npm. Keep HTTPS and the committed integrity hash enforced; do not allow the entire CDN hostname or exempt the package from integrity verification. A different version or URL requires provenance and hash review. Worker lockfile policy is unchanged.

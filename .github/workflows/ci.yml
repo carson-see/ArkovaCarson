@@ -2149,7 +2149,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Verify root lockfile integrity
-        run: node_modules/.bin/lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https
+        # Patched SheetJS is published on its official CDN, not npm. Permit
+        # only the reviewed, integrity-pinned archive URL; no host-wide exception.
+        run: node_modules/.bin/lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --allowed-urls https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz --validate-https
       - name: Verify worker lockfile integrity
         run: node_modules/.bin/lockfile-lint --path services/worker/package-lock.json --type npm --allowed-hosts npm --validate-https
 
