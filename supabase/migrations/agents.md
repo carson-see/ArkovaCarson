@@ -2119,3 +2119,11 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
   terminal retention, key cleanup, and org offboarding cannot delete the
   evidence or become blocked by it. `service_role` has SELECT only; the
   SECURITY DEFINER RPC owns inserts. This migration is forward-only.
+
+- `0499_scrum5294_materialization_recovery_rls_policy.sql` restores the
+  canonical restrictive `mfa_verified_authenticated` census policy on the
+  0498 recovery ledger. The policy is deny-all for both `anon` and
+  `authenticated`, including AAL2 callers; it adds no permissive policy or
+  table grant. `service_role` remains read-only and the audited SECURITY
+  DEFINER recovery RPC remains the only writer. This defense-in-depth policy
+  is retained across application rollback.

@@ -1157,6 +1157,59 @@ SELECT set_config('request.jwt.claim.role','',true);
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policy
+    WHERE polrelid='public.agent_webhook_materialization_recoveries'::regclass
+      AND polname='mfa_verified_authenticated'
+      AND NOT polpermissive
+      AND polcmd='*'
+      AND polroles @> ARRAY[
+        (SELECT oid FROM pg_roles WHERE rolname='anon'),
+        (SELECT oid FROM pg_roles WHERE rolname='authenticated')
+      ]
+      AND pg_get_expr(polqual,polrelid)='false'
+      AND pg_get_expr(polwithcheck,polrelid)='false'
+  ) THEN
+    RAISE EXCEPTION 'recovery ledger is missing the canonical restrictive deny-all policy';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_policy
+    WHERE polrelid='public.agent_webhook_materialization_recoveries'::regclass
+      AND polpermissive
+  ) THEN
+    RAISE EXCEPTION 'recovery ledger unexpectedly has a permissive policy';
+  END IF;
+END $$;
+
+-- Exercise the deny boundary even if a later migration accidentally restores
+-- table SELECT grants. A verified AAL2 caller and anon must both see zero
+-- immutable recovery rows; service_role retains read-only inspection.
+GRANT SELECT ON public.agent_webhook_materialization_recoveries TO authenticated,anon;
+SET LOCAL ROLE authenticated;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"role":"authenticated","aal":"aal2","sub":"11111111-1111-4111-8111-111111111111"}',
+  true
+);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM public.agent_webhook_materialization_recoveries)<>0 THEN
+    RAISE EXCEPTION 'authenticated AAL2 read immutable recovery evidence';
+  END IF;
+END $$;
+RESET ROLE;
+SET LOCAL ROLE anon;
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM public.agent_webhook_materialization_recoveries)<>0 THEN
+    RAISE EXCEPTION 'anon read immutable recovery evidence';
+  END IF;
+END $$;
+RESET ROLE;
+REVOKE SELECT ON public.agent_webhook_materialization_recoveries FROM authenticated,anon;
+
+DO $$
+BEGIN
   IF has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','INSERT')
      OR has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','UPDATE')
      OR has_table_privilege('service_role','public.agent_webhook_materialization_recoveries','DELETE')
