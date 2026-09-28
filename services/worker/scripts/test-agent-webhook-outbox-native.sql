@@ -4,24 +4,24 @@ BEGIN;
 INSERT INTO auth.users(id,email) VALUES
   ('11111111-1111-4111-8111-111111111111','ar20-admin@example.test');
 INSERT INTO public.organizations(id,legal_name,display_name,public_id) VALUES
-  ('aaaaaaaa-0000-4000-8000-000000000001','AR20 Org','AR20 Org','ORG-AR20');
+  ('fa960000-0000-4000-8000-000000000001','AR20 Org','AR20 Org','ORG-AR20');
 SET LOCAL ROLE service_role;
 SELECT set_config('request.jwt.claim.role','service_role',true);
 INSERT INTO public.profiles(id,email,role,org_id) VALUES
   ('11111111-1111-4111-8111-111111111111','ar20-admin@example.test','ORG_ADMIN',
-   'aaaaaaaa-0000-4000-8000-000000000001')
+   'fa960000-0000-4000-8000-000000000001')
 ON CONFLICT(id) DO UPDATE SET email=excluded.email,role=excluded.role,org_id=excluded.org_id;
 RESET ROLE;
 SELECT set_config('request.jwt.claim.role','',true);
 
 INSERT INTO public.api_keys(id,org_id,key_prefix,key_hash,name,scopes,is_active,created_by)
-VALUES ('55555555-5555-4555-8555-555555555555','aaaaaaaa-0000-4000-8000-000000000001',
+VALUES ('55555555-5555-4555-8555-555555555555','fa960000-0000-4000-8000-000000000001',
   'ak_live_5555',repeat('5',64),'bounded manager',ARRAY['agents:manage','verify'],true,
   '11111111-1111-4111-8111-111111111111');
 
 CREATE TEMP TABLE machine_agent AS
 SELECT public.register_agent_with_outbox(
-  'aaaaaaaa-0000-4000-8000-000000000001','api_key',
+  'fa960000-0000-4000-8000-000000000001','api_key',
   '55555555-5555-4555-8555-555555555555','machine agent','custom',ARRAY['verify'],
   NULL,NULL,NULL,NULL,jsonb_build_object('environment','staging')) AS value;
 DO $$
@@ -34,7 +34,7 @@ BEGIN
     RAISE EXCEPTION 'machine registration metadata or audit attribution was lost';
   END IF;
   PERFORM public.create_agent_key_with_outbox(
-    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'api_key',
+    'fa960000-0000-4000-8000-000000000001',v_agent,'api_key',
     '55555555-5555-4555-8555-555555555555',repeat('7',64),'ak_live_7777');
   IF NOT EXISTS (SELECT 1 FROM public.audit_events WHERE event_type='AGENT_KEY_CREATED'
       AND details::jsonb @> jsonb_build_object('actor_api_key_id','55555555-5555-4555-8555-555555555555',
@@ -52,7 +52,7 @@ DECLARE
 BEGIN
   BEGIN
     PERFORM public.admit_computeid_agent_as_api_key_with_outbox(
-      'aaaaaaaa-0000-4000-8000-000000000001',
+      'fa960000-0000-4000-8000-000000000001',
       '55555555-5555-4555-8555-555555555555',
       '77777777-7777-4777-8777-777777777777',
       clock_timestamp()+interval '1 hour','over-ceiling ComputeID machine',
@@ -70,7 +70,7 @@ END $$;
 
 CREATE TEMP TABLE computeid_admission AS
 SELECT public.admit_computeid_agent_as_api_key_with_outbox(
-  'aaaaaaaa-0000-4000-8000-000000000001',
+  'fa960000-0000-4000-8000-000000000001',
   '55555555-5555-4555-8555-555555555555',
   '88888888-8888-4888-8888-888888888888',
   clock_timestamp()+interval '1 hour','ComputeID machine',ARRAY['verify'],
@@ -124,7 +124,7 @@ BEGIN
     RESET ROLE;
   END;
   INSERT INTO public.agents(org_id,registered_by,name,agent_type,allowed_scopes)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001',
+  VALUES('fa960000-0000-4000-8000-000000000001',
     '11111111-1111-4111-8111-111111111111','service delete fixture','custom',ARRAY['verify'])
   RETURNING id INTO v_agent;
   SET LOCAL ROLE service_role;
@@ -137,7 +137,7 @@ END $$;
 
 CREATE TEMP TABLE ar20_result AS
 SELECT public.register_agent_with_outbox(
-  'aaaaaaaa-0000-4000-8000-000000000001','user',
+  'fa960000-0000-4000-8000-000000000001','user',
   '11111111-1111-4111-8111-111111111111','AR20 agent','custom',ARRAY['verify']
 ) AS value;
 
@@ -171,7 +171,7 @@ BEGIN
   END;
   BEGIN
     PERFORM public.enqueue_agent_webhook_event(
-      'aaaaaaaa-0000-4000-8000-000000000001',
+      'fa960000-0000-4000-8000-000000000001',
       (SELECT id FROM public.agents LIMIT 1),'agent.updated','active',NULL,NULL,
       clock_timestamp(),gen_random_uuid());
     RAISE EXCEPTION 'NULL source accepted';
@@ -179,7 +179,7 @@ BEGIN
   END;
   BEGIN
     PERFORM public.enqueue_agent_webhook_event(
-      'aaaaaaaa-0000-4000-8000-000000000001',
+      'fa960000-0000-4000-8000-000000000001',
       (SELECT id FROM public.agents LIMIT 1),NULL,'active',NULL,'api',
       clock_timestamp(),gen_random_uuid());
     RAISE EXCEPTION 'NULL event type accepted';
@@ -187,7 +187,7 @@ BEGIN
   END;
   BEGIN
     PERFORM public.register_agent_with_outbox(
-      'aaaaaaaa-0000-4000-8000-000000000001','api_key',
+      'fa960000-0000-4000-8000-000000000001','api_key',
       '55555555-5555-4555-8555-555555555555','over-delegated','custom',
       ARRAY['anchor:write']);
     RAISE EXCEPTION 'API key registered an agent above its scope ceiling';
@@ -253,7 +253,7 @@ BEGIN
 
   BEGIN
     PERFORM public.get_latest_drive_folder_mirror_states(
-      'aaaaaaaa-0000-4000-8000-000000000001', ARRAY['rule-a',NULL]
+      'fa960000-0000-4000-8000-000000000001', ARRAY['rule-a',NULL]
     );
     RAISE EXCEPTION 'Drive mirror health RPC accepted a NULL rule id';
   EXCEPTION WHEN invalid_parameter_value THEN NULL;
@@ -264,16 +264,16 @@ INSERT INTO public.audit_events(
   actor_id,event_type,event_category,target_type,target_id,org_id,details,created_at
 ) VALUES
   (NULL,'drive_folder_mirror_failed','SYSTEM','organization_rules','rule-a',
-   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '2 minutes'),
+   'fa960000-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '2 minutes'),
   (NULL,'drive_folder_mirror_recovered','SYSTEM','organization_rules','rule-a',
-   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute'),
+   'fa960000-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute'),
   (NULL,'drive_folder_mirror_failed','SYSTEM','organization_rules','rule-b',
-   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute');
+   'fa960000-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute');
 DO $$
 DECLARE v_states jsonb;
 BEGIN
   v_states:=public.get_latest_drive_folder_mirror_states(
-    'aaaaaaaa-0000-4000-8000-000000000001',ARRAY['rule-a','rule-b']);
+    'fa960000-0000-4000-8000-000000000001',ARRAY['rule-a','rule-b']);
   IF jsonb_array_length(v_states)<>2
      OR NOT v_states @> '[{"target_id":"rule-a","event_type":"drive_folder_mirror_recovered"}]'::jsonb THEN
     RAISE EXCEPTION 'Drive mirror health RPC omitted a requested rule or selected a stale state';
@@ -286,23 +286,23 @@ INSERT INTO public.audit_events(
   actor_id,event_type,event_category,target_type,target_id,org_id,details,created_at
 )
 SELECT NULL,'drive_folder_mirror_failed','SYSTEM','organization_rules',
-  'bulk-rule-'||lpad(i::text,4,'0'),'aaaaaaaa-0000-4000-8000-000000000001',
+  'bulk-rule-'||lpad(i::text,4,'0'),'fa960000-0000-4000-8000-000000000001',
   '{}',clock_timestamp()-interval '2 minutes'
 FROM generate_series(1,1001) AS generated(i);
 INSERT INTO public.audit_events(
   actor_id,event_type,event_category,target_type,target_id,org_id,details,created_at
 ) VALUES
   (NULL,'drive_folder_mirror_recovered','SYSTEM','organization_rules','bulk-rule-0001',
-   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute'),
+   'fa960000-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute'),
   (NULL,'drive_folder_mirror_recovered','SYSTEM','organization_rules','bulk-rule-1001',
-   'aaaaaaaa-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute');
+   'fa960000-0000-4000-8000-000000000001','{}',clock_timestamp()-interval '1 minute');
 DO $$
 DECLARE v_rule_ids text[]; v_states jsonb;
 BEGIN
   SELECT array_agg('bulk-rule-'||lpad(i::text,4,'0') ORDER BY i)
     INTO v_rule_ids FROM generate_series(1,1001) AS generated(i);
   v_states:=public.get_latest_drive_folder_mirror_states(
-    'aaaaaaaa-0000-4000-8000-000000000001',v_rule_ids);
+    'fa960000-0000-4000-8000-000000000001',v_rule_ids);
   IF jsonb_array_length(v_states)<>1001
      OR v_states->0 <> '{"target_id":"bulk-rule-0001","event_type":"drive_folder_mirror_recovered"}'::jsonb
      OR v_states->1000 <> '{"target_id":"bulk-rule-1001","event_type":"drive_folder_mirror_recovered"}'::jsonb THEN
@@ -365,21 +365,21 @@ DECLARE
   v_audits bigint;
 BEGIN
   INSERT INTO public.agents(org_id,registered_by,name,status,agent_type,allowed_scopes)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+  VALUES('fa960000-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
     'structured audit fixture','active','custom',ARRAY['verify'])
   RETURNING id INTO v_agent;
   INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('d',64),'ak_live_dddd',
+  VALUES('fa960000-0000-4000-8000-000000000001',v_agent,repeat('d',64),'ak_live_dddd',
     'active audit key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',true)
   RETURNING id INTO v_active_key;
   INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('e',64),'ak_live_eeee',
+  VALUES('fa960000-0000-4000-8000-000000000001',v_agent,repeat('e',64),'ak_live_eeee',
     'provider inactive audit key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',
     false,clock_timestamp(),'computeid:passport.suspended')
   RETURNING id INTO v_provider_inactive_key;
 
   PERFORM public.apply_admin_agent_status_transition(
-    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'suspended',
+    'fa960000-0000-4000-8000-000000000001',v_agent,'suspended',
     jsonb_build_object('name','structured audit fixture'),'user',
     '11111111-1111-4111-8111-111111111111');
   SELECT details::jsonb INTO STRICT v_details FROM public.audit_events
@@ -404,7 +404,7 @@ BEGIN
   END IF;
 
   PERFORM public.apply_admin_agent_status_transition(
-    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'active','{}','user',
+    'fa960000-0000-4000-8000-000000000001',v_agent,'active','{}','user',
     '11111111-1111-4111-8111-111111111111');
   SELECT details::jsonb INTO STRICT v_details FROM public.audit_events
     WHERE target_id=v_agent::text AND event_type='AGENT_UPDATED'
@@ -421,7 +421,7 @@ BEGIN
 
   SELECT count(*) INTO v_audits FROM public.audit_events WHERE target_id=v_agent::text;
   PERFORM public.apply_admin_agent_status_transition(
-    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'active','{}','user',
+    'fa960000-0000-4000-8000-000000000001',v_agent,'active','{}','user',
     '11111111-1111-4111-8111-111111111111');
   IF (SELECT count(*) FROM public.audit_events WHERE target_id=v_agent::text)<>v_audits THEN
     RAISE EXCEPTION 'authoritative admin no-op emitted a misleading transition audit';
@@ -430,14 +430,14 @@ END $$;
 
 CREATE TEMP TABLE broad_agent AS
 SELECT (public.register_agent_with_outbox(
-  'aaaaaaaa-0000-4000-8000-000000000001','user',
+  'fa960000-0000-4000-8000-000000000001','user',
   '11111111-1111-4111-8111-111111111111','broad agent','custom',ARRAY['anchor:write'])
   #>>'{agent,id}')::uuid AS id;
 DO $$
 BEGIN
   BEGIN
     PERFORM public.create_agent_key_with_outbox(
-      'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+      'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
       'api_key','55555555-5555-4555-8555-555555555555',repeat('6',64),'ak_live_6666');
     RAISE EXCEPTION 'API key minted an agent key above its scope ceiling';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
@@ -451,17 +451,17 @@ DECLARE
   v_audits bigint;
 BEGIN
   INSERT INTO public.agents(org_id,registered_by,name,status,agent_type,allowed_scopes,metadata)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+  VALUES('fa960000-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
     'narrow resume fixture','suspended','custom',ARRAY['anchor:write'],jsonb_build_object('admin_suspended',true))
   RETURNING id INTO v_agent;
   INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('9',64),'ak_live_9999',
+  VALUES('fa960000-0000-4000-8000-000000000001',v_agent,repeat('9',64),'ak_live_9999',
     'narrow resume key',ARRAY['anchor:write'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'admin:agent.suspended')
   RETURNING id INTO v_key;
   SELECT count(*) INTO v_audits FROM public.audit_events;
   BEGIN
     PERFORM public.apply_admin_agent_status_transition(
-      'aaaaaaaa-0000-4000-8000-000000000001',v_agent,'active','{}','api_key',
+      'fa960000-0000-4000-8000-000000000001',v_agent,'active','{}','api_key',
       '55555555-5555-4555-8555-555555555555');
     RAISE EXCEPTION 'narrow API-key caller resumed an agent above its scope ceiling';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
@@ -482,17 +482,17 @@ DECLARE
   v_next jsonb := '{"computeid":{"issuer":"computeid","passport_id":"99999999-9999-4999-8999-999999999999","last_event":"passport.reinstated"}}';
 BEGIN
   INSERT INTO public.agents(org_id,registered_by,name,status,agent_type,allowed_scopes,metadata)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
+  VALUES('fa960000-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
     'provider resume fixture','suspended','custom',ARRAY['verify'],v_expected)
   RETURNING id INTO v_agent;
   INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('a',64),'ak_live_aaaa','broad old key',ARRAY['verify','anchor:write'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'computeid:passport.suspended')
+  VALUES('fa960000-0000-4000-8000-000000000001',v_agent,repeat('a',64),'ak_live_aaaa','broad old key',ARRAY['verify','anchor:write'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'computeid:passport.suspended')
   RETURNING id INTO v_broad;
   INSERT INTO public.api_keys(org_id,agent_id,key_hash,key_prefix,name,scopes,created_by,is_active,revoked_at,revocation_reason)
-  VALUES('aaaaaaaa-0000-4000-8000-000000000001',v_agent,repeat('b',64),'ak_live_bbbb','eligible old key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'computeid:passport.suspended')
+  VALUES('fa960000-0000-4000-8000-000000000001',v_agent,repeat('b',64),'ak_live_bbbb','eligible old key',ARRAY['verify'],'11111111-1111-4111-8111-111111111111',false,clock_timestamp(),'computeid:passport.suspended')
   RETURNING id INTO v_eligible;
   PERFORM public.apply_computeid_agent_transition(
-    'aaaaaaaa-0000-4000-8000-000000000001',v_agent,
+    'fa960000-0000-4000-8000-000000000001',v_agent,
     '99999999-9999-4999-8999-999999999999','suspended',v_expected,
     jsonb_build_object('status','active','suspended_at',NULL,'metadata',v_next),
     'reactivate','passport.reinstated',clock_timestamp());
@@ -525,12 +525,12 @@ END $$;
 INSERT INTO auth.users(id,email) VALUES
   ('eeeeeeee-0000-4000-8000-000000000001','ar20-second-admin@example.test');
 INSERT INTO public.organizations(id,legal_name,display_name,public_id) VALUES
-  ('bbbbbbbb-0000-4000-8000-000000000002','AR20 Second Org','AR20 Second Org','ORG-AR20-SECOND');
+  ('fa960000-0000-4000-8000-000000000002','AR20 Second Org','AR20 Second Org','ORG-AR20-SECOND');
 SET LOCAL ROLE service_role;
 SELECT set_config('request.jwt.claim.role','service_role',true);
 INSERT INTO public.profiles(id,email,role,org_id) VALUES
   ('eeeeeeee-0000-4000-8000-000000000001','ar20-second-admin@example.test','ORG_ADMIN',
-   'bbbbbbbb-0000-4000-8000-000000000002')
+   'fa960000-0000-4000-8000-000000000002')
 ON CONFLICT(id) DO UPDATE SET email=excluded.email,role=excluded.role,org_id=excluded.org_id;
 RESET ROLE;
 SELECT set_config('request.jwt.claim.role','',true);
@@ -544,7 +544,7 @@ UPDATE public.agent_webhook_outbox
 
 CREATE TEMP TABLE second_org_agent AS
 SELECT public.register_agent_with_outbox(
-  'bbbbbbbb-0000-4000-8000-000000000002','user',
+  'fa960000-0000-4000-8000-000000000002','user',
   'eeeeeeee-0000-4000-8000-000000000001','second org agent','custom',ARRAY['verify']
 ) AS value;
 DO $$
@@ -556,7 +556,7 @@ DECLARE
 BEGIN
   BEGIN
     PERFORM public.enqueue_agent_webhook_event(
-      'aaaaaaaa-0000-4000-8000-000000000001',v_agent,
+      'fa960000-0000-4000-8000-000000000001',v_agent,
       'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid());
     RAISE EXCEPTION 'cross-tenant agent webhook ownership mismatch was accepted';
   EXCEPTION WHEN foreign_key_violation THEN NULL;
@@ -570,7 +570,7 @@ BEGIN
      OR NOT EXISTS (
        SELECT 1 FROM public.agent_webhook_outbox
        WHERE id=(v_zero->>'outbox_id')::uuid
-         AND org_id='bbbbbbbb-0000-4000-8000-000000000002'
+         AND org_id='fa960000-0000-4000-8000-000000000002'
          AND state='zero_targets'
          AND payload_text LIKE '%ORG-AR20-SECOND%'
          AND payload_text NOT LIKE '%ORG-AR20"%'
@@ -579,7 +579,7 @@ BEGIN
   END IF;
 
   PERFORM public.enqueue_agent_webhook_event(
-    'bbbbbbbb-0000-4000-8000-000000000002',v_agent,
+    'fa960000-0000-4000-8000-000000000002',v_agent,
     'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid());
   v_suppressed:=public.materialize_next_agent_webhook_event('disabled',false);
   IF v_suppressed->>'state'<>'suppressed'
@@ -587,7 +587,7 @@ BEGIN
      OR NOT EXISTS (
        SELECT 1 FROM public.agent_webhook_outbox
        WHERE id=(v_suppressed->>'outbox_id')::uuid
-         AND org_id='bbbbbbbb-0000-4000-8000-000000000002'
+         AND org_id='fa960000-0000-4000-8000-000000000002'
          AND state='suppressed'
      ) THEN
     RAISE EXCEPTION 'flag-off materialization did not report the stored suppressed state';
@@ -600,7 +600,7 @@ UPDATE public.agent_webhook_outbox o
 
 INSERT INTO public.webhook_endpoints(id,org_id,url,secret_hash,events,is_active,public_id)
 VALUES ('22222222-2222-4222-8222-222222222222',
-  'aaaaaaaa-0000-4000-8000-000000000001','https://example.test/ar20','secret',
+  'fa960000-0000-4000-8000-000000000001','https://example.test/ar20','secret',
   ARRAY['agent.registered','agent.updated'],true,'WHK-AR20');
 
 SELECT public.materialize_next_agent_webhook_event('enabled',false);
@@ -661,10 +661,10 @@ END $$;
 CREATE TEMP TABLE hol_events(position integer, outbox_id uuid);
 INSERT INTO hol_events VALUES
   (1,public.enqueue_agent_webhook_event(
-    'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
     'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid())),
   (2,public.enqueue_agent_webhook_event(
-    'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
     'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()));
 UPDATE public.agent_webhook_outbox SET next_attempt_at=clock_timestamp()+interval '1 hour'
  WHERE id=(SELECT outbox_id FROM hol_events WHERE position=1);
@@ -708,7 +708,7 @@ END $$;
 -- nonterminal `pending` result without a false terminal alert.
 CREATE TEMP TABLE retryable_materialization_fixture AS
 SELECT public.enqueue_agent_webhook_event(
-  'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
   'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
 ) AS outbox_id;
 INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
@@ -751,7 +751,7 @@ UPDATE public.agent_webhook_outbox
 -- falsely reporting another retry.
 CREATE TEMP TABLE terminal_materialization_fixture AS
 SELECT public.enqueue_agent_webhook_event(
-  'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
   'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
 ) AS outbox_id;
 UPDATE public.agent_webhook_outbox
