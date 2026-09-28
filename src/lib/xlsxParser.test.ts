@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as XLSX from 'xlsx';
 import { isExcelFile, parseSpreadsheetFile } from './xlsxParser';
 
 // Helper to create a mock File
@@ -88,5 +89,72 @@ describe('parseSpreadsheetFile', () => {
       Notes: 'Backend team',
     });
     expect(result.rows[2].data.Name).toBe('Cara Osei');
+  });
+
+  it('parses a genuine legacy .xls fixture into one row per record', async () => {
+    const bytes = readFileSync(
+      join(import.meta.dirname, 'fixtures', 'spreadsheets', 'sample-roster.xls'),
+    );
+    const file = new File([bytes], 'sample-roster.xls', {
+      type: 'application/vnd.ms-excel',
+    });
+
+    const result = await parseSpreadsheetFile(file);
+
+    expect(result.columns.map((column) => column.name)).toEqual(['Name', 'Role', 'Notes']);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[0].data).toEqual({
+      Name: 'Alice Rivera',
+      Role: 'Engineer',
+      Notes: 'Backend team',
+    });
+  });
+
+  it('rejects a legacy workbook whose declared range exceeds the caller row limit', async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([['Name'], ['Alice']]);
+    sheet['!ref'] = 'A1:A100';
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Roster');
+    const bytes = XLSX.write(workbook, { bookType: 'biff8', type: 'array' }) as ArrayBuffer;
+    const file = new File([bytes], 'claimed-range.xls', {
+      type: 'application/vnd.ms-excel',
+    });
+
+    await expect(parseSpreadsheetFile(file, 10)).rejects.toThrow(
+      'File has too many rows (max 10).',
+    );
+  });
+
+  it('retains a prototype-shaped header as inert own data', async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([['__proto__', 'constructor'], ['safe', 'also-safe']]);
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Roster');
+    const bytes = XLSX.write(workbook, { bookType: 'biff8', type: 'array' }) as ArrayBuffer;
+    const file = new File([bytes], 'prototype-header.xls', {
+      type: 'application/vnd.ms-excel',
+    });
+
+    const result = await parseSpreadsheetFile(file);
+
+    expect(Object.getPrototypeOf(result.rows[0].data)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(result.rows[0].data, '__proto__')).toBe(true);
+    expect(result.rows[0].data.__proto__).toBe('safe');
+    expect(result.rows[0].data.constructor).toBe('also-safe');
+  });
+
+  it('rejects malformed legacy .xls bytes', async () => {
+    const file = new File(['not a BIFF workbook'], 'malformed.xls', {
+      type: 'application/vnd.ms-excel',
+    });
+
+    await expect(parseSpreadsheetFile(file)).rejects.toThrow();
+  });
+
+  it('rejects a spreadsheet larger than the existing 10MB upload boundary before parsing', async () => {
+    const file = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'oversized.xls', {
+      type: 'application/vnd.ms-excel',
+    });
+
+    await expect(parseSpreadsheetFile(file)).rejects.toThrow('File size must be less than 10MB.');
   });
 });

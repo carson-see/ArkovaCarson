@@ -366,7 +366,7 @@ New copy key `THIRD_PARTY_NOTICES_LABELS.LICENSE_TEXT_TOGGLE`; §1.3 clean.
 Tests are split by data source, deliberately: `ThirdPartyNoticesPage.test.tsx`
 (pre-existing) runs against the REAL generated JSON — its old "does not include
 a fabricated xlsx entry (no such dependency exists in the tree)" case was
-rewritten in this change because its premise went stale: `xlsx@0.18.5` IS a
+rewritten in this change because its premise went stale: `xlsx@0.20.3` IS a
 direct production dependency today, and the assertion only stayed green because
 the committed data predated it (2026-07-28) — stale data masking a missing
 attribution. The replacement derives truth from `package-lock.json` both ways

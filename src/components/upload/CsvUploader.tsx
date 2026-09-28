@@ -65,7 +65,7 @@ export function CsvUploader({
 
         // Parse spreadsheet with 30-second timeout to prevent infinite spinner
         const parsed = await Promise.race([
-          parseSpreadsheetFile(file),
+          parseSpreadsheetFile(file, maxRows),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('File parsing timed out. Try a smaller file or different format.')), 30000)
           ),

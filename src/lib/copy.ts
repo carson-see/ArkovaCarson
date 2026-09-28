@@ -5031,6 +5031,13 @@ export const SPREADSHEET_MODE_LABELS = {
   CHOOSE_DIFFERENT_FILE: 'Choose a different file',
 } as const;
 
+export const SPREADSHEET_IMPORT_ERRORS = {
+  INVALID_LEGACY_FILE: 'Invalid legacy .xls file.',
+  FILE_TOO_LARGE: 'File size must be less than 10MB.',
+  TOO_MANY_ROWS: (maxRows: number) =>
+    `File has too many rows (max ${maxRows.toLocaleString()}).`,
+} as const;
+
 // ─── QUEUE-01 / SCRUM-2894 (L2-A1) — Pending Documents page ─────────────────
 //
 // Append-only block (per CLAUDE.md §6 "Two PRs each appending..." guidance —
