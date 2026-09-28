@@ -25,6 +25,7 @@ import {
   handleImportRows,
   handleAgentLifecycle,
   handleListAnchors,
+  hasValidWorkerAccessConfig,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -68,6 +69,97 @@ describe('private anchor list worker proxy', () => {
     const result=await handleListAnchors({},config);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
+});
+
+describe('isolated staging worker Access bridge', () => {
+  const accessConfig = {
+    ...CONFIG,
+    workerBaseUrl: 'https://ar20-closure-20260927-worker.arkova.ai',
+    workerAccessHost: 'ar20-closure-20260927-worker.arkova.ai',
+    workerAccessClientId: 'fixture-access-id',
+    workerAccessClientSecret: 'fixture-access-secret',
+    callerApiKey: 'ak_test_caller',
+  };
+
+  it('accepts only an exact bare isolated-staging origin', () => {
+    expect(hasValidWorkerAccessConfig(accessConfig)).toBe(true);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: `${accessConfig.workerBaseUrl}/prefix` })).toBe(false);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: `${accessConfig.workerBaseUrl}?redirect=1` })).toBe(false);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: 'https://user@ar20-closure-20260927-worker.arkova.ai' })).toBe(false);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: 'https://ar20-closure-20260927-worker.arkova.ai:8443' })).toBe(false);
+  });
+
+  it('preserves legacy non-Access HTTP localhost and base-path routing', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [], next_cursor: null }));
+    const result = await handleListAnchors({}, {
+      ...CONFIG,
+      workerBaseUrl: 'http://127.0.0.1:8787/worker-prefix',
+      callerApiKey: 'ak_local',
+    });
+    expect(result.isError).toBeFalsy();
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:8787/worker-prefix/api/v1/anchors?limit=50');
+    expect(new Headers(init.headers).get('X-API-Key')).toBe('ak_local');
+  });
+
+  it('adds the Access pair without replacing caller application auth', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [], next_cursor: null }));
+    const result = await handleListAnchors({}, accessConfig);
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ar20-closure-20260927-worker.arkova.ai/api/v1/anchors?limit=50',
+      expect.objectContaining({
+        redirect: 'manual',
+        headers: expect.objectContaining({
+          'X-API-Key': 'ak_test_caller',
+          'CF-Access-Client-Id': 'fixture-access-id',
+          'CF-Access-Client-Secret': 'fixture-access-secret',
+        }),
+      }),
+    );
+  });
+
+  it('preserves a caller JWT alongside the Access pair', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ agents: [] }));
+    const result = await handleAgentLifecycle('list', {}, {
+      ...accessConfig,
+      callerApiKey: undefined,
+      callerAuthorization: 'Bearer fixture-user-jwt',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ar20-closure-20260927-worker.arkova.ai/api/v1/agents',
+      expect.objectContaining({
+        redirect: 'manual',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer fixture-user-jwt',
+          'CF-Access-Client-Id': 'fixture-access-id',
+          'CF-Access-Client-Secret': 'fixture-access-secret',
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    { workerAccessClientSecret: undefined },
+    { workerAccessClientId: undefined },
+    { workerAccessHost: undefined },
+    { workerAccessHost: 'worker.arkova.ai' },
+    { workerAccessHost: 'ar20-production-worker.arkova.ai', workerBaseUrl: 'https://ar20-production-worker.arkova.ai' },
+    { workerAccessHost: 'ar20-closure-20260927-worker.arkova.ai', workerBaseUrl: 'https://attacker.example' },
+  ])('fails closed before fetch for partial, production, or mismatched Access config', async override => {
+    const result = await handleListAnchors({}, { ...accessConfig, ...override });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not follow a redirect or expose Access credentials in the result', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: 'https://attacker.example' } }));
+    const result = await handleListAnchors({}, accessConfig);
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result.content[0].text).not.toContain('fixture-access');
   });
 });
 

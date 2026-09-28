@@ -236,6 +236,11 @@ export interface SupabaseConfig {
    * the lowercase text fallback only.
    */
   workerBaseUrl?: string;
+  /** Exact isolated-staging Access host; never a production/shared host. */
+  workerAccessHost?: string;
+  /** Rig-only Cloudflare Access service-token credentials. Never logged. */
+  workerAccessClientId?: string;
+  workerAccessClientSecret?: string;
   /**
    * The RAW API key the caller presented on the inbound MCP request
    * (X-API-Key auth only; absent for OAuth Bearer callers). Forwarded
@@ -256,6 +261,81 @@ export interface SupabaseConfig {
    * capability still answered with a success-shaped `{total, results}` payload.
    */
   nessieEnabled?: boolean;
+}
+
+const ISOLATED_STAGING_ACCESS_HOST = /^ar20-closure-[a-z0-9-]+\.arkova\.ai$/;
+
+export function hasValidWorkerAccessConfig(config: Pick<SupabaseConfig,
+  'workerBaseUrl' | 'workerAccessHost' | 'workerAccessClientId' | 'workerAccessClientSecret'>): boolean {
+  const accessValues = [config.workerAccessHost, config.workerAccessClientId, config.workerAccessClientSecret];
+  const accessCount = accessValues.filter(value => typeof value === 'string' && value.length > 0).length;
+  if (accessCount === 0) return true;
+  if (accessCount !== accessValues.length || !config.workerBaseUrl) return false;
+  try {
+    const base = new URL(config.workerBaseUrl);
+    return base.protocol === 'https:'
+      && !base.username
+      && !base.password
+      && !base.port
+      && base.pathname === '/'
+      && !base.search
+      && !base.hash
+      && config.workerAccessHost === base.hostname
+      && ISOLATED_STAGING_ACCESS_HOST.test(base.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch one path from the configured worker origin. Optional Cloudflare Access
+ * credentials are accepted only as a complete pair bound to one exact,
+ * isolated-staging hostname. Redirects stay manual so neither Access nor
+ * caller credentials can be replayed to a Location target.
+ */
+async function workerFetch(
+  config: SupabaseConfig,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  if (!config.workerBaseUrl) throw new Error('worker_base_url_missing');
+  const base = new URL(config.workerBaseUrl);
+  if (!hasValidWorkerAccessConfig(config)) throw new Error('worker_access_config_invalid');
+  const hasAccess = Boolean(config.workerAccessHost);
+  const target = /^https?:\/\//i.test(path)
+    ? new URL(path)
+    : new URL(`${hasAccess ? base.origin : config.workerBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`);
+  if (target.origin !== base.origin) {
+    throw new Error('worker_origin_invalid');
+  }
+
+  const accessValues = [config.workerAccessHost, config.workerAccessClientId, config.workerAccessClientSecret];
+  const accessCount = accessValues.filter(value => typeof value === 'string' && value.length > 0).length;
+  let accessHeaders: Record<string, string> = {};
+  if (accessCount !== 0) {
+    accessHeaders = {
+      'CF-Access-Client-Id': config.workerAccessClientId!,
+      'CF-Access-Client-Secret': config.workerAccessClientSecret!,
+    };
+  }
+
+  const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(accessHeaders)) headers.set(name, value);
+  const canonicalHeaderName = (name: string): string => ({
+    accept: 'Accept',
+    authorization: 'Authorization',
+    'content-type': 'Content-Type',
+    'x-api-key': 'X-API-Key',
+    'cf-access-client-id': 'CF-Access-Client-Id',
+    'cf-access-client-secret': 'CF-Access-Client-Secret',
+  })[name] ?? name;
+  const requestHeaders: Record<string, string> = {};
+  headers.forEach((value, name) => { requestHeaders[canonicalHeaderName(name)] = value; });
+  return fetch(target.toString(), {
+    ...init,
+    redirect: 'manual',
+    headers: requestHeaders,
+  });
 }
 
 const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
@@ -381,7 +461,7 @@ export async function handleAgentLifecycle(
   const { agent_id: _agentId, ...payload } = input;
   const body = ['register','update','admit_computeid'].includes(operation) ? payload : undefined;
   try {
-    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}${route}`, {
+    const response = await workerFetch(config, route, {
       method, redirect: 'manual', signal: AbortSignal.timeout(AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS),
       headers: { 'Content-Type': 'application/json', ...(config.callerApiKey ? { 'X-API-Key': config.callerApiKey } : { Authorization: config.callerAuthorization! }) },
       ...(body ? { body: JSON.stringify(body) } : {}),
@@ -453,7 +533,7 @@ export async function handleListAnchors(input: AnchorListInput, config: Supabase
     const value = input[key]; if (value !== undefined) params.set(key, String(value));
   }
   try {
-    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}/api/v1/anchors?${params}`, {
+    const response = await workerFetch(config, `/api/v1/anchors?${params}`, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS),
       headers: { 'X-API-Key': config.callerApiKey },
     });
@@ -532,7 +612,7 @@ export async function handleManageFolders(input: ManageFoldersInput, config: Sup
       : { anchor_ids: input.anchor_ids, folder_id: input.folder_id ?? null };
   }
   try {
-    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}${path}`, {
+    const response = await workerFetch(config, path, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -1429,7 +1509,7 @@ async function searchCredentialsWorkerSemantic(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SEARCH_WORKER_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await workerFetch(config, url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -1827,7 +1907,7 @@ async function nessieWorkerQuery(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), NESSIE_WORKER_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await workerFetch(config, url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -2029,9 +2109,8 @@ async function authenticatedWorkerJson(
 ): Promise<{ response: Response; body: Record<string, unknown> | null }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS);
-  const base = config.workerBaseUrl!.replace(/\/$/, '');
   try {
-    const response = await fetch(`${base}${path}`, {
+    const response = await workerFetch(config, path, {
       ...init,
       redirect: 'manual',
       headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },

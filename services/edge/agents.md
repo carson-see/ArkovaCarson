@@ -1,6 +1,18 @@
 # agents.md — services/edge
 _Last updated: 2026-09-13 (SCRUM-3907 / SCRUM-1032 — edge deploy workflow + deployed-version parity)._
 
+## Isolated soak worker routing
+
+The isolated workers.dev MCP may reach a private staging worker through an
+Access-protected, per-rig Cloudflare Tunnel hostname. `WORKER_BASE_URL` and
+`WORKER_ACCESS_HOST` must name that exact `ar20-closure-*` host, and
+`WORKER_ACCESS_CLIENT_ID` / `WORKER_ACCESS_CLIENT_SECRET` must be present as a
+pair. The edge adds the Access pair without replacing the caller's API key or
+Supabase JWT. It never follows worker redirects. This is a staging-only bridge:
+do not point the Access variables at production, shared staging, or a Cloud Run
+URL. The Cloud Run service remains private; cloudflared runs as a separate,
+digest-pinned sidecar rather than inside the product worker image.
+
 ## SCRUM-3907 / SCRUM-1032 — edge deploy workflow + deployed-version parity (2026-09-13)
 
 CODE ONLY — this PR builds the pipeline; it does not run it. No `wrangler

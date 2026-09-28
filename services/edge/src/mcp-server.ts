@@ -50,6 +50,7 @@ import {
   handleManageFolders,
   handleAgentLifecycle,
   handleListAnchors,
+  hasValidWorkerAccessConfig,
   type SupabaseConfig,
   type ToolResult,
   type ImportRowsInput,
@@ -1152,11 +1153,20 @@ export async function handleMcpRequest(
     // Gemini-space search forwarding the caller's key (preserves org-scoping
     // + per-caller rate limits). Otherwise it degrades to the text fallback.
     workerBaseUrl: env.WORKER_BASE_URL,
+    workerAccessHost: env.WORKER_ACCESS_HOST,
+    workerAccessClientId: env.WORKER_ACCESS_CLIENT_ID,
+    workerAccessClientSecret: env.WORKER_ACCESS_CLIENT_SECRET,
     callerApiKey: auth.callerApiKey ?? undefined,
     callerAuthorization: auth.callerAuthorization ?? undefined,
     // BUG-008/027: fail closed — only the exact string "true" enables Nessie.
     nessieEnabled: env.ENABLE_NESSIE_QUERY === 'true',
   };
+  if (!hasValidWorkerAccessConfig(config)) {
+    return new Response(JSON.stringify({ error: 'Service unavailable', code: 'WORKER_ACCESS_CONFIG_INVALID' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': corsOrigin, Vary: 'Origin' },
+    });
+  }
 
   const clientIp = earlyClientIp;
 

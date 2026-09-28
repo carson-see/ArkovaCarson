@@ -73,6 +73,11 @@ export interface Env {
   // nessie_query degrades to the lowercase text fallback only. Provision as a
   // wrangler var/secret at deploy — do NOT hardcode a prod URL in source.
   WORKER_BASE_URL?: string;
+  /** Exact isolated-staging tunnel host protected by Cloudflare Access. */
+  WORKER_ACCESS_HOST?: string;
+  /** Rig-only Cloudflare Access service-token credentials (must be paired). */
+  WORKER_ACCESS_CLIENT_ID?: string;
+  WORKER_ACCESS_CLIENT_SECRET?: string;
 
   // BUG-008/027 (CTO ruling R-1 STRENGTHENED): capability gate for the MCP
   // `nessie_query` tool. Nessie is permanently disabled by standing founder
