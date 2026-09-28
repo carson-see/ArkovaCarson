@@ -17,7 +17,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 1200
     const now = Math.floor(Date.now() / 1000);
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
     const user = { id: userId, email: 'round3@example.invalid', role: 'authenticated', aud: 'authenticated', email_confirmed_at: new Date().toISOString(), app_metadata: { provider: 'email' }, user_metadata: {}, factors: [{ id: 'round3-factor', factor_type: 'totp', status: 'verified' }] };
-    const session = { access_token: `${encode({ alg: 'HS256' })}.${encode({ sub: userId, session_id: 'round3-session', role: 'authenticated', aal: 'aal2', exp: now + 3600, iat: now, amr: [{ method: 'totp', timestamp: now }] })}.fixture`, refresh_token: 'round3-fixture', expires_at: now + 3600, expires_in: 3600, token_type: 'bearer', user };
+    const session = { access_token: `${encode({ alg: 'HS256' })}.${encode({ sub: userId, session_id: 'private-tag-local-session', role: 'authenticated', aal: 'aal2', exp: now + 3600, iat: now, amr: [{ method: 'totp', timestamp: now }] })}.fixture`, refresh_token: 'round3-fixture', expires_at: now + 3600, expires_in: 3600, token_type: 'bearer', user }; // gitleaks:allow — route-mocked local session; no hosted issuer accepts it
     await page.addInitScript(value => localStorage.setItem('sb-127-auth-token', JSON.stringify(value)), session);
 
     const tagQueries: string[] = [];

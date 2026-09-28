@@ -669,3 +669,15 @@ UAT-17's standalone email fixture also renders the production add-existing-membe
 (gitignored) so a local run does not dirty the tree. Set `UAT14_EVIDENCE_DIR`
 to capture into the tracked evidence folder when refreshing UAT evidence
 deliberately.
+
+## Private tag search — synthetic local browser fixture
+
+`private-tag-search-local.spec.ts` and `private-tag-search-local.config.ts` exercise the real My Records page with synthetic loopback-only Supabase and worker responses. The dedicated config runs installed Chrome at 1280px and 375px and verifies debounce, user/organization tag predicates, visible error/retry recovery, a returned synthetic record, responsive layout, and horizontal containment. It does **not** contact hosted services or prove Auth, RLS, database, provider, or live-browser acceptance.
+
+Run it explicitly from the repository root:
+
+```bash
+npx playwright test --config e2e/private-tag-search-local.config.ts
+```
+
+The file-level guard skips the fixture under every named project in the ordinary Playwright config. No CI workflow invokes the dedicated config. Keep the `gitleaks:allow` annotations on its deterministic loopback-only JWT/session and anon-key placeholders; they are not credentials, but the scanner intentionally treats key-shaped fixture values conservatively.

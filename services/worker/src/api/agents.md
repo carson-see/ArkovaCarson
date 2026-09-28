@@ -782,3 +782,13 @@ Postgres, so one noisy rule cannot hide another behind a PostgREST row cap and
 the page no longer issues one query per rule. The handler accepts only
 requested rule ids and the two canonical event names; RPC errors, duplicates,
 unknown ids, or malformed rows keep the complete health response fail-closed.
+
+## 2026-09-27 — enable-only rule patches revalidate stored configuration
+
+`handleUpdateRule` validates the merged stored rule whenever a patch enables
+it, even when the request contains only `{ enabled: true }`. This prevents a
+legacy or directly-written malformed trigger/action configuration from being
+reactivated without passing the current schemas. Valid legacy Drive rules that
+use `type: 'drive_folder'` plus `folder_id` remain accepted. The connector
+conflict guard still performs its separate just-before-write reread; stored
+configuration validation does not replace that concurrency check.

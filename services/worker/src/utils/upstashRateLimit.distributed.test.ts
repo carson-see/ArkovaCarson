@@ -387,19 +387,30 @@ describe('rateLimit() middleware over a distributed store', () => {
     const instanceA = new UpstashRateLimitStore(BASE_URL, TOKEN);
     const instanceB = new UpstashRateLimitStore(BASE_URL, TOKEN);
     const app = appWithLimiter(3);
+    // Keep one server lifecycle for the whole load-balancer simulation instead
+    // of creating and tearing down a listener for every request. A full-suite
+    // run observed a sporadic Express 404 here; its precise cause was not
+    // reproduced, so this only removes listener-lifecycle variation.
+    const server = app.listen();
 
-    // Two requests land on instance A.
-    setRateLimitStore(instanceA);
-    await request(app).get('/probe').expect(200);
-    await request(app).get('/probe').expect(200);
+    try {
+      // Two requests land on instance A.
+      setRateLimitStore(instanceA);
+      await request(server).get('/probe').expect(200);
+      await request(server).get('/probe').expect(200);
 
-    // The load balancer moves the client to instance B, whose local cache is empty.
-    setRateLimitStore(instanceB);
-    await request(app).get('/probe').expect(200); // 3rd overall — still allowed
-    const blocked = await request(app).get('/probe').expect(429); // 4th overall
+      // The load balancer moves the client to instance B, whose local cache is empty.
+      setRateLimitStore(instanceB);
+      await request(server).get('/probe').expect(200); // 3rd overall — still allowed
+      const blocked = await request(server).get('/probe').expect(429); // 4th overall
 
-    expect(blocked.body).toMatchObject({ error: 'Too many requests' });
-    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+      expect(blocked.body).toMatchObject({ error: 'Too many requests' });
+      expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it('reports X-RateLimit-Remaining from the shared counter, not the local cache', async () => {

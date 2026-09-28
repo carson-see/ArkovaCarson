@@ -1798,9 +1798,11 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
     });
   });
 
-  it('reports a terminal materialization failure with only the safe outbox UUID and keeps draining', async () => {
+  it('ignores a persisted pending retry, reports only terminal materialization failures, and keeps draining', async () => {
     const outboxId = '22222222-2222-4222-8222-222222222222';
+    const pendingOutboxId = '11111111-1111-4111-8111-111111111111';
     rpcStateOf().agent.materialize_next_agent_webhook_event = [
+      { data: { outbox_id: pendingOutboxId, state: 'pending', private: 'pending-private' }, error: null },
       { data: { outbox_id: outboxId, state: 'materialization_failed', private: 'do-not-log' }, error: null },
       { data: { outbox_id: 'not-a-uuid', state: 'materialization_failed', private: 'also-private' }, error: null },
       { data: null, error: null },
@@ -1827,6 +1829,9 @@ describe('processAgentWebhookOutbox compatibility drainer', () => {
     expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('do-not-log');
     expect(JSON.stringify(mockSentry.captureException.mock.calls)).not.toContain('do-not-log');
     expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('also-private');
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain(pendingOutboxId);
+    expect(JSON.stringify(mockSentry.captureException.mock.calls)).not.toContain(pendingOutboxId);
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('pending-private');
     expect(mockSentry.captureException).toHaveBeenCalledTimes(2);
   });
 

@@ -520,6 +520,84 @@ BEGIN
   END IF;
 END $$;
 
+-- A second organization exercises ownership rejection and proves terminal
+-- no-target/flag-off states through the real materialization RPC.
+INSERT INTO auth.users(id,email) VALUES
+  ('eeeeeeee-0000-4000-8000-000000000001','ar20-second-admin@example.test');
+INSERT INTO public.organizations(id,legal_name,display_name,public_id) VALUES
+  ('bbbbbbbb-0000-4000-8000-000000000002','AR20 Second Org','AR20 Second Org','ORG-AR20-SECOND');
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claim.role','service_role',true);
+INSERT INTO public.profiles(id,email,role,org_id) VALUES
+  ('eeeeeeee-0000-4000-8000-000000000001','ar20-second-admin@example.test','ORG_ADMIN',
+   'bbbbbbbb-0000-4000-8000-000000000002')
+ON CONFLICT(id) DO UPDATE SET email=excluded.email,role=excluded.role,org_id=excluded.org_id;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.role','',true);
+
+CREATE TEMP TABLE deferred_outbox AS
+SELECT id,next_attempt_at FROM public.agent_webhook_outbox
+WHERE state='pending';
+UPDATE public.agent_webhook_outbox
+   SET next_attempt_at=clock_timestamp()+interval '1 hour'
+ WHERE id IN (SELECT id FROM deferred_outbox);
+
+CREATE TEMP TABLE second_org_agent AS
+SELECT public.register_agent_with_outbox(
+  'bbbbbbbb-0000-4000-8000-000000000002','user',
+  'eeeeeeee-0000-4000-8000-000000000001','second org agent','custom',ARRAY['verify']
+) AS value;
+DO $$
+DECLARE
+  v_agent uuid := ((SELECT value FROM second_org_agent)#>>'{agent,id}')::uuid;
+  v_before bigint := (SELECT count(*) FROM public.agent_webhook_outbox);
+  v_zero jsonb;
+  v_suppressed jsonb;
+BEGIN
+  BEGIN
+    PERFORM public.enqueue_agent_webhook_event(
+      'aaaaaaaa-0000-4000-8000-000000000001',v_agent,
+      'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid());
+    RAISE EXCEPTION 'cross-tenant agent webhook ownership mismatch was accepted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  IF (SELECT count(*) FROM public.agent_webhook_outbox)<>v_before THEN
+    RAISE EXCEPTION 'cross-tenant ownership rejection left an outbox row';
+  END IF;
+
+  v_zero:=public.materialize_next_agent_webhook_event('enabled',false);
+  IF v_zero->>'state'<>'zero_targets'
+     OR NOT EXISTS (
+       SELECT 1 FROM public.agent_webhook_outbox
+       WHERE id=(v_zero->>'outbox_id')::uuid
+         AND org_id='bbbbbbbb-0000-4000-8000-000000000002'
+         AND state='zero_targets'
+         AND payload_text LIKE '%ORG-AR20-SECOND%'
+         AND payload_text NOT LIKE '%ORG-AR20"%'
+     ) THEN
+    RAISE EXCEPTION 'second-org zero-target materialization lost ownership or terminal state';
+  END IF;
+
+  PERFORM public.enqueue_agent_webhook_event(
+    'bbbbbbbb-0000-4000-8000-000000000002',v_agent,
+    'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid());
+  v_suppressed:=public.materialize_next_agent_webhook_event('disabled',false);
+  IF v_suppressed->>'state'<>'suppressed'
+     OR COALESCE((v_suppressed->>'targets')::integer,-1)<>0
+     OR NOT EXISTS (
+       SELECT 1 FROM public.agent_webhook_outbox
+       WHERE id=(v_suppressed->>'outbox_id')::uuid
+         AND org_id='bbbbbbbb-0000-4000-8000-000000000002'
+         AND state='suppressed'
+     ) THEN
+    RAISE EXCEPTION 'flag-off materialization did not report the stored suppressed state';
+  END IF;
+END $$;
+UPDATE public.agent_webhook_outbox o
+   SET next_attempt_at=d.next_attempt_at
+  FROM deferred_outbox d
+ WHERE o.id=d.id;
+
 INSERT INTO public.webhook_endpoints(id,org_id,url,secret_hash,events,is_active,public_id)
 VALUES ('22222222-2222-4222-8222-222222222222',
   'aaaaaaaa-0000-4000-8000-000000000001','https://example.test/ar20','secret',
@@ -622,6 +700,89 @@ BEGIN
       WHERE q.event_id=(SELECT d.event_id::text FROM public.webhook_delivery_logs d WHERE d.id=v_delivery)
         AND error_message='delivery lease expired repeatedly; receiver outcome is unknown') THEN
     RAISE EXCEPTION 'lease-expiry budget did not fail forward truthfully';
+  END IF;
+END $$;
+
+-- An ordinary materialization exception reports the persisted retry state.
+-- The worker alerts only on `materialization_failed`, so this must remain a
+-- nonterminal `pending` result without a false terminal alert.
+CREATE TEMP TABLE retryable_materialization_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
+) AS outbox_id;
+INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
+  status,idempotency_key)
+SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
+  o.payload,1,'success','22222222-2222-4222-8222-222222222222-'||o.wire_event_id
+FROM public.agent_webhook_outbox o
+WHERE o.id=(SELECT outbox_id FROM retryable_materialization_fixture);
+CREATE TEMP TABLE retryable_materialization_result AS
+SELECT clock_timestamp() AS called_at,
+  public.materialize_next_agent_webhook_event('enabled',false) AS value;
+DO $$
+DECLARE
+  v_id uuid := (SELECT outbox_id FROM retryable_materialization_fixture);
+  v_called_at timestamptz := (SELECT called_at FROM retryable_materialization_result);
+  v_result jsonb := (SELECT value FROM retryable_materialization_result);
+BEGIN
+  IF v_result->>'outbox_id' IS DISTINCT FROM v_id::text
+     OR v_result->>'state' IS DISTINCT FROM 'pending'
+     OR NOT EXISTS (
+       SELECT 1 FROM public.agent_webhook_outbox
+       WHERE id=v_id AND state='pending' AND materialization_attempts=1
+         AND resolved_at IS NULL AND next_attempt_at>v_called_at
+         AND last_error LIKE '%ownership conflict%'
+     )
+     OR EXISTS (
+       SELECT 1 FROM public.webhook_delivery_logs
+       WHERE agent_event_outbox_id=v_id
+     ) THEN
+    RAISE EXCEPTION 'ordinary materialization exception did not store and return one pending retry state';
+  END IF;
+END $$;
+UPDATE public.agent_webhook_outbox
+   SET state='suppressed',resolved_at=clock_timestamp(),next_attempt_at=clock_timestamp(),
+       last_error=NULL
+ WHERE id=(SELECT outbox_id FROM retryable_materialization_fixture);
+
+-- Force the real exception path with seven attempts already recorded. The
+-- eighth attempt must store and return the same terminal state, rather than
+-- falsely reporting another retry.
+CREATE TEMP TABLE terminal_materialization_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'aaaaaaaa-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
+) AS outbox_id;
+UPDATE public.agent_webhook_outbox
+   SET materialization_attempts=7,next_attempt_at=clock_timestamp()-interval '1 second'
+ WHERE id=(SELECT outbox_id FROM terminal_materialization_fixture);
+INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
+  status,idempotency_key)
+SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
+  o.payload,1,'success','22222222-2222-4222-8222-222222222222-'||o.wire_event_id
+FROM public.agent_webhook_outbox o
+WHERE o.id=(SELECT outbox_id FROM terminal_materialization_fixture);
+CREATE TEMP TABLE terminal_materialization_result AS
+SELECT public.materialize_next_agent_webhook_event('enabled',false) AS value;
+DO $$
+DECLARE
+  v_id uuid := (SELECT outbox_id FROM terminal_materialization_fixture);
+  v_result jsonb := (SELECT value FROM terminal_materialization_result);
+BEGIN
+  IF v_result->>'outbox_id' IS DISTINCT FROM v_id::text
+     OR v_result->>'state' IS DISTINCT FROM 'materialization_failed'
+     OR NOT EXISTS (
+       SELECT 1 FROM public.agent_webhook_outbox
+       WHERE id=v_id AND state='materialization_failed'
+         AND materialization_attempts=8 AND resolved_at IS NOT NULL
+         AND last_error LIKE '%ownership conflict%'
+     )
+     OR EXISTS (
+       SELECT 1 FROM public.webhook_delivery_logs
+       WHERE agent_event_outbox_id=v_id
+     ) THEN
+    RAISE EXCEPTION 'eighth materialization exception did not store and return one terminal state';
   END IF;
 END $$;
 

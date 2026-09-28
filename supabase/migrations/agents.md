@@ -2095,3 +2095,15 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
   connector health reads one deterministic latest failure/recovery state for
   every requested enabled rule without relying on a PostgREST row-capped audit
   scan. No hosted database application is asserted.
+
+- `0496_scrum5294_agent_webhook_materialization_state.sql` is a forward-only
+  reporting correction for the existing durable materializer. On an exception
+  at the eighth attempt, the function now returns the state produced by the
+  same `UPDATE ... RETURNING` that stores `materialization_failed`; 0491 could
+  store that terminal state while returning `retryable_failure`. Ordinary
+  exceptions now return their persisted `pending` state, while the eighth
+  returns persisted `materialization_failed`. The signature, ACL, locks, retry
+  budget, delivery writes, and payload contract are unchanged.
+  Native coverage forces the real ownership-conflict exception at seven prior
+  attempts and asserts that stored and returned state are both terminal; a
+  sibling case pins persisted/returned `pending`, increment and future backoff.

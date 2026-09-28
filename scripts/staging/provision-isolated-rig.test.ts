@@ -44,6 +44,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(here, 'provision-isolated-rig.sh');
+const TEARDOWN_SCRIPT = resolve(here, 'teardown-isolated-rig.sh');
 const REPO_ROOT = resolve(here, '../..');
 const REPO_HEAD = execFileSync('git', ['rev-parse', 'HEAD'], {
   cwd: REPO_ROOT,
@@ -263,6 +264,22 @@ describe('provision-isolated-rig.sh — gemini profile model/prompt overrides', 
 });
 
 describe('provision-isolated-rig.sh — every rig gets boot-critical secrets', () => {
+  it('uses distinct deterministic identities and only exact resource IAM grants', () => {
+    expect(script).toMatch(/ark-rig-\$\{RIG_IDENTITY_HASH\}-run@/);
+    expect(script).toMatch(/ark-rig-\$\{RIG_IDENTITY_HASH\}-oidc@/);
+    expect(script).toMatch(/gcloud secrets add-iam-policy-binding/);
+    expect(script).toMatch(/gcloud run services add-iam-policy-binding/);
+    expect(script).not.toMatch(/gcloud projects add-iam-policy-binding/);
+  });
+
+  it('derives the cron secret per rig and never emits a KMS key resource', () => {
+    const { out, code } = dryRun(['--name', 'identity-bound', '--profile', 'chain']);
+    expect(code).toBe(0);
+    expect(out).toContain('CRON_SECRET=cron-secret-identity-bound-staging:latest');
+    expect(out).not.toContain('GCP_KMS_KEY_RESOURCE_NAME');
+    expect(out).not.toContain('BITCOIN_KMS_KEY_ID');
+  });
+
   it('wires Stripe + HMAC + cron + FRONTEND_URL on ALL profiles so config.ts Zod does not crash-loop', () => {
     for (const profile of ['mock', 'chain', 'gemini']) {
       const { out, code } = dryRun(['--name', `s0-s2a-${profile}`, '--profile', profile]);
@@ -476,6 +493,16 @@ interface ApplyRunOptions {
   failFinalStatePersistence?: boolean;
   childTimeoutMs?: number;
   env?: Record<string, string>;
+  allowDirtySource?: boolean;
+  projectIamPayload?: string;
+  serviceAccountDisabled?: boolean;
+  secretIamPayload?: string;
+  runIamPayload?: string;
+  rigSecretIamFailureName?: string;
+  dependencyLatestState?: string;
+  existingSecretVersions?: string;
+  failLatestAccessFor?: string[];
+  failSecretCreateFor?: string[];
 }
 
 const stubDirs: string[] = [];
@@ -509,6 +536,10 @@ function applyRunStubbed(
     : options.rigId === 'RIG-B1'
       ? 'recover-broadcasts'
       : 'org-queue-scheduler';
+  const rigIdentityHash = createHash('sha256').update(name).digest('hex').slice(0, 12);
+  const identityProject = options.env?.STAGING_GCP_PROJECT ?? 'arkova1';
+  const runtimeSa = `ark-rig-${rigIdentityHash}-run@${identityProject}.iam.gserviceaccount.com`;
+  const oidcSa = `ark-rig-${rigIdentityHash}-oidc@${identityProject}.iam.gserviceaccount.com`;
   writeFileSync(logFile, '');
   writeFileSync(npxLogFile, '');
   writeFileSync(orderLogFile, '');
@@ -523,6 +554,7 @@ function applyRunStubbed(
     NODE_ENV: 'production',
     ENABLE_AI_FRAUD: 'false',
     ENABLE_AI_REPORTS: 'false',
+    ENABLE_BULK_RECIPIENT_PROVISIONING: 'false',
     // Mirrors the prod deploy so an extraction soak runs the budget prod runs
     // (BASE_ENV_VARS in provision-isolated-rig.sh).
     AI_EXTRACTION_LATENCY_BUDGET_MS: '15000',
@@ -555,6 +587,7 @@ function applyRunStubbed(
     'CRON_SECRET',
     // config.ts superRefine fails production boot without it (2026-08-30 finding 1).
     'IP_HASH_PEPPER',
+    'RECIPIENT_IDENTIFIER_PEPPER',
     ...(profile === 'chain'
       ? ['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']
       : []),
@@ -587,6 +620,10 @@ printf '%s\\n' "$*" >> "${gitLogFile}"
 if [[ "$1" == "fetch" ]]; then
   ${options.gitFetchFails ? 'exit 1' : 'exit 0'}
 fi
+if [[ "$1" == "diff" && "$2" == "--quiet" ]]; then
+  [[ '${options.allowDirtySource !== false ? 'true' : 'false'}' == 'true' ]] && exit 0
+  exit 1
+fi
 exec "${REAL_GIT}" "$@"
 `,
   );
@@ -611,6 +648,33 @@ if [[ "$*" == *"--data-file=-"* ]]; then
   else
     cat >/dev/null
   fi
+fi
+if [[ "$1" == "secrets" && "$2" == "create" ]]; then
+  for failed in ${(options.failSecretCreateFor ?? []).map((name) => `'${name}'`).join(' ') || "''"}; do
+    if [[ -n "$failed" && "$3" == "$failed" ]]; then echo 'injected concurrent create failure' >&2; exit 17; fi
+  done
+fi
+if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "describe" ]]; then
+  printf '{"email":"%s","uniqueId":"123456789","disabled":${options.serviceAccountDisabled ? 'true' : 'false'}}\n' "$4"
+  exit 0
+fi
+if [[ "$1" == "projects" && "$2" == "get-iam-policy" ]]; then
+  if [[ -n '${options.projectIamPayload ?? ''}' ]]; then echo '${options.projectIamPayload ?? ''}'; exit 0; fi
+  printf '{"bindings":[{"role":"roles/logging.logWriter","members":["serviceAccount:${runtimeSa}","serviceAccount:${oidcSa}"]}]}\n'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "get-iam-policy" ]]; then
+  if [[ -n '${options.rigSecretIamFailureName ?? ''}' && "$3" == '${options.rigSecretIamFailureName ?? ''}' ]]; then echo '{"bindings":[]}'; exit 0; fi
+  echo '${options.secretIamPayload ?? `{"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:${runtimeSa}"]}]}`}'
+  exit 0
+fi
+if [[ "$1" == "run" && "$2" == "services" && "$3" == "get-iam-policy" ]]; then
+  echo '${options.runIamPayload ?? `{"bindings":[{"role":"roles/run.invoker","members":["serviceAccount:${oidcSa}"]}]}`}'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "list" ]]; then
+  echo '${options.existingSecretVersions ?? ''}'
+  exit 0
 fi
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
@@ -637,7 +701,16 @@ if [[ "$1" == "secrets" && "$2" == "describe" ]]; then
   done
   exit 0
 fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "describe" ]]; then
+  echo '${options.dependencyLatestState ?? 'ENABLED'}'
+  exit 0
+fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
+  access_secret=''
+  for arg in "$@"; do [[ "$arg" == --secret=* ]] && access_secret="\${arg#--secret=}"; done
+  for failed in ${(options.failLatestAccessFor ?? []).map((name) => `'${name}'`).join(' ') || "''"}; do
+    if [[ -n "$failed" && "$access_secret" == "$failed" ]]; then exit 1; fi
+  done
   echo '${STUB_CRON_SECRET}'
   exit 0
 fi
@@ -953,6 +1026,224 @@ function expectEveryDeclaredSchedulerJobContainedAfter(
   }
 }
 
+
+
+describe('teardown-isolated-rig.sh — exact rig-secret cleanup', () => {
+  it('plans deletion of exactly the five derived rig secrets including recipient identity', () => {
+    const out = execFileSync('bash', [TEARDOWN_SCRIPT, '--project-ref', 'abcdefghijklmnopqrst', '--service', 'arkova-worker-cleanup-scope-staging'], { encoding: 'utf8' });
+    const deletes = out.split('\n').filter((line) => line.includes('gcloud secrets delete'));
+    expect(deletes).toHaveLength(5);
+    expect(deletes.join("\n")).toContain("recipient-identifier-pepper-cleanup-scope-staging");
+    expect(deletes.join('\n')).toContain('cron-secret-cleanup-scope-staging');
+    expect(deletes.join('\n')).not.toContain('cron-secret-staging ');
+  });
+});
+
+describe('provision-isolated-rig.sh — dedicated resource identity boundary', () => {
+  it('uses exact identities and resource grants before the paid project mutation', () => {
+    const name = 'resource-boundary';
+    const result = applyRunStubbed(name, 'mock', { allowDirtySource: true });
+    expect(result.code, result.out).toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(true);
+    const hash = createHash('sha256').update(name).digest('hex').slice(0, 12);
+    const runtime = `ark-rig-${hash}-run@arkova1.iam.gserviceaccount.com`;
+    expect(result.gcloudCalls).toContain(`iam service-accounts describe ${runtime} --project=arkova1 --format=json`);
+    const projectCreate = result.callOrder.findIndex((entry) => entry.startsWith('npx supabase projects create '));
+    const grants = result.callOrder
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.startsWith('gcloud secrets add-iam-policy-binding '));
+    expect(grants).toHaveLength(5);
+    expect(grants.every(({ entry, index }) => entry.includes(`--member=serviceAccount:${runtime}`) && index < projectCreate)).toBe(true);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('projects add-iam-policy-binding'))).toBe(false);
+    expect(result.gcloudCalls.some((entry) => entry.includes('kms'))).toBe(false);
+  });
+
+  it('rejects arbitrary dependency secret names before paid mutation', () => {
+    const result = applyRunStubbed('bad-secret-name', 'mock', {
+      env: { STAGING_STRIPE_SECRET_KEY_SECRET: 'prod-stripe-secret' },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+    expect(result.out).toMatch(/unapproved Stripe key secret name/);
+  });
+
+  it('rejects a non-deterministic runtime identity before paid mutation', () => {
+    const result = applyRunStubbed('bad-runtime-sa', 'mock', {
+      env: { STAGING_RUNTIME_SA_EMAIL: 'default@developer.gserviceaccount.com' },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+    expect(result.out).toMatch(/distinct deterministic rig accounts/);
+  });
+
+
+  it('rejects a disabled identity before paid mutation', () => {
+    const result = applyRunStubbed('disabled-identity', 'mock', { serviceAccountDisabled: true, allowDirtySource: true });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it.each([
+    ['sensitive', 'roles/secretmanager.secretAccessor', null],
+    ['conditional', 'roles/logging.logWriter', { title: 'unexpected', expression: 'true' }],
+  ])('rejects %s direct project grants for the exact principal', (_label, role, condition) => {
+    const name = `${_label}-policy`;
+    const hash = createHash('sha256').update(name).digest('hex').slice(0, 12);
+    const member = `serviceAccount:ark-rig-${hash}-run@arkova1.iam.gserviceaccount.com`;
+    const projectIamPayload = JSON.stringify({ bindings: [{ role, members: [member], ...(condition ? { condition } : {}) }] });
+    const result = applyRunStubbed(name, 'mock', { projectIamPayload, allowDirtySource: true });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+    expect(result.out).toMatch(/unknown, sensitive, conditional, or malformed/);
+  });
+
+  it('rejects malformed project IAM projection', () => {
+    const result = applyRunStubbed('malformed-policy', 'mock', { projectIamPayload: '{}', allowDirtySource: true });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('refuses to rotate a secret that has prior disabled versions', () => {
+    const result = applyRunStubbed('prior-secret-version', 'mock', {
+      allowDirtySource: true,
+      failLatestAccessFor: ['cron-secret-prior-secret-version-staging'],
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/exists without a usable latest version; refusing rotation/);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('secrets versions add cron-secret-prior-secret-version'))).toBe(false);
+  });
+
+  it('atomically creates stable cron and IP secrets with first values and never versions-adds them', () => {
+    const name = 'atomic-stable';
+    const cron = `cron-secret-${name}-staging`;
+    const pepper = `ip-hash-pepper-${name}-staging`;
+    const recipientPepper = `recipient-identifier-pepper-${name}-staging`;
+    const result = applyRunStubbed(name, 'mock', {
+      allowDirtySource: true,
+      missingSecrets: [cron, pepper, recipientPepper],
+    });
+    expect(result.code, result.out).toBe(0);
+    expect(result.gcloudCalls).toContain(`secrets create ${cron} --project=arkova1 --replication-policy=automatic --data-file=-`);
+    expect(result.gcloudCalls).toContain(`secrets create ${pepper} --project=arkova1 --replication-policy=automatic --data-file=-`);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith(`secrets versions add ${cron}`))).toBe(false);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith(`secrets versions add ${pepper}`))).toBe(false);
+    expect(result.secretPayloads[cron]).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.secretPayloads[pepper]).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.secretPayloads[cron]).not.toBe(result.secretPayloads[pepper]);
+    expect(result.secretPayloads[recipientPepper]).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.secretPayloads[recipientPepper]).not.toBe(result.secretPayloads[pepper]);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith(`secrets versions add ${recipientPepper}`))).toBe(false);
+  });
+
+  it('stops on a concurrent stable-secret create loser before paid mutation', () => {
+    const name = 'create-race';
+    const cron = `cron-secret-${name}-staging`;
+    const result = applyRunStubbed(name, 'mock', {
+      allowDirtySource: true,
+      missingSecrets: [cron],
+      failSecretCreateFor: [cron],
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/injected concurrent create failure/);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith(`secrets versions add ${cron}`))).toBe(false);
+  });
+
+  it('rejects a lossy flattened IAM projection instead of accepting an empty match', () => {
+    const result = applyRunStubbed('lossy-policy', 'mock', { allowDirtySource: true, projectIamPayload: '[]' });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('keeps a rig-local recipient key pinned and rollout off', () => {
+    const name = 'recipient-key';
+    const result = applyRunStubbed(name, 'mock', { allowDirtySource: true });
+    expect(result.code, result.out).toBe(0);
+    expect(result.gcloudCalls).toContain(`secrets versions access 1 --secret=recipient-identifier-pepper-${name}-staging --project=arkova1`);
+    const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy ')) ?? '';
+    expect(deploy).toContain(`RECIPIENT_IDENTIFIER_PEPPER=recipient-identifier-pepper-${name}-staging:1`);
+    expect(deploy).toContain('ENABLE_BULK_RECIPIENT_PROVISIONING=false');
+  });
+
+  it('refuses an unusable pinned recipient key without substituting latest', () => {
+    const name = 'recipient-key-disabled';
+    const secret = `recipient-identifier-pepper-${name}-staging`;
+    const result = applyRunStubbed(name, 'mock', { allowDirtySource: true, failLatestAccessFor: [secret] });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain('without a usable 1 version; refusing rotation');
+    expect(result.gcloudCalls.some((call) => call.startsWith(`secrets versions add ${secret}`))).toBe(false);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('accepts a typed empty direct-project grant projection', () => {
+    const result = applyRunStubbed('empty-project-roles', 'mock', { allowDirtySource: true, projectIamPayload: '{"bindings":[]}' });
+    expect(result.code, result.out).toBe(0);
+  });
+
+  it('rejects a dependency without an ENABLED latest version before mutation', () => {
+    const result = applyRunStubbed('disabled-dependency', 'mock', { allowDirtySource: true, dependencyLatestState: 'DISABLED' });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/has no ENABLED latest version/);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('secrets create '))).toBe(false);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('fails dependency-secret IAM mismatch before resource or paid mutation', () => {
+    const result = applyRunStubbed('bad-secret-readback', 'mock', {
+      allowDirtySource: true,
+      secretIamPayload: '{"bindings":[]}',
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/lacks exact secret-level access/);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('secrets create '))).toBe(false);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('fails a rig-owned secret IAM readback before paid mutation', () => {
+    const name = 'bad-rig-secret-policy';
+    const failedSecret = `supabase-url-${name}-staging`;
+    const result = applyRunStubbed(name, 'mock', { allowDirtySource: true, rigSecretIamFailureName: failedSecret, missingSecrets: [failedSecret] });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/exact rig-secret IAM readback failed/);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls).toContain(`secrets delete ${failedSecret} --project=arkova1 --quiet`);
+  });
+
+  it('grants and reads back exact invoker after deploy and before Scheduler', () => {
+    const result = applyRunStubbed('invoker-order', 'chain', { allowDirtySource: true });
+    expect(result.code, result.out).toBe(0);
+    const deploy = result.callOrder.findIndex((entry) => entry.startsWith('gcloud run deploy '));
+    const grant = result.callOrder.findIndex((entry) => entry.startsWith('gcloud run services add-iam-policy-binding '));
+    const readback = result.callOrder.findIndex((entry) => entry.startsWith('gcloud run services get-iam-policy '));
+    const scheduler = result.callOrder.findIndex((entry) => entry.startsWith('gcloud scheduler jobs create '));
+    expect(deploy).toBeLessThan(grant);
+    expect(grant).toBeLessThan(readback);
+    expect(readback).toBeLessThan(scheduler);
+  });
+
+  it('stops before Scheduler when invoker IAM readback fails; mock never grants invoker', () => {
+    const failed = applyRunStubbed('bad-run-readback', 'chain', { allowDirtySource: true, runIamPayload: '{"bindings":[]}' });
+    expect(failed.code).not.toBe(0);
+    expect(failed.out).toMatch(/exact Cloud Run invoker IAM readback failed/);
+    expect(failed.gcloudCalls.some((entry) => entry.startsWith('scheduler jobs create '))).toBe(false);
+    const mock = applyRunStubbed('mock-no-invoker', 'mock', { allowDirtySource: true });
+    expect(mock.code, mock.out).toBe(0);
+    expect(mock.gcloudCalls.some((entry) => entry.startsWith('run services add-iam-policy-binding '))).toBe(false);
+  });
+
+  it('retains the production dirty-source guard with zero external mutation', () => {
+    const result = applyRunStubbed('dirty-source-guard', 'mock', { allowDirtySource: false });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/working-tree bytes differ from declared source HEAD/);
+    expect(result.gcloudCalls).toHaveLength(0);
+    expect(result.npxCalls).toHaveLength(0);
+  });
+
+  it('records truthful cleanup guidance for failures after resource creation', () => {
+    expect(script).toContain('status is blocked_after_resource_create');
+    expect(script).not.toContain('status is blocked_after_project_create');
+  });
+});
 describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under --apply (L2-S2a-FIX)', () => {
   const result = applyRunStubbed('s2afix-chain', 'chain');
   const schedulerCreates = result.gcloudCalls.filter((c) =>

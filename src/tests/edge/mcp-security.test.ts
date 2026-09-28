@@ -899,7 +899,17 @@ describe('mcp-server — every tool registers the canonical description (review 
     // argument next. `arkova_anchor_document` is nested one level deeper
     // inside the `anchorDocumentEnabled` conditional, hence the loose indent.
     const registrations = [...source.matchAll(/\n {2,4}tool\(\n\s*'([a-z0-9_]+)',\n([\s\S]*?)\n\s*\{/g)];
-    expect(registrations.length).toBe(TOOL_DEFINITIONS.length);
+    const agentToolsBlock = source.match(/const agentTools:[\s\S]*?= \[([\s\S]*?)\n {2}\];/)?.[1] ?? '';
+    const loopRegistrations = [...agentToolsBlock.matchAll(/\['([a-z0-9_]+)'/g)].map((match) => match[1]);
+    const inlineListRegistration = source.includes(
+      "tool('arkova_list_anchors', TOOL_DESC.arkova_list_anchors,",
+    ) ? ['arkova_list_anchors'] : [];
+    expect([
+      ...registrations.map(([, name]) => name),
+      ...loopRegistrations,
+      ...inlineListRegistration,
+    ].sort()).toEqual(TOOL_DEFINITIONS.map((tool) => tool.name).sort());
+    expect(source).toMatch(/for \(const \[name, shape, operation\] of agentTools\) tool\(name, TOOL_DESC\[name\]/);
 
     const inlined = registrations
       .filter(([, , descriptionArg]) => !descriptionArg.includes('TOOL_DESC'))

@@ -870,7 +870,11 @@ describe('handleUpdateRule', () => {
   function plainDisabledRuleRead() {
     return tableMock({
       select: {
-        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'ds' }, enabled: false },
+        data: {
+          trigger_type: 'ESIGN_COMPLETED', trigger_config: { vendors: ['docusign'] },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'ds' }, enabled: false,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
         error: null,
       },
     });
@@ -883,7 +887,7 @@ describe('handleUpdateRule', () => {
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res, json } = mockRes();
@@ -903,7 +907,7 @@ describe('handleUpdateRule', () => {
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res } = mockRes();
@@ -929,13 +933,17 @@ describe('handleUpdateRule', () => {
     const membership = adminMembership();
     const currentRuleRead = tableMock({
       select: {
-        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: false },
+        data: {
+          trigger_type: 'ESIGN_COMPLETED', trigger_config: { vendors: ['docusign'] },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-docusign' }, enabled: false,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
         error: null,
       },
     });
     const raceCheck = tableMock({ select: { data: { id: 'seeded-rule-id' }, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), raceCheck.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), currentRuleRead.from(''), raceCheck.from('')),
     );
 
     const { res, status, json } = mockRes();
@@ -957,7 +965,11 @@ describe('handleUpdateRule', () => {
     const membership = adminMembership();
     const currentRuleRead = tableMock({
       select: {
-        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: false },
+        data: {
+          trigger_type: 'ESIGN_COMPLETED', trigger_config: { vendors: ['docusign'] },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-docusign' }, enabled: false,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
         error: null,
       },
     });
@@ -968,6 +980,7 @@ describe('handleUpdateRule', () => {
       scriptedFrom(
         profiles.from(''),
         membership.from(''),
+        currentRuleRead.from(''),
         currentRuleRead.from(''),
         raceCheck.from(''),
         rulesUpdate.from(''),
@@ -989,7 +1002,11 @@ describe('handleUpdateRule', () => {
     const membership = adminMembership();
     const currentRuleRead = tableMock({
       select: {
-        data: { trigger_type: 'ESIGN_COMPLETED', action_config: { tag: 'connector-docusign' }, enabled: true },
+        data: {
+          trigger_type: 'ESIGN_COMPLETED', trigger_config: { vendors: ['docusign'] },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-docusign' }, enabled: true,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
         error: null,
       },
     });
@@ -999,7 +1016,7 @@ describe('handleUpdateRule', () => {
     // fire, a second SELECT would consume the `rulesUpdate` slot and this
     // test would fail on the update-shape assertion below.
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), currentRuleRead.from(''), currentRuleRead.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res, json } = mockRes();
@@ -1488,19 +1505,52 @@ describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', (
     });
   });
 
-  it('a bare {enabled:true} PATCH (no trigger_config in the request) never re-derives or calls the mirror', async () => {
+  it('rejects enable-only PATCH when the stored rule config is malformed', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const malformedStoredRule = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'], folder_id: 'drv-orphan' },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google-drive' }, enabled: false,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
+        error: null,
+      },
+    });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), malformedStoredRule.from('')),
+    );
+
+    const { res, status, json } = mockRes();
+    await handleUpdateRule(USER_ID, mockReq({ params: { id: RULE_ID }, body: { enabled: true } }), res);
+
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'invalid_config' }) }),
+    );
+    expect(malformedStoredRule.calls.some((call) => call.method === 'update')).toBe(false);
+  });
+
+  it('accepts a valid stored legacy single-folder rule on enable-only PATCH without re-deriving the mirror', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
     const membership = adminMembership();
     const enableRaceCheck = tableMock({
       select: {
-        data: { trigger_type: 'WORKSPACE_FILE_MODIFIED', action_config: { tag: 'connector-google_drive' }, enabled: false },
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'], type: 'drive_folder', folder_id: 'drv-legacy' },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: false,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
         error: null,
       },
     });
     const raceLookup = tableMock({ select: { data: null, error: null } });
     const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), membership.from(''), enableRaceCheck.from(''), raceLookup.from(''), ruleUpdate.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), enableRaceCheck.from(''), enableRaceCheck.from(''), raceLookup.from(''), ruleUpdate.from('')),
     );
 
     const { res, json } = mockRes();

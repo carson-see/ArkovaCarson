@@ -884,7 +884,7 @@ async function validatePatchAgainstCurrent(
   orgId: string,
   patch: UpdateOrgRuleInputT,
 ): Promise<PatchValidationResult> {
-  if (!patch.trigger_config && !patch.action_config) return { kind: 'ok' };
+  if (!patch.trigger_config && !patch.action_config && patch.enabled !== true) return { kind: 'ok' };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: readErr } = await (db as any)
     .from('organization_rules')
@@ -945,10 +945,10 @@ async function validatePatchAgainstCurrent(
  * `PATCH /api/rules/:id {enabled:true}` to activate it. A rule seeded by
  * `docusign-rule-seed.ts` can land in the gap BETWEEN those two calls just
  * as easily as in the gap the create-time check narrows — and nothing
- * guarded that second gap until now: `validatePatchAgainstCurrent` doesn't
- * even read the current row for a bare `{enabled:true}` patch (no
- * trigger_config/action_config in the body), so a plain enable-toggle had
- * zero connector awareness. Same scoping as the create-time guard —
+ * guarded that second gap until now. `validatePatchAgainstCurrent` now reads
+ * and validates the stored row for a bare `{enabled:true}` patch, but this
+ * separate fresh read is still required for connector race detection after
+ * validation. Same scoping as the create-time guard —
  * connector-tagged rules only, `enabled: false -> true` transitions only
  * (an already-enabled rule being re-patched is a no-op for this check) —
  * and same limit: check-then-update, not a DB-level constraint, so this
@@ -958,6 +958,8 @@ async function checkConnectorEnableRace(
   ruleId: string,
   orgId: string,
 ): Promise<PatchValidationResult> {
+  // Re-read immediately before the conflict lookup rather than reusing the
+  // validation snapshot; another request may have enabled this rule meanwhile.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: readErr } = await (db as any)
     .from('organization_rules')

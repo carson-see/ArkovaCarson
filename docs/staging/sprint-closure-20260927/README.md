@@ -4,7 +4,7 @@ This directory is the single small reviewer packet for the current source candid
 
 ## Current review state
 
-Round-3 review of `7a395366fb` returned material findings against the runtime still present in published `533db3578`. The corrective source, documentation and verification are tracked in `round3-review-dispositions.md`; earlier receipts below are historical unless that document explicitly revalidates them. No external approval, image qualification or soak is implied.
+The final broad external review evaluated candidate checkpoint `1f134fca2a28baec91619d7e3c60d950f6348adf` and fallback checkpoint `041f89157105a57c6602b9d064efbd41eff89b52`. Their bounded corrections and verification are tracked in `final-review-dispositions.md`; the resulting exact source identities still require publication and manifest freeze. Earlier round-3 and historical receipts below remain supporting evidence only. No artifact admission, image qualification, deployment or soak is implied, and no additional broad-review cycle is planned.
 
 ## What is covered
 
@@ -19,6 +19,7 @@ Round-3 review of `7a395366fb` returned material findings against the runtime st
 - `package-source-hashes.txt`: exact source-file hashes used for those client packages.
 - `proof-sdk-evidence.md`: prior singleton proof SDK qualification.
 - `review-dispositions.md`: round-two PR #3152 review findings and dispositions; proof wording-only follow-up diff `baf00a102ab48c25261bba3d4475ecd6574d18847b7b9f298ba7c0c30554c20e`.
+- `final-review-dispositions.md`: the final broad external-review findings, bounded corrections, exact verification receipts, and remaining artifact/live gates. No additional broad-review cycle is planned.
 - `app-credential-prior-evidence.md`: bounded app and synthetic academic/technical/CLE/CPE/license rehearsal evidence.
 - `named-acceptance-matrix.md`: future-session case IDs, actors, prerequisites, expected visible results, negative/recovery cases, evidence owners, and pass/fail/open fields. Its existence does not mean those cases ran.
 - `release-soak-plan.md`: combined T3 sequence, decision register, premortem, staging plan, and separately retained production-soak direction.
@@ -29,9 +30,9 @@ Round-3 review of `7a395366fb` returned material findings against the runtime st
 
 - 0494 migration SHA-256: `11e3db7802e3636d3225eca1746074f5809fa8eebf38c97735020cdc3a029836`
 - 0494 native harness SHA-256: `722c3c162c6b359bfc09a470d4de1e559336aada0b02b3bef5243c3ba86b15ff`
-- Historical fixed-A head: `10459180091b9cb4d88313b5e7108ccc297d57f2` — review-only and unready after material findings in [comment 5860117184](https://github.com/carson-see/ArkovaCarson/pull/3154#issuecomment-5860117184); corrected source commit 0ff11a14e exists; final operational admission awaits external exact-head re-review
+- Historical fixed-A head: `10459180091b9cb4d88313b5e7108ccc297d57f2` — review-only and unready after material findings in [comment 5860117184](https://github.com/carson-see/ArkovaCarson/pull/3154#issuecomment-5860117184). Historical correction `0ff11a14e` is also superseded; the final broad review evaluated checkpoint `041f89157105a57c6602b9d064efbd41eff89b52`, and its test and required-schema source correction is published as `b79479fea89616b1f20705f478c5ec03c0ecb824`.
 - Historical pre-round-3 runtime source checkpoint: commit `ce545a2f6315f81e087640d0520d6a6f05e98c95`, tree `8288c37ff07336d0e63d46074f6f7d11d18b54d8`, based on main `d3ebb81f000a81a9cc835118961e06c701fe4da2`. The earlier documentation-only supplements left that runtime unchanged; the round-3 correction now changes it. Use the enclosing correction commit and current disposition receipt for review.
-- Draft PR #3154 previously published historical head `10459180091b9cb4d88313b5e7108ccc297d57f2`. Emergency revocation and malformed-claim continuation are source-corrected and internally reviewed at 0ff11a14e; image-build instructions and bulk-only recipient wording are corrected below. External exact-head re-review and actual image qualification remain open. Its image, deployment, quiescence and rehearsal gates also remain open.
+- Draft PR #3154's final broad review evaluated `041f89157105a57c6602b9d064efbd41eff89b52`, superseding historical `10459180091b9cb4d88313b5e7108ccc297d57f2` and `0ff11a14e`. The resulting test and required-schema source correction is published as `b79479fea89616b1f20705f478c5ec03c0ecb824`. Actual image qualification, deployment, quiescence and rehearsal remain open.
 - Draft PR #3153 publishes isolated-rig source commit `d89e78a71ce429690081e3d0bacc0313d0f79cd5`; no rig was provisioned and no live isolation acceptance was claimed.
 - Client source manifest SHA-256: `d0b6ead5bea883983c380699d64987cc0dd6f0c1556a820a702a1406398d16ef`
 - SDK artifact SHA-256 after final wording rebuild: `c93f929813c951ced5f508f392d9e827c137dc51d0f517221f14db9fbb35c4d6`
@@ -46,7 +47,7 @@ Typical local commands represented by the receipts were package build/pack, clea
 
 ## Status limits
 
-This packet retains historical source checkpoints and identifies the round-3 corrections separately. It does **not** claim that checkpoint is the future executable release freeze: external review, finding disposition, fixes, re-review, immutable image provenance, migration-ledger decisions, and the named acceptance prerequisites still have to bind a final executable candidate. It also does not claim registry publication, production migration application, production configuration, deployment, browser acceptance, live customer acceptance, staging acceptance, production soak, or completed third-party external review. No soak was started in this session.
+This packet retains historical source checkpoints and identifies the round-3 corrections separately. It does **not** claim that checkpoint is the future executable release freeze: final finding disposition, targeted verification, publication of the corrected exact identities, immutable image provenance, migration-ledger decisions, and the named acceptance prerequisites still have to bind a final executable candidate. The final broad external review has completed; no additional broad-review cycle is planned. The packet does not claim registry publication, production migration application, production configuration, deployment, browser acceptance, live customer acceptance, staging acceptance, production soak, or final artifact admission. No soak was started in this session.
 
 The 36-hour plain-language report and the complete 137-item recovery ledger remain in the existing canonical roadmap, rather than being duplicated here:
 
@@ -54,8 +55,8 @@ The 36-hour plain-language report and the complete 137-item recovery ledger rema
 - [Confluence recovery roadmap](https://arkova.atlassian.net/wiki/spaces/AR2/pages/156729395)
 
 
-## Reviewed fallback correction awaiting external re-review
+## Historical fallback correction checkpoint
 
-Fixed-A correction `0ff11a14e4e85ab8c7931b6df3cfe5cca761ca2d` (tree `6deee788a4a0ea73338146e435350345c00317fd`) supersedes `10459180091b9cb4d88313b5e7108ccc297d57f2` for source review. Internal source and test-delta review passed. Authenticated emergency DELETE now uses the human/API-key transactional outbox revoke RPC; register, all PATCH updates and key mint remain held at 503. Malformed claims are safely reported and skipped so later valid claims complete. Prompt-drain tests prove coalescing, sanitized failure and latch recovery.
+Fixed-A correction `0ff11a14e4e85ab8c7931b6df3cfe5cca761ca2d` (tree `6deee788a4a0ea73338146e435350345c00317fd`) was an intermediate correction after `10459180091b9cb4d88313b5e7108ccc297d57f2`. It is historical and must not be selected as the rollback artifact. The final broad review evaluated later checkpoint `041f89157105a57c6602b9d064efbd41eff89b52`; the resulting test and required-schema source correction is published as `b79479fea89616b1f20705f478c5ec03c0ecb824` and is the exact source for the pending rollback image.
 
-Evidence: 115 focused lifecycle/delivery tests passed; subsequent affected webhook suites passed 98 tests, with the final prompt-drain suite passing 8 tests. These runs overlap and must not be summed. Worker lint, typecheck and build passed. No new SQL migration or TLA state-machine change was introduced; the existing transaction model does not prove deployed behavior. The correction needs external exact-head re-review, an immutable image, configuration checks, quiescence and rehearsal before operational use. Emergency DELETE can produce an owned row: stop incompatible old worker/job paths before its first use, not merely before Build B traffic. PR #3154 remains draft and protected by `do-not-merge`; it must never merge into the forward candidate or main.
+Historical evidence: 115 focused lifecycle/delivery tests passed; subsequent affected webhook suites passed 98 tests, with the final prompt-drain suite passing 8 tests. These runs overlap and must not be summed or treated as final exact-head qualification. No new SQL migration or TLA state-machine change was introduced; the transaction model does not prove deployed behavior. An immutable image, configuration checks, quiescence and rehearsal remain required. Emergency DELETE can produce an owned row: stop incompatible old worker/job paths before its first use, not merely before Build B traffic. PR #3154 remains draft and protected by `do-not-merge`; it must never merge into the forward candidate or main.
