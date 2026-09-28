@@ -318,6 +318,9 @@ its query key includes both user and selected organization to prevent stale scop
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
 
 UAT-23 bulk imports use only the JWT canonical HTTP bridge; preserve prior-chunk receipts, never auto-retry an ambiguous write, and keep the invocation's original organization scope.
+
+Profile-media uploads are bound to a distinct owner-lifetime token, not only an owner ID. If the owner changes, cycles A→B→A, or the hook unmounts before completion, the wrapped pointer commit must return false so `replaceProfileMedia` removes the new private object and public mirror. Suppress stale success, error, and cleanup-warning toasts; retain cleanup warnings for the current owner.
+
 ## 2026-09-19 — `useOrgProfileFolders`
 
 This additive wrapper is deliberately route-org scoped and never consults profile/active-org state. Its query key includes caller, explicit org, resolved authorization, and manager authority; reads stay disabled and cached rows stay hidden until route authorization resolves. Mutations require the caller-visible manager gate and capture the explicit org. Worker authorization remains authoritative. `descendantFolderIds` is cycle-safe.
