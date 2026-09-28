@@ -1,5 +1,14 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-28 — bulk activation preserves uncertain provider outcomes
+
+`deliverBulkActivationOnce` records `failed/provider_rejected` only for a
+definite rejection reported by the real email wrapper. Unknown outcomes retain
+the existing `sending` claim and return `recipient_activation_delivery_pending`;
+duplicate calls do not resend. Acknowledged success still records `sent`.
+This changes no schema or retry authority. Provider reconciliation remains an
+operator action; an uncertain response is not proof of non-delivery.
+
 ## 2026-09-21 — `connector-health.ts` gains `reconnect_required_scope_change` (SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)
 
 New `HealthReason`, added alongside the `oauth/drive.ts` cutover from `drive.file` to `drive.readonly`

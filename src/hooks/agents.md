@@ -80,6 +80,14 @@ dialog open instead of implying a change that did not happen.
 
 # agents.md — hooks
 
+## 2026-09-28 — organization bulk imports use the organization quota boundary
+
+`useBulkAnchors({ orgId })` must not apply the submitting user's personal
+monthly-plan limit to an organization batch. Organization submissions carry
+the target `org_id`; the worker revalidates membership and enforces that
+organization's configured anchor quota. Personal submissions retain the local
+monthly-plan precheck.
+
 ## 2026-09-19 — UAT-12 capability and tag suggestions
 
 `useSecuringCapability` validates the worker response with Zod and fails closed on

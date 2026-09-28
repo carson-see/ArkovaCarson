@@ -66,6 +66,12 @@ export async function deliverBulkActivationOnce(input: {
     orgId: input.orgId ?? undefined,
     idempotencyKey: `bulk-activation/${input.profileId}/${tokenHash}`,
   });
+  // The real sender returns network/ambiguous failures instead of throwing.
+  // Preserve the durable claim until an operator reconciles the provider;
+  // marking it rejected would assert a delivery outcome we do not know.
+  if (!delivery.success && delivery.failureType !== 'rejected') {
+    throw new Error('recipient_activation_delivery_pending');
+  }
   const completion = delivery.success
     ? { status: 'sent', completed_at: new Date().toISOString(), failure_code: null }
     : { status: 'failed', completed_at: new Date().toISOString(), failure_code: 'provider_rejected' };

@@ -117,13 +117,16 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
   const createBulkAnchors = useCallback(
     async (records: BulkAnchorRecord[], options: CreateBulkAnchorsOptions = {}): Promise<BulkCreateResult | null> => {
       // Wait for entitlements to load before allowing creation
-      if (entitlementsLoading) {
+      if (!targetOrgId && entitlementsLoading) {
         setError('Checking plan quota — please try again');
         return null;
       }
 
-      // Entitlement pre-check — reject early if batch exceeds remaining quota
-      if (!canCreateCount(records.length)) {
+      // The monthly-plan entitlement belongs to a personal submission. An
+      // organization batch is authorized and quota-gated by the worker for
+      // the target org; applying the submitter's personal plan here can block
+      // a valid org admin who is not the organization's billing owner.
+      if (!targetOrgId && !canCreateCount(records.length)) {
         const msg = ENTITLEMENT_LABELS.BULK_EXCEEDS_QUOTA
           .replace('{remaining}', String(remaining ?? 0))
           .replace('{requested}', String(records.length));

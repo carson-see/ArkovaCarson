@@ -285,7 +285,7 @@ describe('bulk recipient profile/link semantics', () => {
       profileId: 'profile-1', activationToken: 'd'.repeat(64), email: 'recipient@example.com',
       actorUserId: 'actor-1', orgId: null,
     };
-    state.sendEmail.mockResolvedValueOnce({ success: false });
+    state.sendEmail.mockResolvedValueOnce({ success: false, failureType: 'rejected' });
     await expect(deliverBulkActivationOnce(input)).rejects.toThrow('recipient_activation_email_failed');
     expect(state.activationUpdates[0]).toMatchObject({
       status: 'failed', failure_code: 'provider_rejected',
