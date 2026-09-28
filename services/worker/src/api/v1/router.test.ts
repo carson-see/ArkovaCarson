@@ -28,11 +28,16 @@ describe('api v1 router attestation batch routes', () => {
 
   it('mounts ComputeID admission before the generic dual-auth lifecycle mount', () => {
     const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+    const maintenanceSource = readFileSync(new URL('./agents-maintenance.ts', import.meta.url), 'utf8');
     const admission = /router\.use\(\s*['"]\/agents\/computeid['"]\s*,\s*computeidGate\s*,\s*batchRateLimiter\s*,\s*requireScopeAnyAuth\(\s*['"]agents:manage['"]\s*\)\s*,\s*agentsComputeIdRouter\s*\)/.exec(routerSource);
-    const lifecycle = /router\.use\(\s*['"]\/agents['"]\s*,\s*requireAgentLifecycleAuth\s*,\s*agentsRouter\s*\)/.exec(routerSource);
+    const lifecycle = /router\.use\(\s*['"]\/agents['"]\s*,\s*requireAgentLifecycleAuth\s*,\s*agentsMaintenanceRouter\s*\)/.exec(routerSource);
     expect(admission).not.toBeNull();
     expect(lifecycle).not.toBeNull();
     expect(admission!.index).toBeLessThan(lifecycle!.index);
+    expect(maintenanceSource).toMatch(/router\.post\(\s*['"]\/['"]\s*,\s*rejectCompatibilityFloorMutation\s*\)/);
+    expect(maintenanceSource).toMatch(/router\.patch\(\s*['"]\/:agentId['"]\s*,\s*rejectCompatibilityFloorMutation\s*\)/);
+    expect(maintenanceSource).toMatch(/router\.post\(\s*['"]\/:agentId\/key['"]\s*,\s*rejectCompatibilityFloorMutation\s*\)/);
+    expect(maintenanceSource).toMatch(/router\.use\(\s*agentsRouter\s*\)/);
   });
 
   it('mounts webhook self-service before the broad API-key webhook router so diagnostics are not double rate-limited', () => {

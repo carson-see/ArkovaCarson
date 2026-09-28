@@ -71,6 +71,12 @@ const EXPECTED_TOOL_NAMES = [
   'arkova_get_document',
   'arkova_oracle_batch_verify',
   'arkova_list_agents',
+  'arkova_register_agent',
+  'arkova_get_agent',
+  'arkova_update_agent',
+  'arkova_revoke_agent',
+  'arkova_create_agent_key',
+  'arkova_admit_computeid_agent',
   'arkova_manage_folders',
 ];
 

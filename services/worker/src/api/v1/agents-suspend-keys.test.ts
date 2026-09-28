@@ -6,6 +6,7 @@ const { dbFromMock, rpcMock } = vi.hoisted(() => ({ dbFromMock: vi.fn(), rpcMock
 vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: rpcMock } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn() }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 import { agentsRouter } from './agents.js';
 const ORG='11111111-1111-1111-1111-111111111111', USER='33333333-3333-3333-3333-333333333333', AGENT='22222222-2222-2222-2222-222222222222';
 const active={id:AGENT,org_id:ORG,status:'active',allowed_scopes:['verify']};
