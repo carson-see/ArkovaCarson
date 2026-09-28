@@ -601,7 +601,7 @@ UPDATE public.agent_webhook_outbox o
 INSERT INTO public.webhook_endpoints(id,org_id,url,secret_hash,events,is_active,public_id)
 VALUES ('22222222-2222-4222-8222-222222222222',
   'fa960000-0000-4000-8000-000000000001','https://example.test/ar20','secret',
-  ARRAY['agent.registered','agent.updated'],true,'WHK-AR20');
+  ARRAY['agent.registered','agent.updated','agent.revoked'],true,'WHK-AR20');
 
 SELECT public.materialize_next_agent_webhook_event('enabled',false);
 DO $$
@@ -632,39 +632,167 @@ BEGIN
   END IF;
 END $$;
 
--- A semantically equal foreign legacy row is not byte/ownership proof and may
--- not be adopted. The outbox remains visibly retryable/nonmaterialized.
-WITH a AS (SELECT * FROM public.agents LIMIT 1), e AS (
-  SELECT public.enqueue_agent_webhook_event(a.org_id,a.id,'agent.updated',a.status,
-    NULL,'api',clock_timestamp(),gen_random_uuid()) outbox_id FROM a
-) SELECT * FROM e;
+-- A registered delivery under the former endpoint+wire-event key is retained
+-- but may not block a distinct revoked event that shares the agent UUID. The
+-- revoked row gets its own owned key; no legacy ownership is transferred.
+CREATE TEMP TABLE logical_key_agent(id uuid PRIMARY KEY);
+INSERT INTO logical_key_agent VALUES (gen_random_uuid());
+INSERT INTO public.agents(id,org_id,name,agent_type,status,allowed_scopes,registered_by,metadata)
+SELECT id,'fa960000-0000-4000-8000-000000000001','logical key fixture',
+  'custom','active',ARRAY['verify'],'11111111-1111-4111-8111-111111111111','{}'::jsonb
+FROM logical_key_agent;
+UPDATE public.agent_webhook_outbox
+   SET next_attempt_at=clock_timestamp()+interval '1 hour'
+ WHERE state='pending';
+CREATE TEMP TABLE foreign_legacy_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
+  'agent.revoked','revoked',NULL,'api',clock_timestamp(),gen_random_uuid()) AS outbox_id;
+INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
+  status,idempotency_key)
+SELECT '22222222-2222-4222-8222-222222222222','agent.registered',o.wire_event_id::uuid,
+  jsonb_set(o.payload,'{event_type}','"agent.registered"'),1,'success',
+  '22222222-2222-4222-8222-222222222222-'||o.wire_event_id
+FROM public.agent_webhook_outbox o WHERE o.id=(SELECT outbox_id FROM foreign_legacy_fixture);
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox
+      WHERE id=(SELECT outbox_id FROM foreign_legacy_fixture) AND state='materialized')
+     OR NOT EXISTS (SELECT 1 FROM public.webhook_delivery_logs d
+         WHERE d.agent_event_outbox_id IS NULL AND d.event_type='agent.registered'
+           AND d.idempotency_key='22222222-2222-4222-8222-222222222222-'||
+             (SELECT wire_event_id FROM public.agent_webhook_outbox
+               WHERE id=(SELECT outbox_id FROM foreign_legacy_fixture)))
+     OR NOT EXISTS (SELECT 1 FROM public.webhook_delivery_logs
+         WHERE agent_event_outbox_id=(SELECT outbox_id FROM foreign_legacy_fixture)
+           AND idempotency_key='agent-outbox-22222222-2222-4222-8222-222222222222-'||
+             (SELECT outbox_id::text FROM foreign_legacy_fixture)) THEN
+    RAISE EXCEPTION 'foreign legacy row blocked, disappeared, or was adopted by the logical outbox';
+  END IF;
+END $$;
+
+-- A foreign old-key row for the SAME customer event remains a conflict. It is
+-- neither adopted nor bypassed with a second customer delivery.
+CREATE TEMP TABLE foreign_same_event_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
+) AS outbox_id;
 INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
   status,idempotency_key)
 SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
   o.payload,1,'success','22222222-2222-4222-8222-222222222222-'||o.wire_event_id
-FROM public.agent_webhook_outbox o WHERE o.event_type='agent.updated';
+FROM public.agent_webhook_outbox o WHERE o.id=(SELECT outbox_id FROM foreign_same_event_fixture);
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
 DO $$
-DECLARE i integer;
 BEGIN
-  FOR i IN 1..10 LOOP
-    PERFORM public.materialize_next_agent_webhook_event('enabled',false);
-  END LOOP;
   IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox
-      WHERE event_type='agent.updated' AND state='pending'
-        AND last_error LIKE '%ownership conflict%') THEN
-    RAISE EXCEPTION 'foreign legacy row was adopted or hidden';
+      WHERE id=(SELECT outbox_id FROM foreign_same_event_fixture)
+        AND state='pending' AND last_error LIKE '%ownership conflict%')
+     OR EXISTS (SELECT 1 FROM public.webhook_delivery_logs
+         WHERE agent_event_outbox_id=(SELECT outbox_id FROM foreign_same_event_fixture)) THEN
+    RAISE EXCEPTION 'foreign same-event legacy row was adopted or duplicated';
   END IF;
 END $$;
+UPDATE public.agent_webhook_outbox SET state='suppressed',resolved_at=clock_timestamp()
+ WHERE id=(SELECT outbox_id FROM foreign_same_event_fixture);
+
+-- A pre-0497 crash can leave the exact owned delivery under the old key before
+-- the outbox state update. It is safe to adopt only with exact owner+bytes.
+CREATE TEMP TABLE owned_legacy_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
+) AS outbox_id;
+INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
+  status,idempotency_key,agent_event_outbox_id,agent_payload_text)
+SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
+  o.payload,0,'pending','22222222-2222-4222-8222-222222222222-'||o.wire_event_id,o.id,o.payload_text
+FROM public.agent_webhook_outbox o WHERE o.id=(SELECT outbox_id FROM owned_legacy_fixture);
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox
+      WHERE id=(SELECT outbox_id FROM owned_legacy_fixture) AND state='materialized')
+     OR (SELECT count(*) FROM public.webhook_delivery_logs
+         WHERE agent_event_outbox_id=(SELECT outbox_id FROM owned_legacy_fixture))<>1 THEN
+    RAISE EXCEPTION 'exact owned legacy delivery was not adopted after an uncertain state write';
+  END IF;
+END $$;
+
+-- Same outbox ownership is insufficient when the frozen payload bytes differ.
+-- A corrupt pre-0497 row must remain visible and must not gain a second row.
+CREATE TEMP TABLE owned_legacy_mismatch_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
+) AS outbox_id;
+INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
+  status,idempotency_key,agent_event_outbox_id,agent_payload_text)
+SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
+  jsonb_set(o.payload,'{data,status}','"suspended"'),0,'pending',
+  '22222222-2222-4222-8222-222222222222-'||o.wire_event_id,o.id,
+  jsonb_set(o.payload,'{data,status}','"suspended"')::text
+FROM public.agent_webhook_outbox o WHERE o.id=(SELECT outbox_id FROM owned_legacy_mismatch_fixture);
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox
+      WHERE id=(SELECT outbox_id FROM owned_legacy_mismatch_fixture)
+        AND state='pending' AND last_error LIKE '%payload mismatch%')
+     OR (SELECT count(*) FROM public.webhook_delivery_logs
+         WHERE agent_event_outbox_id=(SELECT outbox_id FROM owned_legacy_mismatch_fixture))<>1 THEN
+    RAISE EXCEPTION 'same-owner legacy payload mismatch was hidden or duplicated';
+  END IF;
+END $$;
+UPDATE public.agent_webhook_outbox SET state='suppressed',resolved_at=clock_timestamp()
+ WHERE id=(SELECT outbox_id FROM owned_legacy_mismatch_fixture);
+
+-- A conflicting new logical key on one endpoint rolls back every target
+-- insert from the attempt. It is never adopted across owners and cannot leave
+-- a partial fan-out row for another endpoint.
+INSERT INTO public.webhook_endpoints(id,org_id,url,secret_hash,events,is_active,public_id)
+VALUES ('33333333-3333-4333-8333-333333333333',
+  'fa960000-0000-4000-8000-000000000001','https://example.test/ar20-secondary','secret',
+  ARRAY['agent.updated'],true,'WHK-AR20-SECONDARY');
+CREATE TEMP TABLE new_key_foreign_fixture AS
+SELECT public.enqueue_agent_webhook_event(
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
+  'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
+) AS outbox_id;
+INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
+  status,idempotency_key)
+SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
+  o.payload,1,'success','agent-outbox-22222222-2222-4222-8222-222222222222-'||o.id
+FROM public.agent_webhook_outbox o WHERE o.id=(SELECT outbox_id FROM new_key_foreign_fixture);
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.agent_webhook_outbox
+      WHERE id=(SELECT outbox_id FROM new_key_foreign_fixture)
+        AND state='pending' AND last_error LIKE '%ownership conflict%')
+     OR EXISTS (SELECT 1 FROM public.webhook_delivery_logs
+         WHERE agent_event_outbox_id=(SELECT outbox_id FROM new_key_foreign_fixture)) THEN
+    RAISE EXCEPTION 'foreign logical key was adopted or partial target inserts survived';
+  END IF;
+END $$;
+UPDATE public.agent_webhook_outbox SET state='suppressed',resolved_at=clock_timestamp()
+ WHERE id=(SELECT outbox_id FROM new_key_foreign_fixture);
+DELETE FROM public.webhook_delivery_logs
+ WHERE idempotency_key='agent-outbox-22222222-2222-4222-8222-222222222222-'||
+   (SELECT outbox_id::text FROM new_key_foreign_fixture);
+DELETE FROM public.webhook_endpoints WHERE id='33333333-3333-4333-8333-333333333333';
 
 -- A newer logical event cannot materialize around an earlier live event for
 -- the same agent merely because the earlier event is temporarily not due.
 CREATE TEMP TABLE hol_events(position integer, outbox_id uuid);
 INSERT INTO hol_events VALUES
   (1,public.enqueue_agent_webhook_event(
-    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
     'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid())),
   (2,public.enqueue_agent_webhook_event(
-    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
     'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()));
 UPDATE public.agent_webhook_outbox SET next_attempt_at=clock_timestamp()+interval '1 hour'
  WHERE id=(SELECT outbox_id FROM hol_events WHERE position=1);
@@ -706,15 +834,18 @@ END $$;
 -- An ordinary materialization exception reports the persisted retry state.
 -- The worker alerts only on `materialization_failed`, so this must remain a
 -- nonterminal `pending` result without a false terminal alert.
+UPDATE public.agent_webhook_outbox
+   SET next_attempt_at=clock_timestamp()+interval '1 hour'
+ WHERE state='pending';
 CREATE TEMP TABLE retryable_materialization_fixture AS
 SELECT public.enqueue_agent_webhook_event(
-  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
   'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
 ) AS outbox_id;
 INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
   status,idempotency_key)
 SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
-  o.payload,1,'success','22222222-2222-4222-8222-222222222222-'||o.wire_event_id
+  o.payload,1,'success','agent-outbox-22222222-2222-4222-8222-222222222222-'||o.id
 FROM public.agent_webhook_outbox o
 WHERE o.id=(SELECT outbox_id FROM retryable_materialization_fixture);
 CREATE TEMP TABLE retryable_materialization_result AS
@@ -749,9 +880,12 @@ UPDATE public.agent_webhook_outbox
 -- Force the real exception path with seven attempts already recorded. The
 -- eighth attempt must store and return the same terminal state, rather than
 -- falsely reporting another retry.
+UPDATE public.agent_webhook_outbox
+   SET next_attempt_at=clock_timestamp()+interval '1 hour'
+ WHERE state='pending';
 CREATE TEMP TABLE terminal_materialization_fixture AS
 SELECT public.enqueue_agent_webhook_event(
-  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM broad_agent),
+  'fa960000-0000-4000-8000-000000000001',(SELECT id FROM logical_key_agent),
   'agent.updated','active',NULL,'api',clock_timestamp(),gen_random_uuid()
 ) AS outbox_id;
 UPDATE public.agent_webhook_outbox
@@ -760,7 +894,7 @@ UPDATE public.agent_webhook_outbox
 INSERT INTO public.webhook_delivery_logs(endpoint_id,event_type,event_id,payload,attempt_number,
   status,idempotency_key)
 SELECT '22222222-2222-4222-8222-222222222222',o.event_type,o.wire_event_id::uuid,
-  o.payload,1,'success','22222222-2222-4222-8222-222222222222-'||o.wire_event_id
+  o.payload,1,'success','agent-outbox-22222222-2222-4222-8222-222222222222-'||o.id
 FROM public.agent_webhook_outbox o
 WHERE o.id=(SELECT outbox_id FROM terminal_materialization_fixture);
 CREATE TEMP TABLE terminal_materialization_result AS
@@ -783,6 +917,69 @@ BEGIN
        WHERE agent_event_outbox_id=v_id
      ) THEN
     RAISE EXCEPTION 'eighth materialization exception did not store and return one terminal state';
+  END IF;
+END $$;
+
+-- Registration and terminal revocation intentionally expose the same stable
+-- wire event_id (the agent UUID), but they are distinct logical events. Both
+-- must materialize exactly once for the same endpoint. Reclaiming either
+-- outbox row after an uncertain DB completion must adopt only its own exact
+-- delivery row and must not insert a duplicate.
+CREATE TEMP TABLE lifecycle_collision_agent(id uuid PRIMARY KEY);
+INSERT INTO lifecycle_collision_agent VALUES (gen_random_uuid());
+INSERT INTO public.agents(id,org_id,name,agent_type,status,allowed_scopes,registered_by,metadata)
+SELECT id,'fa960000-0000-4000-8000-000000000001','lifecycle collision fixture',
+  'custom','active',ARRAY['verify'],'11111111-1111-4111-8111-111111111111','{}'::jsonb
+FROM lifecycle_collision_agent;
+CREATE TEMP TABLE lifecycle_collision_fixture(position integer, outbox_id uuid);
+UPDATE public.agent_webhook_outbox
+   SET next_attempt_at=clock_timestamp()+interval '1 hour'
+ WHERE state='pending';
+INSERT INTO lifecycle_collision_fixture VALUES
+  (1,public.enqueue_agent_webhook_event(
+    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM lifecycle_collision_agent),
+    'agent.registered','active',NULL,'api',clock_timestamp(),gen_random_uuid())),
+  (2,public.enqueue_agent_webhook_event(
+    'fa960000-0000-4000-8000-000000000001',(SELECT id FROM lifecycle_collision_agent),
+    'agent.revoked','revoked',NULL,'api',clock_timestamp(),gen_random_uuid()));
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
+SELECT public.materialize_next_agent_webhook_event('enabled',false);
+DO $$
+DECLARE
+  v_before integer;
+  v_position integer;
+BEGIN
+  IF (SELECT count(*) FROM lifecycle_collision_fixture f
+      JOIN public.agent_webhook_outbox o ON o.id=f.outbox_id
+      WHERE o.state='materialized')<>2
+     OR (SELECT count(*) FROM lifecycle_collision_fixture f
+         JOIN public.webhook_delivery_logs d ON d.agent_event_outbox_id=f.outbox_id)<>2
+     OR (SELECT count(DISTINCT d.event_id) FROM lifecycle_collision_fixture f
+         JOIN public.webhook_delivery_logs d ON d.agent_event_outbox_id=f.outbox_id)<>1
+     OR (SELECT count(DISTINCT d.idempotency_key) FROM lifecycle_collision_fixture f
+         JOIN public.webhook_delivery_logs d ON d.agent_event_outbox_id=f.outbox_id)<>2
+     OR EXISTS (
+       SELECT 1 FROM lifecycle_collision_fixture f
+       JOIN public.webhook_delivery_logs d ON d.agent_event_outbox_id=f.outbox_id
+       WHERE d.idempotency_key IS DISTINCT FROM
+         'agent-outbox-'||d.endpoint_id::text||'-'||f.outbox_id::text
+     ) THEN
+    RAISE EXCEPTION 'registered/revoked shared wire identity did not materialize as two owned logical deliveries';
+  END IF;
+
+  SELECT count(*) INTO v_before FROM public.webhook_delivery_logs d
+    JOIN lifecycle_collision_fixture f ON f.outbox_id=d.agent_event_outbox_id;
+  FOR v_position IN 1..2 LOOP
+    UPDATE public.agent_webhook_outbox
+       SET state='pending',resolved_at=NULL,next_attempt_at=clock_timestamp()-interval '1 second'
+     WHERE id=(SELECT outbox_id FROM lifecycle_collision_fixture WHERE position=v_position);
+    PERFORM public.materialize_next_agent_webhook_event('enabled',false);
+  END LOOP;
+  IF (SELECT count(*) FROM public.webhook_delivery_logs d
+      JOIN lifecycle_collision_fixture f ON f.outbox_id=d.agent_event_outbox_id)<>v_before
+     OR EXISTS (SELECT 1 FROM lifecycle_collision_fixture f
+       JOIN public.agent_webhook_outbox o ON o.id=f.outbox_id WHERE o.state<>'materialized') THEN
+    RAISE EXCEPTION 'same logical outbox replay inserted a duplicate or failed to rematerialize';
   END IF;
 END $$;
 

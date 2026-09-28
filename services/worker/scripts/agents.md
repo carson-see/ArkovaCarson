@@ -319,10 +319,13 @@ full Supabase lineage replay.
 # AR20-13 agent webhook outbox native contract
 
 `test-agent-webhook-outbox-native.sql` runs against an isolated schema with
-0491–0496 applied. It covers atomic register/outbox commit, payload exclusions,
+0491–0497 applied. It covers atomic register/outbox commit, payload exclusions,
 explicit flag/null guards, atomic materialization, live/stale lease CAS, and
 refusal to adopt a semantically-equal foreign legacy delivery row. It also
-executes the outbox MFA deny-all boundary (authenticated AAL2 still sees no
+proves registered and revoked notifications that share one public agent UUID
+materialize under distinct logical outbox keys, while exact crash replay is
+adopted and same-event, wrong-payload, or foreign-owner conflicts remain visible.
+The script also executes the outbox MFA deny-all boundary (authenticated AAL2 still sees no
 rows while `service_role` retains access), the bounded Drive latest-health RPC,
 and the physical-delete lifecycle: an unresolved registered-event FK blocks
 deletion, while 90-day terminal retention releases the FK before the audited
