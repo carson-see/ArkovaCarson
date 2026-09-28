@@ -2010,20 +2010,34 @@ replay_schema() {
   echo "# falling back to psql schema replay (CONCURRENTLY-safe)." >&2
   command -v psql >/dev/null 2>&1 || { echo "ERROR: psql not on PATH; cannot replay schema." >&2; exit 1; }
   : "${STAGING_NEW_SUPABASE_DB_PASSWORD:?required for the psql schema-replay fallback}"
-  local uri applied=0 v exists f
+  local applied=0 v exists f
   # Session-mode pooler (5432): the direct db.<ref> host is frequently IPv6-only
   # and unroutable, which is the same LegacyDbConfigIpv6Error class handled above.
-  uri="postgresql://postgres.${NEW_PROJECT_REF}:${STAGING_NEW_SUPABASE_DB_PASSWORD}@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require"
-  psql "$uri" -At -c 'select 1' >/dev/null 2>&1 || { echo "ERROR: psql fallback could not connect to ${NEW_PROJECT_REF}." >&2; exit 1; }
+  local -a psql_connection=(
+    --host=aws-0-us-east-2.pooler.supabase.com
+    --port=5432
+    --username="postgres.${NEW_PROJECT_REF}"
+    --dbname=postgres
+  )
+  # Keep the generated password out of both a URI parser and process argv. Its
+  # base64 alphabet can contain URI delimiters (`/`, `+`), and operators may
+  # provide values containing other reserved characters. libpq reads these two
+  # settings from the child-only environment without percent-encoding.
+  PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+    psql "${psql_connection[@]}" -At -c 'select 1' >/dev/null 2>&1 \
+    || { echo "ERROR: psql fallback could not connect to ${NEW_PROJECT_REF}." >&2; exit 1; }
   for f in supabase/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
     v="$(basename "$f" | cut -d_ -f1)"
-    exists="$(psql "$uri" -At -c "select 1 from supabase_migrations.schema_migrations where version='${v}' limit 1;" 2>/dev/null || true)"
+    exists="$(PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+      psql "${psql_connection[@]}" -At -c "select 1 from supabase_migrations.schema_migrations where version='${v}' limit 1;" 2>/dev/null || true)"
     [[ "$exists" == "1" ]] && continue
     echo "  applying ${v} $(basename "$f")" >&2
-    if ! psql "$uri" -v ON_ERROR_STOP=1 -q -f "$f"; then
+    if ! PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+      psql "${psql_connection[@]}" -v ON_ERROR_STOP=1 -q -f "$f"; then
       echo "ERROR: psql schema replay failed at ${v}." >&2; exit 1
     fi
-    psql "$uri" -q -c "insert into supabase_migrations.schema_migrations(version,name) values ('${v}','$(basename "$f")') on conflict do nothing;" >/dev/null
+    PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+      psql "${psql_connection[@]}" -q -c "insert into supabase_migrations.schema_migrations(version,name) values ('${v}','$(basename "$f")') on conflict do nothing;" >/dev/null
     applied=$((applied + 1))
   done
   echo "# psql schema replay applied ${applied} migration(s); pipeline_error=${pipeline_error}." >&2

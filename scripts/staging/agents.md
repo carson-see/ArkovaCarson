@@ -473,3 +473,10 @@ preserve the earlier sections and their individual byte pins when updating them.
 ## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
 
 `uat03_mailbox_driver.py` is stdlib-only and defaults to a no-network dry run. It restricts execution to the exact PR2655 preview, named UAT03 standalone project, or the released reorg-3836 project paired with its exact existing worker URL. Manifest/evidence JSON paths stay within this checkout’s ignored `artifacts/uat03-mailbox` directory; traversal/symlink escapes and overwriting existing evidence are rejected. It checks committed driver/health head and readable installed hook, then exercises actual Auth/worker/Data API/mailbox timing and concurrency. IMAP credentials and mailbox proof stay in memory; artifacts contain only labels/status/booleans and created fixture IDs. It never provisions or activates anything, and its output cannot claim a complete hosted release. `uat03_mailbox_driver_test.py` tests target/recipient/proof/evidence guards without network; `uat03-mailbox-driver.test.ts` runs those checks in the existing Vitest suite.
+
+- **The Step 2 `psql` fallback never builds a password-bearing URI.** Generated
+  Supabase database passwords use base64 characters such as `/` and `+`, and
+  operator-supplied values may contain other URI delimiters. The fallback passes
+  host, port, user and database as separate `psql` arguments and supplies the
+  password only through child-scoped `PGPASSWORD` with `PGSSLMODE=require`.
+  Never print the environment or move the password back into argv/log output.

@@ -68,7 +68,7 @@ const TEAM1_ADMISSION_PROVENANCE_RULE =
 // .test.ts's prefix/per-section hashes and ordered heading list. Any edit here
 // must recompute BOTH, exactly the way each test computes them.
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '2a041de608047226e6277cdbc830f48cc0fffe2ec331a5b1ef78e2eb0d84c9b0';
+  '44fc0c1f9c62c45e1952ae1e0614149b1de9fd66b853839ee560c0779d50acf4';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a
@@ -450,6 +450,7 @@ interface ApplyRunResult extends SyncRunResult {
   supabaseOverrideCalls: string[];
   callOrder: string[];
   gitCalls: string[];
+  psqlCalls: string[];
   artifactDir: string;
   admissionArtifactPath: string;
   schedulerStates: Record<string, string>;
@@ -470,6 +471,10 @@ interface ApplyRunOptions {
   linkFailures?: number;
   /** Consecutive `supabase db push` invocations that fail before one succeeds. */
   dbPushFailures?: number;
+  /** Make db push hit the deterministic CREATE INDEX CONCURRENTLY pipeline error. */
+  dbPushPipelineError?: boolean;
+  /** Exact fixture password expected only through PGPASSWORD by the psql stub. */
+  dbPassword?: string;
   /** Secret names whose `gcloud secrets describe` must report absent. */
   missingSecrets?: string[];
   deployedImageRef?: string;
@@ -524,6 +529,7 @@ function applyRunStubbed(
   const supabaseOverrideLogFile = join(stubDir, 'supabase-override-calls.log');
   const orderLogFile = join(stubDir, 'call-order.log');
   const gitLogFile = join(stubDir, 'git-calls.log');
+  const psqlLogFile = join(stubDir, 'psql-calls.log');
   const schedulerStateDir = join(stubDir, 'scheduler-state');
   const artifactDir = join(stubDir, 'artifacts');
   const admissionArtifactPath = join(artifactDir, `isolated-rig-admission-${name}.json`);
@@ -551,6 +557,7 @@ function applyRunStubbed(
   writeFileSync(supabaseOverrideLogFile, '');
   writeFileSync(orderLogFile, '');
   writeFileSync(gitLogFile, '');
+  writeFileSync(psqlLogFile, '');
   if (options.blockAdmissionArtifactPath) {
     mkdirSync(admissionArtifactPath, { recursive: true });
   }
@@ -822,6 +829,10 @@ if [[ "$1" == "supabase" && "$2" == "db" && "$3" == "push" ]]; then
   if [[ -f '${dbPushCountFile}' ]]; then push_count="$(cat '${dbPushCountFile}')"; fi
   push_count=$((push_count + 1))
   printf '%s' "$push_count" > '${dbPushCountFile}'
+  if [[ '${options.dbPushPipelineError ? 'true' : 'false'}' == 'true' ]]; then
+    echo 'ERROR: CREATE INDEX CONCURRENTLY cannot be executed within a pipeline (SQLSTATE 25001)' >&2
+    exit 1
+  fi
   if (( push_count <= ${options.dbPushFailures ?? 0} )); then
     echo 'failed SASL auth: Tenant or user not found' >&2
     exit 1
@@ -860,6 +871,28 @@ exit 64
   );
   chmodSync(join(stubDir, 'npx'), 0o755);
 
+  writeFileSync(
+    join(stubDir, 'psql'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+expected_password='${(options.dbPassword ?? 'stub-db-password-not-real').replaceAll("'", "'\\''")}'
+[[ "\${PGPASSWORD-}" == "$expected_password" ]] || { echo 'unexpected PGPASSWORD' >&2; exit 65; }
+[[ "\${PGSSLMODE-}" == 'require' ]] || { echo 'unexpected PGSSLMODE' >&2; exit 66; }
+printf 'psql %s\n' "$*" >> '${psqlLogFile}'
+printf 'psql %s\n' "$*" >> '${orderLogFile}'
+if [[ "$*" == *'select 1 from supabase_migrations.schema_migrations'* ]]; then
+  printf '1\n'
+  exit 0
+fi
+if [[ "$*" == *"select 1"* ]]; then
+  printf '1\n'
+  exit 0
+fi
+exit 0
+`,
+  );
+  chmodSync(join(stubDir, 'psql'), 0o755);
+
   const supabaseOverride = join(stubDir, 'supabase-override');
   writeFileSync(
     supabaseOverride,
@@ -884,7 +917,7 @@ exec '${join(stubDir, 'npx')}' supabase "$@"
     // admission). The Step-4 stub run must satisfy them to reach Step 4 and
     // run to completion; none of these touch real infra (project create / link /
     // push / api-keys all resolve through the npx stub above).
-    STAGING_NEW_SUPABASE_DB_PASSWORD: 'stub-db-password-not-real',
+    STAGING_NEW_SUPABASE_DB_PASSWORD: options.dbPassword ?? 'stub-db-password-not-real',
     STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-key-not-real',
     STAGING_CHANGED_BEHAVIOR:
       'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
@@ -948,6 +981,9 @@ exec '${join(stubDir, 'npx')}' supabase "$@"
   const gitCalls = readFileSync(gitLogFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
+  const psqlCalls = readFileSync(psqlLogFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
   const schedulerStates = existsSync(schedulerStateDir)
     ? Object.fromEntries(readdirSync(schedulerStateDir).map((jobName) => [
         jobName,
@@ -971,6 +1007,7 @@ exec '${join(stubDir, 'npx')}' supabase "$@"
     supabaseOverrideCalls,
     callOrder,
     gitCalls,
+    psqlCalls,
     artifactDir,
     admissionArtifactPath,
     schedulerStates,
@@ -2661,6 +2698,24 @@ describe('provision-isolated-rig.sh — link waits for ACTIVE_HEALTHY (finding 4
     const result = applyRunStubbed('push-retry', 'mock', { dbPushFailures: 1 });
     expect(result.code, result.out).toBe(0);
     expect(result.npxCalls.filter((call) => call.startsWith('supabase db push '))).toHaveLength(2);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
+  });
+
+  it('passes a reserved-character database password to the psql fallback only through the environment', () => {
+    const password = 'b64/plus+at@colon:hash#percent%query?safe';
+    const result = applyRunStubbed('push-pipeline-password', 'mock', {
+      dbPushPipelineError: true,
+      dbPassword: password,
+    });
+
+    expect(result.code, result.out).toBe(0);
+    expect(result.psqlCalls.length).toBeGreaterThan(1);
+    expect(result.psqlCalls.every((call) => call.includes('--host=aws-0-us-east-2.pooler.supabase.com'))).toBe(true);
+    expect(result.psqlCalls.every((call) => call.includes('--username=postgres.abcdefghijklmnopqrst'))).toBe(true);
+    expect(result.psqlCalls.every((call) => call.includes('--dbname=postgres'))).toBe(true);
+    expect(result.psqlCalls.join('\n')).not.toContain(password);
+    expect(result.out).not.toContain(password);
+    expect(result.psqlCalls.some((call) => call.includes('postgresql://'))).toBe(false);
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
   });
 
