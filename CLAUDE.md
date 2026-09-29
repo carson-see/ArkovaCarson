@@ -2,7 +2,7 @@
 
 > **Source of truth:** Jira (status/scope) + Confluence (documentation). Everything else — including this file — is operational code or historical context.
 >
-> Rolling state lives in [HANDOFF.md](./HANDOFF.md). Env vars live in [docs/reference/ENV.md](./docs/reference/ENV.md). Story detail lives in Jira ([board](https://arkova.atlassian.net/jira/software/projects/SCRUM)). Topic docs live in Confluence ([space A](https://arkova.atlassian.net/wiki/spaces/A)).
+> Rolling state lives in [HANDOFF.md](./HANDOFF.md). Env vars live in [docs/reference/ENV.md](./docs/reference/ENV.md). Story detail lives in Jira ([AR20 board](https://arkova.atlassian.net/jira/software/projects/AR20/boards/34), [SCRUM board](https://arkova.atlassian.net/jira/software/projects/SCRUM); see §5). Topic docs live in Confluence ([space A](https://arkova.atlassian.net/wiki/spaces/A)).
 >
 > This file is the directive — rules Claude follows, shaped like a contract.
 >
@@ -271,13 +271,15 @@ Migration state (reality, not aspiration): see HANDOFF.md.
 
 ## 5. STORY STATUS + PRIORITIZATION
 
-Source of truth: [Jira SCRUM board](https://arkova.atlassian.net/jira/software/projects/SCRUM). Do NOT maintain a per-story status table in this file — it will drift.
+Source of truth: Jira. There are **two Jira projects and keys from both are valid**: [`AR20` — Arkova Roadmap 2.0](https://arkova.atlassian.net/jira/software/projects/AR20/boards/34) is the board for new roadmap work, and [`SCRUM`](https://arkova.atlassian.net/jira/software/projects/SCRUM) holds the existing tickets. An `AR20-N` key in a PR body, commit or doc is a real ticket, not a missing `SCRUM` key — never flag one as a process finding. Read a ticket on the board its key names. Do NOT maintain a per-story status table in this file — it will drift.
 
 **Roadmap (priority order):** the canonical roadmap is the [12-Month Technical Roadmap v3](https://arkova.atlassian.net/wiki/spaces/A/pages/82444290), executed via the [PI-1 Program Increment Plan](https://arkova.atlassian.net/wiki/spaces/A/pages/83296257) — read before picking up new work; if a Jira label disagrees, the roadmap wins and the label is fixed.
 
 For confluence audit pages, see [Confluence space A](https://arkova.atlassian.net/wiki/spaces/A) — every epic has an audit page titled `SCRUM-N — <summary> — AUDIT`.
 
 ### 5.1 Jira ticket structure conventions (post-2026-04-26)
+
+The issuetype id and the live automation rule UUIDs below were recorded against the `SCRUM` project. Whether `AR20` carries the same issuetype ids and automation rules is verify-in-Jira, not asserted here.
 
 - **Jira description** = short pointer (≤200 chars) plus Confluence link. The MCP edit endpoint caps `fields` payload size — descriptions over ~200 chars round-trip-fail.
 - **Confluence page** = the structured spec (Goal / Outcomes / Scope / Child Stories / DoD / References). Title format: `SCRUM-NNN — <summary>` for stories or `SCRUM-NNN — <TAG: Title> — AUDIT` for epics. Parent under space `A` homepage `163950`.
