@@ -19,6 +19,8 @@ import {
   getStartPageToken,
   listChanges,
   listChildFolders,
+  listFolderFiles,
+  DRIVE_FOLDER_MIME_TYPE,
   DriveConfigError,
   DriveApiError,
   DRIVE_FOLDER_LISTING_SCOPES,
@@ -1412,5 +1414,151 @@ describe('getStartPageToken (extracted for 410/404 cursor recovery reuse)', () =
     }).catch((e) => e);
     expect(err).toBeInstanceOf(DriveApiError);
     expect((err as DriveApiError).status).toBe(500);
+  });
+});
+
+describe('listFolderFiles (DRIVE-BACKFILL initial sync enumeration)', () => {
+  it('composes the files.list query excluding folders/trashed, direct children only', async () => {
+    let capturedUrl = '';
+    let capturedAuth: string | null = null;
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedAuth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return new Response(
+        JSON.stringify({
+          files: [
+            { id: 'file-1', name: 'Contract.pdf', mimeType: 'application/pdf', modifiedTime: '2026-01-01T00:00:00Z', headRevisionId: 'rev-1', size: '1024', parents: ['folder-1'] },
+          ],
+          nextPageToken: 'page-2',
+        }),
+        { status: 200 },
+      );
+    };
+
+    const res = await listFolderFiles({
+      accessToken: 'access-tok',
+      folderId: 'folder-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(res).toEqual({
+      files: [
+        { id: 'file-1', name: 'Contract.pdf', mimeType: 'application/pdf', modifiedTime: '2026-01-01T00:00:00Z', headRevisionId: 'rev-1', size: '1024', parents: ['folder-1'] },
+      ],
+      nextPageToken: 'page-2',
+    });
+    expect(capturedAuth).toBe('Bearer access-tok');
+
+    const url = new URL(capturedUrl);
+    expect(url.pathname).toBe('/drive/v3/files');
+    expect(url.searchParams.get('q')).toBe(
+      `'folder-1' in parents and trashed = false and mimeType != '${DRIVE_FOLDER_MIME_TYPE}'`,
+    );
+    expect(url.searchParams.get('pageSize')).toBe('100');
+    expect(url.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(url.searchParams.get('includeItemsFromAllDrives')).toBe('true');
+    expect(url.searchParams.get('fields')).toBe(
+      'nextPageToken,files(id,name,mimeType,modifiedTime,headRevisionId,size,parents,driveId)',
+    );
+  });
+
+  it('omits nextPageToken from the result when Drive omits it (enumeration complete)', async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ files: [] }), { status: 200 });
+    const res = await listFolderFiles({
+      accessToken: 'at',
+      folderId: 'folder-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(res).toEqual({ files: [] });
+    expect('nextPageToken' in res).toBe(false);
+  });
+
+  it('passes pageToken through as the outbound pageToken param (pagination)', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+    };
+    await listFolderFiles({
+      accessToken: 'at',
+      folderId: 'folder-1',
+      pageToken: 'page-7',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(new URL(capturedUrl).searchParams.get('pageToken')).toBe('page-7');
+  });
+
+  it('clamps pageSize into Drive\'s [1, 1000] range', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+    };
+    await listFolderFiles({
+      accessToken: 'at',
+      folderId: 'folder-1',
+      pageSize: 5000,
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(new URL(capturedUrl).searchParams.get('pageSize')).toBe('1000');
+  });
+
+  it('escapes a quote and a backslash in folderId so they cannot terminate the q clause', async () => {
+    let capturedUrl = '';
+    const fetchImpl = async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+    };
+    const maliciousFolderId = "abc' or trashed=false or '1'='1" + '\\';
+    await listFolderFiles({
+      accessToken: 'at',
+      folderId: maliciousFolderId,
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    const q = new URL(capturedUrl).searchParams.get('q')!;
+    const expectedEscaped = maliciousFolderId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    expect(q).toBe(
+      `'${expectedEscaped}' in parents and trashed = false and mimeType != '${DRIVE_FOLDER_MIME_TYPE}'`,
+    );
+  });
+
+  it('throws a bounded DriveApiError with status + retryAfter on a 429', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: { message: 'Rate limit exceeded' } }), {
+        status: 429,
+        headers: { 'retry-after': '30' },
+      });
+    const err = await listFolderFiles({
+      accessToken: 'at',
+      folderId: 'folder-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(429);
+    expect((err as DriveApiError).retryAfter).toBe('30');
+  });
+
+  it('throws a bounded DriveApiError on a 403 (permission denied)', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: { message: 'The user does not have sufficient permissions' } }), { status: 403 });
+    const err = await listFolderFiles({
+      accessToken: 'at',
+      folderId: 'folder-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(403);
+  });
+
+  it('throws a bounded DriveApiError on a 404 (folder deleted)', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: { message: 'File not found' } }), { status: 404 });
+    const err = await listFolderFiles({
+      accessToken: 'at',
+      folderId: 'folder-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(DriveApiError);
+    expect((err as DriveApiError).status).toBe(404);
   });
 });
