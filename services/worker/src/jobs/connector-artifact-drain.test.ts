@@ -1713,6 +1713,81 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
     expect(payload.fingerprint_source).toBe('document_bytes');
   });
 
+  // BUG-2026-09-29 defect 4: every connector artifact was published as
+  // credential_type='CONTRACT_POSTSIGNING' unconditionally — truthful for
+  // DocuSign (a signed contract), but a hardcoded lie for Google Drive (a
+  // spreadsheet, a doc, anything a user filed for safekeeping shows on the
+  // record page as "Contract — Signed"). `OTHER` already exists in the
+  // credential_type enum and maps to a neutral "General Record" / "Other"
+  // label in copy.ts — no new enum value, no UI change needed.
+  it('BUG-2026-09-29: labels a Google Drive artifact credential_type=OTHER, not CONTRACT_POSTSIGNING', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-drive-other', public_id: 'ARK-DRIVE-OTHER' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      { ...BASE_ROW, source: 'google_drive', external_ref: 'file-1', metadata: {} },
+      { db },
+    );
+
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.credential_type).toBe('OTHER');
+  });
+
+  it('BUG-2026-09-29: keeps credential_type=CONTRACT_POSTSIGNING for DocuSign (a genuinely signed contract)', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-docusign-cp', public_id: 'ARK-DOCUSIGN-CP' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      { ...BASE_ROW, source: 'docusign', external_ref: 'env-cp-1', metadata: {} },
+      { db },
+    );
+
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.credential_type).toBe('CONTRACT_POSTSIGNING');
+  });
+
+  // BUG-2026-09-29 defect 4: `anchors.file_size` was never populated from
+  // this path (the record page showed "0 B" for every connector-sourced
+  // anchor, Drive or DocuSign) even though `connector_artifact.byte_length`
+  // already carries it.
+  it('BUG-2026-09-29: populates file_size from connector_artifact.byte_length when present', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-sized', public_id: 'ARK-SIZED' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      { ...BASE_ROW, source: 'google_drive', external_ref: 'file-2', byte_length: 48213, metadata: {} },
+      { db },
+    );
+
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.file_size).toBe(48213);
+  });
+
+  it('BUG-2026-09-29: leaves file_size null when byte_length is null or non-positive (anchors_file_size_positive CHECK)', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-unsized', public_id: 'ARK-UNSIZED' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      { ...BASE_ROW, source: 'google_drive', external_ref: 'file-3', byte_length: 0, metadata: {} },
+      { db },
+    );
+
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.file_size).toBeNull();
+  });
+
   // BUG-2026-09-29 defect 3: connector-artifact-drain.ts already preferred a
   // plain `metadata.filename` key (matching DocuSign's convention) over the
   // synthetic `${source}:${external_ref}` fallback — the Drive producer just

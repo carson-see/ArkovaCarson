@@ -79,7 +79,22 @@ export const AnchorInsertPayload = z
     org_id: dbUuid('org_id'),
     user_id: dbUuid('user_id'),
     filename: z.string().min(1).max(255),
-    credential_type: z.literal('CONTRACT_POSTSIGNING'),
+    // BUG-2026-09-29 defect 4: every connector artifact used to be published
+    // as CONTRACT_POSTSIGNING unconditionally — truthful for DocuSign, a
+    // hardcoded lie for Google Drive (a spreadsheet, a doc, anything a user
+    // filed for safekeeping showed on the record page as "Contract —
+    // Signed"). `OTHER` is an existing credential_type enum value (no new
+    // one added) that `defaultMaterializeAnchor` now selects for
+    // `source === 'google_drive'`; every other connector keeps
+    // CONTRACT_POSTSIGNING, unchanged.
+    credential_type: z.enum(['CONTRACT_POSTSIGNING', 'OTHER']),
+    // BUG-2026-09-29 defect 4: `anchors.file_size`, populated from
+    // `connector_artifact.byte_length` (already measured server-side at
+    // fetch time, §1.6A) instead of being left NULL forever — the record
+    // page showed "0 B" for every connector-sourced anchor. Nullable:
+    // `anchors_file_size_positive` CHECKs `file_size IS NULL OR file_size >
+    // 0`, so a missing/non-positive byte_length must stay NULL, never 0.
+    file_size: z.number().int().positive().nullable(),
     metadata: z.record(z.string(), z.unknown()),
     // Evidence class of the fingerprint on every row this drain materializes
     // (migration 0376/0384; CHECK-constrained on `anchors.fingerprint_source`).
@@ -718,13 +733,29 @@ export async function defaultMaterializeAnchor(
   // traffic — this branch is additive and does not change any prior behavior.
   const isInboundDeclaredHash = metadataString(row.metadata, '_direction') === 'inbound';
 
+  // BUG-2026-09-29 defect 4: CONTRACT_POSTSIGNING is truthful for DocuSign (a
+  // signed contract) but not for Google Drive, where a file can be anything
+  // a user filed for safekeeping — a spreadsheet, a policy doc, a photo.
+  // `OTHER` is an existing enum value; every non-Drive source keeps today's
+  // behavior unchanged.
+  const credentialType: 'CONTRACT_POSTSIGNING' | 'OTHER' =
+    row.source === 'google_drive' ? 'OTHER' : 'CONTRACT_POSTSIGNING';
+  // BUG-2026-09-29 defect 4: mirrors the anchors_file_size_positive CHECK
+  // (`file_size IS NULL OR file_size > 0`) so a zero/negative/absent
+  // byte_length is never sent as 0 — it stays NULL, exactly like an anchor
+  // whose size was never measured.
+  const fileSize = typeof row.byte_length === 'number' && row.byte_length > 0
+    ? row.byte_length
+    : null;
+
   const insertPayload = {
     fingerprint: row.fingerprint_sha256,
     status: 'PENDING' as const,
     org_id: row.org_id,
     user_id: userId,
     filename,
-    credential_type: 'CONTRACT_POSTSIGNING' as const,
+    credential_type: credentialType,
+    file_size: fileSize,
     // Spread the artifact's own metadata FIRST so the trusted connector fields
     // below always WIN — a (possibly attacker-influenced) metadata key named
     // `connector_source` / `connector_artifact_id` / `external_ref` can never
