@@ -2,6 +2,9 @@
 
 `arkova` — TypeScript SDK for the Arkova Verification API (PH1-SDK-01 + INT-01).
 
+## 2026-09-26 — agent lifecycle parity
+`Arkova.agents` mirrors the six generic lifecycle operations and API-key-only ComputeID admission. Mutation calls never opt into retry. One-time key responses and nested errors are runtime-validated and scrubbed; keep malformed-response and no-retry tests with this surface.
+
 ## Structure
 - **`src/`** — client, types, barrel export.
 - **`examples/`** — usage examples.

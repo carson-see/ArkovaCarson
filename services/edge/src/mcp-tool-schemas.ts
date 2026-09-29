@@ -142,6 +142,29 @@ export const oracleBatchVerifySchema = z
   .strict();
 
 export const listAgentsSchema = z.object({}).strict();
+const agentScopeSchema = z.enum(['read:records','read:orgs','read:search','write:anchors','admin:rules','verify','verify:batch','usage:read','keys:manage','compliance:read','compliance:write','oracle:read','oracle:write','anchor:write','anchor:read','attestations:write','attestations:read','webhooks:manage','agents:manage','keys:read','orgs:manage']);
+const httpsUrlSchema = z.string().url().max(2048).refine((value) => new URL(value).protocol === 'https:', 'callback_url must use HTTPS');
+export const registerAgentSchema = z.object({
+  name: z.string().trim().min(1).max(200), description: z.string().max(1000).optional(),
+  agent_type: z.enum(['llm_agent','ats_integration','hr_platform','compliance_tool','custom']).optional(),
+  allowed_scopes: z.array(agentScopeSchema).min(1).max(32).optional(), framework: z.string().max(100).optional(),
+  version: z.string().max(50).optional(), callback_url: httpsUrlSchema.optional(), metadata: z.record(z.string(), z.unknown()).optional(),
+}).strict().superRefine((value, ctx) => { if (value.metadata && Object.prototype.hasOwnProperty.call(value.metadata, 'computeid')) ctx.addIssue({ code: 'custom', path: ['metadata','computeid'], message: 'metadata.computeid is provider-managed' }); });
+export const agentIdSchema = z.object({ agent_id: z.string().uuid() }).strict();
+export const updateAgentSchema = z.object({ agent_id: z.string().uuid(), name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(1000).optional(), allowed_scopes: z.array(agentScopeSchema).min(1).max(32).optional(),
+  status: z.enum(['active','suspended']).optional(), framework: z.string().max(100).optional(), version: z.string().max(50).optional(),
+  callback_url: httpsUrlSchema.nullable().optional(),
+}).strict().refine((value) => Object.keys(value).some((key) => key !== 'agent_id'), 'at least one update field is required');
+export const computeIdAdmissionSchema = z.object({
+  passport_id: z.string().uuid(), name: z.string().trim().min(1).max(200).optional(), description: z.string().max(1000).optional(),
+  allowed_scopes: z.array(z.enum(['verify','verify:batch','anchor:write','write:anchors','anchor:read','read:records','read:search'])).min(1).max(32).optional(),
+  verification_receipt: z.object({ passport_id: z.string().uuid(), status: z.string().min(1).max(32), signature_valid: z.boolean().nullable().optional(),
+    issued_at: z.string().min(1).max(100).refine((value) => Number.isFinite(Date.parse(value)), 'issued_at must be a timestamp'),
+    expires_at: z.string().min(1).max(100).refine((value) => Number.isFinite(Date.parse(value)), 'expires_at must be a timestamp'), key_id: z.string().regex(/^[a-f0-9]{16}$/),
+    receipt_signature: z.string().min(1).max(4096), receipt_algorithm: z.string().min(1).max(32), receipt_payload: z.string().min(2).max(16384),
+  }).catchall(z.unknown()),
+}).strict().refine((value) => value.passport_id === value.verification_receipt.passport_id, { path: ['verification_receipt','passport_id'], message: 'passport IDs must match' });
 
 export const manageFoldersSchema = z.object({
   action: z.enum(['list', 'create', 'update', 'bind_connector', 'delete', 'bulk_move']),
@@ -222,6 +245,12 @@ export const MCP_TOOL_SCHEMAS = {
   arkova_get_document: agentGetDocumentSchema,
   arkova_oracle_batch_verify: oracleBatchVerifySchema,
   arkova_list_agents: listAgentsSchema,
+  arkova_register_agent: registerAgentSchema,
+  arkova_get_agent: agentIdSchema,
+  arkova_update_agent: updateAgentSchema,
+  arkova_revoke_agent: agentIdSchema,
+  arkova_create_agent_key: agentIdSchema,
+  arkova_admit_computeid_agent: computeIdAdmissionSchema,
   arkova_manage_folders: manageFoldersSchema,
 } as const;
 

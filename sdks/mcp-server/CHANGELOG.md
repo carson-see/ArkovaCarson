@@ -5,6 +5,10 @@ server). This file starts at 3.2.0; for anything earlier, see
 `git log -- sdks/mcp-server/`. Versions are released independently from the
 `arkova` TypeScript SDK and the `arkova` Python package.
 
+## 3.3.0
+
+Add six generic-agent tools (register, list, get, update, revoke, and create a one-time key) plus API-key-only ComputeID admission from its complete signed verification receipt. Mutations are single-attempt and all calls use the configured API key through the canonical worker routes.
+
 ## 3.2.0
 
 Additive. No tool is renamed or removed.

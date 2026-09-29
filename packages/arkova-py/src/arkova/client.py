@@ -3,18 +3,24 @@ from __future__ import annotations
 import asyncio
 import email.utils
 import hashlib
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
 from typing import Any, Literal, TypeVar
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from pydantic import ValidationError
 
 from .errors import ArkovaError
 from .models import (
+    Agent,
+    AgentKeyCreated,
+    AgentList,
+    AgentRevocation,
     Anchor,
     AnchorImportResponse,
     AnchorImportRow,
@@ -23,6 +29,7 @@ from .models import (
     BulkAnchorDuplicateStrategy,
     BulkAnchorInput,
     BulkAnchorResponse,
+    ComputeIdAdmissionResult,
     DocumentDetail,
     FingerprintDetail,
     FingerprintVerification,
@@ -69,6 +76,100 @@ class _Unset:
 
 
 _UNSET = _Unset()
+
+_AGENT_TYPES = {"llm_agent", "ats_integration", "hr_platform", "compliance_tool", "custom"}
+_AGENT_SCOPES = {"read:records", "read:orgs", "read:search", "write:anchors", "admin:rules", "verify", "verify:batch", "usage:read", "keys:manage", "compliance:read", "compliance:write", "oracle:read", "oracle:write", "anchor:write", "anchor:read", "attestations:write", "attestations:read", "webhooks:manage", "agents:manage", "keys:read", "orgs:manage"}
+_COMPUTEID_SCOPES = {"verify", "verify:batch", "anchor:write", "write:anchors", "anchor:read", "read:records", "read:search"}
+
+
+def _validate_agent_values(*, name: str | None = None, agent_type: str | None = None,
+                           scopes: Sequence[str] | None = None, callback_url: str | None = None,
+                           description: str | None = None, framework: str | None = None,
+                           version: str | None = None,
+                           allowed_scopes: set[str] = _AGENT_SCOPES) -> None:
+    if name is not None and (not isinstance(name, str) or not name.strip() or len(name) > 200):
+        raise ArkovaError("Invalid agent name", status_code=400, code="invalid_request")
+    if description is not None and (not isinstance(description, str) or len(description) > 1000):
+        raise ArkovaError("Invalid agent description", status_code=400, code="invalid_request")
+    if framework is not None and (not isinstance(framework, str) or len(framework) > 100):
+        raise ArkovaError("Invalid agent framework", status_code=400, code="invalid_request")
+    if version is not None and (not isinstance(version, str) or len(version) > 50):
+        raise ArkovaError("Invalid agent version", status_code=400, code="invalid_request")
+    if agent_type is not None and agent_type not in _AGENT_TYPES:
+        raise ArkovaError("Invalid agent type", status_code=400, code="invalid_request")
+    if scopes is not None and (not scopes or len(scopes) > 32 or any(scope not in allowed_scopes for scope in scopes)):
+        raise ArkovaError("Invalid agent scope", status_code=400, code="invalid_request")
+    if callback_url is not None:
+        parsed = urlparse(callback_url)
+        if parsed.scheme != "https" or not parsed.netloc or any(character.isspace() for character in parsed.netloc):
+            raise ArkovaError("Agent callback URL must be a valid HTTPS URL", status_code=400, code="invalid_request")
+
+
+def _agent_create_body(
+    *, name: str, description: str | None, agent_type: str | None,
+    allowed_scopes: Sequence[str] | None, framework: str | None,
+    version: str | None, callback_url: str | None,
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    _validate_agent_values(name=name, agent_type=agent_type, scopes=allowed_scopes, callback_url=callback_url,
+        description=description, framework=framework, version=version)
+    if metadata is not None and "computeid" in metadata:
+        raise ArkovaError("metadata.computeid is provider-managed", status_code=400, code="invalid_request")
+    return {"name": name, **({"description": description} if description is not None else {}),
+        **({"agent_type": agent_type} if agent_type is not None else {}),
+        **({"allowed_scopes": list(allowed_scopes)} if allowed_scopes is not None else {}),
+        **({"framework": framework} if framework is not None else {}),
+        **({"version": version} if version is not None else {}),
+        **({"callback_url": callback_url} if callback_url is not None else {}),
+        **({"metadata": dict(metadata)} if metadata is not None else {})}
+
+
+def _agent_update_body(**values: Any) -> dict[str, Any]:
+    body = {key: value for key, value in values.items() if not isinstance(value, _Unset)}
+    if not body:
+        raise ArkovaError("Agent update requires at least one field", status_code=400, code="invalid_request")
+    if "allowed_scopes" in body:
+        _validate_agent_values(scopes=body["allowed_scopes"])
+        body["allowed_scopes"] = list(body["allowed_scopes"])
+    if body.get("status") not in (None, "active", "suspended"):
+        raise ArkovaError("Invalid agent status", status_code=400, code="invalid_request")
+    if "callback_url" in body:
+        _validate_agent_values(callback_url=body["callback_url"])
+    _validate_agent_values(name=body.get("name"), description=body.get("description"),
+        framework=body.get("framework"), version=body.get("version"))
+    return body
+
+
+def _computeid_admission_body(
+    *, passport_id: str, verification_receipt: Mapping[str, Any], name: str | None,
+    description: str | None, allowed_scopes: Sequence[str] | None,
+) -> dict[str, Any]:
+    def timestamp(value: Any) -> bool:
+        if not isinstance(value, str) or not 1 <= len(value) <= 64:
+            return False
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return True
+        except ValueError:
+            return False
+
+    status = verification_receipt.get("status")
+    signature_valid = verification_receipt.get("signature_valid")
+    if (not isinstance(passport_id, str) or not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}", passport_id)
+            or str(verification_receipt.get("passport_id", "")).lower() != passport_id.lower()
+            or not isinstance(status, str) or not 1 <= len(status) <= 32
+            or signature_valid is not None and not isinstance(signature_valid, bool)
+            or not timestamp(verification_receipt.get("issued_at")) or not timestamp(verification_receipt.get("expires_at"))
+            or not isinstance(verification_receipt.get("key_id"), str) or not re.fullmatch(r"[0-9a-f]{16}", verification_receipt["key_id"])
+            or not isinstance(verification_receipt.get("receipt_signature"), str) or not 1 <= len(verification_receipt["receipt_signature"]) <= 4096
+            or not isinstance(verification_receipt.get("receipt_algorithm"), str) or not 1 <= len(verification_receipt["receipt_algorithm"]) <= 32
+            or not isinstance(verification_receipt.get("receipt_payload"), str) or not 2 <= len(verification_receipt["receipt_payload"]) <= 16_384):
+        raise ArkovaError("Invalid ComputeID admission receipt", status_code=400, code="invalid_request")
+    _validate_agent_values(name=name, description=description, scopes=allowed_scopes, allowed_scopes=_COMPUTEID_SCOPES)
+    return {"passport_id": passport_id, "verification_receipt": dict(verification_receipt),
+        **({"name": name} if name is not None else {}),
+        **({"description": description} if description is not None else {}),
+        **({"allowed_scopes": list(allowed_scopes)} if allowed_scopes is not None else {})}
 
 
 def _headers(api_key: str) -> dict[str, str]:
@@ -138,10 +239,22 @@ def _raise_for_error(response: httpx.Response) -> None:
 
     body = _plain_error_body(response) or {}
     raw_code = body.get("error")
-    code = raw_code if isinstance(raw_code, str) else None
+    nested_raw = raw_code if isinstance(raw_code, dict) else None
+    nested = ({key: value for key in ("code", "message", "reason", "agent_id")
+        if isinstance((value := nested_raw.get(key)), str)} if nested_raw is not None else None)
+    if nested_raw is not None and isinstance(nested_raw.get("permitted"), list) and all(
+        isinstance(value, str) for value in nested_raw["permitted"]
+    ):
+        nested = {**(nested or {}), "permitted": nested_raw["permitted"]}
+    code = raw_code if isinstance(raw_code, str) else (
+        nested.get("code") if nested and isinstance(nested.get("code"), str) else None
+    )
     raw_message = body.get("message")
+    nested_message = nested.get("message") if nested else None
     message = (
-        raw_message
+        nested_message
+        if isinstance(nested_message, str) and nested_message
+        else raw_message
         if isinstance(raw_message, str) and raw_message
         else code or f"Arkova API error {response.status_code}"
     )
@@ -150,14 +263,20 @@ def _raise_for_error(response: httpx.Response) -> None:
         status_code=response.status_code,
         code=code,
         retry_after=retry_after,
+        details=nested,
     )
 
 
 def _parse_json(response: httpx.Response, model: type[T]) -> T:
+    sensitive = model in (AgentKeyCreated, ComputeIdAdmissionResult)
     try:
         return model.model_validate(response.json())  # type: ignore[attr-defined]
     except (ValueError, ValidationError) as exc:
-        raise ArkovaError("Arkova API returned an unexpected response shape") from exc
+        if not sensitive:
+            raise ArkovaError("Arkova API returned an unexpected response shape", code="unexpected_response") from exc
+    # Raise outside the handler so the discarded validation exception is not
+    # retained as __context__ with the raw one-time key or signed receipt.
+    raise ArkovaError("Arkova API returned an unexpected response shape", code="unexpected_response")
 
 
 def _versioned_path(base_url: str, version: str, path: str) -> str:
@@ -587,6 +706,48 @@ class Arkova:
         return _parse_json(self._request("POST", path, json={"record_public_ids": list(record_public_ids),
             "folder_id": folder_id}, retryable=False), FolderMoveResult)
 
+    def register_agent(self, *, name: str, description: str | None = None, agent_type: str | None = None,
+        allowed_scopes: Sequence[str] | None = None, framework: str | None = None,
+        version: str | None = None, callback_url: str | None = None,
+        metadata: Mapping[str, Any] | None = None) -> Agent:
+        path = _versioned_path(str(self._client.base_url), "v1", "/agents")
+        body = _agent_create_body(name=name, description=description, agent_type=agent_type,
+            allowed_scopes=allowed_scopes, framework=framework, version=version,
+            callback_url=callback_url, metadata=metadata)
+        return _parse_json(self._request("POST", path, json=body, retryable=False), Agent)
+
+    def list_agents(self) -> AgentList:
+        return _parse_json(self._request("GET", _versioned_path(str(self._client.base_url), "v1", "/agents")), AgentList)
+
+    def get_agent(self, agent_id: str) -> Agent:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}")
+        return _parse_json(self._request("GET", path), Agent)
+
+    def update_agent(self, agent_id: str, *, name: str | _Unset = _UNSET,
+        description: str | _Unset = _UNSET, allowed_scopes: Sequence[str] | _Unset = _UNSET,
+        status: Literal["active", "suspended"] | _Unset = _UNSET, framework: str | _Unset = _UNSET,
+        version: str | _Unset = _UNSET, callback_url: str | None | _Unset = _UNSET) -> Agent:
+        body = _agent_update_body(name=name, description=description, allowed_scopes=allowed_scopes,
+            status=status, framework=framework, version=version, callback_url=callback_url)
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}")
+        return _parse_json(self._request("PATCH", path, json=body, retryable=False), Agent)
+
+    def revoke_agent(self, agent_id: str) -> AgentRevocation:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}")
+        return _parse_json(self._request("DELETE", path, retryable=False), AgentRevocation)
+
+    def create_agent_key(self, agent_id: str) -> AgentKeyCreated:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}/key")
+        return _parse_json(self._request("POST", path, retryable=False), AgentKeyCreated)
+
+    def admit_computeid_agent(self, *, passport_id: str, verification_receipt: Mapping[str, Any],
+        name: str | None = None, description: str | None = None,
+        allowed_scopes: Sequence[str] | None = None) -> ComputeIdAdmissionResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/agents/computeid/admit")
+        body = _computeid_admission_body(passport_id=passport_id, verification_receipt=verification_receipt,
+            name=name, description=description, allowed_scopes=allowed_scopes)
+        return _parse_json(self._request("POST", path, json=body, retryable=False), ComputeIdAdmissionResult)
+
     def _request(
         self,
         method: str,
@@ -851,6 +1012,48 @@ class AsyncArkova:
         path = _versioned_path(str(self._client.base_url), "v1", "/folders/bulk-move")
         return _parse_json(await self._request("POST", path, json={"record_public_ids": list(record_public_ids),
             "folder_id": folder_id}, retryable=False), FolderMoveResult)
+
+    async def register_agent(self, *, name: str, description: str | None = None, agent_type: str | None = None,
+        allowed_scopes: Sequence[str] | None = None, framework: str | None = None,
+        version: str | None = None, callback_url: str | None = None,
+        metadata: Mapping[str, Any] | None = None) -> Agent:
+        path = _versioned_path(str(self._client.base_url), "v1", "/agents")
+        body = _agent_create_body(name=name, description=description, agent_type=agent_type,
+            allowed_scopes=allowed_scopes, framework=framework, version=version,
+            callback_url=callback_url, metadata=metadata)
+        return _parse_json(await self._request("POST", path, json=body, retryable=False), Agent)
+
+    async def list_agents(self) -> AgentList:
+        return _parse_json(await self._request("GET", _versioned_path(str(self._client.base_url), "v1", "/agents")), AgentList)
+
+    async def get_agent(self, agent_id: str) -> Agent:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}")
+        return _parse_json(await self._request("GET", path), Agent)
+
+    async def update_agent(self, agent_id: str, *, name: str | _Unset = _UNSET,
+        description: str | _Unset = _UNSET, allowed_scopes: Sequence[str] | _Unset = _UNSET,
+        status: Literal["active", "suspended"] | _Unset = _UNSET, framework: str | _Unset = _UNSET,
+        version: str | _Unset = _UNSET, callback_url: str | None | _Unset = _UNSET) -> Agent:
+        body = _agent_update_body(name=name, description=description, allowed_scopes=allowed_scopes,
+            status=status, framework=framework, version=version, callback_url=callback_url)
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}")
+        return _parse_json(await self._request("PATCH", path, json=body, retryable=False), Agent)
+
+    async def revoke_agent(self, agent_id: str) -> AgentRevocation:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}")
+        return _parse_json(await self._request("DELETE", path, retryable=False), AgentRevocation)
+
+    async def create_agent_key(self, agent_id: str) -> AgentKeyCreated:
+        path = _versioned_path(str(self._client.base_url), "v1", f"/agents/{quote(agent_id, safe='')}/key")
+        return _parse_json(await self._request("POST", path, retryable=False), AgentKeyCreated)
+
+    async def admit_computeid_agent(self, *, passport_id: str, verification_receipt: Mapping[str, Any],
+        name: str | None = None, description: str | None = None,
+        allowed_scopes: Sequence[str] | None = None) -> ComputeIdAdmissionResult:
+        path = _versioned_path(str(self._client.base_url), "v1", "/agents/computeid/admit")
+        body = _computeid_admission_body(passport_id=passport_id, verification_receipt=verification_receipt,
+            name=name, description=description, allowed_scopes=allowed_scopes)
+        return _parse_json(await self._request("POST", path, json=body, retryable=False), ComputeIdAdmissionResult)
 
     async def _request(
         self,

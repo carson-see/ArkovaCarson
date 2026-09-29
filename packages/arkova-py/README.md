@@ -5,7 +5,7 @@ Typed Python client for the Arkova Verification APIs.
 ## Install
 
 ```bash
-pip install 'arkova>=2.3.0'
+pip install 'arkova>=2.6.0'
 ```
 
 Python 3.10 or newer is supported.
@@ -223,3 +223,7 @@ Every NOT-VERIFIED outcome carries one frozen machine reason code
 verifier via a cross-runtime parity gate in the Arkova repo. A passing
 signature never substitutes for the cryptographic recompute; a failing
 explicitly-requested signature check fails the verdict closed.
+
+## Agent lifecycle
+
+`Arkova` and `AsyncArkova` expose matching `register_agent`, `list_agents`, `get_agent`, `update_agent`, `revoke_agent`, `create_agent_key`, and `admit_computeid_agent` methods. Configure an organization API key with `agents:manage`; ComputeID admission accepts API-key authentication only and never widens scopes. Save keys returned by key creation and admission immediately; lifecycle writes are never automatically retried. The restricted key returned by admission is not automatically an agent-management key.

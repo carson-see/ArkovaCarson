@@ -78,6 +78,94 @@ class FolderEnvelope(ArkovaModel):
     folder: Folder
 
 
+class AgentKeySummary(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str
+    name: str
+    key_prefix: str
+    scopes: list[str]
+    is_active: bool
+    last_used_at: str | None = None
+    created_at: str
+    expires_at: str | None = None
+
+
+class Agent(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str
+    name: str
+    description: str | None = None
+    agent_type: str
+    status: str
+    allowed_scopes: list[str]
+    framework: str | None = None
+    version: str | None = None
+    callback_url: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    api_keys: list[AgentKeySummary] | None = None
+
+
+class AgentList(ArkovaModel):
+    agents: list[Agent]
+
+
+class AgentRevocation(ArkovaModel):
+    status: Literal["revoked"]
+    agent_id: str
+
+
+class AgentKeyCreated(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    key: str = Field(min_length=1)
+    key_id: str = Field(min_length=1)
+    key_prefix: str = Field(min_length=1)
+    agent_id: str
+    agent_name: str
+    scopes: list[str]
+    created_at: str
+    warning: str
+
+
+class ComputeIdBinding(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    issuer: Literal["computeid"]
+    passport_id: str
+    bound_at: str
+    receipt_issued_at: str | None = None
+    receipt_expires_at: str
+
+
+class ComputeIdVerificationReceipt(ArkovaModel):
+    passport_id: str
+    status: str
+    signature_valid: bool | None = None
+    issued_at: str
+    expires_at: str
+    key_id: str
+    receipt_signature: str
+    receipt_algorithm: str
+    receipt_payload: str
+
+
+class ComputeIdAdmissionInput(ArkovaModel):
+    passport_id: str
+    verification_receipt: ComputeIdVerificationReceipt
+    name: str | None = None
+    description: str | None = None
+    allowed_scopes: list[str] | None = None
+
+
+class ComputeIdAdmissionResult(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    agent: Agent
+    binding: ComputeIdBinding
+    key: str = Field(min_length=1)
+    key_id: str = Field(min_length=1)
+    key_prefix: str = Field(min_length=1)
+    scopes: list[str]
+    warning: str
+
+
 class FolderMoveFailure(ArkovaModel):
     anchor_id: str
     code: str

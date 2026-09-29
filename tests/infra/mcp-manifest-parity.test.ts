@@ -61,11 +61,11 @@ const SERVER_TOOL_NAMES = TOOL_DEFINITIONS.map((t) => t.name);
 describe('MCP discovery manifest parity (L2-A6)', () => {
   const manifest = loadManifest();
 
-  it('server declares 16 default plus 3 conditional tools', () => {
+  it('server declares 22 default plus 3 conditional tools', () => {
     // Not a manifest assertion — a tripwire so this test file itself gets
     // revisited if TOOL_DEFINITIONS grows/shrinks materially, since the
-    // PR body and description text below reference "19" explicitly.
-    expect(SERVER_TOOL_NAMES.length).toBe(19);
+    // PR body and description text below reference "25" explicitly.
+    expect(SERVER_TOOL_NAMES.length).toBe(25);
   });
 
   it('has a non-empty tools array', () => {

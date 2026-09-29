@@ -3,6 +3,12 @@
 All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
 anything earlier, see `git log -- packages/arkova-py/`.
 
+## 2.6.0
+
+- Add matching synchronous and asynchronous generic agent lifecycle methods and ComputeID passport admission.
+- Add typed request/result models, local input validation, safe nested API errors and strict one-time-key response parsing. Lifecycle mutations are attempted once.
+- Release gate: merge and requalify the separate singleton proof repair from #3104 before publishing a combined SDK release.
+
 ## 2.5.0
 
 - Add synchronous and asynchronous `anchor_import()` for canonical 1–100 row spreadsheet imports. Inputs contain fingerprints and metadata only; write requests are never automatically retried.
