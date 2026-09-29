@@ -229,6 +229,14 @@ export function makeDriveFileChangedJobDeps(
           mime_type: input.mimeType,
           export_mime_type: input.exportMimeType,
           content_type: input.contentType,
+          // BUG-2026-09-29: the Drive file's human name. Deliberately NOT
+          // underscore-prefixed (unlike the four _drive_* fields below) —
+          // connector-artifact-drain.ts's defaultMaterializeAnchor reads a
+          // plain top-level `filename` key to name the anchor, the same
+          // convention DocuSign's `filename`/`external_filename` already
+          // use. Without this the anchor's display name fell back to the
+          // synthetic `google_drive:<fileId>` label.
+          filename: input.filename,
           // ── SCRUM-4507 source link-back ────────────────────────────────
           // Underscore-prefixed on purpose. `connector-artifact-drain.ts`
           // spreads this whole blob onto `anchors.metadata`, and the record

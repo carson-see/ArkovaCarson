@@ -807,6 +807,11 @@ ENABLE_VEREMARK_WEBHOOK=false       # default off; flip per-customer when wired
 ENABLE_DRIVE_OAUTH=false            # Drive OAuth flow exposed on /api/v1/integrations/google_drive; default off until Drive launch
 ENABLE_DRIVE_WEBHOOK=false          # Google Drive push notification intake; default off until changes.list/folder matching is validated
 ENABLE_WORKSPACE_RENEWAL=false      # 6-hourly Drive watch-channel renewal cron; set true with Drive launch
+ENABLE_DRIVE_INITIAL_SYNC=true      # DRIVE-BACKFILL (founder directive 2026-09-29): backfill pre-existing files in a
+                                    # newly connected/watched Drive folder through the existing file-changed ->
+                                    # connector_artifact -> anchor pipeline. Default true (founder-mandated default-on
+                                    # behavior, not a beta opt-in) — the kill switch is for operational rollback.
+                                    # See integrations/connectors/drive-initial-sync.ts + drive-initial-sync-trigger.ts.
 
 # GRC connectors (Drata / Vanta / Anecdotes — SCRUM-1144..1148)
 DRATA_CLIENT_ID=                    # Drata OAuth client id

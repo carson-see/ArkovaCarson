@@ -161,6 +161,9 @@ describe('processDriveFileChangedJob', () => {
         'file_id', 'integration_id', 'mime_type', 'modified_time', 'org_id',
         'revision_id', 'rule_event_id',
         'shared_drive_id', 'folder_id', 'folder_path', 'revision_kind',
+        // BUG-2026-09-29: the file's human NAME — an opaque display label,
+        // not PII (it is not an email/account identifier).
+        'filename',
       ].sort(),
     );
   });
@@ -197,6 +200,7 @@ describe('SCRUM-4507 Drive source link-back payload fields', () => {
     expect(parsed.folder_id).toBeUndefined();
     expect(parsed.folder_path).toBeUndefined();
     expect(parsed.revision_kind).toBeUndefined();
+    expect(parsed.filename).toBeUndefined();
   });
 
   it('accepts every member of the shared revision-kind vocabulary and rejects anything else', () => {
@@ -263,6 +267,39 @@ describe('SCRUM-4507 Drive source link-back payload fields', () => {
         folderPath: null,
         revisionKind: null,
       }),
+    );
+  });
+
+  it('BUG-2026-09-29: forwards the Drive file name to the artifact sink', async () => {
+    const { deps, enqueueArtifact } = makeDeps();
+
+    await processDriveFileChangedJob(
+      {
+        org_id: ORG,
+        integration_id: INT,
+        file_id: 'file-named',
+        filename: '05 Financial Model, 24 Month Projection (draft assumptions)',
+      },
+      deps,
+    );
+
+    expect(enqueueArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filename: '05 Financial Model, 24 Month Projection (draft assumptions)',
+      }),
+    );
+  });
+
+  it('BUG-2026-09-29: converts an absent filename to null (never undefined) at the sink boundary', async () => {
+    const { deps, enqueueArtifact } = makeDeps();
+
+    await processDriveFileChangedJob(
+      { org_id: ORG, integration_id: INT, file_id: 'file-legacy' },
+      deps,
+    );
+
+    expect(enqueueArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({ filename: null }),
     );
   });
 

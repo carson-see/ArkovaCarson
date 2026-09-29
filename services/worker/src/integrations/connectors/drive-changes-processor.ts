@@ -153,6 +153,15 @@ export interface DriveProcessorDb {
     folder_id: string | null;
     folder_path: string | null;
     revision_kind: DriveRevisionKind;
+    /**
+     * BUG-2026-09-29: the Drive file's human name (`changes.list` `file.name`,
+     * already captured on the ChangeDescriptor and forwarded to
+     * `enqueueRuleEvent` above) — previously dropped here, so it never
+     * reached `connector_artifact.metadata` and the eventual anchor fell
+     * back to the synthetic `google_drive:<fileId>` display name. `null`
+     * when Drive gave us no name for this change.
+     */
+    filename: string | null;
   }): Promise<string | null>;
   /**
    * Gap-visibility record for a 410/404-style cursor re-bootstrap (orchestrator
@@ -367,6 +376,28 @@ function parentMatches(parents: string[], watched: string[]): boolean {
   return false;
 }
 
+/**
+ * BUG-2026-09-29: which parent folder should be recorded as `folder_id`.
+ *
+ * A file can carry multiple parents; `parentMatches` already treats the
+ * whole array as a set. `folder_id` used to be hardcoded to `parents[0]`
+ * regardless of which parent actually matched a watched folder — so a
+ * multi-parent file whose UNWATCHED parent happened to sort first was filed
+ * (and its record page linked back) under a folder nobody configured a rule
+ * for, even though one of its OTHER parents was the exact one that made the
+ * change match in the first place. Returns the first parent that is in
+ * `watched`, or `null` when none is (the caller falls back to `parents[0]`
+ * for display on a non-matching change, where the choice is cosmetic only).
+ */
+function firstWatchedParent(parents: string[], watched: string[]): string | null {
+  if (watched.length === 0 || parents.length === 0) return null;
+  const watchedSet = new Set(watched);
+  for (const p of parents) {
+    if (watchedSet.has(p)) return p;
+  }
+  return null;
+}
+
 type LedgerOutcome = 'queued' | 'parent_mismatch' | 'unrelated_change';
 
 function classifyLedgerOutcome(matches: boolean, parentCount: number): LedgerOutcome {
@@ -426,17 +457,19 @@ function classifyPage(
     }
 
     const parents = change.file?.parents ?? [];
+    // BUG-2026-09-29: when the change matches a watched folder, folder_id
+    // MUST be that watched parent — not just parents[0] — or a multi-parent
+    // file can be filed under an unrelated folder nobody configured a rule
+    // for. `parents[0]` remains the fallback for a non-matching change
+    // (`unrelated_change`/`parent_mismatch` never reach the enqueue, so this
+    // is a display choice only there, made the same way as before).
+    const watchedParent = firstWatchedParent(parents, watchedFolderIds);
     descriptors.push({
       fileId,
       revisionId: revision.revisionId,
       revisionKind: revision.kind,
       sharedDriveId: change.file?.driveId ?? null,
-      // The FIRST parent, deliberately: Drive allows multiple parents, and the
-      // watched-folder match already treats the array as a set. Picking one is
-      // a display choice, so it picks the same element a reader sees first
-      // rather than searching for the watched one — which would make the link
-      // depend on the org's rule configuration rather than on the file.
-      folderId: parents[0] ?? null,
+      folderId: watchedParent ?? parents[0] ?? null,
       parents,
       matches: parentMatches(parents, watchedFolderIds),
       actorEmail: change.file?.lastModifyingUser?.emailAddress ?? null,
@@ -813,6 +846,10 @@ export async function processDriveChanges(args: {
             folder_id: d.folderId,
             folder_path: folderPath,
             revision_kind: d.revisionKind,
+            // BUG-2026-09-29: carry the real Drive file name through so the
+            // anchor's display name is not the synthetic `google_drive:<id>`
+            // fallback (see drive-artifact-producer.ts and drive-file-changed.ts).
+            filename: d.filename,
           });
       } catch (err) {
         // Compensate: roll back the ledger reservation so retry isn't blocked.

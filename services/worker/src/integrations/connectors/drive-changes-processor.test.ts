@@ -1226,10 +1226,79 @@ describe('SCRUM-4507 Drive source link-back producer fields', () => {
     expect(db.fileChangedJobPayloads).toHaveLength(1);
     expect(db.fileChangedJobPayloads[0]).toMatchObject({
       shared_drive_id: 'shared-drive-legal',
-      // The FIRST parent — the same array the watched-folder match ran over.
+      // The MATCHED watched parent (here also parents[0], so this case alone
+      // does not distinguish the two) — see the BUG-2026-09-29 test below for
+      // the case where the watched parent is NOT parents[0].
       folder_id: WATCHED_FOLDER_A,
       folder_path: '/Legal/Contracts',
       revision_kind: 'head_revision',
+    });
+  });
+
+  it('BUG-2026-09-29: uses the WATCHED parent for folder_id, not parents[0], when they differ', async () => {
+    // A file can have multiple parents. The watched-folder match already
+    // treats `parents` as a set (parentMatches), but folder_id used to be
+    // hardcoded to parents[0] regardless of which parent actually matched —
+    // so a change whose unwatched parent happened to sort first was filed
+    // under (and its record page linked to) a folder nobody configured a
+    // rule for. Deliberately puts the UNWATCHED folder first.
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        {
+          file: {
+            id: 'file-multi-parent',
+            name: 'model.xlsx',
+            parents: [UNWATCHED_FOLDER, WATCHED_FOLDER_A],
+            headRevisionId: 'rev-multi',
+          },
+        },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(db.fileChangedJobPayloads).toHaveLength(1);
+    expect(db.fileChangedJobPayloads[0]).toMatchObject({
+      folder_id: WATCHED_FOLDER_A,
+    });
+  });
+
+  it('BUG-2026-09-29: carries the real Drive file name through to the file-changed job', async () => {
+    // The file's human name (changes.list `file.name`) was already captured
+    // on the ChangeDescriptor for the rule-event path (`enqueueRuleEvent`'s
+    // `filename`), but silently dropped before `enqueueFileChangedJob` — so
+    // it never reached connector_artifact.metadata, and the eventual anchor
+    // fell back to the synthetic `google_drive:<fileId>` display name.
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf([
+        {
+          file: {
+            id: 'file-named',
+            name: '05 Financial Model, 24 Month Projection (draft assumptions)',
+            parents: [WATCHED_FOLDER_A],
+            headRevisionId: 'rev-named',
+          },
+        },
+      ], { newStartPageToken: 'token-2' }),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'access-token',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(db.fileChangedJobPayloads).toHaveLength(1);
+    expect(db.fileChangedJobPayloads[0]).toMatchObject({
+      filename: '05 Financial Model, 24 Month Projection (draft assumptions)',
     });
   });
 
