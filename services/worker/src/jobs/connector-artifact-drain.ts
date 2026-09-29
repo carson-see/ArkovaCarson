@@ -250,6 +250,14 @@ export interface ConnectorArtifactDrainDeps {
   listMaterializedArtifacts: (args: { orgId: string; limit: number }) => Promise<MaterializedArtifactRef[]>;
   /** Emit a bounded, PII-scrubbed alert. Never throws into the drain loop. */
   emitAlert: (alert: ConnectorArtifactAlert) => void;
+  /**
+   * BUG-2026-09-29 item D: retry `resolve_connector_destination_folder`
+   * (0462) for this org's still-unfiled connector anchors, every pass —
+   * closes the gap where an anchor inserted while its connector connection
+   * was momentarily revoked never gets re-routed. See
+   * `defaultRetryUnfiledConnectorFolderRouting`'s doc comment.
+   */
+  retryUnfiledConnectorFolderRouting: (args: { orgId: string }) => Promise<{ attempted: number; filed: number }>;
   /** Page size per pass. */
   limit?: number;
 }
@@ -324,6 +332,13 @@ export interface ConnectorArtifactDrainResult {
   reconfirmRequeued: number;
   /** Legacy response field retained as zero: rejected snapshots are not requeued by this caller. */
   supersededRequeued: number;
+  /**
+   * BUG-2026-09-29 item D: anchors filed this pass by the retry-routing
+   * sweep (a connector anchor that was unfiled because its connection was
+   * momentarily revoked at INSERT time). Zero on every pass with nothing to
+   * retry — this is the common case, not a failure signal.
+   */
+  refiled: number;
 }
 
 /**
@@ -875,6 +890,106 @@ async function defaultListMaterializedArtifacts(
     .map((r) => ({ id: r.id, anchor_id: r.anchor_id ?? null }));
 }
 
+/** Connector sources `resolve_connector_destination_folder` (0462) knows how to route. */
+const FOLDER_ROUTABLE_CONNECTOR_SOURCES: ReadonlySet<string> = new Set(['google_drive', 'docusign']);
+/** Bounded so one org's unfiled backlog never dominates a drain pass. */
+const RETRY_UNFILED_FOLDER_ROUTING_LIMIT = 25;
+
+/**
+ * BUG-2026-09-29 item D — routing is INSERT/UPDATE-time-only in SQL (0462's
+ * `trg_00_route_connector_anchor_to_folder` / `trg_route_materialized_
+ * connector_anchor_to_folder`), so an anchor inserted while its connector
+ * connection is MOMENTARILY revoked (a disconnect-then-reconnect race) never
+ * gets a second chance unless some UNRELATED later artifact update happens to
+ * touch the same anchor and fire the AFTER UPDATE trigger. Confirmed against
+ * prod (read-only, 2026-09-29T21:50Z): anchor ARK-DOC-7RFUVV was inserted at
+ * 20:55:00Z with `folder_id` NULL because `org_integrations` row `2b47529f`
+ * was `revoked_at` 20:51:19Z (reconnected 20:55:56Z), so
+ * `resolve_connector_destination_folder`'s `v_connection_ok` check failed at
+ * INSERT time — it was only filed later, at 21:20:02Z, when a DIFFERENT
+ * artifact update for the same anchor incidentally fired the AFTER UPDATE
+ * trigger. Without that incidental later write, the anchor stays unfiled
+ * forever.
+ *
+ * Smallest safe fix: every drain pass for an org ALSO retries routing for
+ * that org's still-unfiled connector anchors, reusing the EXISTING,
+ * already-deployed, service-role-only `resolve_connector_destination_folder`
+ * RPC (0462) — no new SQL, no migration. Worker-only.
+ *
+ * Bounded (`RETRY_UNFILED_FOLDER_ROUTING_LIMIT`), best-effort (never throws —
+ * a failure here must never fail the artifact drain it rides along with),
+ * and idempotent (`.is('folder_id', null)` on both the read and the write, so
+ * a race with the SQL trigger filing the same anchor first is a harmless
+ * no-op here).
+ */
+export async function defaultRetryUnfiledConnectorFolderRouting(
+  args: { orgId: string },
+  deps: Pick<ConnectorArtifactDrainDeps, 'db' | 'logger'>,
+): Promise<{ attempted: number; filed: number }> {
+  const result = { attempted: 0, filed: 0 };
+  let candidates: Array<{ id: string; user_id: string; org_id: string; metadata: Record<string, unknown> | null }>;
+  try {
+    const { data, error } = await deps.db
+      .from('anchors')
+      .select('id, user_id, org_id, metadata')
+      .eq('org_id', args.orgId)
+      .is('folder_id', null)
+      .limit(RETRY_UNFILED_FOLDER_ROUTING_LIMIT);
+    if (error) {
+      deps.logger.warn({ error, orgId: args.orgId }, 'retry unfiled connector folder routing: candidate select failed');
+      return result;
+    }
+    candidates = (data ?? []) as typeof candidates;
+  } catch (err) {
+    deps.logger.warn({ err, orgId: args.orgId }, 'retry unfiled connector folder routing: candidate select threw');
+    return result;
+  }
+
+  for (const anchor of candidates) {
+    const metadata = anchor.metadata ?? {};
+    const source = typeof metadata.connector_source === 'string' ? metadata.connector_source : null;
+    const artifactId = typeof metadata.connector_artifact_id === 'string' ? metadata.connector_artifact_id : null;
+    // Not a connector-routable anchor at all (manual/batch upload, or a
+    // connector this RPC does not route) — nothing to retry.
+    if (!source || !FOLDER_ROUTABLE_CONNECTOR_SOURCES.has(source) || !artifactId) continue;
+    result.attempted += 1;
+    try {
+      const { data: folderId, error: rpcError } = await callRpc<string>(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        deps.db as any,
+        'resolve_connector_destination_folder',
+        {
+          p_artifact_id: artifactId,
+          p_anchor_user_id: anchor.user_id,
+          p_anchor_org_id: anchor.org_id,
+        },
+      );
+      // NULL is a legitimate "still not routable" answer (connection still
+      // revoked, no mirrored folder yet, etc.) — not a failure, nothing to log.
+      if (rpcError || !folderId) continue;
+      const { error: updateError } = await deps.db
+        .from('anchors')
+        .update({ folder_id: folderId })
+        .eq('id', anchor.id)
+        .is('folder_id', null);
+      if (updateError) {
+        deps.logger.warn(
+          { error: updateError, orgId: args.orgId, anchorId: anchor.id },
+          'retry unfiled connector folder routing: folder_id update failed',
+        );
+        continue;
+      }
+      result.filed += 1;
+    } catch (err) {
+      deps.logger.warn(
+        { err, orgId: args.orgId, anchorId: anchor.id },
+        'retry unfiled connector folder routing: per-anchor attempt failed',
+      );
+    }
+  }
+  return result;
+}
+
 function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifactDrainDeps {
   const db = injected.db ?? (defaultDb as unknown as DrainDb);
   return {
@@ -889,6 +1004,9 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
     listMaterializedArtifacts:
       injected.listMaterializedArtifacts ?? ((args) => defaultListMaterializedArtifacts(args, { db })),
     emitAlert: wrapEmitAlert(injected.emitAlert ?? defaultEmitAlert),
+    retryUnfiledConnectorFolderRouting:
+      injected.retryUnfiledConnectorFolderRouting ??
+      ((args) => defaultRetryUnfiledConnectorFolderRouting(args, { db, logger: injected.logger ?? (defaultLogger as unknown as DrainLogger) })),
     limit: injected.limit,
   };
 }
@@ -1054,6 +1172,7 @@ export async function drainConnectorArtifactsForOrg(
     confirmed: 0,
     reconfirmRequeued: 0,
     supersededRequeued: 0,
+    refiled: 0,
   };
 
   // CONFIRMATION PRE-STEP: promote/reconcile prior-pass `materialized` rows
@@ -1062,6 +1181,20 @@ export async function drainConnectorArtifactsForOrg(
   // SECURED — a CONFIRMATION re-read, never a re-debit (the debit RPC expects
   // PENDING and would reject a BROADCASTING anchor).
   await confirmMaterializedArtifacts(deps, orgId, limit, result);
+
+  // BUG-2026-09-29 item D: retry folder routing for this org's still-unfiled
+  // connector anchors on EVERY pass, deliberately BEFORE the
+  // candidateIds.length===0 early return below — an org can go passes at a
+  // time with nothing new to claim while still carrying an anchor left
+  // unfiled by a momentary connection-revoked race at INSERT time (see
+  // `defaultRetryUnfiledConnectorFolderRouting`'s doc comment). Best-effort:
+  // a failure here is logged by the dep itself and never blocks the drain.
+  try {
+    const retry = await deps.retryUnfiledConnectorFolderRouting({ orgId });
+    result.refiled = retry.filed;
+  } catch (err) {
+    deps.logger.warn({ err, orgId }, 'connector-artifact drain: retry unfiled folder routing threw (best-effort, drain continues)');
+  }
 
   // Candidate rows for THIS org only. DELIBERATELY id-only: this SELECT feeds
   // ONLY the claim loop below with WHICH rows to attempt, never their content.
@@ -1616,6 +1749,8 @@ export interface ConnectorArtifactDrainCronResult {
   reconfirmRequeued: number;
   /** Legacy field retained as zero; rejected snapshots are left for existing recovery. */
   supersededRequeued: number;
+  /** BUG-2026-09-29 item D: anchors filed this cycle by the retry-routing sweep, summed across orgs. */
+  refiled: number;
 }
 
 export interface ConnectorArtifactDrainCronDeps {
@@ -1754,6 +1889,7 @@ export async function runConnectorArtifactDrain(
     confirmed: 0,
     reconfirmRequeued: 0,
     supersededRequeued: 0,
+    refiled: 0,
   };
 
   if (!enabled) {
@@ -1782,6 +1918,7 @@ export async function runConnectorArtifactDrain(
       base.confirmed += r.confirmed;
       base.reconfirmRequeued += r.reconfirmRequeued;
       base.supersededRequeued += r.supersededRequeued;
+      base.refiled += r.refiled;
     } catch (err) {
       // Per-org isolation: surface as a cycle alert, keep draining other orgs.
       base.orgsFailed += 1;

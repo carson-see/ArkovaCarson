@@ -1233,6 +1233,8 @@ describe('createProcessorDbAdapter', () => {
         folder_id: 'folder-legal',
         folder_path: '/Legal/Contracts',
         revision_kind: 'head_revision',
+        // BUG-2026-09-29.
+        filename: 'msa.pdf',
       });
 
       expect(jobId).toBe('job-1');
@@ -1252,6 +1254,7 @@ describe('createProcessorDbAdapter', () => {
           folder_id: 'folder-legal',
           folder_path: '/Legal/Contracts',
           revision_kind: 'head_revision',
+          filename: 'msa.pdf',
         },
       });
     });
@@ -1273,6 +1276,7 @@ describe('createProcessorDbAdapter', () => {
         folder_id: null,
         folder_path: null,
         revision_kind: 'modified_time',
+        filename: null,
       });
 
       expect(jobId).toBe('job-2');
@@ -1288,6 +1292,8 @@ describe('createProcessorDbAdapter', () => {
       expect(submittedPayload.folder_id).toBeUndefined();
       expect(submittedPayload.folder_path).toBeUndefined();
       expect(submittedPayload.revision_kind).toBe('modified_time');
+      // BUG-2026-09-29: same conversion for filename.
+      expect(submittedPayload.filename).toBeUndefined();
     });
 
     it('returns null (does not submit) on Zod failure — e.g. non-UUID org_id', async () => {
@@ -1307,6 +1313,7 @@ describe('createProcessorDbAdapter', () => {
         folder_id: null,
         folder_path: null,
         revision_kind: 'head_revision',
+        filename: null,
       });
 
       expect(jobId).toBeNull();
@@ -1332,6 +1339,7 @@ describe('createProcessorDbAdapter', () => {
         folder_id: null,
         folder_path: null,
         revision_kind: 'head_revision',
+        filename: null,
       });
 
       expect(jobId).toBeNull();

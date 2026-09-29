@@ -1,5 +1,52 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+## 2026-09-29 — BUG-2026-09-29: multi-parent folder_id + dropped Drive file name (worker-only, no migration; see `jobs/agents.md` for the filing root cause, the momentary-revocation retry fix, and the category/size migration)
+
+Two independent bugs in `drive-changes-processor.ts`'s `classifyPage`, both
+in the same function that already existed to build each change's
+`ChangeDescriptor`:
+
+1. **`folder_id` was hardcoded to `parents[0]`, not the WATCHED parent.**
+   `parentMatches` already treats `parents` as a set — a file with multiple
+   parents matches if ANY of them is watched. But the descriptor's `folder_id`
+   (which flows through `enqueueFileChangedJob` → `connector_artifact.metadata.
+   _drive_folder_id` → `resolve_connector_destination_folder`, migration 0462)
+   was always `parents[0]`, regardless of which parent actually caused the
+   match. A change whose UNWATCHED parent happened to sort first was filed
+   under (and its record page linked back to) a folder nobody configured a
+   rule for — silently wrong, not a failure anything logs. Fixed with a new
+   `firstWatchedParent(parents, watched)` helper (mirrors `parentMatches`'
+   shape) called before building the descriptor: `folderId: watchedParent ??
+   parents[0] ?? null`. The `parents[0]` fallback is kept for a
+   NON-matching change, where the choice is cosmetic only (an
+   `unrelated_change`/`parent_mismatch` descriptor never reaches the enqueue).
+2. **The Drive file's human name (`change.file.name`) was captured on the
+   descriptor and forwarded to `enqueueRuleEvent`'s `filename` (the rules-engine
+   record event), but silently dropped before `enqueueFileChangedJob`.** It
+   therefore never reached `connector_artifact.metadata` and the eventual
+   anchor's display name fell back to the synthetic `google_drive:<fileId>`
+   label (`jobs/connector-artifact-drain.ts`'s `defaultMaterializeAnchor`).
+   Fixed by adding `filename: d.filename` to the `enqueueFileChangedJob` call
+   and threading it through the whole chain: `DriveProcessorDb.
+   enqueueFileChangedJob`'s payload type (this file) → the real adapter in
+   `drive-changes-runner.ts` (`filename: payload.filename ?? undefined`,
+   same null↔undefined convention as the existing SCRUM-4507 link-back
+   fields) → `DriveFileChangedJobPayload` (`drive-artifact-producer.ts`,
+   `.optional()` for the same backward-compat reason as those fields — jobs
+   already in `job_queue` have no `filename` key) → `DriveArtifactProducerDeps
+   .enqueueArtifact`'s input (required `| null`, `processDriveFileChangedJob`
+   always supplies it) → `jobs/drive-file-changed.ts`'s `p_metadata.filename`
+   (see that file's own agents.md entry for why this one key is deliberately
+   NOT underscore-prefixed, unlike the four `_drive_*` SCRUM-4507 fields).
+
+Regression tests: `drive-changes-processor.test.ts` (`parents:
+[UNWATCHED_FOLDER, WATCHED_FOLDER_A]` → `folder_id` is the watched one, not
+`parents[0]`; a named file's name reaches `fileChangedJobPayloads[0].filename`),
+`drive-artifact-producer.test.ts` (filename forwarded / null-safe / in the
+payload-shape ratchet), `drive-changes-runner.test.ts` (adapter passes
+`filename` through to `submitJob`) — all confirmed failing against the
+pre-fix code before the fix landed.
+
 _Last updated: 2026-09-26 (`drive-folder-mirror.ts` — `loadActiveDriveConnection` distinguishes a retryable DB error from a legitimate "no connection"; the caller (`rules-crud.ts`) awaits the mirror instead of firing it after the response — review P2 follow-up on PR #3086)._
 _Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
 

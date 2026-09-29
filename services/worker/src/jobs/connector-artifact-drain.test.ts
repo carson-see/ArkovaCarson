@@ -32,6 +32,7 @@ const {
   defaultListDrainableOrgIds,
   scrubReason,
   defaultMaterializeAnchor,
+  defaultRetryUnfiledConnectorFolderRouting,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -99,6 +100,7 @@ interface Harness {
   listMaterializedArtifacts: ReturnType<typeof vi.fn>;
   alert: ReturnType<typeof vi.fn>;
   claimAttempts: Array<{ id: string }>;
+  retryUnfiledConnectorFolderRouting: ReturnType<typeof vi.fn>;
 }
 
 function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps> = {}): Harness {
@@ -203,6 +205,14 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
   const resetUnclaimedConnectorBroadcasts =
     (overrides.resetUnclaimedConnectorBroadcasts as ReturnType<typeof vi.fn>) ?? vi.fn(async () => 0);
 
+  // BUG-2026-09-29 item D: default is a no-op (nothing to retry) so every
+  // EXISTING test in this file — none of which model an `anchors` table on
+  // the `connector_artifact`-only fake `from()` above — is unaffected.
+  // Dedicated tests for the retry-routing sweep itself inject their own.
+  const retryUnfiledConnectorFolderRouting =
+    (overrides.retryUnfiledConnectorFolderRouting as ReturnType<typeof vi.fn>) ??
+    vi.fn(async () => ({ attempted: 0, filed: 0 }));
+
   const deps = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     db: { from } as any,
@@ -214,10 +224,14 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
     readAnchorStatus,
     listMaterializedArtifacts,
     emitAlert: alert,
+    retryUnfiledConnectorFolderRouting,
     ...overrides,
   } as unknown as ConnectorArtifactDrainDeps;
 
-  return { rows, deps, materialize, debit, resetUnclaimedConnectorBroadcasts, batchAnchor, readAnchorStatus, listMaterializedArtifacts, alert, claimAttempts };
+  return {
+    rows, deps, materialize, debit, resetUnclaimedConnectorBroadcasts, batchAnchor, readAnchorStatus,
+    listMaterializedArtifacts, alert, claimAttempts, retryUnfiledConnectorFolderRouting,
+  };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -911,9 +925,242 @@ describe('drainConnectorArtifactsForOrg', () => {
 });
 
 // Build a full ConnectorArtifactDrainResult (defaults the confirmation fields).
-function drainResult(over: Partial<{ claimed: number; anchored: number; failed: number; confirmed: number; reconfirmRequeued: number; supersededRequeued: number }>) {
-  return { claimed: 0, anchored: 0, failed: 0, confirmed: 0, reconfirmRequeued: 0, supersededRequeued: 0, ...over };
+function drainResult(over: Partial<{ claimed: number; anchored: number; failed: number; confirmed: number; reconfirmRequeued: number; supersededRequeued: number; refiled: number }>) {
+  return { claimed: 0, anchored: 0, failed: 0, confirmed: 0, reconfirmRequeued: 0, supersededRequeued: 0, refiled: 0, ...over };
 }
+
+/**
+ * BUG-2026-09-29 item D — minimal in-memory `anchors` table backing a
+ * supabase-js-shaped query builder, for `defaultRetryUnfiledConnectorFolderRouting`
+ * unit tests. Deliberately separate from `makeHarness`'s `connector_artifact`
+ * fake (which throws on any other table) — these tests exercise the routing
+ * retry in isolation.
+ */
+interface AnchorFixture {
+  id: string;
+  user_id: string;
+  org_id: string;
+  folder_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+function makeAnchorsDb(anchors: AnchorFixture[]) {
+  const updateCalls: Array<{ id: string; folder_id: unknown }> = [];
+  const limitCalls: number[] = [];
+
+  function from(table: string) {
+    if (table !== 'anchors') throw new Error(`unexpected table ${table}`);
+    const state: {
+      op: 'select' | 'update';
+      patch?: Record<string, unknown>;
+      filters: Array<(r: AnchorFixture) => boolean>;
+    } = { op: 'select', filters: [] };
+
+    const builder: Record<string, unknown> = {
+      select() { return builder; },
+      update(patch: Record<string, unknown>) { state.op = 'update'; state.patch = patch; return builder; },
+      eq(col: string, val: unknown) {
+        state.filters.push((r) => (r as unknown as Record<string, unknown>)[col] === val);
+        return builder;
+      },
+      is(col: string, val: null) {
+        state.filters.push((r) => (r as unknown as Record<string, unknown>)[col] == val);
+        return builder;
+      },
+      limit(n: number) {
+        limitCalls.push(n);
+        const matched = anchors.filter((r) => state.filters.every((f) => f(r))).slice(0, n);
+        return Promise.resolve({ data: matched.map((r) => ({ ...r })), error: null });
+      },
+      then(onFulfilled: (v: { data: unknown; error: unknown }) => unknown, onRejected?: (e: unknown) => unknown) {
+        // Terminal for a bare `await update().eq().is()` (no `.select()`).
+        const matched = anchors.filter((r) => state.filters.every((f) => f(r)));
+        for (const r of matched) {
+          if (state.op === 'update' && state.patch) {
+            updateCalls.push({ id: r.id, folder_id: state.patch.folder_id });
+            Object.assign(r, state.patch);
+          }
+        }
+        const value = { data: state.op === 'update' ? null : matched, error: null };
+        return Promise.resolve(value).then(onFulfilled, onRejected);
+      },
+    };
+    return builder;
+  }
+
+  return { from, anchors, updateCalls, limitCalls };
+}
+
+describe('defaultRetryUnfiledConnectorFolderRouting (BUG-2026-09-29 item D)', () => {
+  const ORG_D = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const USER_D = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const ARTIFACT_D = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const FOLDER_D = '11111111-2222-4333-8444-555555555555';
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('files an anchor whose connector connection has since been restored', async () => {
+    const anchorsDb = makeAnchorsDb([
+      { id: 'anchor-1', user_id: USER_D, org_id: ORG_D, folder_id: null,
+        metadata: { connector_source: 'google_drive', connector_artifact_id: ARTIFACT_D } },
+    ]);
+    vi.mocked(callRpc).mockResolvedValueOnce({ data: FOLDER_D, error: null });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await defaultRetryUnfiledConnectorFolderRouting(
+      { orgId: ORG_D },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: anchorsDb as any, logger },
+    );
+
+    expect(result).toEqual({ attempted: 1, filed: 1 });
+    expect(anchorsDb.updateCalls).toEqual([{ id: 'anchor-1', folder_id: FOLDER_D }]);
+    expect(vi.mocked(callRpc)).toHaveBeenCalledWith(
+      expect.anything(),
+      'resolve_connector_destination_folder',
+      { p_artifact_id: ARTIFACT_D, p_anchor_user_id: USER_D, p_anchor_org_id: ORG_D },
+    );
+  });
+
+  it('does not update folder_id when the resolver still returns null (connection still not restored)', async () => {
+    const anchorsDb = makeAnchorsDb([
+      { id: 'anchor-2', user_id: USER_D, org_id: ORG_D, folder_id: null,
+        metadata: { connector_source: 'google_drive', connector_artifact_id: ARTIFACT_D } },
+    ]);
+    vi.mocked(callRpc).mockResolvedValueOnce({ data: null, error: null });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await defaultRetryUnfiledConnectorFolderRouting(
+      { orgId: ORG_D },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: anchorsDb as any, logger },
+    );
+
+    expect(result).toEqual({ attempted: 1, filed: 0 });
+    expect(anchorsDb.updateCalls).toEqual([]);
+  });
+
+  it('skips an anchor with no connector metadata at all (manual/batch upload)', async () => {
+    const anchorsDb = makeAnchorsDb([
+      { id: 'anchor-3', user_id: USER_D, org_id: ORG_D, folder_id: null, metadata: {} },
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await defaultRetryUnfiledConnectorFolderRouting(
+      { orgId: ORG_D },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: anchorsDb as any, logger },
+    );
+
+    expect(result).toEqual({ attempted: 0, filed: 0 });
+    expect(vi.mocked(callRpc)).not.toHaveBeenCalled();
+  });
+
+  it('skips an anchor from a connector source the resolver does not route (e.g. manual_upload)', async () => {
+    const anchorsDb = makeAnchorsDb([
+      { id: 'anchor-4', user_id: USER_D, org_id: ORG_D, folder_id: null,
+        metadata: { connector_source: 'manual_upload', connector_artifact_id: ARTIFACT_D } },
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await defaultRetryUnfiledConnectorFolderRouting(
+      { orgId: ORG_D },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: anchorsDb as any, logger },
+    );
+
+    expect(result).toEqual({ attempted: 0, filed: 0 });
+    expect(vi.mocked(callRpc)).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the candidate select fails — returns zeros and logs', async () => {
+    const db = {
+      from: (table: string) => {
+        if (table !== 'anchors') throw new Error(`unexpected table ${table}`);
+        return {
+          select() { return this; },
+          eq() { return this; },
+          is() { return this; },
+          limit: () => Promise.resolve({ data: null, error: { message: 'boom' } }),
+        };
+      },
+    };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await defaultRetryUnfiledConnectorFolderRouting({ orgId: ORG_D }, { db: db as any, logger });
+
+    expect(result).toEqual({ attempted: 0, filed: 0 });
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('isolates a per-anchor RPC throw — the rest of the batch still processes', async () => {
+    const anchorsDb = makeAnchorsDb([
+      { id: 'anchor-throws', user_id: USER_D, org_id: ORG_D, folder_id: null,
+        metadata: { connector_source: 'google_drive', connector_artifact_id: ARTIFACT_D } },
+      { id: 'anchor-ok', user_id: USER_D, org_id: ORG_D, folder_id: null,
+        metadata: { connector_source: 'google_drive', connector_artifact_id: ARTIFACT_D } },
+    ]);
+    vi.mocked(callRpc)
+      .mockRejectedValueOnce(new Error('rpc down'))
+      .mockResolvedValueOnce({ data: FOLDER_D, error: null });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await defaultRetryUnfiledConnectorFolderRouting(
+      { orgId: ORG_D },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: anchorsDb as any, logger },
+    );
+
+    expect(result).toEqual({ attempted: 2, filed: 1 });
+    expect(anchorsDb.updateCalls).toEqual([{ id: 'anchor-ok', folder_id: FOLDER_D }]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_D, anchorId: 'anchor-throws' }),
+      expect.stringContaining('per-anchor attempt failed'),
+    );
+  });
+
+  it('bounds the candidate select to a fixed page size', async () => {
+    const anchorsDb = makeAnchorsDb([]);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await defaultRetryUnfiledConnectorFolderRouting(
+      { orgId: ORG_D },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: anchorsDb as any, logger },
+    );
+
+    expect(anchorsDb.limitCalls).toEqual([25]);
+  });
+});
+
+describe('drainConnectorArtifactsForOrg — retry-routing integration (BUG-2026-09-29 item D)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('calls the retry-routing sweep and surfaces its count, even when there are zero drainable artifact rows', async () => {
+    const h = makeHarness([], { retryUnfiledConnectorFolderRouting: vi.fn(async () => ({ attempted: 2, filed: 1 })) });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(h.retryUnfiledConnectorFolderRouting).toHaveBeenCalledWith({ orgId: ORG_A });
+    expect(result.refiled).toBe(1);
+    expect(result.claimed).toBe(0);
+  });
+
+  it('is best-effort: a throwing retry-routing dep never fails the drain pass', async () => {
+    const h = makeHarness(
+      [makeRow({ id: ART_1, org_id: ORG_A, status: 'pending' })],
+      { retryUnfiledConnectorFolderRouting: vi.fn(async () => { throw new Error('retry sweep exploded'); }) },
+    );
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.refiled).toBe(0);
+    expect(result.claimed).toBe(1);
+    expect(result.anchored).toBe(1);
+    expect(h.deps.logger.warn).toHaveBeenCalled();
+  });
+});
 
 describe('runConnectorArtifactDrain (cron entrypoint)', () => {
   it('enumerates orgs with drainable rows and drains each, aggregating results', async () => {
@@ -1464,6 +1711,32 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376;
 
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.fingerprint_source).toBe('document_bytes');
+  });
+
+  // BUG-2026-09-29 defect 3: connector-artifact-drain.ts already preferred a
+  // plain `metadata.filename` key (matching DocuSign's convention) over the
+  // synthetic `${source}:${external_ref}` fallback — the Drive producer just
+  // never wrote one. This pins that the drain-side lookup itself is correct
+  // once the key is present, independent of the producer-side fix.
+  it('BUG-2026-09-29: uses metadata.filename over the synthetic source:external_ref fallback', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-named', public_id: 'ARK-NAMED' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      {
+        ...BASE_ROW,
+        source: 'google_drive',
+        external_ref: 'file-4',
+        metadata: { filename: '05 Financial Model, 24 Month Projection (draft assumptions)' },
+      },
+      { db },
+    );
+
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.filename).toBe('05 Financial Model, 24 Month Projection (draft assumptions)');
   });
 });
 

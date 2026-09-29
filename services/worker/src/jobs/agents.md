@@ -1,3 +1,155 @@
+## 2026-09-29 — BUG-2026-09-29: Drive filing root cause (revised), momentary-revocation retry fix, and category/size/filename repair
+
+**REVISION (orchestrator review, production read-only SQL, 2026-09-29T21:50Z)
+of an earlier same-day entry.** The first pass here got the filing root
+cause half right and half wrong, and over-corrected the SQL side. Corrected
+account:
+
+**Filing root cause — two things, not one.** (1) `resolve_connector_
+destination_folder` has ALWAYS read the connector connection id from
+`connector_artifact.metadata->>'integration_id'`, never from the
+`integration_id` COLUMN — the leading hypothesis that the column mattered
+was refuted by reading migration 0462 directly, and this remains correct.
+(2) The EARLIER version of this entry claimed the 13 unfiled anchors predate
+`trg_00_route_connector_anchor_to_folder` and the eager Drive folder mirror.
+Production read-only SQL refuted that too: anchor `ARK-DOC-7RFUVV` was
+inserted 2026-09-29T20:55:00Z — with both the trigger and the mirror folder
+already live — and STILL got `folder_id IS NULL` at insert. The real
+mechanism: `org_integrations` row `2b47529f` was `revoked_at` 20:51:19Z and
+reconnected 20:55:56Z, so `resolve_connector_destination_folder`'s
+`v_connection_ok` check legitimately failed at INSERT time (the connection
+really was invalid at that instant). The anchor was only filed later, at
+21:20:02Z, when a DIFFERENT artifact update for the same anchor incidentally
+fired `trg_route_materialized_connector_anchor_to_folder`. Filing already
+works correctly in prod for every anchor created today (4/4) — the gap is
+narrower than first assumed: an anchor inserted during that exact
+revoked-then-reconnected window has no OTHER mechanism to retry unless
+something unrelated happens to touch it again.
+
+**Fix for that gap (item D): `connector-artifact-drain.ts` gains a
+retry-routing sweep, worker-only, no migration.** New
+`defaultRetryUnfiledConnectorFolderRouting()` + `ConnectorArtifactDrainDeps.
+retryUnfiledConnectorFolderRouting`, called from `drainConnectorArtifactsForOrg`
+on EVERY pass for that org — deliberately placed BEFORE the
+`candidateIds.length === 0` early return, so it runs even on a pass with no
+new connector_artifact rows to claim (an org can go many passes with nothing
+new while still carrying an anchor stuck by this exact race). It re-reads
+that org's `folder_id IS NULL` anchors (bounded,
+`RETRY_UNFILED_FOLDER_ROUTING_LIMIT = 25`), filters to ones with connector
+provenance (`metadata.connector_source` in `{google_drive, docusign}` +
+`metadata.connector_artifact_id`), and calls the EXISTING, unmodified,
+service-role-only `resolve_connector_destination_folder` RPC (0462) for
+each — the same function the SQL triggers already call, just invoked
+proactively from the worker instead of waiting for an incidental later
+write. A non-null result gets written with `.eq('id',...).is('folder_id',
+null)` (idempotent — a race with the SQL trigger filing it first is a
+harmless no-op). Best-effort by design: every failure mode (select error,
+RPC throw, update error) is caught and logged, never propagates, and the
+CALLER (`drainConnectorArtifactsForOrg`) wraps the whole call in its own
+try/catch too, belt-and-suspenders. New `ConnectorArtifactDrainResult.refiled`
+/ `ConnectorArtifactDrainCronResult.refiled` fields surface the count (zero
+on a normal pass, not a failure signal). No new SQL, no migration — reuses
+0462's RPC verbatim. Chose this over "route at reconnect" (hooking the Drive
+OAuth callback) because it is robust to ANY momentary-revocation window, not
+just an explicit reconnect action, and self-heals continuously rather than
+depending on a specific code path remembering to trigger a sweep.
+
+Regression tests (`connector-artifact-drain.test.ts`): a dedicated
+`defaultRetryUnfiledConnectorFolderRouting` suite (files, skips
+non-connector/unsupported-source anchors, tolerates a null RPC result,
+never throws on a candidate-select failure or a per-anchor RPC throw,
+bounds the page size) plus two `drainConnectorArtifactsForOrg` integration
+tests (the sweep runs even with zero drainable artifact rows; a throwing
+sweep never fails the drain pass). Verified red (temporarily stubbed the
+real function to return zeros) before green (restored).
+
+**`enqueue_connector_artifact`'s `p_integration_id` — DROPPED from this
+change entirely**, per explicit instruction: populating
+`connector_artifact.integration_id` (the FK column) has no reader anywhere
+in the codebase (the resolver has always used the metadata copy) — it would
+be pure hygiene with zero behavioral effect, not worth a DROP+CREATE on a
+service-role-only RPC. `drive-file-changed.ts` no longer passes it; tracked
+as a hygiene-only follow-up, not shipped.
+
+**Defect 4 (category + size), `connector-artifact-drain.ts`'s
+`defaultMaterializeAnchor` + `AnchorInsertPayload` — DOES need a migration,
+confirmed by reading the CURRENT (live) `materialize_connector_artifact_anchor`
+body in 0462 directly, not assumed:**
+- `credential_type` is HARDCODED to the literal `'CONTRACT_POSTSIGNING'` in
+  0462's own `INSERT` (not read from the payload at all), and the validation
+  block RAISEs if `p_anchor_payload->>'credential_type' IS DISTINCT FROM
+  'CONTRACT_POSTSIGNING'` — so a worker-only change sending `'OTHER'` would
+  make EVERY Drive materialization fail closed with "connector payload does
+  not match locked source" the moment it shipped without the migration.
+  Migration required; see `supabase/migrations/agents.md`'s 0500 entry.
+  `row.source === 'google_drive' ? 'OTHER' : 'CONTRACT_POSTSIGNING'` —
+  `OTHER` is an existing `credential_type` enum value (already mapped to a
+  neutral "Other" / "General Record" label in `src/lib/copy.ts`), no new
+  enum value, no UI copy change. `AnchorInsertPayload.credential_type`
+  widened from `z.literal(...)` to `z.enum(['CONTRACT_POSTSIGNING', 'OTHER'])`.
+- `file_size` is entirely ABSENT from 0462's `INSERT` column list, and any
+  extra payload key the validation block doesn't recognize is REJECTED
+  outright — so `file_size` ALSO cannot be populated without the migration.
+  `anchors.file_size` showed "0 B" for every connector-sourced anchor even
+  though `connector_artifact.byte_length` already measures it (§1.6A). Now
+  `file_size = typeof row.byte_length === 'number' && row.byte_length > 0 ?
+  row.byte_length : null`, matching the `anchors_file_size_positive` CHECK
+  exactly. New required `AnchorInsertPayload.file_size` field.
+- `defaultMaterializeAnchor`'s existing `filename` resolution
+  (`metadata.filename ?? metadata.external_filename ?? '${source}:${
+  external_ref}'`) was ALREADY correct and untouched by this fix, and needed
+  NO migration: 0462 already reads `p_anchor_payload->>'filename'` directly
+  (not hardcoded, no locked-value check beyond length 1-255). The Drive bug
+  was entirely on the PRODUCER side never writing a `filename` metadata key
+  (see `integrations/connectors/agents.md`'s 2026-09-29 entry) — worker-only,
+  shipped separately, no migration.
+- Deliberately NOT touched: DocuSign and every other connector source keep
+  `CONTRACT_POSTSIGNING` unchanged.
+
+**Backfill scope, and what is deliberately NOT forced.** Migration 0500's
+data-only backfill now covers filename, file_size, AND credential_type for
+the 13 pre-existing Drive anchors (widened from the earlier folder_id+filename
+-only draft, per instruction). `credential_type` → `'OTHER'` is gated to
+`status = 'PENDING'` ONLY: `prevent_credential_type_change` (baseline)
+blocks a credential_type change once status leaves PENDING for a
+non-`service_role` caller, and while the migration's `set_config`
+service-role impersonation (needed for the filename/folder_id writes
+regardless) WOULD technically satisfy that trigger's own bypass on a
+SECURED row too, the migration deliberately does not lean on that to force
+a retroactive category relabel on an already-secured, chain-committed
+record. Any of the 13 that are not PENDING keep `CONTRACT_POSTSIGNING` after
+this migration runs. **Operator follow-up, read-only, to see how many (if
+any) that affects:**
+```sql
+SELECT id, public_id, status FROM public.anchors
+WHERE metadata->>'connector_source' = 'google_drive'
+  AND credential_type = 'CONTRACT_POSTSIGNING' AND status <> 'PENDING';
+```
+`file_size` and `filename` are NOT status-gated (no trigger references
+either column — checked directly, not assumed; see 0500's own header
+comment for the exact grep).
+
+**`drive-file-changed.ts`'s `p_metadata` gained one new key: `filename`
+(plain, NOT underscore-prefixed)** — unaffected by the `p_integration_id`
+removal above, this part of the original fix stands. Deliberately the
+opposite convention from the four `_drive_*` SCRUM-4507 link-back fields on
+the SAME object: those are underscore-prefixed so the record page's generic
+metadata dump (which hides `_`-prefixed keys, BUG-2026-07-17-010) doesn't
+show them raw; `filename` is read as a plain top-level key by
+`defaultMaterializeAnchor` (the same convention DocuSign's
+`filename`/`external_filename` already use) — underscoring it would hide it
+from THAT lookup, not just the dump. `input.filename` (from the producer,
+`?? null` always, never `undefined`) is the Drive file's real name, sourced
+from `changes.list`'s `file.name`.
+
+Regression tests: `drive-file-changed.test.ts` (`filename` written as a
+plain metadata key, null-safe; the strict metadata key-set ratchet
+updated — no `p_integration_id` assertion, that was removed),
+`connector-artifact-drain.test.ts` (Drive → `OTHER`, DocuSign stays
+`CONTRACT_POSTSIGNING`, `file_size` from `byte_length` with the zero/null
+guard, `filename` lookup pin, plus the item-D retry-routing suite above) —
+all confirmed failing against the pre-fix code before the fix landed.
+
 ## 2026-09-25 — Founder decision: connector document updates SUPERSEDE, never duplicate or REVOKE
 
 `connector-artifact-drain.ts` previously did a plain `INSERT INTO anchors(...)` per drained
