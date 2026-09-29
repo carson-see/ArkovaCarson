@@ -1,6 +1,23 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
+_Last updated: 2026-09-29 (`drive-oauth.ts`: OAuth callback success path now fires the DRIVE-BACKFILL initial-sync trigger — founder directive 2026-09-29; see `integrations/connectors/agents.md`)_
 _Last updated: 2026-09-21 (`drive-oauth.ts`: no logic change here, but `DRIVE_DEFAULT_SCOPES` and `driveGrantExcessScopes` it imports from `oauth/drive.ts` moved to the drive.readonly cutover — SCRUM-5287/SCRUM-2903/SCRUM-2330; see `oauth/agents.md` for the full story)_
+
+## 2026-09-29 — `drive-oauth.ts`: DRIVE-BACKFILL trigger point 2 (founder directive 2026-09-29)
+
+After the `org_integrations` upsert succeeds (new connection OR reconnect) and
+`recordIntegrationEvent` writes, a new `triggerInitialSyncForReconnectedOrg`
+call fires — fire-and-forget, before the redirect — loading every already-
+existing connector-managed Drive rule for the org
+(`loadConnectorDriveFoldersForOrg`) and triggering the initial-sync job for
+each rule's folders. A brand-new connection has no rule naming a folder yet,
+so this is a harmless no-op there; a reconnect after a revoke/disconnect may
+have one or more rules already naming folders from the PRIOR connection, and
+this is what backfills them under the FRESH connection. Self-contained
+try/catch: a callback that already wrote the connection and is about to
+redirect the user must never 500 because a best-effort backfill kickoff
+failed. See `integrations/connectors/agents.md`'s 2026-09-29 entry for the
+full feature (also covers `rules-crud.ts`'s trigger point 1).
 _Last updated: 2026-09-21 (`drive-folders.test.ts`: added a `config.js` mock — `drive-changes-runner.js` now transitively imports `jobs/run-lease.ts`)_
 _Last updated: 2026-09-13 (`drive-folders.ts` added — Connectors page folder picker, SPEC-CONNECTORS §2.2)_
 
