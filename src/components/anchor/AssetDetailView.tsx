@@ -917,6 +917,34 @@ function WhatChangedPanel({ anchor }: Readonly<{ anchor: AnchorRecord }>) {
 // the disclosure's own accessible-name/state correct without hiding the
 // content from assistive tech that reads `hidden` regions on request.
 
+/** Metadata entries that resolve to a link back to the record's source. */
+function sourceLinkEntries(
+  metadata: Record<string, unknown>,
+  provider: RecordSourceProvider,
+  docusignEnv: DocusignEnv,
+): [string, unknown][] {
+  return Object.entries(metadata).filter(
+    ([key, value]) => buildSourceMetadataHref(provider, key, value, docusignEnv) !== null,
+  );
+}
+
+function SourceLinkRows({ entries, provider, docusignEnv }: Readonly<TechnicalDetailsSectionProps>) {
+  if (entries.length === 0) return null;
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2" data-testid="source-link-rows">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+          {DRIVE_RECORD_LINKS_LABELS.SECTION_LABEL}
+        </p>
+        {entries.map(([key, value]) => (
+          <MetadataRow key={key} metaKey={key} value={value} provider={provider} docusignEnv={docusignEnv} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 interface TechnicalDetailsSectionProps {
   entries: [string, unknown][];
   provider: RecordSourceProvider;
@@ -1370,17 +1398,27 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             </>
           )}
 
-          {/* Technical details (readability pass, founder-reported 2026-09-29):
-              every raw identifier, collapsed by default, rendered exactly
-              once. DocuSign bilateral rollout (frontend-targeted T2):
-              account_id/envelope_id inside it still render as deep links —
-              see MetadataRow. */}
+          {/* Source links stay VISIBLE; raw identifiers collapse. A metadata value
+              that resolves to a link back to its source (the DocuSign account
+              and envelope) is something the record owner acts on, so it renders
+              above the fold. Everything else is an identifier and goes into the
+              collapsed Technical details, rendered exactly once. A key never
+              appears in both. e2e/record-detail.spec.ts pins the links visible. */}
           {visibleMetadata && (
-            <TechnicalDetailsSection
-              entries={Object.entries(visibleMetadata)}
-              provider={sourceProvider}
-              docusignEnv={docusignEnv}
-            />
+            <>
+              <SourceLinkRows
+                entries={sourceLinkEntries(visibleMetadata, sourceProvider, docusignEnv)}
+                provider={sourceProvider}
+                docusignEnv={docusignEnv}
+              />
+              <TechnicalDetailsSection
+                entries={Object.entries(visibleMetadata).filter(
+                  ([key, value]) => buildSourceMetadataHref(sourceProvider, key, value, docusignEnv) === null,
+                )}
+                provider={sourceProvider}
+                docusignEnv={docusignEnv}
+              />
+            </>
           )}
 
           {/* DocuSign Signers (bilateral rollout, frontend-targeted T2) — dedicated

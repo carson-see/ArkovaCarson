@@ -25,7 +25,6 @@ import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
 import { DoesNotAssertDisclaimer } from '@/components/verification/DoesNotAssertDisclaimer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
-import { usePublicAnchorParent } from '@/hooks/usePublicAnchorParent';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import {
   Card,
@@ -38,7 +37,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
-import { issuerRegistryPath, verifyPath } from '@/lib/routes';
+import { issuerRegistryPath } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import {
   hasPublicVerificationProof,
@@ -170,17 +169,6 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     undefined,
     { public: true }
   );
-
-  // PR #3190 review finding 2: get_public_anchor does not emit
-  // parent_public_id/version_number (confirmed against production).
-  // usePublicAnchorParent calls the worker's separate, genuinely public
-  // GET /api/v1/verify/:publicId endpoint for the one field this page needs
-  // (see that hook's header for the full trail — no schema/RPC change).
-  // Must be called unconditionally (hooks rule) — gated via its own
-  // `enabled` param on the narrow SUPERSEDED case, computed safely off the
-  // nullable `data` state before the loading/error early returns below.
-  const isSupersededForParentLookup = normalizePublicVerificationStatus(data?.status ?? '') === 'SUPERSEDED';
-  const { parentPublicId } = usePublicAnchorParent(data?.public_id, isSupersededForParentLookup);
 
   useEffect(() => {
     async function fetchVerification() {
@@ -449,29 +437,17 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               {ANCHORING_STATUS_LABELS.PENDING_SINCE.replace('{time}', pendingSince)}
             </p>
           )}
-          {/* Readability pass (founder-reported, 2026-09-29; corrected PR #3190
-              review finding 2): a superseded record must say plainly it
-              remains valid evidence (supersede, never revoke). `get_public_anchor`
-              (the RPC this page's primary fetch uses) does NOT return
-              parent_public_id — confirmed against production — so the link
-              below is sourced from `usePublicAnchorParent`, a SEPARATE call
-              to the worker's already-public GET /api/v1/verify/:publicId
-              endpoint (API-RICH-01), not from `data`. No schema/RPC change
-              made or requested. */}
+          {/* A superseded record says plainly that it remains valid evidence
+              (supersede, never revoke). There is deliberately NO link to the
+              other version here: `get_public_anchor` returns neither
+              parent_public_id nor version_number, and the only public source
+              that does, GET /api/v1/verify/:publicId, writes an audit row and
+              dispatches a `credential.verified` webhook to the record owner
+              on every call. A page view must not do that. The link needs the
+              field added to the public projection, as its own reviewed change. */}
           {isSuperseded && (
             <div className="mt-3 max-w-sm text-xs text-muted-foreground" data-testid="public-superseded-version-note">
               <p>{PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID}</p>
-              {parentPublicId && (
-                <p className="mt-1">
-                  <a
-                    href={verifyPath(parentPublicId)}
-                    className="text-primary hover:underline"
-                    data-testid="public-previous-version-link"
-                  >
-                    {PUBLIC_VERIFICATION_LABELS.VIEW_PREVIOUS_VERSION}
-                  </a>
-                </p>
-              )}
             </div>
           )}
         </div>

@@ -1096,11 +1096,9 @@ export const PUBLIC_VERIFICATION_LABELS = {
   REPORT_ISSUE_SUBJECT: 'Issue with record',
   // Readability pass (founder-reported, 2026-09-29): a superseded record must
   // say plainly that it remains valid evidence (supersede, never revoke — see
-  // memory/project_drive_supersede_not_revoke.md), and link back to the
-  // earlier version when the API provided one.
+  // memory/project_drive_supersede_not_revoke.md).
   SUPERSEDED_REMAINS_VALID:
     'This version remains valid evidence of the document as it existed when it was secured.',
-  VIEW_PREVIOUS_VERSION: 'View the previous version',
 } as const;
 
 // =============================================================================

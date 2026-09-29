@@ -20,47 +20,9 @@ each call site rather than blanket-prefixing `void`:
   stuck loading spinner or a false "Document Verified." Tests: 2 new cases in
   `PublicVerification.test.tsx`.
 
-## 2026-09-29 CORRECTION (PR #3190 review finding 2) — `get_public_anchor` does NOT return parent_public_id/version_number; fixed via a second endpoint
+## PR #3190 follow-up: public page has no version link (2026-09-29)
 
-The entry immediately below claimed "the verification API already returns" `version_number`/
-`parent_public_id` on `data` (the `get_public_anchor` RPC response) and typed them directly on
-`PublicAnchorData`. **Verified false against production**: `get_public_anchor` emits neither
-field. `get_anchor_lineage` does, but it is SECURITY DEFINER with EXECUTE granted to neither
-`anon` nor `authenticated` — the browser cannot call it, and the entry's own test suite had
-passed only because it fabricated the fields directly onto the mocked RPC response instead of
-exercising a real response shape.
-
-The actual, real source (no SQL/RPC/schema change): `GET /api/v1/verify/:publicId`
-(`services/worker/src/api/v1/verify.ts`) is a genuinely public, anonymous-GET-allowed endpoint
-(Constitution 1.10) that ALREADY surfaces `parent_public_id` as an additive-nullable field
-(API-RICH-01, `services/worker/src/api/v1/docs.ts` OpenAPI schema) — the same router family
-`VerifierProofDownload`'s `useProofAvailability` already calls from this exact page, for its
-sibling `/proof` sub-path. New hook `src/hooks/usePublicAnchorParent.ts` calls the BASE route
-instead, for just `parent_public_id`, gated on `enabled: status === 'SUPERSEDED'` (the only case
-that renders the link) so it does not fire on every page view. `PublicAnchorData` no longer
-declares `version_number`/`parent_public_id` — they were never populated by the RPC it types.
-
-**Known, documented side effect (not introduced by this hook, inherent to the endpoint):**
-`GET /api/v1/verify/:publicId`'s handler writes a `VERIFICATION_QUERIED` audit-log row on every
-call (IP-hash + user-agent), and — only when `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` is on — may
-dispatch a `credential.verified` webhook to the anchor's org. Calling it from this hook means a
-SUPERSEDED record's public page view now also produces that audit row, which it did not before
-(the RPC path has no such logging). The `enabled` gate above bounds this to SUPERSEDED views
-only. This is a real, deliberate trade-off flagged here rather than silently accepted — if the
-extra audit volume or webhook exposure is unwanted, the fix is to either drop the "view previous
-version" link entirely or have the worker-side handler skip the audit/webhook path for a request
-carrying a marker identifying it as an internal supplementary lookup (a genuine backend change,
-out of scope for this frontend-only fix).
-
-There is still deliberately NO forward link to a newer version: this endpoint only carries the
-BACKWARD parent pointer for whichever anchor is queried — a superseded ROOT record (no parent)
-gets nothing from it either, which is honestly reflected by the link simply not rendering.
-Building a forward pointer would need a real backend change (a dedicated lineage endpoint, or
-widening this response) and is out of scope here.
-
-Tests: `usePublicAnchorParent.test.ts` (new, 8 cases, real documented response shape — not
-invented). `PublicVerification.record-readability.test.tsx` rewritten to mock `global.fetch`
-with that same real shape instead of fabricating fields on the RPC mock (7 cases).
+A `usePublicAnchorParent` hook and a `public-previous-version-link` were drafted in this PR and removed before merge. `get_public_anchor` returns neither `parent_public_id` nor `version_number`, and the only public source that does, the worker's `GET /api/v1/verify/:publicId`, writes a `VERIFICATION_QUERIED` audit row and dispatches a `credential.verified` webhook on every call. A page view must not trigger either. `PublicVerification.tsx` keeps the `public-superseded-version-note` statement only. To add the link, add `parent_public_id` to the public projection in a reviewed migration (additive nullable field, section 1.8) and read it from the RPC the page already calls.
 
 ## 2026-09-29 — `PublicVerification.tsx` version honesty + JSON-LD title (readability pass follow-up)
 
@@ -72,15 +34,11 @@ JSON-LD `name` field) — so there was no visible raw-id title bug here. Two rea
 fixed, with NO change to the frozen API response shape (§1.8 — both fields below are
 additive-nullable and the verification API already returns them):
 
-- **Version honesty.** `PublicAnchorData` gained typed `version_number?: number | null` /
-  `parent_public_id?: string | null`. A SUPERSEDED record now shows
+- **Version honesty.** A SUPERSEDED record now shows
   `PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID`
   (`data-testid="public-superseded-version-note"`) — supersede never revokes, so a superseded
   public record states plainly it remains valid evidence of the document as it existed when
-  secured — and, when the API provided `parent_public_id`, a link back to it
-  (`data-testid="public-previous-version-link"`, `verifyPath(parent_public_id)`). There is
-  deliberately NO forward link to a newer version: the frozen response does not carry one, and
-  inventing a client-side lookup to find it would be an unrequested API/behavior change.
+  secured. There is NO link to another version on the public page; see the note above.
 - **JSON-LD `name`.** `CredentialJsonLd` now derives its `name` via
   `deriveDisplayTitle(data.filename, data.metadata)` (`src/lib/recordDisplay.ts`) instead of
   the raw `data.filename` — the same connector-internal-id problem as the detail page's title,

@@ -1,4 +1,4 @@
-## 2026-09-29 (PR #3190 review) — `useAnchorVersions.ts` stale-lineage fix; `usePublicAnchorParent.ts` (new)
+## 2026-09-29 (PR #3190 review) — `useAnchorVersions.ts` stale-lineage fix
 
 **Finding 3 — stale lineage across a route change without remount.** `useAnchorVersions`'s
 resolved chain used to be plain `versions` state, cleared only when a NEW effect's `run()`
@@ -23,26 +23,9 @@ through the real page (mocking only `@/lib/supabase`), with anchor A given a REA
 `versions.length > 1 ? versions : undefined` gating already hides that trivially) — confirmed RED
 against the pre-fix hook by temporarily reverting it and re-running both suites.
 
-## `usePublicAnchorParent.ts` (new) — PR #3190 review finding 2
+## PR #3190 follow-up: `usePublicAnchorParent` removed (2026-09-29)
 
-`PublicVerification.tsx`'s SUPERSEDED "view previous version" link was built against a FABRICATED
-response shape — `version_number`/`parent_public_id` typed directly on the `get_public_anchor`
-RPC's response, which (confirmed against production) never emits either field. `get_anchor_lineage`
-does, but is SECURITY DEFINER with EXECUTE granted to neither `anon` nor `authenticated`. This new
-hook instead calls `GET /api/v1/verify/:publicId` (`services/worker/src/api/v1/verify.ts`) — a
-genuinely public, anonymous-GET-allowed endpoint that ALREADY returns `parent_public_id`
-(API-RICH-01, documented in that file's OpenAPI schema) — no SQL/RPC/schema change. Same router
-family `useProofAvailability` already calls from this exact page (its `/proof` sub-path); this
-hook calls the sibling base route. Gated on `enabled: status === 'SUPERSEDED'` so it only fires
-for the page views that would actually show the link. Degrades to `parentPublicId: null` (never
-throws, never blocks the page) on any non-200, malformed body, or network failure — this is a
-supplementary fetch, not a page-blocking one. **Documented side effect, not introduced by this
-hook:** the endpoint's handler writes a `VERIFICATION_QUERIED` audit row on every call (and may
-dispatch a `credential.verified` webhook when that flag is on) — calling it means a SUPERSEDED
-public page view now also produces that audit row, which the RPC path never did. See
-`src/components/verification/agents.md`'s matching correction entry for the full trade-off. Tests:
-`usePublicAnchorParent.test.ts` (8 cases), using the documented response shape from
-`services/worker/src/api/v1/docs.ts`, not an invented one.
+A `usePublicAnchorParent` hook was drafted in this PR. The hook and its test were deleted before merge because the endpoint it fetched has side effects (audit row plus customer webhook per call). See `src/components/verification/agents.md`.
 
 ## 2026-09-29 — `useAnchorVersions.ts` (new); `useAnchors.ts`/`usePrivateAnchorList.ts` gain version-lineage columns
 

@@ -367,6 +367,22 @@ describe('AssetDetailView', () => {
       },
     };
 
+    it('keeps the account and envelope links VISIBLE, outside the collapsed technical details, each rendered once', () => {
+      // Regression caught by e2e/record-detail.spec.ts on PR #3190: the
+      // readability pass moved every metadata row into a collapsed
+      // disclosure, which hid these two links. `toBeInTheDocument` is true
+      // for a hidden element, so the older assertions below could not see it.
+      const { getAllByTestId, container } = render(<AssetDetailView anchor={docusignAnchor} />);
+      const collapsed = container.querySelector('#technical-details-content');
+
+      for (const testId of ['docusign-account-link', 'docusign-envelope-link']) {
+        const links = getAllByTestId(testId);
+        expect(links).toHaveLength(1);
+        expect(links[0]).toBeVisible();
+        expect(collapsed?.contains(links[0]) ?? false).toBe(false);
+      }
+    });
+
     it('renders the account id metadata row as a link to the DocuSign account console', () => {
       const { getByTestId } = render(<AssetDetailView anchor={docusignAnchor} />);
 

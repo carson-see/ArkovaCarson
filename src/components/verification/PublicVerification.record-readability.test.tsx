@@ -10,19 +10,16 @@
  * filename verbatim — the same connector-internal-id problem in a
  * less-visible place (structured data read by search engines/AI crawlers).
  *
- * CORRECTED (PR #3190 review finding 2): the first version of this file
- * fabricated `version_number`/`parent_public_id` directly on the
- * `get_public_anchor` RPC response. Confirmed against PRODUCTION: that RPC
- * emits neither field. The real source is a SEPARATE fetch to the worker's
- * already-public `GET /api/v1/verify/:publicId` endpoint (API-RICH-01,
- * `usePublicAnchorParent` — see that hook's own tests and header for the
- * full trail), which this file now mocks via `global.fetch`, using the
- * documented response shape from `services/worker/src/api/v1/docs.ts` /
- * `verify.ts`'s `VerificationResult` type — not an invented one.
+ * The public page carries NO link between versions (PR #3190 review
+ * finding 2). `get_public_anchor` emits neither `version_number` nor
+ * `parent_public_id` (confirmed against production), and the worker's
+ * `GET /api/v1/verify/:publicId` writes an audit row and dispatches a
+ * customer webhook on every call, so a page view must never call it.
+ * `global.fetch` is stubbed here only to prove that it is not called.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { PublicVerification } from './PublicVerification';
 
 const rpcMock = vi.hoisted(() => vi.fn());
@@ -79,7 +76,7 @@ describe('PublicVerification — record readability pass', () => {
     vi.unstubAllGlobals();
   });
 
-  it('tells a superseded record it remains valid evidence, and links to the version it replaced', async () => {
+  it('tells a superseded record it remains valid evidence', async () => {
     rpcMock.mockResolvedValue({
       data: { ...baseAnchor, status: 'SUPERSEDED', superseded_at: '2026-09-29T20:47:10.002Z' },
       error: null,
@@ -91,62 +88,23 @@ describe('PublicVerification — record readability pass', () => {
     expect(note).toHaveTextContent(/remains valid evidence/i);
   });
 
-  it('calls the worker\'s public GET /api/v1/verify/:publicId endpoint for the parent link — never the frozen get_public_anchor RPC for this field', async () => {
+  it('never calls the worker verify endpoint from a page view: that endpoint writes an audit row and notifies the record owner', async () => {
     rpcMock.mockResolvedValue({ data: { ...baseAnchor, status: 'SUPERSEDED' }, error: null });
-
-    render(<PublicVerification publicId="ARK-DOC-7RFUVV" />);
-    await screen.findByTestId('public-superseded-version-note');
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      'https://worker.test/api/v1/verify/ARK-DOC-7RFUVV',
-      expect.objectContaining({ signal: expect.anything() }),
-    ));
-  });
-
-  it('links back to the earlier version when the worker verify endpoint provides a parent_public_id', async () => {
-    rpcMock.mockResolvedValue({ data: { ...baseAnchor, status: 'SUPERSEDED' }, error: null });
-    fetchMock.mockResolvedValue(fetchJsonResponse(200, {
-      verified: true,
-      status: 'SUPERSEDED',
-      parent_public_id: 'ARK-DOC-OLDER',
-    }));
-
-    render(<PublicVerification publicId="ARK-DOC-7RFUVV" />);
-
-    const link = await screen.findByTestId('public-previous-version-link');
-    expect(link).toHaveAttribute('href', '/verify/ARK-DOC-OLDER');
-  });
-
-  it('does not render the "view previous version" link when the worker endpoint has no parent_public_id (the root/no-parent case)', async () => {
-    rpcMock.mockResolvedValue({ data: { ...baseAnchor, status: 'SUPERSEDED' }, error: null });
-    fetchMock.mockResolvedValue(fetchJsonResponse(200, { verified: true, status: 'SUPERSEDED' }));
 
     render(<PublicVerification publicId="ARK-DOC-7RFUVV" />);
 
     await screen.findByTestId('public-superseded-version-note');
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId('public-previous-version-link')).not.toBeInTheDocument();
   });
 
-  it('still shows the "remains valid evidence" note even when the worker lookup fails — this is a supplementary, non-blocking fetch', async () => {
-    rpcMock.mockResolvedValue({ data: { ...baseAnchor, status: 'SUPERSEDED' }, error: null });
-    fetchMock.mockRejectedValue(new Error('network down'));
-
-    render(<PublicVerification publicId="ARK-DOC-7RFUVV" />);
-
-    const note = await screen.findByTestId('public-superseded-version-note');
-    expect(note).toHaveTextContent(/remains valid evidence/i);
-    expect(screen.queryByTestId('public-previous-version-link')).not.toBeInTheDocument();
-  });
-
-  it('does not render the version note for a non-superseded record, and does not call the worker verify endpoint at all', async () => {
+  it('does not render the version note for a non-superseded record', async () => {
     rpcMock.mockResolvedValue({ data: { ...baseAnchor, status: 'SECURED' }, error: null });
 
     render(<PublicVerification publicId="ARK-DOC-7RFUVV" />);
 
     await screen.findByTestId('credential-renderer');
     expect(screen.queryByTestId('public-superseded-version-note')).not.toBeInTheDocument();
-    // No reason to hit the extra endpoint (and its audit-log side effect —
-    // see usePublicAnchorParent.ts) for a record that will never show the note.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
