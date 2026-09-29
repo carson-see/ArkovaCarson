@@ -228,7 +228,7 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
     // SELECT→UPDATE window the SCRUM-5285 domain CAS above closes.
     const { data: org, error: orgError } = await db
       .from('organizations')
-      .select('domain, domain_verified')
+      .select('domain, domain_verified, verification_status')
       .eq('id', orgId)
       .single();
 
@@ -239,10 +239,19 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
 
     const isFullyVerified = !!org.domain_verified;
 
-    const updatePayload = {
-      ein_tax_id: cleanEin,
-      verification_status: isFullyVerified ? 'VERIFIED' : 'PENDING',
-    };
+    // Never demote. An org that is already VERIFIED without a proven domain
+    // (a KYB or operator grant) keeps that status when it adds or corrects an
+    // EIN. The status column is left OUT of the write entirely in that case,
+    // so this branch cannot grant anything: if the status changed between the
+    // read and the write, whatever is in the row stays in the row.
+    const keepsVerified = !isFullyVerified && org.verification_status === 'VERIFIED';
+
+    const updatePayload = keepsVerified
+      ? { ein_tax_id: cleanEin }
+      : {
+        ein_tax_id: cleanEin,
+        verification_status: isFullyVerified ? 'VERIFIED' : 'PENDING',
+      };
 
     const baseUpdate = db
       .from('organizations')
@@ -295,10 +304,12 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
     logger.info({ orgId, fullyVerified: isFullyVerified }, 'Organization EIN submitted for verification');
 
     res.json({
-      status: isFullyVerified ? 'VERIFIED' : 'PENDING',
+      status: isFullyVerified || keepsVerified ? 'VERIFIED' : 'PENDING',
       message: isFullyVerified
         ? 'Organization fully verified!'
-        : 'EIN submitted. Complete domain verification to finish.',
+        : keepsVerified
+          ? 'EIN saved. Your organization remains verified.'
+          : 'EIN submitted. Complete domain verification to finish.',
     });
   } catch (error) {
     logger.error({ error }, 'Failed to verify org EIN');

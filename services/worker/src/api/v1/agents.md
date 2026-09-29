@@ -2091,3 +2091,14 @@ domain routes above.
 The EIN itself is never logged or audited on any branch, exactly as before
 (Constitution 1.4, L3 Confidential) — pinned by a dedicated test that scans
 every logger call and every audit-insert payload for the raw value.
+
+## 2026-09-29 — `verify-ein` never demotes (follow-on to the domain-first fix above)
+
+An org can be `VERIFIED` without `domain_verified` (KYB webhook, operator
+grant). `POST /verify-ein` used to write `PENDING` for every org whose domain
+was not proven, which would demote those orgs the moment they added an EIN.
+When the row is already `VERIFIED` and the domain is not proven, the handler
+now leaves `verification_status` OUT of the write and audits
+`ORG_EIN_SUBMITTED`, not `ORG_VERIFIED`: it preserves a status another
+authority set and grants nothing itself. Production instances on 2026-09-29:
+HakiChain, Planbok and CyberGlobal were operator-verified with no proven domain.

@@ -303,6 +303,95 @@ describe('POST /verify-ein', () => {
     expect(res.body.status).toBe('VERIFIED');
   });
 
+  it('keeps an operator- or KYB-verified org VERIFIED when it has no proven domain, and writes no status', async () => {
+    // An org can be VERIFIED without `domain_verified` (KYB webhook, operator
+    // grant). Submitting an EIN must not demote it, and must not re-assert the
+    // status either: the column is left out of the write so nothing is granted.
+    const captured: Record<string, unknown>[] = [];
+    const captureAudit: Record<string, unknown>[] = [];
+    let orgCalls = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        orgCalls += 1;
+        if (orgCalls === 1) return mockQuery({ data: null, error: null });
+        if (orgCalls === 2) {
+          return mockQuery({
+            data: { domain: null, domain_verified: false, verification_status: 'VERIFIED' },
+            error: null,
+          });
+        }
+        const writeChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+        (writeChain.update as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            captured.push({ ...payload });
+            return writeChain;
+          },
+        );
+        return writeChain;
+      }
+      if (table === 'audit_events') {
+        const chain = mockQuery({ data: null, error: null });
+        (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            captureAudit.push({ ...payload });
+            return chain;
+          },
+        );
+        return chain;
+      }
+      return mockQuery({ data: null });
+    });
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('VERIFIED');
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toEqual({ ein_tax_id: '12-3456789' });
+    expect('verification_status' in captured[0]).toBe(false);
+    // Nothing was granted here, so the audit row must not claim a grant.
+    expect(captureAudit.some((p) => p.event_type === 'ORG_VERIFIED')).toBe(false);
+    expect(captureAudit.some((p) => p.event_type === 'ORG_EIN_SUBMITTED')).toBe(true);
+  });
+
+  it('still moves an UNVERIFIED org with no proven domain to PENDING', async () => {
+    const captured: Record<string, unknown>[] = [];
+    let orgCalls = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        orgCalls += 1;
+        if (orgCalls === 1) return mockQuery({ data: null, error: null });
+        if (orgCalls === 2) {
+          return mockQuery({
+            data: { domain: 'example.com', domain_verified: false, verification_status: 'UNVERIFIED' },
+            error: null,
+          });
+        }
+        const writeChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+        (writeChain.update as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            captured.push({ ...payload });
+            return writeChain;
+          },
+        );
+        return writeChain;
+      }
+      return mockQuery({ data: null });
+    });
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('PENDING');
+    expect(captured[0]).toEqual({ ein_tax_id: '12-3456789', verification_status: 'PENDING' });
+  });
+
   it('CAS-guards the VERIFIED grant against BOTH domain_verified and domain', async () => {
     let updateChain: ReturnType<typeof mockQuery> | undefined;
     const callIdx = { current: 0 };
