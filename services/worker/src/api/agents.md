@@ -1,5 +1,31 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-29 — `rules-crud.ts`: DRIVE-BACKFILL initial-sync trigger (founder directive 2026-09-29)
+
+Next to the existing `mirrorDriveFoldersForRuleWrite` call (both create and
+update paths), a new `triggerInitialSyncForRuleFolders` kicks off the backfill
+that secures every file already sitting in a newly connected/watched Drive
+folder — see `integrations/connectors/agents.md`'s 2026-09-29 entry for the
+full feature.
+
+- **CREATE**: every folder named by a connector-managed Drive rule is treated
+  as new (a brand-new rule has no "previous" folder set).
+- **PATCH**: only folders NEWLY ADDED by this patch are synced — a diff
+  against the row's PRE-patch `trigger_config`. `validatePatchAgainstCurrent`
+  now also returns `currentTriggerConfig` (the same row read it already did;
+  no extra query) so the diff has the "before" side without a second DB call.
+  A folder already on the rule before this patch is untouched here (it was
+  already triggered when it was first added — re-checking it would just be
+  absorbed by the trigger's own idempotency guard, one redundant round-trip).
+- **Fire-and-forget, deliberately NOT awaited** — unlike the mirror above
+  (which IS awaited so its result can ride in the response body). The
+  trigger only does cheap `drive_initial_sync_state` reads + a `job_queue`
+  insert per folder, never Drive itself, so there is no Drive-listing latency
+  to avoid by blocking the response on it. Never throws
+  (`triggerDriveInitialSyncForFolders` is non-throwing by contract), so there
+  is nothing to catch here and the response shape is completely unaffected by
+  initial-sync outcomes.
+
 ## 2026-09-28 — bulk activation preserves uncertain provider outcomes
 
 `deliverBulkActivationOnce` records `failed/provider_rejected` only for a
