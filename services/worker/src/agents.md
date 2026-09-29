@@ -5,7 +5,21 @@ Keep the mount-order regression in `index.test.ts` when changing either layer.
 
 PR #2904 review: `memory-leaks.test.ts` explicitly supplies the disabled fanout config while importing actual delivery/lifecycle cleanup. The suite remains independent of configured-worker credentials.
 
+_Last updated: 2026-09-29 (DRIVE-BACKFILL, founder directive: `config.ts` gains `enableDriveInitialSync` — `ENABLE_DRIVE_INITIAL_SYNC`, `boolFlag(true)`, default ON — see `integrations/connectors/agents.md` for the full feature)_
 _Last updated: 2026-09-21 (SCRUM-5287/SCRUM-2903/SCRUM-2330: `config.ts` gains `googleDriveOauthClientId`/`googleDriveOauthClientSecret` — the new `arkova-connectors` OAuth client pair for the drive.readonly cutover, alongside the legacy `googleOauthClientId`/`googleOauthClientSecret`)_
+
+## 2026-09-29 DRIVE-BACKFILL — `config.ts` gains `enableDriveInitialSync`
+
+New `ENABLE_DRIVE_INITIAL_SYNC` (`boolFlag(true)` — default **ON**, unlike almost every other
+connector launch flag in this file, which default OFF until founder-approved). This one is
+founder-mandated default-on behavior from day one (founder directive 2026-09-29: "every file
+already in a connected/watched Drive folder is secured automatically, no confirmation prompt") —
+the kill switch exists for an operational rollback, not a launch gate. Gates only the
+ENUMERATE+ENQUEUE step (`integrations/connectors/drive-initial-sync.ts` /
+`drive-initial-sync-trigger.ts`); `enableConnectorArtifactEnqueue`/`enableConnectorArtifactDrain`
+still separately gate whether an enqueued artifact is actually fetched/anchored, so it is safe to
+leave this on even before those flip. See `integrations/connectors/agents.md`'s 2026-09-29 entry
+for the full feature and `jobs/agents.md` for the job runner.
 _Last updated: 2026-09-13 (SCRUM-3888: origin guard for the public Cloud Run origin — new `middleware/requireCloudflareOrigin.ts`, flag-gated `off` by default; `config.ts` gains the mode/secret pair with a boot guard; `index.ts` mounts it first, ahead of CORS and every route)_
 
 ## 2026-09-21 SCRUM-5287/SCRUM-2903/SCRUM-2330 — `config.ts` gains the new Drive OAuth client pair

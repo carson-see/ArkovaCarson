@@ -1,3 +1,23 @@
+## 2026-09-29 — DRIVE-BACKFILL: `POST /jobs/drive-initial-sync` + in-process backup (founder directive 2026-09-29)
+
+`cron.ts` gains `POST /drive-initial-sync` (mounted at `/jobs/drive-initial-sync`),
+the Drive twin of `/drive-file-changed` immediately above it — same
+`limit` query-param validation (`DriveInitialSyncLimitSchema`, `[1,100]`),
+same 500-on-throw shape (Cloud Scheduler retries), same `cronAuth` protection.
+Drains `google_drive.initial_sync` via `jobs/drive-initial-sync-runner.ts`'s
+`runDriveInitialSyncJobs` — see `integrations/connectors/agents.md` for the
+full feature. `scheduled.ts` registers the SAME job every 5 minutes as the
+dev/test backup (also fires on every warm prod instance, same dual-wiring
+precedent as every other connector job drain), gated on
+`config.enableDriveInitialSync` (default true — this is why the in-process
+backup is NOT dormant the way `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`-gated jobs
+are by default). Registered in `in-process-cron-audit.ts`'s
+`IN_PROCESS_CRON_AUDIT` as `guard: 'run-lease'` — it drains through
+`claim_next_job` (atomic per-row claim) AND each claimed job additionally runs
+under a per-org `withRunLease`, so a concurrent copy for the same org never
+runs its body at all (see `jobs/agents.md`'s matching entry for the lease
+detail).
+
 ## 2026-09-12 — SCRUM-5023: `POST /jobs/api-key-expiry-notice`
 
 Daily API-key expiry notice (job in `jobs/api-key-expiry-notice.ts`, scheduler entry in
