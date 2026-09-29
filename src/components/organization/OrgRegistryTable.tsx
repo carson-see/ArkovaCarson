@@ -30,8 +30,9 @@ import {
   Lock,
   RefreshCw,
 } from 'lucide-react';
-import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS, VERSION_HISTORY_LABELS } from '@/lib/copy';
 import { verifyUrl } from '@/lib/routes';
+import { deriveDisplayTitle } from '@/lib/recordDisplay';
 import { toast } from 'sonner';
 import { useExportAnchors } from '@/hooks/useExportAnchors';
 import { Button } from '@/components/ui/button';
@@ -275,7 +276,7 @@ export function OrgRegistryTable({
     // SCRUM-3010: admin → org-wide (`org_id`); non-admin member → own rows only (`user_id`).
     const base = supabase
       .from('anchors')
-      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata, folder_id', { count: 'exact' });
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata, folder_id, version_number, parent_anchor_id', { count: 'exact' });
 
     const orgScoped = base.eq('org_id', orgId);
     const scoped = isAdmin
@@ -549,6 +550,11 @@ export function OrgRegistryTable({
           anchors.map((anchor) => {
             const status = statusConfig[anchor.status];
             const StatusIcon = status.icon;
+            // Readability pass (founder-reported, 2026-09-29, dashboard
+            // follow-up): never title a row with a raw connector-internal id.
+            const displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata as Record<string, unknown> | null);
+            const showVersionChip = ((anchor.version_number as number | null) ?? 1) > 1;
+            const isSuperseded = anchor.status === 'SUPERSEDED';
             return (
               <div
                 key={anchor.id}
@@ -558,7 +564,7 @@ export function OrgRegistryTable({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate text-sm">
-                      {anchor.filename}
+                      {displayTitle}
                     </p>
                     <div className="flex items-center gap-2 mt-1.5">
                       <Badge
@@ -568,6 +574,16 @@ export function OrgRegistryTable({
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {status.label}
                       </Badge>
+                      {showVersionChip && (
+                        <Badge variant="outline" className="text-xs font-mono" data-testid="record-version-chip">
+                          {VERSION_HISTORY_LABELS.VERSION_PREFIX} {anchor.version_number}
+                        </Badge>
+                      )}
+                      {isSuperseded && (
+                        <Badge variant="outline" className="text-xs" data-testid="record-superseded-chip">
+                          {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
+                        </Badge>
+                      )}
                       {anchor.credential_type && (
                         <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                           <GraduationCap className="h-3 w-3" />
@@ -694,6 +710,9 @@ export function OrgRegistryTable({
               anchors.map((anchor) => {
                 const status = statusConfig[anchor.status];
                 const StatusIcon = status.icon;
+                const displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata as Record<string, unknown> | null);
+                const showVersionChip = ((anchor.version_number as number | null) ?? 1) > 1;
+                const isSuperseded = anchor.status === 'SUPERSEDED';
 
                 return (
                   <TableRow
@@ -706,7 +725,7 @@ export function OrgRegistryTable({
                       <Checkbox
                         checked={selectedIds.has(anchor.id)}
                         onCheckedChange={() => toggleSelect(anchor.id)}
-                        aria-label={`Select ${anchor.filename}`}
+                        aria-label={`Select ${displayTitle}`}
                       />
                     </TableCell>
                     <TableCell>
@@ -715,18 +734,30 @@ export function OrgRegistryTable({
                           <FileText className="h-4 w-4 text-muted-foreground" />
                         </div>
                         <span className="font-medium truncate max-w-[200px]">
-                          {anchor.filename}
+                          {displayTitle}
                         </span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={status.variant}
-                        className={`${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'REVOKED' ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : ''}`}
-                      >
-                        <StatusIcon className="mr-1 h-3 w-3" />
-                        {status.label}
-                      </Badge>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge
+                          variant={status.variant}
+                          className={`${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'REVOKED' ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : ''}`}
+                        >
+                          <StatusIcon className="mr-1 h-3 w-3" />
+                          {status.label}
+                        </Badge>
+                        {showVersionChip && (
+                          <Badge variant="outline" className="text-xs font-mono" data-testid="record-version-chip">
+                            {VERSION_HISTORY_LABELS.VERSION_PREFIX} {anchor.version_number}
+                          </Badge>
+                        )}
+                        {isSuperseded && (
+                          <Badge variant="outline" className="text-xs" data-testid="record-superseded-chip">
+                            {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDate(anchor.created_at)}

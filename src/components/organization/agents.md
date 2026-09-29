@@ -1,5 +1,21 @@
 # agents.md — components/organization
-_Last updated: 2026-08-30_
+_Last updated: 2026-09-29_
+
+## 2026-09-29 — `OrgRegistryTable.tsx` connector-record readability (coordinator scope addition, dashboard follow-up)
+
+Same reported class as `RecordsList.tsx` (see `src/components/records/agents.md`): both the
+mobile card and the desktop table row titled themselves with the raw connector-internal
+filename. Both now compute `displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata)`
+(`src/lib/recordDisplay.ts` — same shared helper as the Record Detail page, not a
+reimplementation — SonarCloud duplication budget) and render it instead of `anchor.filename`,
+including in the `aria-label` on the row checkbox. Both rows also gained
+`record-version-chip`/`record-superseded-chip` badges (`version_number > 1` /
+`status === 'SUPERSEDED'`) next to the status badge — a superseded row is NEVER hidden, it
+remains valid evidence. The paginated query's `select()` now also fetches `version_number,
+parent_anchor_id`. This table does NOT show a raw metadata dump anywhere (only
+`getRecipientName` extracts a single field), so the ten-key connector denylist from
+`RecordsList.tsx` does not apply here. Tests:
+`OrgRegistryTable.connector-readability.test.tsx` (new, 2 cases).
 
 ## What This Folder Contains
 Organization-level admin components: credential issuance, member management, review queue, and public registry.

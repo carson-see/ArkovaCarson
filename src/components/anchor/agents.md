@@ -1,5 +1,80 @@
 # agents.md — components/anchor
 
+## 2026-09-29 — `AssetDetailView.tsx` record-detail readability pass (founder-reported)
+
+Founder, looking at the Record Details page for a Google Drive record: title was the raw
+internal id (`google_drive:1IxoLk_vWeuU-BB-2Qkmvs8QmV1qi_GKnGxZF8YheIu8`), subtitle showed
+"0 B - Contract - Signed" (raw size-unknown + raw MIME + credential label), the same ten raw
+connector metadata keys ("Metadata" block) rendered a SECOND time inside `CredentialRenderer`'s
+untemplated fallback card, "Source modification time" showed the raw `mtime:...` token with its
+prefix unstripped, and nothing on the page said which version this was or linked to the
+newer/older version for a SUPERSEDED record.
+
+- **Title/type/size** — `displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata)`
+  (`src/lib/recordDisplay.ts`) replaces every `anchor.filename` render on this page (header,
+  rename-pencil seed value, `RevokeAnchorModal`/`ShareSheet` filename props). Subtitle is now
+  `[formatDisplayFileSize(fileSize), deriveDisplayType(fileMime, metadata), credentialTypeLabel]
+  .filter(Boolean).join(' • ')` — a zero/unknown size is OMITTED (never "0 B"), and a raw MIME
+  string is replaced by a plain-language type (Spreadsheet/Document/PDF/...) wherever mapped.
+- **Version banner (new, top of page)** — `VersionBanner` (module-level component) reads
+  `anchor.lineage` (newest-first, from `useAnchorVersions` via `RecordDetailPage.tsx`) and
+  `anchor.versionNumber` and renders, at a glance: "Version N of M" (+ "(current)" suffix on the
+  newest), a link to the newer version (`data-testid="version-banner-current-link"`) when not
+  current, a link to the previous version (`version-banner-previous-link`) when current, and —
+  for a non-newest version — `VERSION_HISTORY_LABELS.REMAINS_VALID_EVIDENCE`
+  (`version-banner-remains-valid`): supersede never revokes, so an older version still states it
+  remains valid evidence of the document as it existed when secured. Links are plain `<a
+  href={recordDetailPath(id)}>` — NOT react-router `Link` — because this component's own test
+  suite renders it with no Router context; `recordDetailPath()` (the existing named-route
+  helper, `src/lib/routes.ts`) is used rather than a hand-built template literal, matching the
+  established convention used by every other internal record link in this app
+  (`DashboardPage`/`MyRecordsPage`/`MemberDetailPage`/`useNotifications` all call
+  `recordDetailPath(anchor.id)`). Self-hides via `resolveVersionContext` returning `null` when
+  `anchor.lineage` has ≤1 entry.
+- **"What changed" (new, inside the Version History card)** — `WhatChangedPanel` states honestly
+  that Arkova stores fingerprints, not file content, so it cannot show a content diff
+  (`VERSION_HISTORY_LABELS.WHAT_CHANGED_NO_DIFF`), and adds
+  `FINGERPRINT_DIFFERS_FROM_VERSION` ONLY when the adjacent version's fingerprint is actually
+  known and differs — never inferred, never claimed when unknown.
+- **Version History card** — list items are now real `<a href={recordDetailPath(id)}>` rows
+  (`data-testid="version-history-row"`/`"version-history-row-link"`) instead of a clickable
+  `<div onClick={() => window.location.assign(...)}>` — better keyboard/screen-reader semantics,
+  same internal-id-based route. Explicitly re-sorted newest-first inside the component
+  (`.slice().sort((a,b) => b.versionNumber - a.versionNumber)`) rather than trusting caller
+  order.
+- **Technical details (new collapsed disclosure)** — `TechnicalDetailsSection` replaces the
+  always-visible "Metadata" block. Collapsed by default; a native `<button aria-expanded={open}
+  aria-controls="technical-details-content">` toggles a `hidden`-attribute content region (NOT a
+  conditional unmount — every existing DocuSign link/testid assertion in
+  `AssetDetailView.test.tsx` queries elements that exist in the DOM whether or not the
+  disclosure is open, so this had to stay query-able either way). Renders the SAME
+  `MetadataRow` entries the old "Metadata" block did (DocuSign account/envelope deep links keep
+  working unchanged) — this is the single place raw identifiers render on this page now.
+- **Eliminating the second raw-metadata dump** — `CredentialRenderer` gained a
+  `showGenericMetadataFields` prop (default `true`, every other caller unaffected); this page
+  passes `showGenericMetadataFields={false}` so its own untemplated per-field dump (the
+  `else if (hasMetadata)` branch) never fires — Technical Details above is now the ONLY raw
+  dump. Curated fields computed independently of that flag (prominent recipient name, issuer,
+  dates, CPE/CLE, templated fields) are UNCHANGED — see `src/components/credentials/agents.md`.
+  Also stopped passing `filename` into `CredentialRenderer` from this page at all: its
+  "no displayable fields" fallback prints `filename` as a lone paragraph, which — once the
+  generic dump was suppressed — started repeating this page's own title a second time; this
+  page already shows the title prominently above, so the prop is simply omitted here.
+- **Drive "Source modification time" formatting** — `DriveSourceChips` now runs a non-
+  `head_revision` value through `formatSourceModifiedTime()` (strips the `mtime:`/`evt:`
+  prefix, formats the ISO timestamp via `toLocaleString()`); a `head_revision` value (a real
+  opaque Drive revision id, never a time) is left exactly as before. A value that fails to parse
+  as a timestamp is shown stripped-but-unformatted, never as an invented date (§1.5).
+- **No banned §1.3 terminology** anywhere on the connector-record path — regression test walks
+  the full rendered text against the banned-terms list.
+
+Tests: `AssetDetailView.record-readability.test.tsx` (new, 15 cases, TDD red-first — 2 confirmed
+RED before the `filename`/`deriveDisplayTitle`/`showGenericMetadataFields` fixes landed).
+Existing `AssetDetailView.test.tsx` (63 cases) passes unchanged — the DocuSign/Drive test
+comments noting "duplicated once more in the pre-existing CredentialRenderer generic metadata
+table" are now literally single-occurrence, but those assertions used `getAllByText(...).length
+> 0`, not an exact count, so they still pass.
+
 ## 2026-09-28 — bulk credit outcomes remain visible
 
 `SecureDocumentDialog` may close a completed spreadsheet import immediately only

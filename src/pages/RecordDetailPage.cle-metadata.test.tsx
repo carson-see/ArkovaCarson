@@ -39,6 +39,7 @@ vi.mock('@/hooks/useHasCredentialImportEntitlement', () => ({
   useHasCredentialImportEntitlement: () => true,
 }));
 vi.mock('@/hooks/useAnchor', () => ({ useAnchor: mockUseAnchor }));
+vi.mock('@/hooks/useAnchorVersions', () => ({ useAnchorVersions: () => ({ versions: [], loading: false }) }));
 vi.mock('@/components/layout', () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   AppShell: ({ children }: any) => <div>{children}</div>,

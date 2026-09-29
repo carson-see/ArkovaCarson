@@ -251,6 +251,22 @@ export interface CredentialRendererProps {
   hasImportEntitlement?: boolean;
   /** Render CPE/CLE metadata in the public-verification variant. */
   publicView?: boolean;
+  /**
+   * When `false`, suppress the generic (untemplated) per-field metadata list
+   * — the `else if (hasMetadata)` branch below that lists every raw metadata
+   * key as its own row. Readability pass (founder-reported, 2026-09-29):
+   * `AssetDetailView.tsx` already renders every raw metadata key itself (in
+   * its "Technical details" disclosure), so a record with a `credentialType`
+   * but no matching template produced the SAME raw key/value list twice on
+   * one page — once there, once here. This flag only gates that one branch;
+   * curated fields computed independently of it (recipient name, issuer,
+   * dates, the templated-field branch, CPE/CLE) are unaffected, so a caller
+   * that needs the full untemplated dump (there is currently no such caller,
+   * but the flag defaults `true` to keep every existing usage — including
+   * the public verification page, which has no metadata section of its own
+   * — byte-for-byte unchanged).
+   */
+  showGenericMetadataFields?: boolean;
 }
 
 const METADATA_DISPLAY_HIDDEN_KEYS = new Set([
@@ -316,6 +332,7 @@ export function CredentialRenderer({
   cleMetadata,
   hasImportEntitlement = false,
   publicView = false,
+  showGenericMetadataFields = true,
 }: Readonly<CredentialRendererProps>) {
   const [copied, setCopied] = useState(false);
 
@@ -393,7 +410,7 @@ export function CredentialRenderer({
         displayFields.push({ label: field.label, value: formatted });
       }
     }
-  } else if (hasMetadata) {
+  } else if (hasMetadata && showGenericMetadataFields) {
     for (const [key, value] of Object.entries(metadata)) {
       if (shouldSkipMetadataField(key, canonicalSubTypeLabel)) continue;
       const formatted = isSubTypeKey(key) && typeof value === 'string'

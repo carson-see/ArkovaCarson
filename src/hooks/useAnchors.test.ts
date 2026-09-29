@@ -219,3 +219,56 @@ describe('useAnchors selected-scope realtime guards', () => {
     expect(anchorIsVisibleRealtime({ deleted_at: null, metadata: {} } as never)).toBe(true);
   });
 });
+
+// 2026-09-29 dashboard follow-up: the record card's version chip needs
+// version_number/parent_anchor_id, which mapAnchorToRecord now carries
+// through (RLS-scoped select, added alongside the other card fields).
+describe('mapAnchorToRecord — version lineage fields', () => {
+  it('maps version_number and parent_anchor_id onto the Record', async () => {
+    const { mapAnchorToRecord } = await import('./useAnchors');
+    const record = mapAnchorToRecord({
+      id: 'anchor-1',
+      filename: 'v2.pdf',
+      fingerprint: 'a'.repeat(64),
+      status: 'SECURED',
+      created_at: '2026-09-01T00:00:00Z',
+      chain_timestamp: null,
+      file_size: 100,
+      credential_type: null,
+      chain_tx_id: null,
+      chain_block_height: null,
+      public_id: 'ARK-DOC-1',
+      metadata: null,
+      folder_id: null,
+      version_number: 2,
+      parent_anchor_id: 'anchor-0',
+    } as never);
+
+    expect(record.versionNumber).toBe(2);
+    expect(record.parentAnchorId).toBe('anchor-0');
+  });
+
+  it('defaults parentAnchorId to null and versionNumber to undefined when absent', async () => {
+    const { mapAnchorToRecord } = await import('./useAnchors');
+    const record = mapAnchorToRecord({
+      id: 'anchor-1',
+      filename: 'v1.pdf',
+      fingerprint: 'a'.repeat(64),
+      status: 'SECURED',
+      created_at: '2026-09-01T00:00:00Z',
+      chain_timestamp: null,
+      file_size: 100,
+      credential_type: null,
+      chain_tx_id: null,
+      chain_block_height: null,
+      public_id: 'ARK-DOC-1',
+      metadata: null,
+      folder_id: null,
+      version_number: null,
+      parent_anchor_id: null,
+    } as never);
+
+    expect(record.versionNumber).toBeUndefined();
+    expect(record.parentAnchorId).toBeNull();
+  });
+});

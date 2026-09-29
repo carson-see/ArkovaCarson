@@ -1,4 +1,34 @@
 # agents.md — verification
+_Last updated: 2026-09-29 (record-detail readability pass, public verification page)_
+
+## 2026-09-29 — `PublicVerification.tsx` version honesty + JSON-LD title (readability pass follow-up)
+
+Checked the PUBLIC verification page for the same raw-id/missing-version problems the
+authenticated Record Detail page had (founder-reported, 2026-09-29). Finding: `data.filename`
+was never rendered as a visible heading anywhere on this page (only passed to
+`CredentialRenderer`'s `compact`-mode-only fallback, which this page never uses, and into the
+JSON-LD `name` field) — so there was no visible raw-id title bug here. Two real gaps found and
+fixed, with NO change to the frozen API response shape (§1.8 — both fields below are
+additive-nullable and the verification API already returns them):
+
+- **Version honesty.** `PublicAnchorData` gained typed `version_number?: number | null` /
+  `parent_public_id?: string | null`. A SUPERSEDED record now shows
+  `PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID`
+  (`data-testid="public-superseded-version-note"`) — supersede never revokes, so a superseded
+  public record states plainly it remains valid evidence of the document as it existed when
+  secured — and, when the API provided `parent_public_id`, a link back to it
+  (`data-testid="public-previous-version-link"`, `verifyPath(parent_public_id)`). There is
+  deliberately NO forward link to a newer version: the frozen response does not carry one, and
+  inventing a client-side lookup to find it would be an unrequested API/behavior change.
+- **JSON-LD `name`.** `CredentialJsonLd` now derives its `name` via
+  `deriveDisplayTitle(data.filename, data.metadata)` (`src/lib/recordDisplay.ts`) instead of
+  the raw `data.filename` — the same connector-internal-id problem as the detail page's title,
+  in a less-visible place (structured data read by search engines / AI crawlers rather than by
+  a human reader).
+
+Tests: `PublicVerification.record-readability.test.tsx` (new, 4 cases). Existing
+`PublicVerification.test.tsx` (31 cases) passes unchanged.
+
 _Last updated: 2026-08-03 (CtdlDataLink — public CTDL feed discoverability, CE demo-gap bug blitz)_
 _Last updated: 2026-07-28 (R19 fingerprint-source evidence class, advances SCRUM-2481)_
 _Last updated: 2026-07-06 (SCRUM-2501 FE-PROOF-GATE proof-availability state machine)_

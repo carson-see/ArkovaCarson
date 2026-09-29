@@ -66,7 +66,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS, RECORDS_PRIVATE_TAG_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS, RECORDS_PRIVATE_TAG_LABELS, VERSION_HISTORY_LABELS } from '@/lib/copy';
+import { deriveDisplayTitle } from '@/lib/recordDisplay';
 import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
@@ -434,6 +435,12 @@ export function MyRecordsPage() {
               {filteredRecords.map((record) => {
                 const status = statusConfig[record.status];
                 const StatusIcon = status.icon;
+                // Readability pass (founder-reported, 2026-09-29, dashboard
+                // follow-up): never title a row with a raw connector-internal
+                // id — same shared helper the Record Detail page uses.
+                const displayTitle = deriveDisplayTitle(record.filename, record.metadata);
+                const showVersionChip = (record.versionNumber ?? 1) > 1;
+                const isSuperseded = record.status === 'SUPERSEDED';
 
                 return (
                   <div
@@ -446,7 +453,7 @@ export function MyRecordsPage() {
                   >
                     <Checkbox
                       checked={selectedRecordIds.has(record.id)}
-                      aria-label={`Select ${record.filename}`}
+                      aria-label={`Select ${displayTitle}`}
                       onClick={(event) => event.stopPropagation()}
                       onCheckedChange={(checked) => setSelectedRecordIds((current) => {
                         const next = new Set(current);
@@ -460,11 +467,21 @@ export function MyRecordsPage() {
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="text-sm font-medium truncate">{record.filename}</p>
+                        <p className="text-sm font-medium truncate">{displayTitle}</p>
                         <Badge variant={status.variant} className="shrink-0">
                           <StatusIcon className="mr-1 h-3 w-3" />
                           {status.label}
                         </Badge>
+                        {showVersionChip && (
+                          <Badge variant="outline" className="shrink-0 font-mono" data-testid="record-version-chip">
+                            {VERSION_HISTORY_LABELS.VERSION_PREFIX} {record.versionNumber}
+                          </Badge>
+                        )}
+                        {isSuperseded && (
+                          <Badge variant="outline" className="shrink-0" data-testid="record-superseded-chip">
+                            {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <p className="text-xs text-muted-foreground font-mono truncate">

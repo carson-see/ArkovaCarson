@@ -1,3 +1,30 @@
+## 2026-09-29 — `useAnchorVersions.ts` (new); `useAnchors.ts`/`usePrivateAnchorList.ts` gain version-lineage columns
+
+`useAnchorVersions(anchor)` (new) walks an anchor's version lineage — up through
+`parent_anchor_id` to the root, then down through every descendant — and returns the full chain
+NEWEST-FIRST (`{ versions: AnchorVersionEntry[], loading }`). Extracted from an ad-hoc
+`useEffect` that used to live directly in `RecordDetailPage.tsx` (see `src/pages/agents.md`).
+That inline version gated the fetch on `version_number > 1 || parent_anchor_id`, which MISSED
+the root/oldest version of a chain once a newer child had already superseded it — exactly the
+founder-reported record (v1, superseded, no parent). This hook always attempts the walk for any
+anchor with an id; a solo record with no relations resolves to a single-entry array (`[self]`),
+and callers gate a visible version UI on `versions.length > 1`, not on an empty-array return.
+`id` is selected (needed for the parent-chain walk, and because this authenticated app's
+established convention is to link records via `recordDetailPath(anchor.id)` everywhere —
+`DashboardPage`/`MyRecordsPage`/`MemberDetailPage`/`useNotifications`); `publicId` is ALSO
+returned for any future public-safe consumer. Tests: `useAnchorVersions.test.ts` (4 cases,
+TDD red-first), including a case that specifically reproduces the founder-reported gap (current
+anchor is version 1, `parentAnchorId: null`, `status: 'SUPERSEDED'`, and a newer child IS found).
+
+2026-09-29 dashboard/list follow-up (coordinator scope addition, same day): `useAnchors.ts`'s
+`fetchAnchorsData`/`mapAnchorToRecord` and `usePrivateAnchorList.ts`'s `ANCHOR_COLUMNS` now both
+select `version_number, parent_anchor_id` alongside the existing card fields, so
+`src/components/records/RecordsList.tsx` / `src/pages/MyRecordsPage.tsx` /
+`src/components/organization/OrgRegistryTable.tsx` can render a version/superseded chip.
+Neither `anchors.id`/`user_id`/`org_id` gained any NEW exposure from this — `parentAnchorId` on
+the `Record` type is only ever used to detect "has a lineage," never rendered or placed in a
+URL from a list surface.
+
 ## 2026-09-25 — `useConnectorHealth.ts` surfaces the SCRUM-1146 health dashboard
 
 `services/worker/src/api/connector-health.ts` already computed a rich `HealthReason`

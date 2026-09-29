@@ -52,6 +52,13 @@ vi.mock('@/hooks/useProfile', () => ({
 vi.mock('@/hooks/useHasCredentialImportEntitlement', () => ({
   useHasCredentialImportEntitlement: () => false,
 }));
+// RecordDetailPage now also calls useAnchorVersions (version-lineage walk).
+// This file exists to pin the REAL useAuth/useAnchor flash-frame interplay —
+// version lineage is unrelated, so it is mocked out rather than extending
+// mockFrom's chain to cover a second, unrelated query shape.
+vi.mock('@/hooks/useAnchorVersions', () => ({
+  useAnchorVersions: () => ({ versions: [], loading: false }),
+}));
 vi.mock('@/components/layout', () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   AppShell: ({ children }: any) => <div>{children}</div>,
