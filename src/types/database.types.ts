@@ -2711,6 +2711,89 @@ export type Database = {
           },
         ]
       }
+      drive_initial_sync_state: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          files_enqueued_count: number
+          files_seen_count: number
+          folder_id: string
+          id: string
+          integration_id: string
+          last_error: string | null
+          last_synced_at: string
+          org_id: string
+          page_token: string | null
+          rule_id: string | null
+          started_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          files_enqueued_count?: number
+          files_seen_count?: number
+          folder_id: string
+          id?: string
+          integration_id: string
+          last_error?: string | null
+          last_synced_at?: string
+          org_id: string
+          page_token?: string | null
+          rule_id?: string | null
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          files_enqueued_count?: number
+          files_seen_count?: number
+          folder_id?: string
+          id?: string
+          integration_id?: string
+          last_error?: string | null
+          last_synced_at?: string
+          org_id?: string
+          page_token?: string | null
+          rule_id?: string | null
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drive_initial_sync_state_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_initial_sync_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_initial_sync_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_initial_sync_state_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "organization_rules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       drive_revision_ledger: {
         Row: {
           actor_email: string | null

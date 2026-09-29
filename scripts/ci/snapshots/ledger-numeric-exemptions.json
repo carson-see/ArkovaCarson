@@ -3,6 +3,11 @@
   "_history": [
     {
       "date": "2026-09-29",
+      "author": "tech-lead session (Claude Fable 5.1)",
+      "note": "REMOVED 0500 and 0501: this PR lands both .sql files on main; both rows are already numeric in the prod ledger (applied 2026-09-29T23:24Z, head 0501, 197 numeric rows)."
+    },
+    {
+      "date": "2026-09-29",
       "author": "tech-lead session (Claude Fable 5.1), founder directive 2026-09-29: secure every existing file when a Drive folder is connected",
       "note": "ADDED 0500 and 0501 immediately ahead of applying them to prod vzwyaatejekddvltxyye via MCP apply_migration, per CLAUDE.md section 0 rule 10, under the founder directive of 2026-09-29 (secure every file in a Drive folder the moment it is connected; records must be readable). No staging soak is claimed for either. 0500 (0500_drive_connector_folder_filing_and_metadata_repair, branch fix/drive-records-filed-and-named, sha256 prefix 83ce54d35a7c, 21314 bytes): body-only CREATE OR REPLACE of materialize_connector_artifact_anchor, whose live body was read and matches 0462 exactly (md5 of prosrc 2b990b9a15e3ed74635a3c59a11fe258); the change accepts credential_type OTHER and an OPTIONAL file_size key, so the worker live at apply time keeps working. Four data backfills limited to Google Drive artifacts, rehearsed on prod in a rolled-back transaction: 13 filenames, 13 file sizes, 0 folder links, 0 category changes (every Drive anchor is already past PENDING). The category backfill was rewritten before apply to join through connector_artifact.anchor_id after EXPLAIN showed the original predicate as a sequential scan of anchors. 0501 (0501_drive_initial_sync_state, branch feat/drive-secure-existing-files-on-connect, sha256 prefix 4041877c3247, 6201 bytes): new table public.drive_initial_sync_state only, RLS enabled and forced, restrictive deny-all policy for anon and authenticated, service_role grants, two indexes, updated_at trigger. No existing table is altered; the foreign keys are bounded by lock_timeout 5s. REMOVE each prefix when its owning PR lands the .sql on main."
     },
@@ -324,8 +329,6 @@
     }
   ],
   "exemptPrefixes": [
-    "0443",
-    "0500",
-    "0501"
+    "0443"
   ]
 }
