@@ -414,37 +414,24 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     const existing = await verifyAgentOwnership(agentId, orgId, res);
     if (!existing) return;
 
-    const { data: updated, error } = await dbAny
-      .from('agents')
-      .update({ status: 'revoked', revoked_at: new Date().toISOString() })
-      .eq('id', agentId)
-      .eq('org_id', orgId)
-      .select('id');
+    // One database transaction owns the terminal status, every associated key,
+    // and the success audit. Migration 0488 locks the same parent row used by
+    // 0448's active-key trigger, closing concurrent mint and stale-resume races.
+    const { data: revokeResult, error } = await dbAny.rpc('revoke_agent_and_keys', {
+      p_org_id: orgId,
+      p_agent_id: agentId,
+      p_actor_id: userId,
+    });
 
-    if (error || !updated || (updated as unknown[]).length === 0) {
+    if (error) {
+      logger.error({ agentId, error }, 'Atomic agent revocation failed');
       res.status(500).json({ error: 'Failed to revoke agent' });
       return;
     }
-
-    // Also revoke all associated API keys. Scope by org_id even though
-    // agent_id is a UUID — defense-in-depth against a hypothetical agent_id
-    // collision (race or test-seed leak) silently revoking another tenant's
-    // keys. Required by services/worker/agents.md service-role rule.
-    await dbAny
-      .from('api_keys')
-      .update({ is_active: false, revoked_at: new Date().toISOString() })
-      .eq('agent_id', agentId)
-      .eq('org_id', orgId);
-
-    void recordAuditEvent({
-      actor_id: userId,
-      org_id: orgId,
-      event_type: 'AGENT_REVOKED',
-      event_category: 'SYSTEM',
-      target_type: 'agent',
-      target_id: agentId,
-      details: 'Agent and all associated API keys revoked',
-    });
+    if (!(revokeResult as { found?: boolean } | null)?.found) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
 
     logger.info({ agentId }, 'Agent revoked');
     res.json({ status: 'revoked', agent_id: agentId });

@@ -221,6 +221,11 @@ set -euo pipefail
 if [[ "\$1" == "fetch" ]]; then
   exit 0
 fi
+if [[ "\$1" == "diff" && "\$2" == "--quiet" ]]; then
+  # Execute the working-tree provisioner under review. Vitest separately pins
+  # the production dirty-source refusal with zero external mutations.
+  exit 0
+fi
 exec "$real_git" "\$@"
 EOF
 chmod +x "$tmp_bin/git"
@@ -228,6 +233,7 @@ chmod +x "$tmp_bin/git"
 cat >"$tmp_bin/npx" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == "--no-install" ]]; then shift; fi
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"abcdefghijklmnopqrst"}'
   exit 0
@@ -258,6 +264,33 @@ chmod +x "$tmp_bin/npx"
 cat >"$tmp_bin/gcloud" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+runtime_sa='ark-rig-300743c5af64-run@arkova1.iam.gserviceaccount.com'
+oidc_sa='ark-rig-300743c5af64-oidc@arkova1.iam.gserviceaccount.com'
+if [[ "$*" == *"--data-file=-"* ]]; then cat >/dev/null; fi
+if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "describe" ]]; then
+  printf '{"email":"%s","uniqueId":"123456789","disabled":false}\n' "$4"
+  exit 0
+fi
+if [[ "$1" == "projects" && "$2" == "get-iam-policy" ]]; then
+  echo '{"bindings":[]}'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "describe" ]]; then
+  echo 'ENABLED'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
+  echo 'stub-secret-value'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "get-iam-policy" ]]; then
+  printf '{"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:%s"]}]}\n' "$runtime_sa"
+  exit 0
+fi
+if [[ "$1" == "run" && "$2" == "services" && "$3" == "get-iam-policy" ]]; then
+  printf '{"bindings":[{"role":"roles/run.invoker","members":["serviceAccount:%s"]}]}\n' "$oidc_sa"
+  exit 0
+fi
 if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "describe" ]]; then
   echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
   exit 0
@@ -272,7 +305,7 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
   cat <<JSON
-{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}},{"name":"IP_HASH_PEPPER","valueSource":{}}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
+{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"AI_EXTRACTION_LATENCY_BUDGET_MS","value":"15000"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}},{"name":"IP_HASH_PEPPER","valueSource":{}},{"name":"RECIPIENT_IDENTIFIER_PEPPER","valueSource":{}},{"name":"ENABLE_BULK_RECIPIENT_PROVISIONING","value":"false"}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
 JSON
   exit 0
 fi

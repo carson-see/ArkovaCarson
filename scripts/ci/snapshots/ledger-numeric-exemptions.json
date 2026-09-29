@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-09-29",
+      "author": "tech-lead session (Claude Fable 5.1), founder directive 2026-09-29: apply all migrations and merge the open release PRs without soaking",
+      "note": "ADDED 0489 and 0491-0499 (PR #3152, release candidate; 0489 is also carried by #3121) and 0490 (PR #3150, wraps 0481's five bare auth.uid() calls) immediately ahead of applying them to prod vzwyaatejekddvltxyye via MCP apply_migration, per CLAUDE.md section 0 rule 10 (apply and exemption in the same motion; the drift gate on those PR heads demands the numeric rows before merge). Exact bytes, sha256 prefixes: 0489 eeadf2aa665a, 0490 d6d5af6609ed, 0491 eace27654ac4, 0492 94ed065824e5, 0493 cb16d011e4e4, 0494 11e3db7802e3, 0495 73c7e3760f3c, 0496 fbd1a57f4c3d, 0497 d744d8811aac, 0498 65eb92841a3e, 0499 8ac91b4d9dd1. Prod precondition read 2026-09-29T16:3xZ: public.agents has 0 rows, api_keys has 9 rows of which 0 carry an agent_id, agent_webhook_outbox and agent_webhook_materialization_recoveries do not exist, so the agent/key trigger changes have no live rows to reject. No staging soak is claimed for any of these. Each ledger row is reconciled to its numeric version in-session and list_migrations re-read. REMOVE 0489 and 0491-0499 when #3152 lands the .sql files on main; REMOVE 0490 when #3150 does."
+    },
+    {
       "date": "2026-09-27",
       "author": "tech-lead session (Claude Fable 5.1) — backlog merge close-out",
       "note": "REMOVED 0487: PR #3088 merged to main at 0f2d4a747 (2026-09-27T01:52Z), so the .sql is now on main and the prod row (version 0487, applied 2026-09-26T15:44Z) is covered by the repo; per the file's invariant an entry present in both is stale. Nothing else changed."
@@ -310,6 +315,17 @@
   ],
   "exemptPrefixes": [
     "0443",
-    "0481"
+    "0481",
+    "0489",
+    "0490",
+    "0491",
+    "0492",
+    "0493",
+    "0494",
+    "0495",
+    "0496",
+    "0497",
+    "0498",
+    "0499"
   ]
 }
