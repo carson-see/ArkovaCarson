@@ -140,6 +140,18 @@ Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and cl
 
 `PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. **Fixed 2026-09-25 (SCRUM-5290):** `PATCH {status:'suspended'}` now deactivates the agent's active keys, and `{status:'active'}` restores them — the auth path reads only `api_keys`, so a status change alone was inert and org-side suspension was decorative. Reactivation matches `revocation_reason = 'admin:agent.suspended'`, a marker deliberately distinct from 0448's `computeid:…` values: an org admin resuming an agent must never revive a key ComputeID suspended. A key-write failure returns 500 rather than reporting a suspension that did not take effect. See `agents-suspend-keys.test.ts`.
 
+_Historical, superseded by the single-transaction design below (migration 0489) — kept verbatim for history:_
+
+**Order is the design, because these are two round-trips and not one transaction.**
+The write that RESTRICTS access commits first, so the crash window fails CLOSED:
+suspend does `keys off -> status suspended` (a crash leaves dead keys and a stale
+`active` status: the agent cannot act, a retry finishes the job); resume does
+`status active -> keys on` (a crash leaves an active status with dead keys: still
+cannot act). Reversing either would leave a suspended agent holding a LIVE key —
+the exact defect this closes. Full atomicity needs a SECURITY DEFINER function
+doing both writes under a row lock, the way 0448 does; that is a migration (T3)
+and is deliberate follow-up, not an oversight.
+
 **Status transitions are now one transaction.** Migration 0489's
 `apply_admin_agent_status_transition` locks the agent row shared with provider
 transitions, applies any accompanying PATCH fields, moves eligible keys, and

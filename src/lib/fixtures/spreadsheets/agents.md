@@ -27,6 +27,10 @@ library's own writer inside the test file — a stronger regression pin for
 
 ## Regenerating
 
+Requires the `xlsx` package (already a pinned dependency, `xlsx@0.18.5`).
+
+_Historical, superseded below:_
+
 Requires the exact official SheetJS CDN package pinned in the root lockfile
 (`xlsx@0.20.3`).
 Run from the repo root:
