@@ -1,4 +1,19 @@
 # agents.md — credentials
+_Last updated: 2026-09-29_
+
+## 2026-09-29 — `CredentialRenderer.tsx` gains `showGenericMetadataFields` (record-detail readability pass)
+
+New optional prop, default `true` (every existing caller — including the public verification
+page — unaffected). `AssetDetailView.tsx` passes `false`: that page now renders every raw
+metadata key itself, in its own collapsed "Technical details" disclosure (see
+`src/components/anchor/agents.md`), and CredentialRenderer's untemplated `else if (hasMetadata)`
+per-field dump was producing the IDENTICAL key/value list a SECOND time on the same page
+(founder-reported, 2026-09-29) — this flag gates ONLY that one branch. Deliberately does NOT
+touch: the templated-field branch (`hasTemplate && hasMetadata`), the prominent recipient-name
+display (DEGREE/CERTIFICATE/PROFESSIONAL — reads `metadata.recipient_name` independently of this
+flag), issuer/dates, or CPE/CLE sections — `AssetDetailView.record-readability.test.tsx` and new
+cases in `CredentialRenderer.test.tsx` both assert the curated fields still render with the flag
+off. Tests: 4 new cases in `CredentialRenderer.test.tsx`'s `Mode 2` describe block.
 _Last updated: 2026-07-28_
 
 ## What This Folder Contains

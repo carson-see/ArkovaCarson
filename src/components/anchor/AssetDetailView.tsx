@@ -7,7 +7,7 @@
 import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { FileText, CheckCircle, XCircle, AlertTriangle, Clock, Copy, Check, RefreshCw, Download, ArrowLeft, Hash, Share2, ExternalLink, GitBranch, Pencil, Ban } from 'lucide-react';
+import { FileText, CheckCircle, XCircle, AlertTriangle, Clock, Copy, Check, RefreshCw, Download, ArrowLeft, Hash, Share2, ExternalLink, GitBranch, Pencil, Ban, ChevronDown } from 'lucide-react';
 import { RevokeAnchorModal } from './RevokeAnchorModal';
 import { QRCodeSVG } from 'qrcode.react';
 import { ComplianceBadge } from './ComplianceBadge';
@@ -40,9 +40,15 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { verifyUrl } from '@/lib/routes';
+import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
+import {
+  deriveDisplayTitle,
+  deriveDisplayType,
+  formatDisplayFileSize,
+  formatSourceModifiedTime,
+} from '@/lib/recordDisplay';
 
 /** Inline copy button for values */
 function CopyButton({ value }: { value: string }) {
@@ -107,8 +113,22 @@ interface AnchorRecord {
   versionNumber?: number;
   /** Parent anchor ID for lineage navigation */
   parentAnchorId?: string | null;
-  /** Lineage chain: all versions of this credential */
-  lineage?: { id: string; versionNumber: number; status: string; createdAt: string; filename: string }[];
+  /**
+   * Lineage chain: every version of this record, newest first (see
+   * `useAnchorVersions`). `publicId`/`fingerprint` are optional so existing
+   * callers that built this array before the readability pass (2026-09-29)
+   * still type-check; the version banner and "what changed" panel degrade
+   * gracefully (no link / no fingerprint-differs line) when either is absent.
+   */
+  lineage?: {
+    id: string;
+    publicId?: string | null;
+    versionNumber: number;
+    status: string;
+    createdAt: string;
+    filename: string;
+    fingerprint?: string;
+  }[];
 }
 
 interface AssetDetailViewProps {
@@ -581,9 +601,17 @@ function DriveSourceChips({ metadata }: Readonly<DriveSourceChipsProps>) {
   // including a legacy record with no kind recorded at all — gets the weaker,
   // true label.
   const revisionKind = metadataString(metadata, '_drive_revision_kind');
-  const revisionLabel = revisionKind === 'head_revision'
+  const isHeadRevision = revisionKind === 'head_revision';
+  const revisionLabel = isHeadRevision
     ? DRIVE_RECORD_LINKS_LABELS.REVISION_LABEL
     : DRIVE_RECORD_LINKS_LABELS.MODIFIED_TIME_LABEL;
+  // Readability pass (founder-reported, 2026-09-29): a non-head-revision value
+  // is a synthetic `mtime:`/`evt:` token — strip the internal prefix and show
+  // a formatted date/time instead of the raw token. A head_revision value is
+  // an opaque Drive revision id, never a time, so it is never reformatted.
+  const revisionDisplay = isHeadRevision
+    ? revision
+    : (revision ? (formatSourceModifiedTime(revision) ?? revision) : revision);
 
   if (!fileHref && !folderHref && !sharedDriveHref && !revision) return null;
 
@@ -626,7 +654,7 @@ function DriveSourceChips({ metadata }: Readonly<DriveSourceChipsProps>) {
                   against the live product — a link that works for some records
                   and 404s for others is worse than plain text. */}
               <span className="text-xs font-mono break-all" data-testid="drive-revision-plain">
-                {revision}
+                {revisionDisplay}
               </span>
             </DriveSourceRow>
           )}
@@ -732,13 +760,211 @@ function DocusignSignerRows({ signers, env }: Readonly<DocusignSignerRowsProps>)
   );
 }
 
+// ─── Version readability (founder-reported, 2026-09-29) ────────────────────
+//
+// A record's version chain used to be answerable only by scrolling to the
+// bottom "Version History" card, and a SUPERSEDED record said nothing at all
+// about where its replacement lives. `resolveVersionContext` derives the
+// current record's position in `anchor.lineage` (newest-first, from
+// `useAnchorVersions`); `VersionBanner` renders the at-a-glance summary near
+// the top of the page, and the "What changed" panel inside the Version
+// History card states honestly what Arkova does and does not know.
+
+interface LineageEntry {
+  id: string;
+  publicId?: string | null;
+  versionNumber: number;
+  status: string;
+  createdAt: string;
+  filename: string;
+  fingerprint?: string;
+}
+
+interface VersionContext {
+  currentVersion: number;
+  maxVersion: number;
+  isNewest: boolean;
+  newerEntry?: LineageEntry;
+  olderEntry?: LineageEntry;
+}
+
+/** `null` when there is no lineage to show (a solo record — the common case). */
+function resolveVersionContext(anchor: AnchorRecord): VersionContext | null {
+  const lineage = anchor.lineage;
+  if (!lineage || lineage.length <= 1) return null;
+
+  const currentVersion = anchor.versionNumber ?? 1;
+  const maxVersion = Math.max(...lineage.map((v) => v.versionNumber));
+  return {
+    currentVersion,
+    maxVersion,
+    isNewest: currentVersion >= maxVersion,
+    newerEntry: lineage.find((v) => v.versionNumber === currentVersion + 1),
+    olderEntry: lineage.find((v) => v.versionNumber === currentVersion - 1),
+  };
+}
+
+interface VersionBannerProps {
+  anchor: AnchorRecord;
+  formatDate: (dateString: string) => string;
+}
+
+function VersionBanner({ anchor, formatDate }: Readonly<VersionBannerProps>) {
+  const ctx = resolveVersionContext(anchor);
+  if (!ctx) return null;
+  const { currentVersion, maxVersion, isNewest, newerEntry, olderEntry } = ctx;
+
+  const versionOfLabel = VERSION_HISTORY_LABELS.VERSION_OF_TOTAL.replace(
+    '{version}',
+    String(currentVersion),
+  ).replace('{total}', String(maxVersion));
+
+  return (
+    <Alert
+      data-testid="version-banner"
+      className={isNewest ? 'border-primary/30 bg-primary/5' : 'border-amber-500/30 bg-amber-500/5'}
+    >
+      <GitBranch className="h-4 w-4" />
+      <AlertDescription>
+        <p className="font-medium text-foreground">
+          {versionOfLabel}
+          {isNewest && (
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+              {VERSION_HISTORY_LABELS.CURRENT_SUFFIX}
+            </span>
+          )}
+        </p>
+        {isNewest ? (
+          olderEntry && (
+            <p className="mt-1 text-sm">
+              {VERSION_HISTORY_LABELS.REPLACES_PREVIOUS.replace('{version}', String(olderEntry.versionNumber))}{' '}
+              <a
+                href={recordDetailPath(olderEntry.id)}
+                className="text-primary hover:underline"
+                data-testid="version-banner-previous-link"
+              >
+                {VERSION_HISTORY_LABELS.VIEW_PREVIOUS_VERSION}
+              </a>
+            </p>
+          )
+        ) : (
+          <>
+            {newerEntry && (
+              <p className="mt-1 text-sm">
+                {VERSION_HISTORY_LABELS.NEWER_VERSION_NOTICE.replace('{date}', formatDate(newerEntry.createdAt))}{' '}
+                <a
+                  href={recordDetailPath(newerEntry.id)}
+                  className="text-primary hover:underline"
+                  data-testid="version-banner-current-link"
+                >
+                  {VERSION_HISTORY_LABELS.VIEW_CURRENT_VERSION}
+                </a>
+              </p>
+            )}
+            <p className="mt-2 text-xs text-muted-foreground" data-testid="version-banner-remains-valid">
+              {VERSION_HISTORY_LABELS.REMAINS_VALID_EVIDENCE}
+            </p>
+          </>
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * Honest "what changed" statement (§1.5): Arkova stores fingerprints, not
+ * file content, so it never claims a content diff. The only thing it can
+ * state is whether the fingerprint differs from the adjacent version — and
+ * only when that neighbor's fingerprint is actually known.
+ */
+function WhatChangedPanel({ anchor }: Readonly<{ anchor: AnchorRecord }>) {
+  const ctx = resolveVersionContext(anchor);
+  if (!ctx) return null;
+
+  const neighbor = ctx.isNewest ? ctx.olderEntry : ctx.newerEntry;
+  const fingerprintDiffers = Boolean(
+    neighbor?.fingerprint && anchor.fingerprint && neighbor.fingerprint !== anchor.fingerprint,
+  );
+
+  return (
+    <div className="space-y-1.5 rounded-md border border-border bg-muted/30 p-3" data-testid="what-changed-section">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+        {VERSION_HISTORY_LABELS.WHAT_CHANGED_TITLE}
+      </span>
+      <p className="text-xs text-muted-foreground">{VERSION_HISTORY_LABELS.WHAT_CHANGED_NO_DIFF}</p>
+      {fingerprintDiffers && neighbor && (
+        <p className="text-xs text-muted-foreground" data-testid="what-changed-fingerprint-differs">
+          {VERSION_HISTORY_LABELS.FINGERPRINT_DIFFERS_FROM_VERSION.replace(
+            '{version}',
+            String(neighbor.versionNumber),
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Technical details (founder-reported, 2026-09-29) ──────────────────────
+//
+// Every raw identifier Arkova recorded for a document (file id, revision id,
+// connector ids, …) now lives in exactly ONE collapsed disclosure, instead of
+// an always-visible "Metadata" block that also used to be duplicated a second
+// time by CredentialRenderer's untemplated fallback (see
+// `showGenericMetadataFields` on that component). Collapsed by default;
+// native <button> gives full keyboard support for free, and `aria-expanded`
+// plus a `hidden`-attribute content region (not a conditional unmount) keep
+// the disclosure's own accessible-name/state correct without hiding the
+// content from assistive tech that reads `hidden` regions on request.
+
+interface TechnicalDetailsSectionProps {
+  entries: [string, unknown][];
+  provider: RecordSourceProvider;
+  docusignEnv: DocusignEnv;
+}
+
+function TechnicalDetailsSection({ entries, provider, docusignEnv }: Readonly<TechnicalDetailsSectionProps>) {
+  const [open, setOpen] = useState(false);
+  if (entries.length === 0) return null;
+
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls="technical-details-content"
+          onClick={() => setOpen((prev) => !prev)}
+          data-testid="technical-details-toggle"
+          className="flex w-full items-center justify-between text-left text-[10px] uppercase tracking-wider text-muted-foreground font-semibold hover:text-foreground transition-colors"
+        >
+          <span>{RECORD_DETAIL_LABELS.TECHNICAL_DETAILS_TOGGLE}</span>
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+        <div id="technical-details-content" hidden={!open} className="space-y-2 pt-1">
+          {entries.map(([key, value]) => (
+            <MetadataRow key={key} metaKey={key} value={value} provider={provider} docusignEnv={docusignEnv} />
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRename = false, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
+  // Readability pass (founder-reported, 2026-09-29): a connector-sourced
+  // filename (`google_drive:1IxoL...`) is an internal id, never shown as the
+  // title. `displayTitle` is what renders AND what the rename pencil seeds
+  // its input with — editing should start from the readable name a person
+  // would actually want to change, not the raw id underneath it.
+  const displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata);
+
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [editingFilename, setEditingFilename] = useState(false);
-  const [filenameInput, setFilenameInput] = useState(anchor.filename);
+  const [filenameInput, setFilenameInput] = useState(displayTitle);
   const [renameSaving, setRenameSaving] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
 
@@ -765,6 +991,20 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const isDeclaredUnverified = isConnectorSourced && anchor.fingerprintSource === 'issuer_record_attestation';
   const credentialMetadata = anchor.metadata ?? undefined;
   const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
+  // Readability pass: a truthful, plain-language subtitle. "0 B" for an
+  // unknown size is worse than no size at all, and a raw MIME string
+  // ("application/vnd.google-apps.spreadsheet") is replaced by a
+  // plain-language type wherever one is known.
+  const displaySize = formatDisplayFileSize(anchor.fileSize);
+  const displayType = deriveDisplayType(anchor.fileMime, anchor.metadata) ?? anchor.fileMime ?? undefined;
+  const credentialTypeLabel = anchor.credentialType
+    ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[anchor.credentialType] ?? anchor.credentialType
+    : undefined;
+  const subtitleParts = [
+    displaySize,
+    displayType,
+    credentialTypeLabel && credentialTypeLabel !== displayType ? credentialTypeLabel : undefined,
+  ].filter((part): part is string => Boolean(part));
   // DocuSign record deep links (bilateral rollout, frontend-targeted T2):
   // gated strictly on connector_source === 'docusign' — a non-DocuSign
   // anchor never sees a link, regardless of what its metadata contains.
@@ -823,12 +1063,6 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
     setShowVerifyDropzone(false);
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
   const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleString('en-US', {
       year: 'numeric',
@@ -884,12 +1118,18 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
         )}
       </div>
 
+      {/* Version banner (readability pass, founder-reported 2026-09-29) —
+          at-a-glance: which version this is, whether it's current, and a
+          working link to the newer/older version. Self-hides for a solo
+          record (no lineage). */}
+      <VersionBanner anchor={anchor} formatDate={formatDate} />
+
       {canRevoke && (
         <RevokeAnchorModal
           open={revokeOpen}
           onClose={() => setRevokeOpen(false)}
           anchorId={anchor.id}
-          filename={anchor.filename}
+          filename={displayTitle}
           onRevoked={onRevoked}
         />
       )}
@@ -939,7 +1179,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                           setEditingFilename(false);
                         }
                       } else if (e.key === 'Escape') {
-                        setFilenameInput(anchor.filename);
+                        setFilenameInput(displayTitle);
                         setEditingFilename(false);
                       }
                     }}
@@ -971,7 +1211,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 shrink-0"
-                    onClick={() => { setFilenameInput(anchor.filename); setEditingFilename(false); }}
+                    onClick={() => { setFilenameInput(displayTitle); setEditingFilename(false); }}
                     disabled={renameSaving}
                   >
                     <XCircle className="h-4 w-4" />
@@ -979,12 +1219,12 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
-                  <p className="text-lg font-medium truncate">{anchor.filename}</p>
+                  <p className="text-lg font-medium truncate">{displayTitle}</p>
                   {onRenameFile && canRename && (
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                      onClick={() => { setFilenameInput(anchor.filename); setEditingFilename(true); }}
+                      onClick={() => { setFilenameInput(displayTitle); setEditingFilename(true); }}
                       aria-label="Edit document name"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -992,11 +1232,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                   )}
                 </div>
               )}
-              <p className="text-sm text-muted-foreground">
-                {formatFileSize(anchor.fileSize)}
-                {anchor.fileMime && ` • ${anchor.fileMime}`}
-                {anchor.credentialType && ` • ${CREDENTIAL_TYPE_LABELS[anchor.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? anchor.credentialType}`}
-              </p>
+              {subtitleParts.length > 0 && (
+                <p className="text-sm text-muted-foreground">{subtitleParts.join(' • ')}</p>
+              )}
             </div>
           </div>
 
@@ -1117,30 +1355,17 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             </>
           )}
 
-          {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered).
-              DocuSign bilateral rollout (frontend-targeted T2): account_id/envelope_id
-              render as deep links ONLY for connector_source === 'docusign' anchors —
+          {/* Technical details (readability pass, founder-reported 2026-09-29):
+              every raw identifier, collapsed by default, rendered exactly
+              once. DocuSign bilateral rollout (frontend-targeted T2):
+              account_id/envelope_id inside it still render as deep links —
               see MetadataRow. */}
-          {visibleMetadata && Object.keys(visibleMetadata).length > 0 && (
-            <>
-              <Separator />
-              <div className="space-y-3">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
-                <div className="space-y-2">
-                  {Object.entries(visibleMetadata)
-                    .map(([key, value]) => (
-                      <MetadataRow
-                        key={key}
-                        metaKey={key}
-                        value={value}
-                        provider={sourceProvider}
-                        docusignEnv={docusignEnv}
-                      />
-                    ))
-                  }
-                </div>
-              </div>
-            </>
+          {visibleMetadata && (
+            <TechnicalDetailsSection
+              entries={Object.entries(visibleMetadata)}
+              provider={sourceProvider}
+              docusignEnv={docusignEnv}
+            />
           )}
 
           {/* DocuSign Signers (bilateral rollout, frontend-targeted T2) — dedicated
@@ -1197,12 +1422,20 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           template={template}
           issuerName={anchor.issuerName}
           status={anchor.status}
-          filename={anchor.filename}
+          // Readability pass: AssetDetailView already renders the record's
+          // title prominently above (displayTitle) — omitting `filename`
+          // here stops CredentialRenderer's own "no displayable fields"
+          // fallback from repeating that same title a second time.
           issuedDate={anchor.issuedAt}
           expiryDate={anchor.expiresAt}
           cpeMetadata={cpeMetadataView}
           cleMetadata={cleMetadataView}
           hasImportEntitlement={hasImportEntitlement}
+          // Readability pass: this page already renders every raw metadata
+          // key itself (Technical Details, above) — without this the
+          // untemplated fallback below duplicated the identical key/value
+          // list a second time.
+          showGenericMetadataFields={false}
         />
       )}
 
@@ -1239,19 +1472,18 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               {VERSION_HISTORY_LABELS.TITLE}
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {(anchor.lineage ?? [{ id: anchor.id, versionNumber: anchor.versionNumber ?? 1, status: anchor.status, createdAt: anchor.createdAt, filename: anchor.filename }]).map((version) => {
+          <CardContent className="space-y-4">
+            <WhatChangedPanel anchor={anchor} />
+            <div className="space-y-3" data-testid="version-history-list">
+              {(anchor.lineage ?? [{ id: anchor.id, versionNumber: anchor.versionNumber ?? 1, status: anchor.status, createdAt: anchor.createdAt, filename: anchor.filename }])
+                .slice()
+                .sort((a, b) => b.versionNumber - a.versionNumber)
+                .map((version) => {
                 const isCurrent = version.id === anchor.id;
                 const vStatus = statusConfig[version.status as keyof typeof statusConfig];
                 const VIcon = vStatus?.icon ?? Clock;
-                return (
-                  <div
-                    key={version.id}
-                    className={`flex items-center gap-3 rounded-lg px-4 py-3 transition-colors ${isCurrent ? 'bg-primary/5 border border-primary/20' : 'bg-muted/50 hover:bg-muted cursor-pointer'}`}
-                    onClick={!isCurrent ? () => window.location.assign(`/records/${version.id}`) : undefined}
-                    role={!isCurrent ? 'link' : undefined}
-                  >
+                const rowContent = (
+                  <>
                     <div className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${isCurrent ? 'bg-primary/10' : 'bg-muted'}`}>
                       <span className="text-xs font-bold">{version.versionNumber}</span>
                     </div>
@@ -1273,6 +1505,25 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                       <VIcon className="mr-1 h-3 w-3" />
                       {vStatus?.label ?? version.status}
                     </Badge>
+                  </>
+                );
+                return (
+                  <div
+                    key={version.id}
+                    data-testid="version-history-row"
+                    className={`rounded-lg transition-colors ${isCurrent ? 'bg-primary/5 border border-primary/20' : 'bg-muted/50 hover:bg-muted'}`}
+                  >
+                    {isCurrent ? (
+                      <div className="flex items-center gap-3 px-4 py-3">{rowContent}</div>
+                    ) : (
+                      <a
+                        href={recordDetailPath(version.id)}
+                        data-testid="version-history-row-link"
+                        className="flex items-center gap-3 px-4 py-3"
+                      >
+                        {rowContent}
+                      </a>
+                    )}
                   </div>
                 );
               })}
@@ -1437,7 +1688,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           open={shareOpen}
           onOpenChange={setShareOpen}
           publicId={anchor.publicId}
-          filename={anchor.filename}
+          filename={displayTitle}
         />
       )}
 
