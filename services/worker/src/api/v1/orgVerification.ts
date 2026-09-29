@@ -92,10 +92,34 @@ const MAX_EIN_LENGTH = 32;
  * correct answer is a refusal, not a CAS that can never match.
  */
 const VERIFICATION_SUPERSEDED = 'verification_superseded';
+const FULLY_VERIFIED_DETAILS = 'Organization fully verified (EIN + domain)';
 
 /** The affected-row count of an `.update(...).select(...)`, NULL-safe. */
 function affectedRowCount(rows: unknown): number {
   return Array.isArray(rows) ? rows.length : 0;
+}
+
+/** One audit row for a verification step. Never pass the EIN or a code here. */
+async function auditOrgVerification(
+  userId: string,
+  orgId: string,
+  eventType: string,
+  details: string,
+): Promise<void> {
+  await db.from('audit_events').insert({
+    actor_id: userId,
+    org_id: orgId,
+    event_type: eventType,
+    event_category: 'ADMIN',
+    target_type: 'organization',
+    target_id: orgId,
+    details,
+  });
+}
+
+/** The 409 every compare-and-swapped grant answers when the row moved under it. */
+function respondSuperseded(res: Response, message: string): void {
+  res.status(409).json({ error: message, code: VERIFICATION_SUPERSEDED });
 }
 
 /**
@@ -281,25 +305,20 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
       // this write. Do NOT emit the audit row and do NOT answer 200 — the
       // caller must know the grant did not land and restart.
       logger.warn({ orgId }, 'EIN submission superseded by a concurrent domain change');
-      res.status(409).json({
-        error: 'The organization domain changed before this submission could complete verification. Start domain verification again.',
-        code: VERIFICATION_SUPERSEDED,
-      });
+      respondSuperseded(
+        res,
+        'The organization domain changed before this submission could complete verification. Start domain verification again.',
+      );
       return;
     }
 
-    // Log audit event (never log the actual EIN)
-    await db.from('audit_events').insert({
-      actor_id: userId,
-      org_id: orgId,
-      event_type: isFullyVerified ? 'ORG_VERIFIED' : 'ORG_EIN_SUBMITTED',
-      event_category: 'ADMIN',
-      target_type: 'organization',
-      target_id: orgId,
-      details: isFullyVerified
-        ? 'Organization fully verified (EIN + domain)'
-        : 'EIN/Tax ID submitted for verification',
-    });
+    // The audit row never carries the EIN itself.
+    await auditOrgVerification(
+      userId,
+      orgId,
+      isFullyVerified ? 'ORG_VERIFIED' : 'ORG_EIN_SUBMITTED',
+      isFullyVerified ? FULLY_VERIFIED_DETAILS : 'EIN/Tax ID submitted for verification',
+    );
 
     logger.info({ orgId, fullyVerified: isFullyVerified }, 'Organization EIN submitted for verification');
 
@@ -568,24 +587,19 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
       // Nothing was granted. Do NOT emit the audit row and do NOT answer 200 —
       // the caller must know the proof no longer binds and restart.
       logger.warn({ orgId }, 'Domain verification confirm superseded by a concurrent row change');
-      res.status(409).json({
-        error: 'The organization domain or verification code changed before this confirmation landed. Start domain verification again.',
-        code: VERIFICATION_SUPERSEDED,
-      });
+      respondSuperseded(
+        res,
+        'The organization domain or verification code changed before this confirmation landed. Start domain verification again.',
+      );
       return;
     }
 
-    await db.from('audit_events').insert({
-      actor_id: userId,
-      org_id: orgId,
-      event_type: isFullyVerified ? 'ORG_VERIFIED' : 'ORG_DOMAIN_VERIFIED',
-      event_category: 'ADMIN',
-      target_type: 'organization',
-      target_id: orgId,
-      details: isFullyVerified
-        ? 'Organization fully verified (EIN + domain)'
-        : 'Organization domain verified via email',
-    });
+    await auditOrgVerification(
+      userId,
+      orgId,
+      isFullyVerified ? 'ORG_VERIFIED' : 'ORG_DOMAIN_VERIFIED',
+      isFullyVerified ? FULLY_VERIFIED_DETAILS : 'Organization domain verified via email',
+    );
 
     logger.info({ orgId, fullyVerified: isFullyVerified }, 'Domain verification confirmed');
 

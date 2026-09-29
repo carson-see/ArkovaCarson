@@ -303,122 +303,79 @@ describe('POST /verify-ein', () => {
     expect(res.body.status).toBe('VERIFIED');
   });
 
+  /**
+   * One mock for the three-step verify-ein flow (duplicate check, domain-state
+   * read, write), capturing the write payload, its predicates and audit rows.
+   */
+  function mockEinWrite(orgRow: Record<string, unknown>) {
+    const seen = {
+      writes: [] as Record<string, unknown>[],
+      audits: [] as Record<string, unknown>[],
+      writeChain: undefined as ReturnType<typeof mockQuery> | undefined,
+    };
+    const capture = (sink: Record<string, unknown>[], chain: ReturnType<typeof mockQuery>) =>
+      (payload: Record<string, unknown>) => {
+        sink.push({ ...payload });
+        return chain;
+      };
+    let orgCalls = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      if (table === 'audit_events') {
+        const chain = mockQuery({ data: null, error: null });
+        (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(capture(seen.audits, chain));
+        return chain;
+      }
+      if (table !== 'organizations') return mockQuery({ data: null });
+      orgCalls += 1;
+      if (orgCalls === 1) return mockQuery({ data: null, error: null });
+      if (orgCalls === 2) return mockQuery({ data: orgRow, error: null });
+      const chain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+      (chain.update as ReturnType<typeof vi.fn>).mockImplementation(capture(seen.writes, chain));
+      seen.writeChain = chain;
+      return chain;
+    });
+    return seen;
+  }
+
+  const submitEin = () => request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+
   it('keeps an operator- or KYB-verified org VERIFIED when it has no proven domain, and writes no status', async () => {
     // An org can be VERIFIED without `domain_verified` (KYB webhook, operator
     // grant). Submitting an EIN must not demote it, and must not re-assert the
     // status either: the column is left out of the write so nothing is granted.
-    const captured: Record<string, unknown>[] = [];
-    const captureAudit: Record<string, unknown>[] = [];
-    let orgCalls = 0;
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'profiles') {
-        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
-      }
-      if (table === 'organizations') {
-        orgCalls += 1;
-        if (orgCalls === 1) return mockQuery({ data: null, error: null });
-        if (orgCalls === 2) {
-          return mockQuery({
-            data: { domain: null, domain_verified: false, verification_status: 'VERIFIED' },
-            error: null,
-          });
-        }
-        const writeChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
-        (writeChain.update as ReturnType<typeof vi.fn>).mockImplementation(
-          (payload: Record<string, unknown>) => {
-            captured.push({ ...payload });
-            return writeChain;
-          },
-        );
-        return writeChain;
-      }
-      if (table === 'audit_events') {
-        const chain = mockQuery({ data: null, error: null });
-        (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(
-          (payload: Record<string, unknown>) => {
-            captureAudit.push({ ...payload });
-            return chain;
-          },
-        );
-        return chain;
-      }
-      return mockQuery({ data: null });
-    });
+    const seen = mockEinWrite({ domain: null, domain_verified: false, verification_status: 'VERIFIED' });
 
-    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    const res = await submitEin();
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('VERIFIED');
-    expect(captured).toHaveLength(1);
-    expect(captured[0]).toEqual({ ein_tax_id: '12-3456789' });
-    expect('verification_status' in captured[0]).toBe(false);
+    expect(seen.writes).toEqual([{ ein_tax_id: '12-3456789' }]);
     // Nothing was granted here, so the audit row must not claim a grant.
-    expect(captureAudit.some((p) => p.event_type === 'ORG_VERIFIED')).toBe(false);
-    expect(captureAudit.some((p) => p.event_type === 'ORG_EIN_SUBMITTED')).toBe(true);
+    expect(seen.audits.map((p) => p.event_type)).toEqual(['ORG_EIN_SUBMITTED']);
   });
 
   it('still moves an UNVERIFIED org with no proven domain to PENDING', async () => {
-    const captured: Record<string, unknown>[] = [];
-    let orgCalls = 0;
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'profiles') {
-        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
-      }
-      if (table === 'organizations') {
-        orgCalls += 1;
-        if (orgCalls === 1) return mockQuery({ data: null, error: null });
-        if (orgCalls === 2) {
-          return mockQuery({
-            data: { domain: 'example.com', domain_verified: false, verification_status: 'UNVERIFIED' },
-            error: null,
-          });
-        }
-        const writeChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
-        (writeChain.update as ReturnType<typeof vi.fn>).mockImplementation(
-          (payload: Record<string, unknown>) => {
-            captured.push({ ...payload });
-            return writeChain;
-          },
-        );
-        return writeChain;
-      }
-      return mockQuery({ data: null });
-    });
+    const seen = mockEinWrite({ domain: 'example.com', domain_verified: false, verification_status: 'UNVERIFIED' });
 
-    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    const res = await submitEin();
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('PENDING');
-    expect(captured[0]).toEqual({ ein_tax_id: '12-3456789', verification_status: 'PENDING' });
+    expect(seen.writes).toEqual([{ ein_tax_id: '12-3456789', verification_status: 'PENDING' }]);
   });
 
   it('CAS-guards the VERIFIED grant against BOTH domain_verified and domain', async () => {
-    let updateChain: ReturnType<typeof mockQuery> | undefined;
-    const callIdx = { current: 0 };
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'profiles') {
-        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
-      }
-      if (table === 'organizations') {
-        callIdx.current++;
-        if (callIdx.current === 1) return mockQuery({ data: null }); // duplicate check
-        if (callIdx.current === 2) {
-          return mockQuery({ data: { domain: 'example.com', domain_verified: true }, error: null });
-        }
-        updateChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
-        return updateChain;
-      }
-      return mockQuery({ data: null });
-    });
+    const seen = mockEinWrite({ domain: 'example.com', domain_verified: true });
 
-    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    const res = await submitEin();
     expect(res.status).toBe(200);
 
-    const predicates = (updateChain?.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const predicates = (seen.writeChain?.eq as ReturnType<typeof vi.fn>).mock.calls;
     expect(predicates).toContainEqual(['id', 'org-abc']);
     expect(predicates).toContainEqual(['domain_verified', true]);
     expect(predicates).toContainEqual(['domain', 'example.com']);
-    expect((updateChain?.select as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect((seen.writeChain?.select as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
   });
 
   it('returns 409 verification_superseded and emits NO audit row when the CAS affects zero rows', async () => {
