@@ -157,12 +157,19 @@ function deriveMirrorFolderName(driveFolderId: string, folderName: string | null
  * terminal state (nothing to retry until the org actually connects).
  * Review P2 (feat/mirror-connected-drive-folders).
  */
-type ActiveConnectionLookup =
+export type ActiveConnectionLookup =
   | { kind: 'found'; connection: { id: string } }
   | { kind: 'none' }
   | { kind: 'error'; error: unknown };
 
-async function loadActiveDriveConnection(db: DriveFolderMirrorDb, orgId: string): Promise<ActiveConnectionLookup> {
+/**
+ * Exported (DRIVE-BACKFILL, founder directive 2026-09-29): the initial-sync
+ * trigger (`drive-initial-sync-trigger.ts`) needs the SAME "which Drive
+ * connection is currently active for this org" answer this module already
+ * resolves for the folder mirror — reusing it means the two features can
+ * never silently disagree about which connection backs a rule's folders.
+ */
+export async function loadActiveDriveConnection(db: DriveFolderMirrorDb, orgId: string): Promise<ActiveConnectionLookup> {
   const { data, error } = await db
     .from('org_integrations')
     .select('id')
