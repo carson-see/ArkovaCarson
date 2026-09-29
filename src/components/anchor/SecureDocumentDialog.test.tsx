@@ -68,6 +68,14 @@ const mockSubmissionState = vi.hoisted(() => ({ current: null as null | {
 const mockSubmissionRefresh = vi.hoisted(() => vi.fn(async () => ({})));
 const mockSubmissionError = vi.hoisted(() => ({ current: null as string | null }));
 const mockNavigate = vi.hoisted(() => vi.fn());
+const mockBulkWizardProps = vi.hoisted(() => ({ current: null as null | {
+  onComplete?: (result: {
+    total: number; created: number; skipped: number; failed: number;
+    needsCredit: number; held: number; instantFailed: number;
+    instantPending: number; instantUnknown: number; recipientLinkFailed: number;
+    recipientOutcomes: Record<string, number>; partial: boolean; action: 'queue' | 'instant';
+  }) => void;
+} }));
 const DEFAULT_CAPABILITY = { canSecureInstantly: false, creditBalance: 5, instantSecureCost: 1 };
 
 function createTemplateSelectMock(data: unknown[] = []) {
@@ -109,7 +117,10 @@ vi.mock('./FileUpload', () => ({
 }));
 
 vi.mock('@/components/upload', () => ({
-  BulkUploadWizard: () => <div data-testid="bulk-wizard-stub" />,
+  BulkUploadWizard: (props: NonNullable<typeof mockBulkWizardProps.current>) => {
+    mockBulkWizardProps.current = props;
+    return <div data-testid="bulk-wizard-stub" />;
+  },
   MixedBatchUploadWizard: () => <div data-testid="mixed-batch-wizard-stub" />,
 }));
 
@@ -199,6 +210,7 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
   beforeEach(() => {
     vi.clearAllMocks();
     lastFileUploadProps = null;
+    mockBulkWizardProps.current = null;
     mockProfileOrgId.current = null;
     mockCapability.current = { ...DEFAULT_CAPABILITY };
     mockSubmissionState.current = null;
@@ -256,6 +268,56 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
 
     expect(screen.queryByTestId('bulk-wizard-stub')).not.toBeInTheDocument();
     expect(screen.getByText(SECURE_DIALOG_LABELS.PROFILE_SCOPED_FLOW_UNAVAILABLE)).toBeInTheDocument();
+  });
+
+  it('keeps the dialog open so an instant batch with credit outcomes remains visible', () => {
+    const onOpenChange = vi.fn();
+    const onSuccess = vi.fn();
+    render(<SecureDocumentDialog open={true} onOpenChange={onOpenChange} onSuccess={onSuccess} />);
+
+    act(() => {
+      lastFileUploadProps?.onBulkDetected?.([
+        new File(['a,b\n1,2'], 'docs.csv', { type: 'text/csv' }),
+      ]);
+    });
+    expect(mockBulkWizardProps.current?.onComplete).toBeTypeOf('function');
+
+    act(() => {
+      mockBulkWizardProps.current?.onComplete?.({
+        total: 2, created: 2, skipped: 0, failed: 0,
+        needsCredit: 1, held: 0, instantFailed: 0,
+        instantPending: 1, instantUnknown: 0, recipientLinkFailed: 0,
+        recipientOutcomes: {}, partial: false, action: 'instant',
+      });
+    });
+
+    expect(onSuccess).toHaveBeenCalledOnce();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByTestId('bulk-wizard-stub')).toBeInTheDocument();
+  });
+
+  it('retains the existing close behavior for a clean completed batch', () => {
+    const onOpenChange = vi.fn();
+    const onSuccess = vi.fn();
+    render(<SecureDocumentDialog open={true} onOpenChange={onOpenChange} onSuccess={onSuccess} />);
+
+    act(() => {
+      lastFileUploadProps?.onBulkDetected?.([
+        new File(['a,b\n1,2'], 'docs.csv', { type: 'text/csv' }),
+      ]);
+    });
+    expect(mockBulkWizardProps.current?.onComplete).toBeTypeOf('function');
+    act(() => {
+      mockBulkWizardProps.current?.onComplete?.({
+        total: 1, created: 1, skipped: 0, failed: 0,
+        needsCredit: 0, held: 0, instantFailed: 0,
+        instantPending: 1, instantUnknown: 0, recipientLinkFailed: 0,
+        recipientOutcomes: {}, partial: false, action: 'instant',
+      });
+    });
+
+    expect(onSuccess).toHaveBeenCalledOnce();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   // SCRUM-2911 W1 — routes a mixed-format multi-file drop (from FileUpload's

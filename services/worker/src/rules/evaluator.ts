@@ -20,6 +20,7 @@
  */
 
 import { GOOGLE_DRIVE_VENDOR } from '../constants/connectors.js';
+import { parseDriveFolderBindings } from '../integrations/connectors/drive-folder-bindings.js';
 import { RULE_REJECTION_REASON } from './schemas.js';
 
 export type TriggerType =
@@ -84,11 +85,6 @@ function startsWithCI(haystack: string | undefined, needle: unknown): boolean {
   return haystack.toLowerCase().startsWith(needle.toLowerCase());
 }
 
-interface DriveFolderBinding {
-  folder_id: string;
-  folder_path?: string;
-}
-
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
@@ -144,37 +140,12 @@ function filenameRejected(
   return Boolean(cfg.filename_contains && !containsCI(eventFilename, cfg.filename_contains));
 }
 
-function readDriveFolderBindings(cfg: Record<string, unknown>): DriveFolderBinding[] {
-  const bindings: DriveFolderBinding[] = [];
-  if (
-    cfg.type === 'drive_folder' &&
-    typeof cfg.folder_id === 'string' &&
-    cfg.folder_id.length > 0
-  ) {
-    bindings.push({
-      folder_id: cfg.folder_id,
-      folder_path: typeof cfg.folder_path === 'string' ? cfg.folder_path : undefined,
-    });
-  }
-
-  const configured = cfg.drive_folders;
-  if (Array.isArray(configured)) {
-    for (const entry of configured) {
-      if (!entry || typeof entry !== 'object') continue;
-      const folderId = (entry as { folder_id?: unknown }).folder_id;
-      if (typeof folderId !== 'string' || folderId.length === 0) continue;
-      const folderPath = (entry as { folder_path?: unknown }).folder_path;
-      bindings.push({
-        folder_id: folderId,
-        folder_path: typeof folderPath === 'string' ? folderPath : undefined,
-      });
-    }
-  }
-  return bindings;
-}
-
 function driveFolderRejected(cfg: Record<string, unknown>, event: TriggerEvent): boolean {
-  const bindings = readDriveFolderBindings(cfg);
+  // Persisted rows may predate the schema guard. A stray folder_id must never
+  // degrade into an unscoped match merely because the canonical parser
+  // correctly refuses to treat it as a Drive binding.
+  if (typeof cfg.folder_id === 'string' && cfg.folder_id.length > 0 && cfg.type !== 'drive_folder') return true;
+  const bindings = parseDriveFolderBindings(cfg);
   if (bindings.length === 0) return false;
   if (event.vendor !== GOOGLE_DRIVE_VENDOR) return true;
 
@@ -185,9 +156,9 @@ function driveFolderRejected(cfg: Record<string, unknown>, event: TriggerEvent):
       : event.external_file_id;
 
   return !bindings.some((binding) => {
-    if (parentIds.includes(binding.folder_id)) return true;
-    if (fileId === binding.folder_id) return true;
-    return Boolean(binding.folder_path && startsWithCI(event.folder_path, binding.folder_path));
+    if (parentIds.includes(binding.folderId)) return true;
+    if (fileId === binding.folderId) return true;
+    return Boolean(binding.folderPath && startsWithCI(event.folder_path, binding.folderPath));
   });
 }
 

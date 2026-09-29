@@ -150,10 +150,10 @@ describe('SCRUM-3981 — /api/v1/webhooks requires the webhooks:manage scope', (
     expect(routes.length).toBeGreaterThan(0);
   });
 
-  it('covers all 10 routes webhooks.ts registers today', () => {
-    // Ratchet, not decoration: an 11th route must be considered here rather
+  it('covers all 11 routes webhooks.ts registers today', () => {
+    // Ratchet, not decoration: a 12th route must be considered here rather
     // than inheriting coverage silently.
-    expect(routes.length).toBe(10);
+    expect(routes.length).toBe(11);
   });
 
   it.each(routes)('$method $path → 403 insufficient_scope for a read:search key', async (route) => {

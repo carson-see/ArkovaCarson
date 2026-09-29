@@ -1,5 +1,13 @@
 # agents.md — components/anchor
 
+## 2026-09-28 — bulk credit outcomes remain visible
+
+`SecureDocumentDialog` may close a completed spreadsheet import immediately only
+when every outcome is clean. Keep the nested `BulkUploadWizard` mounted for
+partial, failed, Needs credit, Held, unknown instant-state, or recipient-link
+outcomes so its existing per-row summary remains visible. `onSuccess` still
+refreshes records in both cases.
+
 ## 2026-09-19 — UAT-12 frontend completion
 
 `SecureDocumentDialog` sends every single-document queue or instant action through

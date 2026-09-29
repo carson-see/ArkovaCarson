@@ -130,6 +130,10 @@ describe('WebhookEventCatalog', () => {
     'suborg.credits_reclaimed',
     'suborg.suspended',
     'suborg.offboarded',
+    'agent.registered',
+    'agent.updated',
+    'agent.revoked',
+    'agent.key_created',
   ]);
 
   it('claims live only for events with a real emit point', () => {
@@ -204,5 +208,20 @@ describe('WebhookEventCatalog', () => {
         expect(field).not.toMatch(/^anchor_id$|^user_id$|^org_id$/);
       }
     }
+  });
+
+  it('publishes the strict minimal agent lifecycle payload fields', () => {
+    expect(WEBHOOK_EVENT_CATALOG.find((event) => event.id === 'agent.registered')?.fields).toEqual(
+      ['agent_id', 'status', 'source', 'occurred_at', 'org_public_id?'],
+    );
+    expect(WEBHOOK_EVENT_CATALOG.find((event) => event.id === 'agent.updated')?.fields).toEqual(
+      ['agent_id', 'status', 'source', 'occurred_at', 'org_public_id?'],
+    );
+    expect(WEBHOOK_EVENT_CATALOG.find((event) => event.id === 'agent.revoked')?.fields).toEqual(
+      ['agent_id', 'status', 'source', 'occurred_at', 'org_public_id?'],
+    );
+    expect(WEBHOOK_EVENT_CATALOG.find((event) => event.id === 'agent.key_created')?.fields).toEqual(
+      ['agent_id', 'key_id', 'source', 'occurred_at', 'org_public_id?'],
+    );
   });
 });

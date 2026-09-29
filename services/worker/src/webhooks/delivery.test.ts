@@ -100,7 +100,7 @@ const {
     contains: endpointsContains,
   };
 
-  // Retry logs chain: .select().eq().lte().order().limit()
+  // Retry logs chain: .select().eq().is().lte().order().limit()
   // SCRUM-2250 review-fix (defect #2): processWebhookRetries now inserts an
   // `.order('payload->sequence', { ascending: true, nullsFirst: true })` step
   // between `.lte()` and `.limit()` so the 50-row window is the globally-oldest
@@ -109,10 +109,12 @@ const {
   const retryLogsLimit = vi.fn();
   const retryLogsOrder = vi.fn(() => ({ limit: retryLogsLimit }));
   const retryLogsLte = vi.fn(() => ({ order: retryLogsOrder }));
-  const retryLogsEq = vi.fn(() => ({ lte: retryLogsLte }));
+  const retryLogsIs = vi.fn(() => ({ lte: retryLogsLte }));
+  const retryLogsEq = vi.fn(() => ({ is: retryLogsIs, lte: retryLogsLte }));
   const retryLogsSelect = {
     select: vi.fn((_columns?: string) => ({ eq: retryLogsEq })),
     eq: retryLogsEq,
+    is: retryLogsIs,
     lte: retryLogsLte,
     order: retryLogsOrder,
     limit: retryLogsLimit,
@@ -144,12 +146,22 @@ const {
     flag: { data: unknown };
     seq: number;
     seqOverride: { data: unknown; error?: unknown } | null;
-  } = { flag: { data: true }, seq: 0, seqOverride: null };
+    agent: Record<string, Array<{ data: unknown; error: unknown }>>;
+  } = { flag: { data: true }, seq: 0, seqOverride: null, agent: {} };
   const mockRpc = vi.fn((fn: string) => {
     if (fn === 'next_webhook_sequence') {
       if (rpcState.seqOverride) return Promise.resolve(rpcState.seqOverride);
       rpcState.seq += 1;
       return Promise.resolve({ data: rpcState.seq, error: null });
+    }
+    if (fn === 'materialize_next_agent_webhook_event' || fn === 'claim_next_agent_webhook_delivery') {
+      return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: null, error: null });
+    }
+    if (fn === 'complete_agent_webhook_delivery') {
+      return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: true, error: null });
+    }
+    if (fn === 'cleanup_terminal_agent_webhook_outbox') {
+      return Promise.resolve(rpcState.agent[fn]?.shift() ?? { data: 0, error: null });
     }
     // get_flag (and any other rpc) → the flag slot. Tests drive this via
     // mockRpc.mockResolvedValue(...) (legacy) which is bridged onto the flag.
@@ -187,14 +199,15 @@ const {
 
 // Test helpers for the name-aware RPC mock (SCRUM-2250 review-fix). These read
 // the rpcState bridged onto mockRpc above.
-function rpcStateOf(): { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } {
-  return (mockRpc as unknown as { __rpcState: { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } }).__rpcState;
+function rpcStateOf(): { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null; agent: Record<string, Array<{ data: unknown; error: unknown }>> } {
+  return (mockRpc as unknown as { __rpcState: { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null; agent: Record<string, Array<{ data: unknown; error: unknown }>> } }).__rpcState;
 }
 /** Reset the strictly-increasing next_webhook_sequence counter + override. */
 function resetRpcSequence(): void {
   const s = rpcStateOf();
   s.seq = 0;
   s.seqOverride = null;
+  s.agent = {};
 }
 /** Force next_webhook_sequence to return a fixed value/error (replica-skew + failure tests). */
 function setRpcSequence(value: { data: unknown; error?: unknown } | null): void {
@@ -239,6 +252,7 @@ vi.stubGlobal('fetch', mockFetch);
 // indirectly through deliverToEndpoint and processWebhookRetries.
 import {
   dispatchWebhookEvent,
+  processAgentWebhookOutbox,
   processWebhookRetries,
   deriveResourceKey,
   __resetSequenceForTest,
@@ -421,6 +435,36 @@ describe('HMAC-SHA256 webhook signing', () => {
       .digest('hex');
 
     expect(headers['X-Arkova-Signature']).toBe(expectedHmac);
+  });
+
+  it('delivers a tenant-scoped secret-free agent.key_created event through signing and delivery-log identity', async () => {
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-agent-key' }, error: null });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    setupDbRouting();
+    const data = { agent_id: '22222222-2222-4222-8222-222222222222', key_id: '44444444-4444-4444-8444-444444444444', source: 'api', occurred_at: '2026-03-10T12:00:00.000Z' };
+    await dispatchWebhookEvent('org-001', 'agent.key_created', '44444444-4444-4444-8444-444444444444', data);
+    expect(endpointsSelect.eq).toHaveBeenCalledWith('org_id', 'org-001');
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Arkova-Event']).toBe('agent.key_created');
+    const expectedHmac = crypto.createHmac('sha256', MOCK_ENDPOINT.secret_hash)
+      .update(`${options.headers['X-Arkova-Timestamp']}.${options.body}`).digest('hex');
+    expect(options.headers['X-Arkova-Signature']).toBe(expectedHmac);
+    expect(JSON.parse(options.body).data).toEqual(data);
+    expect(options.body).not.toMatch(/raw|hash|prefix|passport|receipt|metadata/i);
+    expect(deliveryLogInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+      event_id: '44444444-4444-4444-8444-444444444444',
+      idempotency_key: 'ep-001-agent.key_created-44444444-4444-4444-8444-444444444444',
+      payload: expect.objectContaining({
+        event_type: 'agent.key_created',
+        event_id: '44444444-4444-4444-8444-444444444444',
+        resource_key: 'agent:22222222-2222-4222-8222-222222222222',
+        data,
+      }),
+    }));
   });
 
   it('produces different signatures for different secrets', () => {
@@ -1651,6 +1695,41 @@ describe('processWebhookRetries', () => {
     );
   });
 
+  it('retries the same logical agent event with its frozen payload and resource identity', async () => {
+    const payload = {
+      event_type: 'agent.key_created',
+      event_id: '44444444-4444-4444-8444-444444444444',
+      timestamp: '2026-03-10T11:55:00Z',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222',
+      sequence: 42,
+      data: { agent_id: '22222222-2222-4222-8222-222222222222', key_id: '44444444-4444-4444-8444-444444444444', source: 'api', occurred_at: '2026-03-10T11:55:00Z' },
+    };
+    retryLogsSelect.limit.mockResolvedValue({ data: [{
+      id: 'log-agent-retry', attempt_number: 1, payload, webhook_endpoints: MOCK_ENDPOINT,
+    }], error: null });
+    deliveryLogSelect.single.mockResolvedValue({
+      data: { id: 'log-agent-retry', status: 'retrying', attempt_number: 1 }, error: null,
+    });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockDbFrom.mockImplementation((table: string) => table === 'webhook_delivery_logs' ? {
+      select: (...args: string[]) => args[0]?.includes('webhook_endpoints')
+        ? { eq: retryLogsSelect.eq }
+        : { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) },
+      insert: deliveryLogInsert.insert,
+      update: deliveryLogUpdate.update,
+    } : {});
+
+    expect(await processWebhookRetries()).toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual(payload);
+    expect(deliveryLogUpdate.update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      status: 'pending', attempt_number: 2,
+    }));
+    expect(deliveryLogUpdate.update).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: 'success' }));
+    expect(deliveryLogInsert.insert).not.toHaveBeenCalled();
+  });
+
   it('queries for retrying status with past next_retry_at', async () => {
     retryLogsSelect.limit.mockResolvedValue({ data: [], error: null });
 
@@ -1665,6 +1744,7 @@ describe('processWebhookRetries', () => {
 
     expect(retryLogsSelect.select).toHaveBeenCalledWith('*, webhook_endpoints(*)');
     expect(retryLogsSelect.eq).toHaveBeenCalledWith('status', 'retrying');
+    expect(retryLogsSelect.is).toHaveBeenCalledWith('agent_event_outbox_id', null);
   });
 
   it('limits query to 50 records', async () => {
@@ -1683,11 +1763,209 @@ describe('processWebhookRetries', () => {
   });
 });
 
+describe('processAgentWebhookOutbox compatibility drainer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetRpcSequence();
+    rpcStateOf().flag = { data: true };
+    __resetWebhookFlagCacheForTest();
+    resetCircuitBreakers();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-27T16:30:00Z'));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('does not terminally suppress when the enablement read is unavailable', async () => {
+    rpcStateOf().flag = { data: null, error: { message: 'flag db unavailable' } } as never;
+    expect(await processAgentWebhookOutbox()).toBe(0);
+    expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
+  });
+
+  it('treats a non-boolean flag response as unavailable', async () => {
+    rpcStateOf().flag = { data: 'false' };
+    expect(await processAgentWebhookOutbox()).toBe(0);
+    expect(mockRpc).not.toHaveBeenCalledWith('materialize_next_agent_webhook_event', expect.anything());
+  });
+
+  it('runs bounded terminal-outbox retention after the owned drain', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: null, error: null }];
+
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
+
+    expect(mockRpc).toHaveBeenCalledWith('cleanup_terminal_agent_webhook_outbox', {
+      p_limit: 500,
+    });
+  });
+
+  it('ignores a persisted pending retry, reports only terminal materialization failures, and keeps draining', async () => {
+    const outboxId = '22222222-2222-4222-8222-222222222222';
+    const pendingOutboxId = '11111111-1111-4111-8111-111111111111';
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [
+      { data: { outbox_id: pendingOutboxId, state: 'pending', private: 'pending-private' }, error: null },
+      { data: { outbox_id: outboxId, state: 'materialization_failed', private: 'do-not-log' }, error: null },
+      { data: { outbox_id: 'not-a-uuid', state: 'materialization_failed', private: 'also-private' }, error: null },
+      { data: null, error: null },
+    ];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: null, error: null }];
+
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      { outboxId },
+      'Agent webhook event reached terminal materialization failure',
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      {},
+      'Agent webhook event reached terminal materialization failure',
+    );
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'agent webhook event reached terminal materialization failure' }),
+      {
+        tags: { component: 'agent-webhook-outbox', operation: 'materialize' },
+        extra: { outboxId },
+      },
+    );
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('do-not-log');
+    expect(JSON.stringify(mockSentry.captureException.mock.calls)).not.toContain('do-not-log');
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('also-private');
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain(pendingOutboxId);
+    expect(JSON.stringify(mockSentry.captureException.mock.calls)).not.toContain(pendingOutboxId);
+    expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('pending-private');
+    expect(mockSentry.captureException).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces terminal-outbox retention failure without leaking the database error', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: null, error: null }];
+    rpcStateOf().agent.cleanup_terminal_agent_webhook_outbox = [{
+      data: null,
+      error: { message: 'private retention sentinel' },
+    }];
+
+    await expect(processAgentWebhookOutbox()).rejects.toThrow('agent webhook retention cleanup failed');
+  });
+
+  it.each([
+    ['scalar', 42],
+    ['empty object', {}],
+    ['missing lease token', { cancelled_delivery_id: null, delivery_id: '33333333-3333-4333-8333-333333333333' }],
+    ['mixed cancellation and delivery', { cancelled_delivery_id: '33333333-3333-4333-8333-333333333333', delivery_id: '44444444-4444-4444-8444-444444444444' }],
+  ])('skips a %s claim response before HTTP or completion and continues the tick', async (_label, claim) => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+    await expect(processAgentWebhookOutbox()).resolves.toBe(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.anything());
+    expect(mockSentry.captureException).toHaveBeenCalledWith(expect.objectContaining({ message: 'agent webhook claim returned an invalid shape' }), expect.objectContaining({ tags: { component: 'agent-webhook-outbox', operation: 'claim' } }));
+  });
+
+  it('retains the terminal cancellation sentinel without HTTP or completion', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [
+      { data: { cancelled_delivery_id: '33333333-3333-4333-8333-333333333333' }, error: null },
+      { data: null, error: null },
+    ];
+    expect(await processAgentWebhookOutbox()).toBe(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.anything());
+  });
+
+  it('terminalizes an invalid stored envelope before signing or network I/O', async () => {
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: {
+      delivery_id: '33333333-3333-4333-8333-333333333333',
+      lease_token: '44444444-4444-4444-8444-444444444444',
+      endpoint_id: '55555555-5555-4555-8555-555555555555',
+      endpoint_url: 'https://hooks.example.com/agent', endpoint_secret: 'sentinel-secret',
+      event_type: 'agent.updated',
+      wire_event_id: '11111111-1111-4111-8111-111111111111',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+      payload_text: '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-09-27T16:29:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-09-27T16:29:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":90,"secret":"must-not-ship"}',
+      attempt_number: 0,
+    }, error: null }, { data: null, error: null }];
+    expect(await processAgentWebhookOutbox()).toBe(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.objectContaining({
+      p_outcome: 'terminal', p_error_message: 'payload_refused_before_signing',
+    }));
+  });
+
+  it.each([[0, 'retry'], [4, 'terminal']] as const)(
+    'settles a stalled response body at attempt %i without losing its lease identity',
+    async (attempt, outcome) => {
+      const claim = {
+        delivery_id: '33333333-3333-4333-8333-333333333333',
+        lease_token: '44444444-4444-4444-8444-444444444444',
+        endpoint_id: '55555555-5555-4555-8555-555555555555',
+        endpoint_url: 'https://hooks.example.com/private-token', endpoint_secret: 'secret',
+        event_type: 'agent.updated',
+        wire_event_id: '11111111-1111-4111-8111-111111111111',
+        resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+        payload_text: JSON.stringify({
+          event_type: 'agent.updated', event_id: '11111111-1111-4111-8111-111111111111',
+          timestamp: '2026-09-27T16:29:00Z',
+          data: { agent_id: '22222222-2222-4222-8222-222222222222', source: 'api', occurred_at: '2026-09-27T16:29:00Z', status: 'active' },
+          resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+        }),
+        attempt_number: attempt,
+      };
+      rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+      rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => new Promise(() => {}), body: { cancel } });
+      const draining = processAgentWebhookOutbox();
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(mockRpc).toHaveBeenCalledWith('complete_agent_webhook_delivery', expect.objectContaining({
+        p_delivery_id: claim.delivery_id, p_lease_token: claim.lease_token, p_outcome: outcome,
+        p_error_message: 'Body read for agent webhook response did not complete within 10000ms',
+      }));
+      expect(await draining).toBe(1);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(JSON.stringify(mockRpc.mock.calls)).not.toContain('private-token');
+    },
+  );
+
+  it('reuses exact persisted body bytes and recomputes a valid fresh signature', async () => {
+    const payloadText = '{"event_type":"agent.updated","event_id":"11111111-1111-4111-8111-111111111111","timestamp":"2026-09-27T16:29:00Z","data":{"agent_id":"22222222-2222-4222-8222-222222222222","source":"api","occurred_at":"2026-09-27T16:29:00Z","status":"active"},"resource_key":"agent:22222222-2222-4222-8222-222222222222","sequence":90}';
+    const claim = {
+      delivery_id: '33333333-3333-4333-8333-333333333333',
+      lease_token: '44444444-4444-4444-8444-444444444444',
+      endpoint_id: '55555555-5555-4555-8555-555555555555',
+      endpoint_url: 'https://hooks.example.com/agent', endpoint_secret: 'secret',
+      event_type: 'agent.updated',
+      wire_event_id: '11111111-1111-4111-8111-111111111111',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222', sequence: 90,
+      payload_text: payloadText, attempt_number: 0,
+    };
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: claim, error: null }, { data: null, error: null }];
+    mockFetch.mockResolvedValue({ ok: true, status: 204, text: () => Promise.resolve('') });
+    expect(await processAgentWebhookOutbox()).toBe(1);
+    const first = mockFetch.mock.calls[0][1];
+    expect(first.body).toBe(payloadText);
+    expect(first.headers['X-Arkova-Signature']).toBe(signPayload(`${first.headers['X-Arkova-Timestamp']}.${payloadText}`, 'secret'));
+
+    vi.setSystemTime(new Date('2026-09-27T16:30:02Z'));
+    rpcStateOf().agent.materialize_next_agent_webhook_event = [{ data: null, error: null }];
+    rpcStateOf().agent.claim_next_agent_webhook_delivery = [{ data: { ...claim, lease_token: '66666666-6666-4666-8666-666666666666', attempt_number: 1 }, error: null }, { data: null, error: null }];
+    expect(await processAgentWebhookOutbox()).toBe(1);
+    const second = mockFetch.mock.calls[1][1];
+    expect(second.body).toBe(payloadText);
+    expect(second.headers['X-Arkova-Timestamp']).not.toBe(first.headers['X-Arkova-Timestamp']);
+    expect(second.headers['X-Arkova-Signature']).toBe(signPayload(`${second.headers['X-Arkova-Timestamp']}.${payloadText}`, 'secret'));
+  });
+});
+
 // ================================================================
 // SCRUM-2250 (BUG-2026-05-16-001) — per-resource webhook ordering
 // ================================================================
 
 describe('deriveResourceKey (SCRUM-2250)', () => {
+  it('groups agent lifecycle retries by customer-visible agent id', () => {
+    expect(deriveResourceKey('agent.key_created', { agent_id: '22222222-2222-4222-8222-222222222222' }))
+      .toBe('agent:22222222-2222-4222-8222-222222222222');
+  });
   it('derives a family-namespaced key from data.public_id', () => {
     expect(deriveResourceKey('anchor.secured', { public_id: 'pub-001' })).toBe('anchor:pub-001');
     expect(deriveResourceKey('credential.issued', { public_id: 'pub-001' })).toBe(

@@ -238,7 +238,7 @@ describe('credentialSourcesRouter', () => {
       verification_level: 'captured_url',
     });
     expect(res.body.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(res.body.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(res.body.credential_recipient_hash).toBeNull();
   });
 
   it('uses the plain-text extraction fallback for text credential sources', async () => {
@@ -283,7 +283,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.body.anchor).not.toHaveProperty('id');
     expect(res.body.preview).toMatchObject({
       credential_recipient_display: 'Ada Recipient',
-      credential_recipient_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      credential_recipient_hash: null,
     });
     expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-1');
 
@@ -311,9 +311,8 @@ describe('credentialSourcesRouter', () => {
     });
     expect(anchorPayload.metadata).not.toHaveProperty('credential_recipient_display');
     expect(anchorPayload.metadata).not.toHaveProperty('recipient_display_name');
-    // SCRUM-2484: the recipient identifier hash is NO LONGER stored in
-    // anchors.metadata (which get_public_anchor projects to anonymous callers).
-    // It lives only in the anchor_recipients linking row.
+    // Caller-controlled source recipients never produce a stable recipient
+    // hash. Self-linking below uses the authenticated user's namespaced id.
     expect(anchorPayload.metadata).not.toHaveProperty('recipient_identifier_hash');
 
     const recipientPayload = mockRecipientInsert.mock.calls[0][0] as Record<string, unknown>;
@@ -368,6 +367,7 @@ describe('credentialSourcesRouter', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.duplicate).toBe(true);
+    expect(res.body.preview.credential_recipient_hash).toBeNull();
     expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
     expect(res.body.anchor).not.toHaveProperty('id');
     expect(mockDeductOrgCredit).not.toHaveBeenCalled();
@@ -518,6 +518,12 @@ describe('credentialSourcesRouter', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('source_changed');
+    expect(res.body).toEqual({
+      error: 'source_changed',
+      message: 'Credential source changed after preview. Preview it again before importing.',
+      expected_source_payload_hash: '0'.repeat(64),
+      actual_source_payload_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(mockDeductOrgCredit).not.toHaveBeenCalled();
     expect(mockAnchorInsert).not.toHaveBeenCalled();
   });
@@ -540,6 +546,7 @@ describe('credentialSourcesRouter', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.duplicate).toBe(true);
+    expect(res.body.preview.credential_recipient_hash).toBeNull();
     expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
     expect(res.body.anchor).not.toHaveProperty('id');
     expect(mockDeductOrgCredit).not.toHaveBeenCalled();

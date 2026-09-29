@@ -31,10 +31,40 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   mirrorConnectedDriveFolders,
+  recordDriveFolderMirrorState,
   extractDriveFoldersToMirror,
   shouldMirrorDriveFoldersForRule,
   type DriveFolderToMirror,
 } from './drive-folder-mirror.js';
+
+describe('recordDriveFolderMirrorState', () => {
+  it('writes state changes per rule without folder identifiers and suppresses repeats', async () => {
+    let latest: string | null = null;
+    const inserted: Array<Record<string, unknown>> = [];
+    const chain = { eq: vi.fn(), in: vi.fn(), order: vi.fn(), limit: vi.fn(), maybeSingle: vi.fn(async () => ({ data: latest ? { event_type: latest } : null, error: null })) };
+    chain.eq.mockReturnValue(chain); chain.in.mockReturnValue(chain); chain.order.mockReturnValue(chain); chain.limit.mockReturnValue(chain);
+    const db = { from: vi.fn(() => ({
+      select: vi.fn(() => chain),
+      insert: vi.fn(async (row: Record<string, unknown>) => { inserted.push(row); latest = row.event_type as string; return { error: null }; }),
+    })) } as never;
+    const failed = [{ folderId: '', driveFolderId: 'private-folder', outcome: 'error' as const, error: 'secret detail' }];
+    await recordDriveFolderMirrorState({ db }, 'org-1', 'rule-1', failed);
+    await recordDriveFolderMirrorState({ db }, 'org-1', 'rule-1', failed);
+    await recordDriveFolderMirrorState({ db }, 'org-1', 'rule-1', [{ folderId: 'mirror', driveFolderId: 'private-folder', outcome: 'existing' }]);
+    expect(inserted.map(({ event_type }) => event_type)).toEqual(['drive_folder_mirror_failed', 'drive_folder_mirror_recovered']);
+    expect(JSON.stringify(inserted)).not.toContain('private-folder');
+    expect(JSON.stringify(inserted)).not.toContain('secret detail');
+  });
+
+  it('returns false when a recovery marker cannot be persisted so the hourly job retries', async () => {
+    const chain = { eq: vi.fn(), in: vi.fn(), order: vi.fn(), limit: vi.fn(), maybeSingle: vi.fn(async () => ({ data: null, error: new Error('db unavailable') })) };
+    chain.eq.mockReturnValue(chain); chain.in.mockReturnValue(chain); chain.order.mockReturnValue(chain); chain.limit.mockReturnValue(chain);
+    const db = { from: vi.fn(() => ({ select: vi.fn(() => chain) })) } as never;
+    await expect(recordDriveFolderMirrorState({ db }, 'org-1', 'rule-1', [
+      { folderId: 'mirror', driveFolderId: 'private-folder', outcome: 'existing' },
+    ])).resolves.toBe(false);
+  });
+});
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
 const ORG_B = '22222222-2222-4222-8222-222222222222';
@@ -86,10 +116,16 @@ function makeFakeDb(opts: {
    * failure, distinct from "no active connection" (`{data:null, error:null}`,
    * a legitimate, non-retryable state meaning the org never connected Drive). */
   orgIntegrationsSelectError?: { message: string };
+  /** Returns a transient error from the next matching `folders` UPDATE.
+   * The row must remain unchanged so a later reconciliation pass can retry. */
+  foldersUpdateErrorOnce?: { message: string };
+  foldersUpdateZeroRowsOnce?: boolean;
 }) {
   const folders: FolderRow[] = opts.folders ? [...opts.folders] : [];
   const integrations: IntegrationRow[] = opts.integrations ?? [];
   let conflictArmed = Boolean(opts.forceInsertConflictOnce);
+  let updateErrorArmed = Boolean(opts.foldersUpdateErrorOnce);
+  let updateZeroArmed = Boolean(opts.foldersUpdateZeroRowsOnce);
   let nextId = 1;
   const calls: Array<{ table: string; op: string; filters: Record<string, unknown>; payload?: unknown }> = [];
 
@@ -180,11 +216,20 @@ function makeFakeDb(opts: {
       },
       then(resolve: (v: unknown) => void, reject: (e: unknown) => void) {
         calls.push({ table, op: 'update', filters: { ...filters }, payload });
+        if (table === 'folders' && updateErrorArmed) {
+          updateErrorArmed = false;
+          return Promise.resolve({ data: null, error: opts.foldersUpdateErrorOnce, count: null }).then(resolve, reject);
+        }
+        if (table === 'folders' && updateZeroArmed) {
+          updateZeroArmed = false;
+          return Promise.resolve({ data: null, error: null, count: 0 }).then(resolve, reject);
+        }
+        let count = 0;
         if (table === 'folders') {
           const row = folders.find((r) => Object.entries(filters).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v));
-          if (row) Object.assign(row, payload);
+          if (row) { Object.assign(row, payload); count = 1; }
         }
-        return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+        return Promise.resolve({ data: null, error: null, count }).then(resolve, reject);
       },
     };
     return chain;
@@ -224,6 +269,36 @@ describe('extractDriveFoldersToMirror', () => {
     expect(extractDriveFoldersToMirror({ vendors: ['docusign'] })).toEqual([]);
     expect(extractDriveFoldersToMirror(undefined)).toEqual([]);
     expect(extractDriveFoldersToMirror(null)).toEqual([]);
+  });
+
+  it('supports the valid legacy singular binding and de-duplicates it against the array form', () => {
+    expect(extractDriveFoldersToMirror({ type: 'drive_folder', folder_id: 'legacy-only' })).toEqual([
+      { folderId: 'legacy-only', folderName: null },
+    ]);
+    expect(extractDriveFoldersToMirror({
+      type: 'drive_folder', folder_id: 'same',
+      drive_folders: [
+        { type: 'drive_folder', folder_id: 'same', folder_name: 'duplicate' },
+        { type: 'drive_folder', folder_id: 'second', folder_name: 'Second' },
+      ],
+    })).toEqual([
+      { folderId: 'same', folderName: 'duplicate' },
+      { folderId: 'second', folderName: 'Second' },
+    ]);
+  });
+
+  it('ignores a legacy folder_id unless its type is drive_folder, without displacing three array selections', () => {
+    expect(extractDriveFoldersToMirror({
+      type: 'workspace_file_modified', folder_id: 'irrelevant',
+      drive_folders: [1, 2, 3].map((n) => ({ folder_id: `array-${n}`, folder_name: `Folder ${n}` })),
+    })).toEqual([1, 2, 3].map((n) => ({ folderId: `array-${n}`, folderName: `Folder ${n}` })));
+  });
+
+  it('returns four for three array selections plus a distinct valid legacy binding so the caller cap rejects it', () => {
+    expect(extractDriveFoldersToMirror({
+      type: 'drive_folder', folder_id: 'legacy',
+      drive_folders: [1, 2, 3].map((n) => ({ folder_id: `array-${n}` })),
+    })).toHaveLength(4);
   });
 
   it('drops duplicate folder ids and malformed entries', () => {
@@ -296,6 +371,59 @@ describe('mirrorConnectedDriveFolders', () => {
     expect(folders).toHaveLength(1);
   });
 
+  it('reports a transient stale-connection refresh failure truthfully, then an automatic reconciliation retry repairs it idempotently', async () => {
+    const existing: FolderRow = {
+      id: 'folder-existing',
+      owner_scope: 'ORG',
+      org_id: ORG_A,
+      connector_provider: 'google_drive',
+      connector_source_id: 'drive-folder-1',
+      connector_connection_id: 'conn-old',
+      name: 'Invoices · ABCDEF01',
+      created_by: USER_ID,
+      is_system_managed: true,
+    };
+    const { db, folders } = makeFakeDb({
+      folders: [existing],
+      integrations: [{ id: 'conn-new', org_id: ORG_A, provider: 'google_drive', revoked_at: null, connected_at: '2026-09-02T00:00:00Z' }],
+      foldersUpdateErrorOnce: { message: 'connection reset by peer' },
+    });
+    const input = { orgId: ORG_A, actorUserId: USER_ID, folders: [{ folderId: 'drive-folder-1', folderName: 'Invoices' }] };
+
+    const failedAttempt = await mirrorConnectedDriveFolders({ db, logger }, input);
+
+    expect(failedAttempt).toEqual([{
+      folderId: 'folder-existing',
+      driveFolderId: 'drive-folder-1',
+      outcome: 'error',
+      error: expect.stringContaining('connection reset by peer'),
+    }]);
+    expect(folders[0]!.connector_connection_id).toBe('conn-old');
+
+    // This second call models the hourly source-of-truth reconciliation pass
+    // retrying the persisted selection. It is deliberately not another save.
+    const retry = await mirrorConnectedDriveFolders({ db, logger }, input);
+    expect(retry).toEqual([{ folderId: 'folder-existing', driveFolderId: 'drive-folder-1', outcome: 'existing' }]);
+    expect(folders).toHaveLength(1);
+    expect(folders[0]!.connector_connection_id).toBe('conn-new');
+  });
+
+  it('does not report existing when a concurrent disappearance makes the refresh affect zero rows', async () => {
+    const { db } = makeFakeDb({
+      folders: [{
+        id: 'folder-gone', owner_scope: 'ORG', org_id: ORG_A, connector_provider: 'google_drive',
+        connector_source_id: 'drive-folder-1', connector_connection_id: 'conn-old', name: 'Evidence',
+        created_by: USER_ID, is_system_managed: true,
+      }],
+      integrations: [{ id: 'conn-new', org_id: ORG_A, provider: 'google_drive', revoked_at: null, connected_at: '2026-09-02T00:00:00Z' }],
+      foldersUpdateZeroRowsOnce: true,
+    });
+    const result = await mirrorConnectedDriveFolders({ db, logger }, {
+      orgId: ORG_A, actorUserId: USER_ID, folders: [{ folderId: 'drive-folder-1', folderName: 'Evidence' }],
+    });
+    expect(result).toEqual([expect.objectContaining({ folderId: 'folder-gone', outcome: 'error' })]);
+  });
+
   it('recovers from a concurrent-insert race (two simultaneous saves) without creating a duplicate', async () => {
     const winner: FolderRow = {
       id: 'folder-winner',
@@ -322,6 +450,23 @@ describe('mirrorConnectedDriveFolders', () => {
     expect(result[0]!.folderId).toBe('folder-winner');
     // The loser's own row never landed — exactly the winner's single row exists.
     expect(folders).toHaveLength(1);
+  });
+
+  it('refreshes a concurrent-insert winner that belongs to the previous Drive connection', async () => {
+    const winner: FolderRow = {
+      id: 'folder-winner-old', owner_scope: 'ORG', org_id: ORG_A, connector_provider: 'google_drive',
+      connector_source_id: 'drive-folder-1', connector_connection_id: 'conn-old', name: 'Evidence',
+      created_by: USER_ID, is_system_managed: true,
+    };
+    const { db, folders } = makeFakeDb({
+      integrations: [{ id: 'conn-new', org_id: ORG_A, provider: 'google_drive', revoked_at: null, connected_at: '2026-09-02T00:00:00Z' }],
+      forceInsertConflictOnce: winner,
+    });
+    const result = await mirrorConnectedDriveFolders({ db, logger }, {
+      orgId: ORG_A, actorUserId: USER_ID, folders: [{ folderId: 'drive-folder-1', folderName: 'Evidence' }],
+    });
+    expect(result).toEqual([{ folderId: 'folder-winner-old', driveFolderId: 'drive-folder-1', outcome: 'existing' }]);
+    expect(folders[0]?.connector_connection_id).toBe('conn-new');
   });
 
   it('a genuine exception on one folder does not suppress mirroring of later folders in the same rule save', async () => {
@@ -391,6 +536,34 @@ describe('mirrorConnectedDriveFolders', () => {
     // error is exactly what should happen on the next save.
     expect(results[0]!.outcome).not.toBe('skipped_no_connection');
     expect(folders).toHaveLength(0);
+  });
+
+  it('records a durable failed state for a connection lookup error without masking that error', async () => {
+    const auditRows: Array<Record<string, unknown>> = [];
+    const auditChain = {
+      eq: vi.fn(), in: vi.fn(), order: vi.fn(), limit: vi.fn(),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+    };
+    auditChain.eq.mockReturnValue(auditChain); auditChain.in.mockReturnValue(auditChain);
+    auditChain.order.mockReturnValue(auditChain); auditChain.limit.mockReturnValue(auditChain);
+    const db = {
+      from: vi.fn((table: string) => table === 'org_integrations'
+        ? { select: () => ({ eq: () => ({ eq: () => ({ is: () => ({ order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: null, error: new Error('lookup unavailable') }) }) }) }) }) }) }) }
+        : {
+            select: () => auditChain,
+            insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null }; },
+          }),
+    } as never;
+    const results = await mirrorConnectedDriveFolders(
+      { db },
+      { orgId: ORG_A, actorUserId: USER_ID, ruleId: 'rule-1', folders: [{ folderId: 'private-folder', folderName: 'Private' }] },
+    );
+    expect(results).toEqual([{ folderId: '', driveFolderId: 'private-folder', outcome: 'error', error: expect.stringContaining('lookup unavailable') }]);
+    expect(auditRows).toEqual([expect.objectContaining({
+      event_type: 'drive_folder_mirror_failed', target_id: 'rule-1', details: { reason: 'folder_mirror_failed' },
+    })]);
+    expect(JSON.stringify(auditRows)).not.toContain('private-folder');
+    expect(JSON.stringify(auditRows)).not.toContain('lookup unavailable');
   });
 
   it('tenant isolation fails closed: two orgs picking a Drive folder with the SAME display name never share or collide on a mirror folder', async () => {

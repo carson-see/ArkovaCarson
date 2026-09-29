@@ -24,7 +24,7 @@ export interface MerkleProofEntry {
  */
 export interface ProofPacket {
   /** Nested evidence returned by the public proof API, including signed payloads. */
-  proof_bundle?: Pick<ProofPacket, 'tx_inclusion_branch' | 'tx_block_index'> | null;
+  proof_bundle?: Pick<ProofPacket, 'block_hash' | 'block_header' | 'tx_inclusion_branch' | 'tx_block_index'> | null;
   /** The document fingerprint (leaf), 64-hex. */
   fingerprint: string;
   /** The Merkle root committed on-chain, 64-hex. */
@@ -72,6 +72,8 @@ export interface ProofPacket {
    * lives at header bytes [36,68), stored little-endian).
    */
   block_header?: string | null;
+  /** OPTIONAL display-endian hash of `block_header`; checked when supplied. */
+  block_hash?: string | null;
   /**
    * OPTIONAL layer-2 BITCOIN-tree inclusion branch (migration 0427): the
    * sibling path proving `tx_id` is committed by the merkleroot inside
@@ -83,15 +85,9 @@ export interface ProofPacket {
    * is the layer-1 APP tree in its stored orientation. Folding one with the
    * other's rule typechecks and proves nothing — hence the distinct name.
    *
-   * NOT YET FOLDED BY THIS VERIFIER. It is carried so the evidence reaches a
-   * holder at all (before this it was persisted server-side and dropped by
-   * every shipped client), but the CLI's transaction-inclusion verdict still
-   * comes from `confirmInclusion` against an INDEPENDENT node. Folding it
-   * locally would only establish that the packet agrees with the header the
-   * packet itself supplies — real evidence needs that header cross-checked
-   * against a node, which is exactly what the chain step already does. Adding
-   * it as a graded step also means a new frozen reason code, which bumps
-   * `reason_enum_version` across the manifest and the Python verifier.
+   * The verifier folds this branch into the Merkle root embedded in
+   * `block_header`. That grades the packet's self-contained consistency; an
+   * independent node remains the authority for chain membership.
    */
   tx_inclusion_branch?: MerkleProofEntry[] | null;
   /**

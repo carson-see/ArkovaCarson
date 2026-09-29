@@ -16,6 +16,7 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: auditMock }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 import { agentsRouter } from './agents.js';
 
@@ -61,7 +62,7 @@ describe('DELETE /api/v1/agents/:agentId atomic revocation', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'revoked', agent_id: AGENT_ID });
-    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys', {
+    expect(rpcMock).toHaveBeenCalledWith('revoke_agent_and_keys_with_outbox', {
       p_org_id: ORG_ID,
       p_agent_id: AGENT_ID,
       p_actor_id: USER_ID,

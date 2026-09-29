@@ -613,6 +613,31 @@ describe('extractText — spreadsheet document-mode extraction (F1)', () => {
     expect(result.pageCount).toBe(1);
     expect(result.text).toContain('# Empty');
   });
+
+  it('rejects a workbook whose claimed sheet range exceeds the extraction bound', async () => {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([['Header'], ['Value']]);
+    ws['!ref'] = 'A1:A1048576';
+    XLSX.utils.book_append_sheet(wb, ws, 'ClaimedRange');
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+    const file = new File([buf], 'claimed-range.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+
+    await expect(extractText(file)).rejects.toThrow('File has too many rows (max 10,000).');
+  });
+
+  it.each([
+    ['oversized.xls', 'application/vnd.ms-excel'],
+    ['oversized.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ])('rejects %s before materializing its bytes', async (filename, type) => {
+    const file = new File([new Uint8Array(10 * 1024 * 1024 + 1)], filename, { type });
+    const arrayBuffer = vi.spyOn(file, 'arrayBuffer');
+
+    await expect(extractText(file)).rejects.toThrow('File size must be less than 10MB.');
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
 });
 // ───────────────────────────────────────────────────────────────────────────
 // F2/F3 (SCRUM sprint amendment A3, founder 22-LOI-format KPI) — real

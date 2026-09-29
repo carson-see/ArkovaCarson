@@ -51,6 +51,7 @@ gcloud run services describe arkova-worker --region us-central1 \
 | `SENTRY_DSN` | Cloud Run env (low sensitivity but consistent policy) | `sentry-dsn-worker` |
 | `CLOUDFLARE_API_TOKEN` | Cloud Run env | `cloudflare-api-token` |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Cloud Run env | `cloudflare-tunnel-token` |
+| `RECIPIENT_IDENTIFIER_PEPPER` | Workflow binding added; not yet deployed to the running worker | `recipient-identifier-pepper:1` — durable recipient identity key; keep version 1 pinned and do not rotate without a versioned identifier migration |
 | `SLACK_TREASURY_WEBHOOK_URL` | Cloud Run env (ARK-103) | `slack-treasury-webhook-url` |
 
 Optional tooling-only secrets:

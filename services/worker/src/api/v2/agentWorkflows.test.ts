@@ -206,7 +206,7 @@ describe('canonical agent workflow documentation', () => {
     // other assertions in this file, so parse tool names out of the same
     // strings rather than re-introducing a JSON manifest dependency.
     const definedToolNames = Array.from(
-      mcpToolsSource.matchAll(/^ {4}name: '([a-z_]+)',$/gm),
+      mcpToolsSource.matchAll(/\bname:\s*'([a-z_]+)'/g),
     ).map((match) => match[1]);
     // `arkova_anchor_document` is registered at runtime only when
     // `MCP_ENABLE_ANCHOR_DOCUMENT=true` (see mcp-server.ts) — it is not
@@ -215,16 +215,16 @@ describe('canonical agent workflow documentation', () => {
     // gate, and of `arkova_import_rows` (UAT-23), which is registered inside
     // that same `telemetry.anchorDocumentEnabled` block — three conditional
     // tools in total. `arkova_manage_folders` IS a default launch tool
-    // (SCRUM-5142), so the launch surface is 16: fifteen read-oriented tools
-    // plus the scoped folder-management tool.
+    // (SCRUM-5142). Derive the default set from the canonical registry rather
+    // than maintaining a second hand-counted list here.
     const launchToolNames = definedToolNames.filter((name) =>
       name !== 'arkova_anchor_document'
       && name !== 'arkova_get_submission_status'
       && name !== 'arkova_import_rows');
 
-    expect(launchToolNames).toHaveLength(16);
+    expect(new Set(launchToolNames).size).toBe(launchToolNames.length);
     expect(launchToolNames).toContain('arkova_manage_folders');
-    expect(mcpToolsDoc).toContain('exposes sixteen default launch tools plus three conditionally registered submission-lifecycle tools');
+    expect(mcpToolsDoc).toContain(`exposes ${launchToolNames.length} default launch tools plus three conditionally registered submission-lifecycle tools`);
     expect(launchToolNames).not.toContain('arkova_anchor_document');
     expect(mcpToolsDoc).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
 

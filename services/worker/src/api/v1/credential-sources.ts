@@ -14,7 +14,6 @@ import {
 } from '../../lib/credential-source-import.js';
 import { dispatchWebhookEvent, isPrivateUrlResolved } from '../../webhooks/delivery.js';
 import { createSafeFetchImpl } from '../../lib/safe-fetch.js';
-import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
@@ -213,10 +212,6 @@ async function buildPreviewFromRequest(req: Request, res: Response) {
     result: await buildCredentialSourceImportPreview(parsed.data, {
       fetchFn: credentialSourceFetch(),
       urlGuard: isPrivateUrlResolved,
-      // SCRUM-2484: keyed HMAC pepper for the recipient identifier (Carson/RTE-
-      // provisioned Secret Manager value → RECIPIENT_IDENTIFIER_PEPPER). When
-      // unset, no enumerable recipient hash is produced.
-      recipientPepper: config.recipientIdentifierPepper,
     }),
   };
 }

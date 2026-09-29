@@ -323,3 +323,7 @@ registry. Adding an MCP tool must update this list and the canonical
 ## 2026-09-14 — SCRUM-3972 review correction
 
 The fan-out flag uses the validated config singleton. Config tests load each environment shape and compare the real fan-out reader to that singleton; changing Cloud Run configuration replaces its revision.
+
+## 2026-09-27 — explicit bulk recipient rollout
+
+`ENABLE_BULK_RECIPIENT_PROVISIONING` defaults false. `linkBulkRecipient` checks it before recipient lookup, Auth account creation, links or email. Configuring the dedicated `RECIPIENT_IDENTIFIER_PEPPER` alone must not enable those effects. The pepper rejects surrounding whitespace and has no fallback; disabling the rollout stops future work but does not undo already created accounts or sent mail.

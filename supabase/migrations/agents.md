@@ -2104,3 +2104,54 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
 | Prefix | File | Ticket | Applied? | Notes |
 |---|---|---|---|---|
 | `0488` | `0488_atomic_admin_agent_revoke.sql` | SCRUM-5300 (parent SCRUM-4492) | **NO — local candidate only** | Service-only RPC validates a same-org `ORG_ADMIN` actor, locks the tenant-owned agent row, and atomically commits terminal status, active/admin-suspended key revocation, permanent marker conversion, and success audit. It composes with 0448's parent-row key-authority and terminal-status triggers to close concurrent mint and stale-resume interleavings. Clean retries add no duplicate audit. Native isolated PostgreSQL coverage loads exact relevant baseline table bodies plus exact 0448 triggers and forces both lock orders, rollback, tenant/actor isolation, ACL, marker rewrite, unrelated inactive-reason preservation, and idempotency; this is targeted evidence, not a full Supabase lineage replay. Deploy migration before worker; roll back worker before dropping the RPC. Prefix was derived from main's `0486` plus open PR #3088's reserved `0487`; no existing migration or exemption was changed. Tier T3; never applied to a hosted database. |
+
+| `0489` | `0489_scrum3980_agent_lifecycle_api_key_revoke.sql` | SCRUM-3980 | **local only; not applied** | Adds service-only machine revoke and atomic organization status-transition RPCs; durable independent provider/org suspension ownership; authenticated direct-write guards for provider metadata/status; current-parent key-scope enforcement; and legacy provider-suspension normalization. Machine audits use NULL `actor_id` plus key id/prefix. Transaction lock/statement timeouts bound DDL/backfill. Rollback restores the prior worker before removing RPCs/triggers and restoring 0448's key-authority body; provider authority backfill is deliberately retained. The local native harness covers human/machine revoke interleavings, status overlap/rollback, authenticated direct-write denial, legacy provider state, and narrowed-scope resume. |
+| `0491` | `0491_scrum5294_agent_webhook_outbox.sql` | AR20-13 / SCRUM-5294 | **reserved; local only; not applied** | Additive agent-event logical outbox, versioned mutation wrappers, atomic endpoint materialization and leased owned-delivery claims. Existing mutation RPCs and legacy delivery ownership remain unchanged for the required compatibility rollout. Prefix derived after fetching origin and inspecting every open PR: #3150 alone owns 0490 and no local/remote reservation or file owns 0491. Never apply before the compatibility worker build excludes owned rows from the legacy retry sweep. |
+
+- `0492_scrum5300_agent_authorization_corrections.sql` removes client physical agent DELETE, enforces machine resume/provider key scope ceilings, and authorizes ComputeID admission through the locked caller API key. Machine registration, key mint, and ComputeID admission audits keep `actor_id` NULL and record the canonical API-key id/prefix plus operation context; generic registration preserves validated metadata while rejecting reserved top-level `computeid` spoofing.
+  This migration is retained on rollback. The original Build A binary remains drain-capable but is not a safe admission/lifecycle fallback after these gaps are known; an emergency rollback must keep a fixed compatible worker or explicitly disable ComputeID admission and affected lifecycle writes.
+
+- `0493_scrum5300_agent_lifecycle_audit_details.sql` is a forward-only audit-detail correction for the two atomic status-transition RPCs. It preserves 0492's signatures, locks, caller ceilings, grants, writes, and return contracts while recording value-free actual changed-field names, previous/next status, actual key deactivate/restore counts, and canonical actor kind/identity. Already-inactive provider-owned keys do not inflate the admin suspension count; clean admin no-ops still emit no audit, and ComputeID retains its existing status-change-only audit policy. No raw metadata, passport identifier, key material, or changed values enter these transition details.
+
+- `0494_scrum5300_agent_key_delete_lock_corrections.sql` is a forward-only integrity correction. Key mint now locks the target agent before resolving and locking its caller, matching revoke/status lock order. An internal physical agent delete permanently deactivates active or administratively/provider-resumable attached keys and records a value-free service audit before the existing FK clears `agent_id`; unrelated inactive compromise reasons remain unchanged. The migration does not make physical deletion a user operation, and the logical outbox remains intentionally service-role-only under forced RLS. Local full-lineage evidence is supporting evidence only; production ledger state must be checked before any apply.
+
+- `0495_scrum5294_agent_webhook_outbox_mfa_policy.sql` restores the canonical
+  restrictive `mfa_verified_authenticated` census policy on the service-only
+  logical outbox without adding any permissive client policy or grant.
+  `service_role` remains the only outbox access path. It also adds the bounded,
+  service-only `get_latest_drive_folder_mirror_states(uuid,text[])` RPC so
+  connector health reads one deterministic latest failure/recovery state for
+  every requested enabled rule without relying on a PostgREST row-capped audit
+  scan. No hosted database application is asserted.
+
+- `0496_scrum5294_agent_webhook_materialization_state.sql` is a forward-only
+  reporting correction for the existing durable materializer. On an exception
+  at the eighth attempt, the function now returns the state produced by the
+  same `UPDATE ... RETURNING` that stores `materialization_failed`; 0491 could
+  store that terminal state while returning `retryable_failure`. Ordinary
+  exceptions now return their persisted `pending` state, while the eighth
+  returns persisted `materialization_failed`. The signature, ACL, locks, retry
+  budget, delivery writes, and payload contract are unchanged.
+  Native coverage forces the real ownership-conflict exception at seven prior
+  attempts and asserts that stored and returned state are both terminal; a
+  sibling case pins persisted/returned `pending`, increment and future backoff.
+
+- `0498_scrum5294_agent_webhook_materialization_recovery.sql` adds a
+  service-only immutable recovery ledger and one transaction-time-authorized
+  re-arm RPC for a real terminal outbox failure (attempt 8). It follows the
+  profile → API key → outbox lock order, rechecks a live `ORG_ADMIN` owner and
+  `webhooks:manage`, snapshots the exact private failure, and writes the audit
+  atomically. One outbox can be re-armed once; the same request UUID stays
+  idempotent after materializer progress, while another UUID conflicts.
+  Snapshot identifiers deliberately are not restrictive foreign keys, so
+  terminal retention, key cleanup, and org offboarding cannot delete the
+  evidence or become blocked by it. `service_role` has SELECT only; the
+  SECURITY DEFINER RPC owns inserts. This migration is forward-only.
+
+- `0499_scrum5294_materialization_recovery_rls_policy.sql` restores the
+  canonical restrictive `mfa_verified_authenticated` census policy on the
+  0498 recovery ledger. The policy is deny-all for both `anon` and
+  `authenticated`, including AAL2 callers; it adds no permissive policy or
+  table grant. `service_role` remains read-only and the audited SECURITY
+  DEFINER recovery RPC remains the only writer. This defense-in-depth policy
+  is retained across application rollback.

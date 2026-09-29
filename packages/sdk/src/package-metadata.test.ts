@@ -52,8 +52,8 @@ describe('packages/sdk package.json metadata', () => {
   // `JSON.stringify`/`Object.keys`), and the retry-safety fix (P2) changes
   // observable behavior for non-idempotent methods on 429/5xx. Versions are
   // released independently from the npm MCP and Python packages.
-  it('is version 3.2.0', () => {
-    expect(pkg.version).toBe('3.2.0');
+  it('is version 3.3.0', () => {
+    expect(pkg.version).toBe('3.3.0');
   });
 
   it('has a repository field pointing at the monorepo, matching the sibling mcp-server package', () => {

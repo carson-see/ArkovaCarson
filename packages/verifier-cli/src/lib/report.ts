@@ -11,6 +11,7 @@ import type { VerifyReport, StepStatus } from '../verify.js';
 const MARK: Record<StepStatus, string> = {
   pass: '[PASS]',
   fail: '[FAIL]',
+  unavailable: '[UNAVAILABLE]',
   skipped: '[ —- ]',
 };
 
@@ -22,9 +23,9 @@ function shortHex(hex: string): string {
 export function renderReport(report: VerifyReport): string {
   const lines: string[] = [];
   lines.push('Arkova reference verifier — independent verification result');
-  lines.push('(zero Arkova network calls; the on-chain fact is confirmed against an independent node)');
+  lines.push('(zero Arkova network calls; on-chain evidence is checked against an independent node)');
   lines.push('');
-  lines.push(report.ok ? 'VERDICT: VERIFIED' : 'VERDICT: NOT VERIFIED');
+  lines.push(`VERDICT: ${report.verdict.replace('_', ' ')}`);
   lines.push('');
   lines.push(`  Secured fingerprint:    ${report.fingerprint}`);
   lines.push(`  Published root:         ${shortHex(report.merkleRoot)}`);
@@ -69,13 +70,17 @@ export function renderReport(report: VerifyReport): string {
 
   // Surface the server's own claim for comparison — never used for the verdict.
   if (report.serverClaimedVerified != null) {
-    const agree = report.serverClaimedVerified === report.ok;
     lines.push('');
-    lines.push(
-      `  Note: the proof package claimed verified=${report.serverClaimedVerified}; ` +
-        `this independent check ${agree ? 'agrees' : 'DISAGREES'}. ` +
-        'This verifier trusts only its own recomputation, never the package claim.',
-    );
+    if (report.verdict === 'INDETERMINATE') {
+      lines.push(`  Note: the proof package claimed verified=${report.serverClaimedVerified}; the independent node was unavailable, so this run cannot agree or disagree with that claim.`);
+    } else {
+      const agree = report.serverClaimedVerified === report.ok;
+      lines.push(
+        `  Note: the proof package claimed verified=${report.serverClaimedVerified}; ` +
+          `this independent check ${agree ? 'agrees' : 'DISAGREES'}. ` +
+          'This verifier trusts only its own recomputation, never the package claim.',
+      );
+    }
   }
 
   lines.push('');

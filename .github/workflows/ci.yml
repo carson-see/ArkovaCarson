@@ -1125,6 +1125,39 @@ jobs:
           git diff --exit-code -- supabase/migrations
           test -z "$(git ls-files --others --exclude-standard -- supabase/migrations)"
 
+      - name: Run agent webhook outbox native SQL contract
+        id: agent-outbox-native
+        if: ${{ !cancelled() && steps.supabase-keys.outcome == 'success' && steps.db-reset.outcome == 'success' }}
+        timeout-minutes: 4
+        env:
+          UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
+        run: |
+          set -euo pipefail
+          output="$(mktemp)"
+          trap 'rm -f "$output"' EXIT
+          if ! timeout 180s psql "$UAT03_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+            -f services/worker/scripts/test-agent-webhook-outbox-native.sql >"$output" 2>&1; then
+            echo "::error::Agent webhook outbox native SQL contract failed; output withheld because fixtures include private test-only endpoint material."
+            exit 1
+          fi
+          echo "Agent webhook outbox native SQL contract passed."
+
+      - name: Run agent revoke full-schema concurrency contract
+        id: agent-revoke-native
+        if: ${{ !cancelled() && steps.supabase-keys.outcome == 'success' && steps.db-reset.outcome == 'success' }}
+        timeout-minutes: 4
+        env:
+          UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}
+        run: |
+          set -euo pipefail
+          output="$(mktemp)"
+          trap 'rm -f "$output"' EXIT
+          if ! timeout 180s bash services/worker/scripts/test-agent-revoke-concurrency-full-schema.sh >"$output" 2>&1; then
+            echo "::error::Agent revoke full-schema concurrency contract failed; fixture output withheld because it includes test-only key material."
+            exit 1
+          fi
+          echo "Agent revoke full-schema concurrency contract passed."
+
       # CI-worker-test-skip fix — this step (root frontend/scripts suite) and
       # everything below it through "Run worker tests with coverage" are
       # INDEPENDENT verification suites that happen to share one job for
@@ -1363,6 +1396,8 @@ jobs:
             [root-coverage]="${{ steps.root-coverage.outcome }}"
             [sdk-tests]="${{ steps.sdk-tests.outcome }}"
             [rls-tests]="${{ steps.rls-tests.outcome }}"
+            [agent-outbox-native]="${{ steps.agent-outbox-native.outcome }}"
+            [agent-revoke-native]="${{ steps.agent-revoke-native.outcome }}"
             [worker-deps]="${{ steps.worker-deps.outcome }}"
             [cache-zk-artifacts]="${{ steps.cache-zk-artifacts.outcome }}"
             [install-circom]="${{ steps.install-circom.outcome }}"
@@ -1376,7 +1411,7 @@ jobs:
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests zapier-validation; do
+          for name in db-reset root-coverage sdk-tests rls-tests agent-outbox-native agent-revoke-native worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage uat22-local-integration edge-deps edge-tests zapier-validation; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
@@ -2114,7 +2149,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Verify root lockfile integrity
-        run: node_modules/.bin/lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https
+        # Patched SheetJS is published on its official CDN, not npm. Permit
+        # only the reviewed, integrity-pinned archive URL; no host-wide exception.
+        run: node_modules/.bin/lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --allowed-urls https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz --validate-https
       - name: Verify worker lockfile integrity
         run: node_modules/.bin/lockfile-lint --path services/worker/package-lock.json --type npm --allowed-hosts npm --validate-https
 

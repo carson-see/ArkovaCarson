@@ -78,6 +78,7 @@ function isConnectorManagedActionConfig(actionConfig: unknown): boolean {
 async function mirrorDriveFoldersForRuleWrite(
   orgId: string,
   actorUserId: string,
+  ruleId: string,
   triggerType: string,
   triggerConfig: unknown,
   actionConfig: unknown,
@@ -88,7 +89,7 @@ async function mirrorDriveFoldersForRuleWrite(
   try {
     return await mirrorConnectedDriveFolders(
       { db: db as unknown as DriveFolderMirrorDb, logger },
-      { orgId, actorUserId, folders },
+      { orgId, actorUserId, ruleId, folders },
     );
   } catch (error: unknown) {
     logger.warn({ error, orgId }, 'drive-folder-mirror wiring failed');
@@ -362,7 +363,7 @@ export async function handleGetRule(
     const { data, error } = await (db as any)
       .from('organization_rules')
       .select(
-        'id, org_id, name, description, enabled, trigger_type, trigger_config, action_type, action_config, created_at, updated_at, last_executed_at',
+        'id, org_id, name, description, enabled, trigger_type, trigger_config, action_type, action_config, created_by_user_id, created_at, updated_at, last_executed_at',
       )
       .eq('id', idParsed.data)
       .eq('org_id', orgId)
@@ -751,6 +752,7 @@ export async function handleCreateRule(
         trigger_config: parsed.data.trigger_config,
         action_type: parsed.data.action_type,
         action_config: parsed.data.action_config,
+        created_by_user_id: userId,
         enabled: false,
       })
       .select('id')
@@ -773,6 +775,7 @@ export async function handleCreateRule(
       mirrorResults = await mirrorDriveFoldersForRuleWrite(
         orgId,
         userId,
+        newId,
         parsed.data.trigger_type,
         parsed.data.trigger_config,
         parsed.data.action_config,
@@ -800,7 +803,7 @@ export async function handleCreateRule(
 }
 
 type PatchValidationResult =
-  | { kind: 'ok'; currentActionType?: string; currentTriggerType?: string; currentActionConfig?: unknown }
+  | { kind: 'ok'; currentActionType?: string; currentTriggerType?: string; currentActionConfig?: unknown; currentCreatedByUserId?: string | null }
   | { kind: 'error'; status: number; body: Record<string, unknown> };
 
 type ParsedUpdateRuleRequest =
@@ -881,11 +884,11 @@ async function validatePatchAgainstCurrent(
   orgId: string,
   patch: UpdateOrgRuleInputT,
 ): Promise<PatchValidationResult> {
-  if (!patch.trigger_config && !patch.action_config) return { kind: 'ok' };
+  if (!patch.trigger_config && !patch.action_config && patch.enabled !== true) return { kind: 'ok' };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: readErr } = await (db as any)
     .from('organization_rules')
-    .select('trigger_type, trigger_config, action_type, action_config, org_id')
+    .select('trigger_type, trigger_config, action_type, action_config, org_id, created_by_user_id')
     .eq('id', ruleId)
     .eq('org_id', orgId)
     .maybeSingle();
@@ -917,6 +920,7 @@ async function validatePatchAgainstCurrent(
       currentActionType: current.action_type as string | undefined,
       currentTriggerType: current.trigger_type as string | undefined,
       currentActionConfig: current.action_config,
+      currentCreatedByUserId: current.created_by_user_id as string | null | undefined,
     };
   } catch (err) {
     return {
@@ -941,10 +945,10 @@ async function validatePatchAgainstCurrent(
  * `PATCH /api/rules/:id {enabled:true}` to activate it. A rule seeded by
  * `docusign-rule-seed.ts` can land in the gap BETWEEN those two calls just
  * as easily as in the gap the create-time check narrows — and nothing
- * guarded that second gap until now: `validatePatchAgainstCurrent` doesn't
- * even read the current row for a bare `{enabled:true}` patch (no
- * trigger_config/action_config in the body), so a plain enable-toggle had
- * zero connector awareness. Same scoping as the create-time guard —
+ * guarded that second gap until now. `validatePatchAgainstCurrent` now reads
+ * and validates the stored row for a bare `{enabled:true}` patch, but this
+ * separate fresh read is still required for connector race detection after
+ * validation. Same scoping as the create-time guard —
  * connector-tagged rules only, `enabled: false -> true` transitions only
  * (an already-enabled rule being re-patched is a no-op for this check) —
  * and same limit: check-then-update, not a DB-level constraint, so this
@@ -954,6 +958,8 @@ async function checkConnectorEnableRace(
   ruleId: string,
   orgId: string,
 ): Promise<PatchValidationResult> {
+  // Re-read immediately before the conflict lookup rather than reusing the
+  // validation snapshot; another request may have enabled this rule meanwhile.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: readErr } = await (db as any)
     .from('organization_rules')
@@ -1046,6 +1052,23 @@ export async function handleUpdateRule(
     // `new Date()` instead of the DB commit time, and the trigger has always
     // been authoritative for audit.
     const update = buildRuleUpdate(parsed.patch);
+    const actionConfig = parsed.patch.action_config ?? validation.currentActionConfig;
+    const connectorDriveResave = !!parsed.patch.trigger_config
+      && !!validation.currentTriggerType
+      && shouldMirrorDriveFoldersForRule(validation.currentTriggerType, actionConfig);
+    if (connectorDriveResave && validation.currentCreatedByUserId === null) {
+      // Atomic compare-and-set: only an authorized org admin reaches this
+      // point, and a concurrent/non-null original creator is never replaced.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const claim = await (db as any).from('organization_rules')
+        .update({ created_by_user_id: userId }, { count: 'exact' })
+        .eq('id', parsed.ruleId).eq('org_id', orgId).is('created_by_user_id', null);
+      if (claim.error) {
+        logger.warn({ error: claim.error, ruleId: parsed.ruleId, orgId }, 'connector rule creator claim failed');
+        res.status(500).json({ error: { code: 'creator_claim_failed', message: 'Could not repair connector rule ownership' } });
+        return;
+      }
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error, count } = await (db as any)
       .from('organization_rules')
@@ -1079,9 +1102,8 @@ export async function handleUpdateRule(
     let mirrorResults: MirrorConnectedDriveFolderResult[] | null = null;
     if (parsed.patch.trigger_config) {
       const triggerType = validation.currentTriggerType;
-      const actionConfig = parsed.patch.action_config ?? validation.currentActionConfig;
       if (triggerType) {
-        mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, triggerType, parsed.patch.trigger_config, actionConfig);
+        mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, parsed.ruleId, triggerType, parsed.patch.trigger_config, actionConfig);
       }
     }
     res.json(mirrorResults !== null ? { ok: true, drive_folder_mirror: mirrorResults } : { ok: true });

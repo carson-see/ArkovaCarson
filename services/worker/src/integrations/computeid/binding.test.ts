@@ -113,6 +113,7 @@ describe('applyPassportEvent', () => {
     expect(s.update).toMatchObject({ status: 'suspended', suspended_at: T2 });
     expect(readBinding(s.update?.metadata)?.suspended_by).toBe('computeid');
     expect(s.keyEnforcement).toBe('deactivate');
+    expect(readBinding(s.update?.metadata)?.provider_suspended).toBe(true);
   });
   it('reinstate → active + suspended_at null + marker cleared + keys reactivated', () => {
     const a = applyPassportEvent({ status: 'suspended', metadata: bound({ suspended_by: 'computeid' }) }, ev('passport.reinstated', T3));
@@ -142,6 +143,7 @@ describe('applyPassportEvent', () => {
     expect(o.decision.reason).toBe('suspended_by_org');
     expect(o.update).toEqual({ metadata: expect.any(Object) });
     expect(o.keyEnforcement).toBe('none');
+    expect(readBinding(o.update?.metadata)?.provider_suspended).toBeUndefined();
   });
 });
 

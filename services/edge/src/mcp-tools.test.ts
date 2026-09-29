@@ -23,6 +23,9 @@ import {
   handleAnchorDocument,
   handleGetSubmissionStatus,
   handleImportRows,
+  handleAgentLifecycle,
+  handleListAnchors,
+  hasValidWorkerAccessConfig,
   SEARCH_MODE_SEMANTIC,
   SEARCH_MODE_LEXICAL,
   TOOL_DEFINITIONS,
@@ -49,6 +52,208 @@ const mockFetch = vi.fn();
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
+});
+
+describe('private anchor list worker proxy', () => {
+  const config = { ...CONFIG, workerBaseUrl: 'https://worker.test', callerApiKey: 'ak_test_caller' };
+  it('forwards one API key and returns only the canonical projection', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [{ public_id:'ARK-1',status:'SECURED',created_at:'2026-09-27T10:00:00Z',updated_at:'2026-09-27T11:00:00Z',filename:'proof.pdf',description:null }], next_cursor:null }));
+    const result = await handleListAnchors({ tag:'audit',tag_scope:'organization',limit:25 }, config);
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith('https://worker.test/api/v1/anchors?limit=25&tag=audit&tag_scope=organization', expect.objectContaining({ method:'GET',headers:{'X-API-Key':'ak_test_caller'} }));
+    expect(result.content[0].text).not.toContain('tag');
+  });
+  it('requires API-key-only forwarding and rejects unsafe response fields', async () => {
+    expect((await handleListAnchors({}, {...config,callerAuthorization:'Bearer jwt'})).isError).toBe(true);
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [{ public_id:'ARK-1',status:'SECURED',created_at:'now',updated_at:'now',filename:'proof.pdf',description:null,org_id:'secret' }],next_cursor:null }));
+    const result=await handleListAnchors({},config);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
+});
+
+describe('isolated staging worker Access bridge', () => {
+  const accessConfig = {
+    ...CONFIG,
+    workerBaseUrl: 'https://ar20-closure-20260927-worker.arkova.ai',
+    workerAccessHost: 'ar20-closure-20260927-worker.arkova.ai',
+    workerAccessClientId: 'fixture-access-id',
+    workerAccessClientSecret: 'fixture-access-secret',
+    callerApiKey: 'ak_test_caller',
+  };
+
+  it('accepts only an exact bare isolated-staging origin', () => {
+    expect(hasValidWorkerAccessConfig(accessConfig)).toBe(true);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: `${accessConfig.workerBaseUrl}/prefix` })).toBe(false);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: `${accessConfig.workerBaseUrl}?redirect=1` })).toBe(false);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: 'https://user@ar20-closure-20260927-worker.arkova.ai' })).toBe(false);
+    expect(hasValidWorkerAccessConfig({ ...accessConfig, workerBaseUrl: 'https://ar20-closure-20260927-worker.arkova.ai:8443' })).toBe(false);
+  });
+
+  it('preserves legacy non-Access HTTP localhost and base-path routing', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [], next_cursor: null }));
+    const result = await handleListAnchors({}, {
+      ...CONFIG,
+      workerBaseUrl: 'http://127.0.0.1:8787/worker-prefix',
+      callerApiKey: 'ak_local',
+    });
+    expect(result.isError).toBeFalsy();
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:8787/worker-prefix/api/v1/anchors?limit=50');
+    expect(new Headers(init.headers).get('X-API-Key')).toBe('ak_local');
+  });
+
+  it('adds the Access pair without replacing caller application auth', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ anchors: [], next_cursor: null }));
+    const result = await handleListAnchors({}, accessConfig);
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ar20-closure-20260927-worker.arkova.ai/api/v1/anchors?limit=50',
+      expect.objectContaining({
+        redirect: 'manual',
+        headers: expect.objectContaining({
+          'X-API-Key': 'ak_test_caller',
+          'CF-Access-Client-Id': 'fixture-access-id',
+          'CF-Access-Client-Secret': 'fixture-access-secret',
+        }),
+      }),
+    );
+  });
+
+  it('preserves a caller JWT alongside the Access pair', async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ agents: [] }));
+    const result = await handleAgentLifecycle('list', {}, {
+      ...accessConfig,
+      callerApiKey: undefined,
+      callerAuthorization: 'Bearer fixture-user-jwt',
+    });
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ar20-closure-20260927-worker.arkova.ai/api/v1/agents',
+      expect.objectContaining({
+        redirect: 'manual',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer fixture-user-jwt',
+          'CF-Access-Client-Id': 'fixture-access-id',
+          'CF-Access-Client-Secret': 'fixture-access-secret',
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    { workerAccessClientSecret: undefined },
+    { workerAccessClientId: undefined },
+    { workerAccessHost: undefined },
+    { workerAccessHost: 'worker.arkova.ai' },
+    { workerAccessHost: 'ar20-production-worker.arkova.ai', workerBaseUrl: 'https://ar20-production-worker.arkova.ai' },
+    { workerAccessHost: 'ar20-closure-20260927-worker.arkova.ai', workerBaseUrl: 'https://attacker.example' },
+  ])('fails closed before fetch for partial, production, or mismatched Access config', async override => {
+    const result = await handleListAnchors({}, { ...accessConfig, ...override });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not follow a redirect or expose Access credentials in the result', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: 'https://attacker.example' } }));
+    const result = await handleListAnchors({}, accessConfig);
+    expect(result.isError).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result.content[0].text).not.toContain('fixture-access');
+  });
+});
+
+describe('generic agent lifecycle worker proxy', () => {
+  const config = { ...CONFIG, workerBaseUrl:'https://worker.test', callerApiKey:'ak_test_caller' };
+  const agent = { id:'aaaaaaaa-0000-4000-8000-000000000009', name:'Agent', description:null, agent_type:'custom', status:'active', allowed_scopes:['verify'], framework:null, version:null, callback_url:null, metadata:{} };
+  const key = { key:'ak_once', key_id:'key-id', key_prefix:'ak_once', scopes:['verify'], warning:'Store once.' };
+  it.each([
+    ['register','POST','/api/v1/agents',{name:'Agent'}], ['list','GET','/api/v1/agents',{}],
+    ['get','GET','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}],
+    ['update','PATCH','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001',status:'suspended'}],
+    ['revoke','DELETE','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}],
+    ['create_key','POST','/api/v1/agents/aaaaaaaa-0000-4000-8000-000000000001/key',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}],
+    ['admit_computeid','POST','/api/v1/agents/computeid/admit',{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{passport_id:'bbbbbbbb-0000-4000-8000-000000000001'}}],
+  ] as const)('%s reaches canonical worker route once', async (operation,method,path,input) => {
+    const success = operation === 'list' ? { agents: [] } : operation === 'revoke' ? { status: 'revoked', agent_id: 'agent_id' in input ? input.agent_id : '' } : operation === 'create_key' ? { ...key, agent_id:input.agent_id, agent_name:'Agent', created_at:'2026-09-26T00:00:00Z' } : operation === 'admit_computeid' ? { ...key, agent:{...agent,metadata:undefined}, binding:{issuer:'computeid',passport_id:input.passport_id,bound_at:'2026-09-26T00:00:00Z',receipt_expires_at:'2026-09-27T00:00:00Z'} } : { ...agent, id:'agent_id' in input ? input.agent_id : agent.id };
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(success),{status:200}));
+    const result=await handleAgentLifecycle(operation,input,config);
+    expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(`https://worker.test${path}`,expect.objectContaining({method,redirect:'manual',headers:expect.objectContaining({'X-API-Key':'ak_test_caller'})}));
+  });
+  it('lists agents with null metadata without hiding the entire list',async()=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata:null},agent]}));
+    const result=await handleAgentLifecycle('list',{},config);
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text).agents).toEqual([{...agent,metadata:{}},agent]);
+  });
+  it.each([[], 'invalid', 7])('rejects non-object agent metadata %j',async metadata=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata}]}));
+    const result=await handleAgentLifecycle('list',{},config);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
+  it('preserves the one-time admission key when the worker canonicalizes an uppercase passport UUID', async () => {
+    const passportUpper = 'BBBBBBBB-0000-4000-8000-000000000001';
+    const passportCanonical = passportUpper.toLowerCase();
+    const receipt = { passport_id: passportUpper, status: 'active', issued_at: '2026-09-26', expires_at: '2026-09-27', key_id: '0123456789abcdef', receipt_signature: 'sig', receipt_algorithm: 'ed25519', receipt_payload: '{}' };
+    mockFetch.mockResolvedValueOnce(Response.json({ ...key, agent: { ...agent, metadata: undefined }, binding: { issuer: 'computeid', passport_id: passportCanonical, bound_at: '2026-09-26T00:00:00Z', receipt_expires_at: '2026-09-27T00:00:00Z' } }, { status: 201 }));
+
+    const result = await handleAgentLifecycle('admit_computeid', { passport_id: passportUpper, verification_receipt: receipt }, config);
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('ak_once');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({passport_id:passportUpper,verification_receipt:receipt});
+  });
+  it('rejects a different valid passport binding without exposing the one-time key', async () => {
+    const passportUpper = 'BBBBBBBB-0000-4000-8000-000000000001';
+    const passportCanonical = 'cccccccc-0000-4000-8000-000000000002';
+    const receipt = { passport_id: passportUpper, status: 'active', issued_at: '2026-09-26', expires_at: '2026-09-27', key_id: '0123456789abcdef', receipt_signature: 'sig', receipt_algorithm: 'ed25519', receipt_payload: '{}' };
+    mockFetch.mockResolvedValueOnce(Response.json({ ...key, agent: { ...agent, metadata: undefined }, binding: { issuer: 'computeid', passport_id: passportCanonical, bound_at: '2026-09-26T00:00:00Z', receipt_expires_at: '2026-09-27T00:00:00Z' } }, { status: 201 }));
+
+    const result = await handleAgentLifecycle('admit_computeid', { passport_id: passportUpper, verification_receipt: receipt }, config);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+    expect(result.content[0].text).not.toContain('ak_once');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([false, true])('preserves bounded scope recovery details (nested=%s)', async nested => {
+    const fields = { required:'agents:manage', granted:['verify'], missing:['keys:manage'], permitted:['verify'], key:'ak_secret', receipt_payload:'private-receipt' };
+    mockFetch.mockResolvedValueOnce(Response.json(nested ? {error:{code:'insufficient_scope',...fields}} : {error:'insufficient_scope',...fields}, {status:403}));
+    const result = await handleAgentLifecycle('create_key', {agent_id:agent.id}, config);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({code:'insufficient_scope',required:'agents:manage',granted:['verify'],missing:['keys:manage'],permitted:['verify']});
+    expect(result.content[0].text).not.toContain('ak_secret');
+    expect(result.content[0].text).not.toContain('private-receipt');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    {required:['verify'],missing:['verify',7],granted:'verify',permitted:['verify',{}]},
+    {required:'a'.repeat(81),missing:['verify\n'],granted:Array(33).fill('verify'),permitted:[null]},
+  ])('omits malformed scope recovery fields without partial lists', async fields => {
+    mockFetch.mockResolvedValueOnce(Response.json({error:{code:'insufficient_scope',...fields}}, {status:403}));
+    const result = await handleAgentLifecycle('create_key', {agent_id:agent.id}, config);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.code).toBe('insufficient_scope');
+    for (const field of ['required','missing','granted','permitted']) expect(payload).not.toHaveProperty(field);
+  });
+  it.each(['register','create_key','admit_computeid'] as const)('keeps raw-key-sensitive %s unavailable to hosted JWT callers', async operation => {
+    const input = operation === 'register' ? {name:'Agent'} : operation === 'create_key' ? {agent_id:agent.id} : {passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}};
+    const result=await handleAgentLifecycle(operation,input,{...CONFIG,workerBaseUrl:'https://worker.test',callerAuthorization:'Bearer jwt'});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('API_KEY_AUTH_REQUIRED');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+  it('does not log a caller key embedded in a transport exception', async () => { const spy=vi.spyOn(console,'error').mockImplementation(()=>{}); mockFetch.mockRejectedValueOnce(new Error('ak_test_caller https://internal')); const result=await handleAgentLifecycle('list',{},config); expect(result.content[0].text).toContain('AGENT_TRANSPORT_ERROR'); expect(spy.mock.calls.flat().join(' ')).not.toContain('ak_test_caller'); spy.mockRestore(); });
+  it('fails closed once when a one-time key response is lost', async () => { mockFetch.mockResolvedValueOnce(new Response('{}',{status:201})); const result=await handleAgentLifecycle('create_key',{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'},config); expect(result.isError).toBe(true); expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE'); expect(mockFetch).toHaveBeenCalledTimes(1); });
+  it.each([['create_key',{...key}],['admit_computeid',{...key,agent,binding:null}],['admit_computeid',{...key,agent,binding:{issuer:'computeid',passport_id:'wrong',bound_at:'now',receipt_expires_at:'later'}}] ] as const)('rejects incomplete %s one-time-key success envelopes',async(operation,response)=>{mockFetch.mockResolvedValueOnce(Response.json(response,{status:201}));const input=operation==='create_key'?{agent_id:'aaaaaaaa-0000-4000-8000-000000000001'}:{passport_id:'bbbbbbbb-0000-4000-8000-000000000001',verification_receipt:{}};const result=await handleAgentLifecycle(operation,input,config);expect(result.isError).toBe(true);expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');expect(mockFetch).toHaveBeenCalledTimes(1);});
+  it('rejects missing, duplicate, redirect, and oversized upstream boundaries', async () => {
+    expect((await handleAgentLifecycle('list',{}, {...config,callerAuthorization:'Bearer jwt'})).isError).toBe(true);
+    mockFetch.mockResolvedValueOnce(new Response(null,{status:307})); expect((await handleAgentLifecycle('list',{},config)).isError).toBe(true);
+    mockFetch.mockResolvedValueOnce(new Response('x'.repeat(262145),{status:500})); expect((await handleAgentLifecycle('list',{},config)).content[0].text).toContain('UPSTREAM_RESPONSE_TOO_LARGE');
+  });
 });
 
 describe('handleImportRows', () => {

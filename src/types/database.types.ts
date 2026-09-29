@@ -109,6 +109,100 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_webhook_outbox: {
+        Row: {
+          agent_id: string
+          created_at: string
+          event_type: string
+          event_uuid: string
+          id: string
+          key_id: string | null
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          materialization_attempts: number
+          next_attempt_at: string
+          occurred_at: string
+          org_id: string
+          payload: Json | null
+          payload_text: string
+          resolved_at: string | null
+          resource_key: string
+          sequence: number
+          state: string
+          wire_event_id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          event_type: string
+          event_uuid?: string
+          id?: string
+          key_id?: string | null
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          materialization_attempts?: number
+          next_attempt_at?: string
+          occurred_at?: string
+          org_id: string
+          payload?: Json | null
+          payload_text: string
+          resolved_at?: string | null
+          resource_key: string
+          sequence?: number
+          state?: string
+          wire_event_id: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          event_type?: string
+          event_uuid?: string
+          id?: string
+          key_id?: string | null
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          materialization_attempts?: number
+          next_attempt_at?: string
+          occurred_at?: string
+          org_id?: string
+          payload?: Json | null
+          payload_text?: string
+          resolved_at?: string | null
+          resource_key?: string
+          sequence?: number
+          state?: string
+          wire_event_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_webhook_outbox_agent_id_fkey"
+            columns: ["agent_id"]
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_webhook_outbox_key_id_fkey"
+            columns: ["key_id"]
+            referencedRelation: "api_keys"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_webhook_outbox_org_id_fkey"
+            columns: ["org_id"]
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_webhook_outbox_org_id_fkey"
+            columns: ["org_id"]
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agents: {
         Row: {
           agent_type: Database["public"]["Enums"]["agent_type"]
@@ -7109,7 +7203,10 @@ export type Database = {
       }
       webhook_delivery_logs: {
         Row: {
+          agent_event_outbox_id: string | null
+          agent_payload_text: string | null
           attempt_number: number
+          claim_expirations: number
           created_at: string
           delivered_at: string | null
           endpoint_id: string
@@ -7118,6 +7215,8 @@ export type Database = {
           event_type: string
           id: string
           idempotency_key: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
           next_retry_at: string | null
           payload: Json
           public_id: string
@@ -7126,7 +7225,10 @@ export type Database = {
           status: string
         }
         Insert: {
+          agent_event_outbox_id?: string | null
+          agent_payload_text?: string | null
           attempt_number?: number
+          claim_expirations?: number
           created_at?: string
           delivered_at?: string | null
           endpoint_id: string
@@ -7135,6 +7237,8 @@ export type Database = {
           event_type: string
           id?: string
           idempotency_key?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
           next_retry_at?: string | null
           payload: Json
           public_id?: string
@@ -7143,7 +7247,10 @@ export type Database = {
           status: string
         }
         Update: {
+          agent_event_outbox_id?: string | null
+          agent_payload_text?: string | null
           attempt_number?: number
+          claim_expirations?: number
           created_at?: string
           delivered_at?: string | null
           endpoint_id?: string
@@ -7152,6 +7259,8 @@ export type Database = {
           event_type?: string
           id?: string
           idempotency_key?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
           next_retry_at?: string | null
           payload?: Json
           public_id?: string
@@ -7161,9 +7270,14 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "webhook_delivery_logs_agent_outbox_fkey"
+            columns: ["agent_event_outbox_id"]
+            referencedRelation: "agent_webhook_outbox"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "webhook_delivery_logs_endpoint_id_fkey"
             columns: ["endpoint_id"]
-            isOneToOne: false
             referencedRelation: "webhook_endpoints"
             referencedColumns: ["id"]
           },
@@ -7490,6 +7604,159 @@ export type Database = {
       }
     }
     Functions: {
+      admit_computeid_agent_as_api_key_with_outbox: {
+        Args: {
+          p_actor_api_key_id: string
+          p_description?: string
+          p_key_hash: string
+          p_key_prefix: string
+          p_name: string
+          p_org_id: string
+          p_passport_id: string
+          p_receipt_expires_at: string
+          p_receipt_issued_at?: string
+          p_scopes: string[]
+        }
+        Returns: Json
+      }
+      admit_computeid_agent_with_outbox: {
+        Args: {
+          p_description?: string
+          p_key_hash: string
+          p_key_prefix: string
+          p_name: string
+          p_org_id: string
+          p_passport_id: string
+          p_principal_id: string
+          p_receipt_expires_at: string
+          p_receipt_issued_at?: string
+          p_scopes: string[]
+        }
+        Returns: Json
+      }
+      apply_admin_agent_status_transition_with_outbox: {
+        Args: {
+          p_actor_id: string
+          p_actor_kind: string
+          p_agent_id: string
+          p_next_status: Database["public"]["Enums"]["agent_status"]
+          p_org_id: string
+          p_updates: Json
+        }
+        Returns: Json
+      }
+      apply_computeid_agent_transition_with_outbox: {
+        Args: {
+          p_agent_id: string
+          p_emit_event_type?: string
+          p_event: string
+          p_event_at: string
+          p_expected_metadata: Json
+          p_expected_status: Database["public"]["Enums"]["agent_status"]
+          p_key_enforcement: string
+          p_org_id: string
+          p_passport_id: string
+          p_update: Json
+        }
+        Returns: Json
+      }
+      claim_next_agent_webhook_delivery: {
+        Args: { p_lease_token: string }
+        Returns: Json
+      }
+      cleanup_terminal_agent_webhook_outbox: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
+      complete_agent_webhook_delivery: {
+        Args: {
+          p_delivery_id: string
+          p_error_message?: string
+          p_lease_token: string
+          p_outcome: string
+          p_response_body?: string
+          p_response_status?: number
+        }
+        Returns: boolean
+      }
+      create_agent_key_with_outbox: {
+        Args: {
+          p_actor_id: string
+          p_actor_kind: string
+          p_agent_id: string
+          p_key_hash: string
+          p_key_prefix: string
+          p_org_id: string
+        }
+        Returns: Json
+      }
+      enqueue_agent_webhook_event: {
+        Args: {
+          p_agent_id: string
+          p_event_type: string
+          p_event_uuid?: string
+          p_key_id?: string
+          p_occurred_at?: string
+          p_org_id: string
+          p_source?: string
+          p_status?: Database["public"]["Enums"]["agent_status"]
+        }
+        Returns: string
+      }
+      get_latest_drive_folder_mirror_states: {
+        Args: { p_org_id: string; p_rule_ids: string[] }
+        Returns: Json
+      }
+      materialize_next_agent_webhook_event: {
+        Args: { p_flag_state: string; p_include_parent_fanout?: boolean }
+        Returns: Json
+      }
+      register_agent_with_outbox: {
+        Args: {
+          p_actor_id: string
+          p_actor_kind: string
+          p_agent_type: Database["public"]["Enums"]["agent_type"]
+          p_allowed_scopes: string[]
+          p_callback_url?: string
+          p_description?: string
+          p_framework?: string
+          p_metadata?: Json
+          p_name: string
+          p_org_id: string
+          p_version?: string
+        }
+        Returns: Json
+      }
+      revoke_agent_and_keys_as_api_key_with_outbox: {
+        Args: {
+          p_actor_api_key_id: string
+          p_agent_id: string
+          p_org_id: string
+        }
+        Returns: Json
+      }
+      revoke_agent_and_keys_with_outbox: {
+        Args: { p_actor_id: string; p_agent_id: string; p_org_id: string }
+        Returns: Json
+      }
+      update_agent_with_outbox: {
+        Args: {
+          p_actor_id: string
+          p_actor_kind: string
+          p_agent_id: string
+          p_org_id: string
+          p_updates: Json
+        }
+        Returns: Json
+      }
+      resolve_agent_manager: {
+        Args: { p_actor_id: string; p_actor_kind: string; p_org_id: string }
+        Returns: Json
+      }
+      agent_scopes_within_caller: {
+        Args: { p_granted: string[]; p_requested: string[] }
+        Returns: boolean
+      }
       _suborg_api_key_authorized: {
         Args: { p_api_key_id: string; p_org_id: string }
         Returns: boolean
@@ -8664,6 +8931,14 @@ export type Database = {
       }
       revoke_agent_and_keys: {
         Args: { p_actor_id: string; p_agent_id: string; p_org_id: string }
+        Returns: Json
+      }
+      apply_admin_agent_status_transition: {
+        Args: { p_actor_id: string; p_actor_kind: string; p_agent_id: string; p_next_status: Database["public"]["Enums"]["agent_status"]; p_org_id: string; p_updates: Json }
+        Returns: Json
+      }
+      revoke_agent_and_keys_as_api_key: {
+        Args: { p_actor_api_key_id: string; p_agent_id: string; p_org_id: string }
         Returns: Json
       }
       revoke_anchor: {

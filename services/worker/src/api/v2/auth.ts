@@ -41,7 +41,7 @@ export function apiKeyAuthV2(hmacSecret: string) {
       const keyHash = hashApiKey(rawKey, hmacSecret);
       // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
       const { data: apiKey, error } = await db.from('api_keys')
-        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
+        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, revoked_at, expires_at')
         .eq('key_hash', keyHash)
         .single();
 
@@ -51,7 +51,7 @@ export function apiKeyAuthV2(hmacSecret: string) {
         return;
       }
 
-      if (!apiKey.is_active) {
+      if (!apiKey.is_active || apiKey.revoked_at) {
         next(ProblemError.apiKeyRevoked());
         return;
       }

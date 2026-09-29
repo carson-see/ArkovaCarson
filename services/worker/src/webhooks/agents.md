@@ -2,6 +2,32 @@
 
 Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sign, Microsoft Graph, Drive, Checkr, ATS) live elsewhere — see `services/worker/src/api/v1/webhooks/` for those.
 
+## 2026-09-27 — AR20-13 agent outbox rollout floor
+
+Agent lifecycle events use migration 0491's private logical outbox and owned
+delivery leases. The compatibility build must be deployed everywhere after the
+additive migration and before any wrapper producer: its legacy retry query
+excludes `agent_event_outbox_id IS NOT NULL`, while `processAgentWebhookOutbox`
+can drain owned rows. Once an owned row exists, never roll back below that
+build. Claims are just-in-time, endpoint-active state is revalidated in the
+claim transaction, and every completion/retry/terminal write CASes the live
+lease token. External delivery remains at-least-once across a receiver-success /
+completion-write crash. `agent_payload_text` is the immutable signed body;
+retry timestamps and HMAC signatures are intentionally fresh.
+
+The outbox RPC calls use the generated database function types. Claim results
+are untrusted `Json`: accept only the complete delivery shape or the exact
+one-key `{ cancelled_delivery_id }` terminal sentinel. A scalar, partial, or
+mixed shape fails before HTTP and completion so lease expiry can recover it;
+do not restore unchecked RPC casts here.
+
+Build B switches the six real producers (generic register/update/revoke/key
+mint, ComputeID admission, and ComputeID provider transition) to the versioned
+wrapper RPCs unconditionally. `hintAgentWebhookDrain` coalesces prompt work;
+the cron retry route remains the durable recovery path. Deploy migration, then
+Build A everywhere, then Build B. After owned rows exist, Build A is the
+rollback floor.
+
 ## Files
 
 | File | Role |
@@ -85,6 +111,8 @@ subscription.
 - `validateWebhookPayload` returns `{ ok: true, bypassed: true }` for unknown event types. The `bypassed` flag is logged at debug level so a typo (`anchor.SUBMITTED` in caps) is detectable, not silent. Don't remove the bypass without first making the allowlist exhaustive — but don't call it harmless either: the concrete types riding it today are listed in "Dispatched but UNREGISTERED" above, and one of them (`anchor.revocation_anchored`) ships §6/§1.6-banned fields that only the missing schema would reject.
 - `secret_hash` column on `webhook_endpoints` IS the raw HMAC key — naming is historical (migration 0046). Consumers receive this exact value at endpoint creation. Don't second-guess and try to hash it again.
 - Delivery idempotency key is `${endpoint.id}-${payload.event_id}` (no attempt number) — RACE-6 fix prevents duplicate deliveries across retry attempts after worker restart.
+- (Historical — superseded by the key format below.)
+- Legacy delivery idempotency key is `${endpoint.id}-${payload.event_type}-${payload.event_id}` (no attempt number). Agent-outbox delivery uses the logical outbox UUID per endpoint internally because distinct lifecycle events can intentionally share the stable agent UUID on the wire. Receivers deduplicate (`event_type`, `event_id`), not `event_id` alone.
 - Replay deliveries (`replayDelivery`) intentionally always create a new `webhook_delivery_logs` row keyed by `replay-${deliveryId}-${ms}-${randomHex}` so the original is preserved for audit and the existing-row idempotency check can't short-circuit the resend.
 - **Per-resource ordering (SCRUM-2250, BUG-2026-05-16-001 SEV1):** every dispatched payload carries two additive-nullable top-level *wire* fields — `resource_key` (derived from `data.public_id`, namespaced by event family, e.g. `anchor:pub-001`; null for aggregate events like `anchor.batch_secured`) and `sequence` (a strictly-monotonic int). They are stamped in `dispatchWebhookEvent` and frozen into `webhook_delivery_logs.payload`, so a retry preserves the original dispatch-time sequence. Consumers detect/reject out-of-order delivery for the SAME resource by comparing `sequence` within a `resource_key`. The wire fields stay additive (§1.8, no v2 bump). **Replica-safe sequence source (review-fix):** `sequence` is allocated from a single global **Postgres sequence** `webhook_event_sequence`, read via the `next_webhook_sequence()` SECURITY DEFINER RPC (the worker reaches PG only through PostgREST/service_role). This is the SEV1 root-cause fix: the worker runs 2–10 Cloud Run replicas, and same-resource lifecycle events are emitted from DIFFERENT replicas — an in-process `Date.now()` counter could stamp a later event from a clock-skewed replica with a LOWER sequence, inverting order. `nextval()` is atomic + globally monotonic with no clock dependency. The new DB object (migration **0337**) re-tiers this PR to **T3**. If the RPC is unreachable at dispatch, `sequence` is stamped `null` (no ordering asserted, treated as legacy) + a Sentry `sequence_alloc` capture — never a fabricated value, so a false ordering is impossible. The retry sweep (`processWebhookRetries`) selects its 50-row window ordered by `payload->sequence ASC NULLS FIRST` (jsonb `->`, numeric compare — **not** `->>` which would sort lexicographically), so under a backlog the window is the globally-oldest events and a resource's true head is never starved by a newer in-window sibling. It then partitions `retrying` rows by `(endpoint_id, resource_key)` and delivers only the lowest-`sequence` head-of-line row per resource each sweep. Distinct resources (and legacy rows with no `resource_key`) form independent groups delivered concurrently via `Promise.allSettled`, so cross-document throughput is preserved (NOT a global serializer). Don't "optimize" the sweep back to a flat `for` loop over all rows, drop the `payload->sequence` ORDER BY, or replace the RPC with an in-memory counter — each reintroduces the out-of-order corruption.
 - **Drop-to-DLQ ordering contract (SCRUM-2250):** per-resource ordering holds only while the head-of-line event is *live*. When a head exhausts its retries (`attempt >= MAX_RETRIES`), it transitions to `failed`, moves to the dead-letter queue (`moveToDeadLetterQueue`), and thereby leaves the `status='retrying'` set. On the next sweep the next-lowest-`sequence` event for that resource becomes the head and proceeds. So a poison head does **not** block its resource forever — it is dead-lettered and the newer events advance, in order. Consumers must treat a *gap* in the per-resource `sequence` (a missing intermediate event) as "an earlier event was dead-lettered, reconcile via the DLQ", NOT as a reason to reject the newer event. This is the intended liveness/ordering trade-off: strict in-order while the head is live, fail-forward once the head is dead-lettered.
@@ -437,3 +465,26 @@ sync by the registration-drift gate.
 ## 2026-09-14 — SCRUM-3972 review correction
 
 The fan-out reader uses config.enableSubOrgWebhookFanout. Delivery suites explicitly mock the disabled flag; the dedicated sub-organization suite enables the same config dependency. This supersedes the older rationale for an ad-hoc process.env read.
+
+## 2026-09-26 — Agent lifecycle refresh notifications (SCRUM-3983)
+
+The generic lifecycle routes and ComputeID admission/transition paths emit four registered strict events: `agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created`. Payloads contain only agent/key UUIDs, status where applicable, `source`, `occurred_at`, and optional public organization id; names, metadata, scopes, receipts, passport data, prefixes, hashes, and raw keys are forbidden. Emission begins only after the authoritative mutation succeeds and is asynchronous/failure-isolated, so customer endpoint failure never hides a committed mutation or one-time key response. Status/revoke RPC retries emit only when their authoritative `changed` flag is true; a successful non-status PATCH emits a refresh notification for each committed write because a stale pre-read cannot safely prove a concurrent write was a no-op. Provider skipped/conflict/failure outcomes do not emit. Recorded retry ordering groups these events with `resource_key = agent:<agent_id>`; this does not claim transactional delivery with the domain mutation or guaranteed cross-producer delivery order.
+
+## 2026-09-27 — terminal logical-outbox visibility (SCRUM-5294)
+
+The owned drainer inspects each materialization result. A terminal
+`materialization_failed` state emits an operator error and Sentry exception
+containing only a validated logical-outbox UUID when one is present. Payload,
+endpoint, tenant, malformed identifiers, and SQL error material are excluded.
+Retryable materialization remains owned by the SQL retry budget; the terminal
+alert does not retry or duplicate the domain mutation.
+
+## 2026-09-28 — claimed agent delivery response deadline
+
+The claimed agent delivery consumer uses `readTextBounded` with a ten-second
+deadline and a fixed, credential-free diagnostic label. The production pinned
+adapter already returns a buffered Response; the independent consumer deadline
+also covers alternate adapters and prevents a stalled read from leaving the
+owned claim unresolved. A timeout follows the existing retry/terminal attempt
+budget with the same delivery ID and lease token; it never records success.
+Focused fake-clock regressions cover an initial attempt and the final attempt.

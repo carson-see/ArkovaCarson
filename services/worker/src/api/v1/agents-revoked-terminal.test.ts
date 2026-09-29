@@ -10,10 +10,11 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
-const dbFromMock = vi.fn();
-vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: vi.fn() } }));
+const { dbFromMock, rpcMock } = vi.hoisted(() => ({ dbFromMock: vi.fn(), rpcMock: vi.fn() }));
+vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: rpcMock } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 import { agentsRouter } from './agents.js';
 
@@ -30,7 +31,7 @@ function createApp() {
 }
 const revokedRow = { id: AGENT_ID, org_id: ORG_ID, name: 'a', status: 'revoked', allowed_scopes: ['verify'] };
 
-beforeEach(() => { vi.clearAllMocks(); dbFromMock.mockReset(); });
+beforeEach(() => { vi.clearAllMocks(); dbFromMock.mockReset(); rpcMock.mockReset(); });
 
 describe('PATCH /api/v1/agents/:agentId on a revoked agent', () => {
   it('409 when the patch tries to change status (revocation is terminal)', async () => {
@@ -43,22 +44,21 @@ describe('PATCH /api/v1/agents/:agentId on a revoked agent', () => {
   it('still allows non-status edits (name) on a revoked agent', async () => {
     const agents = builder([{ data: revokedRow }, { data: { ...revokedRow, name: 'renamed' } }]);
     routeDbTables(dbFromMock, { profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_ADMIN' } }), agents });
+    rpcMock.mockResolvedValue({ data: { found: true, changed: true, agent: { ...revokedRow, name: 'renamed' } }, error: null });
     const res = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ name: 'renamed' });
     expect(res.status).toBe(200);
-    expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ name: 'renamed' }));
+    expect(rpcMock).toHaveBeenCalledWith('update_agent_with_outbox', expect.objectContaining({
+      p_agent_id: AGENT_ID, p_updates: { name: 'renamed' },
+    }));
   });
 });
 
 
-it('returns 409 when the database rejects a stale PATCH after concurrent revocation', async () => {
-  const initial = { ...revokedRow, status: 'active' };
-  // The ownership read predates revocation. The trigger checks the actual row
-  // version under the UPDATE lock; real SQL sessions verify that interleaving.
-  const agents = builder([{ data: initial }, {
-    data: null, error: { code: '23514', message: 'agent_revocation_is_terminal' },
-  }]);
+it('returns 409 when the atomic RPC rejects a stale resume after concurrent revocation', async () => {
+  const agents = builder({ data: { ...revokedRow, status: 'active' } });
   routeDbTables(dbFromMock, { profiles: builder({ data: { org_id: ORG_ID, role: 'ORG_ADMIN' } }), agents });
+  rpcMock.mockResolvedValue({ data: null, error: { code: '23514', message: 'agent_revocation_is_terminal' } });
   const response = await request(createApp()).patch(`/api/v1/agents/${AGENT_ID}`).send({ status: 'active' });
   expect(response.status).toBe(409);
-  expect(agents.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'active' }));
+  expect(rpcMock).toHaveBeenCalled();
 });

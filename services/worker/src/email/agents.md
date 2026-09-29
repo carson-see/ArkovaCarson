@@ -2,6 +2,16 @@
 
 Email sending infrastructure powered by Resend SDK. Handles transactional email delivery with audit logging.
 
+## 2026-09-28 — distinguish rejected sends from uncertain delivery
+
+`sendEmail` retains the `success` contract and adds `failureType` on failures.
+Only explicit request/auth/quota rejection responses establish `rejected`.
+Transport failures, server errors, idempotency conflicts and a missing provider
+message ID are `unknown`: the provider may already have accepted the request.
+Bulk activation retains its durable `sending` claim for these outcomes and
+does not automatically resend. The real-wrapper boundary test covers this
+connection; mocking the sender as throwing does not cover its returned errors.
+
 ## 2026-09-11 — provider idempotency for invitation retries
 
 `sendEmail` accepts an optional `idempotencyKey` and passes it through the Resend SDK options.

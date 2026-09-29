@@ -1,0 +1,126 @@
+[
+  {
+    "fingerprint": "41e224b71e506c2247e51cb0e1e041fd1ef043cbbe13ce18e6c9aed53489cfbd",
+    "merkle_root": "41e224b71e506c2247e51cb0e1e041fd1ef043cbbe13ce18e6c9aed53489cfbd",
+    "merkle_proof": [],
+    "merkle_index": 0,
+    "leaf_count": 1,
+    "tx_id": "50498fc1f8ad8b9b1992a3ba1347846783945412276b7b19d9c55fd4a9d75792",
+    "block_height": 323994,
+    "block_hash": "0000001410e2604e3695956dfbeecfbd4826759f0dcbb86fcd5ace00b05bfd8c",
+    "block_header": "0000002004a67e4940b3b46fe06e3b4b4cfa341d57001333d6819cae43a21dc4040000009d1d6229fc0fb31797cc3fc4caae5369dcd7a619535154153189c5a0bc9e9ea713f3b96a0388141d18cd8200",
+    "op_return_payload": "41524b5641e224b71e506c2247e51cb0e1e041fd1ef043cbbe13ce18e6c9aed53489cfbd",
+    "block_timestamp": "2026-09-28T04:54:43+00:00",
+    "tx_inclusion_branch": [
+      {
+        "hash": "cdffb210f143a24a7727135a39c8e717074bb68e508169896da30bd062832e96",
+        "position": "right"
+      },
+      {
+        "hash": "051cfbb5aba7aca0a6862cd8eacd756ba9d07bbbe227e9611da64aad10c90502",
+        "position": "right"
+      },
+      {
+        "hash": "364465c01bc5ebea71b7d43d5351197fbf74f671f22e92e6f8286ce27f96a28e",
+        "position": "left"
+      },
+      {
+        "hash": "1e2189589ab2d7c658d31b9df053e27c55678b99d0408eaf00989e0e7376f5e6",
+        "position": "left"
+      },
+      {
+        "hash": "dea9eefe6aaa61c1a311e0c2449ffe4947173cf2b07d1fd1546f5c0ae2123681",
+        "position": "left"
+      },
+      {
+        "hash": "69dd384bdcbf6032fb1ce47c1bd3234bbc3bd83aa8c755ea1f341e6780ccda60",
+        "position": "left"
+      },
+      {
+        "hash": "ee65fe02e2d38ca96d4eb4fe7236b7559f46932a8b87a8450ef2b0e34189775d",
+        "position": "right"
+      },
+      {
+        "hash": "597c5e94a9bc208dbdd6d13b6cb6e5ecad4dc6ab6ad0b235dd32855413e79543",
+        "position": "left"
+      },
+      {
+        "hash": "7c97cab7db1d55596aa9991efaa071ab44db39914f4c0f449a46c63c248c811a",
+        "position": "right"
+      },
+      {
+        "hash": "f3a132bba1bb32595c4595840b200ae65446f0b9c8ff8b9ab575b976360a9cdc",
+        "position": "right"
+      }
+    ],
+    "tx_block_index": 188,
+    "proof_schema_version": 1,
+    "signature": null
+  },
+  {
+    "fingerprint": "7e13795f32238983dc3a784381f1752334577f53cfb3af49b93d417c70b35685",
+    "merkle_root": "7e13795f32238983dc3a784381f1752334577f53cfb3af49b93d417c70b35685",
+    "merkle_proof": [],
+    "merkle_index": 0,
+    "leaf_count": 1,
+    "tx_id": "4d8374a420b824aad37d1dbede7282620a1f1e1b8bbb752a041e4a3beaf5cc61",
+    "block_height": 323990,
+    "block_hash": "000000143e05194718d051c59fe822bcbefddfcf68ac1c3ad63c67be1872ac83",
+    "block_header": "000000206a95d08f75a3eef322ff200bbb0c7c00339400549da90b01aa3e666c02000000f5efd977ce440dc9e4a5a9fd500fe25207d2e1e76d90b8b4f4eefa32a3be019c37edb96a0388141df52c250d",
+    "op_return_payload": "41524b567e13795f32238983dc3a784381f1752334577f53cfb3af49b93d417c70b35685",
+    "block_timestamp": "2026-09-28T04:29:43+00:00",
+    "tx_inclusion_branch": [
+      {
+        "hash": "da61fca4df9d3c7d8ebfd88beba542b1f1b134e46ed5483ae656eb8a09d3cd61",
+        "position": "right"
+      },
+      {
+        "hash": "ecd4483258f3850e238f87dc25d8c1ff8bb0c1de206a99d3c72d5014b3a0f331",
+        "position": "right"
+      },
+      {
+        "hash": "7ee94c8636768ac8829fe77a6526237d1b432395c275f718f3372a01ec744328",
+        "position": "left"
+      },
+      {
+        "hash": "45ac68668e12292ebf4d01952c2a5a3bf9036f8f122349b013fda627096e37ab",
+        "position": "right"
+      },
+      {
+        "hash": "e14f4e8a4cf895e1742c2075045519a569ba961d8dc054757330e773288e9c84",
+        "position": "left"
+      },
+      {
+        "hash": "b02127d5ca3a42b8636dbbf5bed7943c7fc897689de2b1e6c6267ce3de8f798b",
+        "position": "left"
+      },
+      {
+        "hash": "1bb6b320a6157e20ab6774ff8d29f53466185bd98b6bc6b40bc24ba736e565bf",
+        "position": "left"
+      },
+      {
+        "hash": "d40290104d784737e65322ff1ab616f6d96bd0e5d45c3ad852dce0278ab1dcca",
+        "position": "right"
+      },
+      {
+        "hash": "7d57451e944202dd2a00706ae16939a610051a88c1679687cdab401239e8bed5",
+        "position": "left"
+      },
+      {
+        "hash": "bad284bf09a8784d3bc15cd0e8a294e2936b9a629a0f79d067ebf4e2135085b6",
+        "position": "right"
+      },
+      {
+        "hash": "f3b92a7b5f1068369e90712d27cbb04d99f766785d6a98de3c3a2ea3bd2892a2",
+        "position": "left"
+      },
+      {
+        "hash": "b1a463165289b8d5f075c315007d9379655e129e3579cf67ead8212534d58a7f",
+        "position": "right"
+      }
+    ],
+    "tx_block_index": 1396,
+    "proof_schema_version": 1,
+    "signature": null
+  }
+]

@@ -44,6 +44,7 @@ export interface ConnectorRuleDetail {
   action_type: string;
   action_config: Record<string, unknown>;
   enabled: boolean;
+  created_by_user_id?: string | null;
 }
 
 export type ConnectorRuleState =
@@ -69,11 +70,24 @@ interface SaveInput {
   actionType: ConnectorActionType;
 }
 
+interface RuleWriteBody {
+  id?: string;
+  drive_folder_mirror?: Array<{ outcome?: string }>;
+  error?: { code?: string; message?: string; existing_rule_id?: string };
+}
+
+function hasFolderMirrorFailure(body: RuleWriteBody): boolean {
+  return Array.isArray(body.drive_folder_mirror)
+    && body.drive_folder_mirror.some((result) => result.outcome !== 'created' && result.outcome !== 'existing');
+}
+
 async function fetchRuleDetail(id: string): Promise<ConnectorRuleDetail | null> {
   const res = await workerFetch(`/api/rules/${id}`, { method: 'GET' });
-  if (!res.ok) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Connector rule detail unavailable');
   const body = (await res.json().catch(() => null)) as { item?: ConnectorRuleDetail } | null;
-  return body?.item ?? null;
+  if (!body?.item) throw new Error('Connector rule detail response malformed');
+  return body.item;
 }
 
 export function useConnectorRule(orgId: string | null, provider: ConnectorProvider) {
@@ -95,9 +109,21 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
         return;
       }
       const body = (await res.json().catch(() => ({}))) as { items?: RuleListItem[] };
-      const matches = (body.items ?? []).filter((r) => r.trigger_type === triggerType && r.enabled);
+      const sameTrigger = (body.items ?? []).filter((r) => r.trigger_type === triggerType);
+      const matches = sameTrigger.filter((r) => r.enabled);
 
       if (matches.length === 0) {
+        // A prior connector save may have committed its SEC-02 disabled rule
+        // but failed one or more awaited folder mirrors. Recover only this
+        // connector's tagged rows; never adopt an unrelated admin-authored
+        // disabled rule that happens to share the trigger type.
+        for (const candidate of sameTrigger.filter((r) => !r.enabled)) {
+          const detail = await fetchRuleDetail(candidate.id);
+          if (detail?.action_config?.tag === connectorTag(provider)) {
+            setState({ status: 'adoptable', rule: detail });
+            return;
+          }
+        }
         setState({ status: 'none' });
         return;
       }
@@ -115,7 +141,7 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
     } catch {
       setState({ status: 'error', message: CONNECTORS_LABELS.CONNECTOR_LOAD_FAILED });
     }
-  }, [orgId, triggerType]);
+  }, [orgId, provider, triggerType]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async load settles after the effect returns
@@ -147,10 +173,19 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
               action_config: actionConfig,
             }),
           });
-          if (!res.ok) {
-            const body = await res.json().catch(() => ({}));
-            setSaveError(body?.error?.message ?? CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+          const body = await res.json().catch(() => ({})) as RuleWriteBody;
+          if (!res.ok || hasFolderMirrorFailure(body)) {
+            setSaveError(body?.error?.message ?? (hasFolderMirrorFailure(body) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED));
             return false;
+          }
+          if (!state.rule.enabled) {
+            const enableRes = await workerFetch(`/api/rules/${targetId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }),
+            });
+            if (!enableRes.ok) {
+              setSaveError(CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+              return false;
+            }
           }
         } else if (state.status === 'none') {
           const createRes = await workerFetch('/api/rules', {
@@ -166,10 +201,7 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
               enabled: false, // SEC-02 — worker forces this anyway; explicit here for clarity
             }),
           });
-          const createBody = await createRes.json().catch(() => ({})) as {
-            id?: string;
-            error?: { code?: string; message?: string; existing_rule_id?: string };
-          };
+          const createBody = await createRes.json().catch(() => ({})) as RuleWriteBody;
 
           if (createRes.status === 409 && createBody?.error?.code === 'rule_exists' && createBody.error.existing_rule_id) {
             // Adopt-vs-create race: the seeder (or a parallel admin) won.
@@ -183,12 +215,20 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
                 action_config: actionConfig,
               }),
             });
-            if (!patchRes.ok) {
-              setSaveError(CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+            const patchBody = await patchRes.json().catch(() => ({})) as RuleWriteBody;
+            if (!patchRes.ok || hasFolderMirrorFailure(patchBody)) {
+              setSaveError(hasFolderMirrorFailure(patchBody) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
               return false;
             }
           } else if (!createRes.ok || !createBody.id) {
             setSaveError(createBody?.error?.message ?? CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+            return false;
+          } else if (hasFolderMirrorFailure(createBody)) {
+            setState({
+              status: 'adoptable',
+              rule: { id: createBody.id, trigger_type: triggerType, trigger_config: input.triggerConfig, action_type: input.actionType, action_config: actionConfig, enabled: false },
+            });
+            setSaveError(CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED);
             return false;
           } else {
             const enableRes = await workerFetch(`/api/rules/${createBody.id}`, {
@@ -220,8 +260,9 @@ export function useConnectorRule(orgId: string | null, provider: ConnectorProvid
                     action_config: actionConfig,
                   }),
                 });
-                if (!patchRes.ok) {
-                  setSaveError(CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
+                const patchBody = await patchRes.json().catch(() => ({})) as RuleWriteBody;
+                if (!patchRes.ok || hasFolderMirrorFailure(patchBody)) {
+                  setSaveError(hasFolderMirrorFailure(patchBody) ? CONNECTORS_LABELS.CONNECTOR_FOLDER_RECOVERY_REQUIRED : CONNECTORS_LABELS.CONNECTOR_SAVE_FAILED);
                   return false;
                 }
               } else {

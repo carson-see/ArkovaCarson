@@ -729,6 +729,10 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'suborg.credits_reclaimed': 'A parent organization reclaimed credits from an affiliated organization.',
   'suborg.suspended': 'An affiliated organization was suspended by its parent organization.',
   'suborg.offboarded': 'An affiliated organization was offboarded — credits returned and the organization suspended.',
+  'agent.registered': 'An agent was registered and its current authorized state can be refreshed.',
+  'agent.updated': 'An agent profile or effective authorization state changed and should be refreshed.',
+  'agent.revoked': 'An agent was permanently revoked.',
+  'agent.key_created': 'A new key was created for an agent. The key secret is never included.',
 };
 
 // =============================================================================
@@ -1587,7 +1591,6 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   SOURCE_FIELD: 'Source',
   PROVIDER_FIELD: 'Provider',
   RECIPIENT_FIELD: 'Recipient',
-  RECIPIENT_PROOF_FIELD: 'Recipient Proof',
   // SCRUM-2914: CONFIDENCE_FIELD removed — extraction confidence scoring is
   // unreliable and is no longer surfaced anywhere in the UI. Do not re-add.
   EVIDENCE_FIELD: 'Evidence',
@@ -2049,6 +2052,9 @@ export const CONNECTORS_LABELS = {
   DRIVE_FOLDERS_UNAVAILABLE: 'Google Drive is not responding right now. Please try again in a moment.',
   DRIVE_FOLDERS_NOT_CONNECTED: 'Connect Google Drive before choosing folders.',
   CONNECTOR_SAVE_FAILED: 'Could not save those settings. Please try again.',
+  CONNECTOR_FOLDER_RECOVERY_REQUIRED: 'The connector rule was saved, but one or more Drive folders still need recovery. Save again to retry those folders.',
+  CONNECTOR_ADMIN_REPAIR_REQUIRED: 'This saved Drive setup needs an organization administrator to save it again before folder recovery can continue.',
+  CONNECTOR_DISABLED_RECOVERY_REQUIRED: 'This saved Drive setup is paused because folder recovery did not finish. Save to retry recovery; it will be enabled only after every selected folder is ready.',
   CONNECTOR_MANAGED_IN_RULES: 'This connector is set up with more than one rule, so it is managed in Rules.',
   CONNECTOR_MANAGE_IN_RULES_LINK: 'Manage in Rules',
   CONNECTOR_FOLDER_MISSING: 'This folder was removed or renamed in Google Drive.',
@@ -2094,11 +2100,31 @@ export const CONNECTORS_LABELS = {
     'Some files could not be retrieved because access to them was not granted. Reconnect to grant access, or check the file was shared correctly.',
   CONNECTOR_HEALTH_REASON_CHANGES_GAP:
     'Some file changes were missed during a recent interruption and could not be recovered. New changes are being picked up normally.',
+  CONNECTOR_HEALTH_REASON_FOLDER_MIRROR_FAILED:
+    'One or more selected folders could not be prepared. Arkova will retry automatically.',
   CONNECTOR_HEALTH_REASON_FETCH_JOB_FAILURES:
     'Some files could not be retrieved. Arkova will keep retrying automatically.',
   CONNECTOR_HEALTH_REASON_PROCESSING_FAILURE:
     'The most recent document from this connector could not be processed.',
+  CONNECTOR_HEALTH_REASON_OAUTH_CLIENT_MISMATCH:
+    'The Google Drive connection settings changed. Reconnect to restore this connector.',
+  CONNECTOR_HEALTH_REASON_RECONNECT_REQUIRED_SCOPE_CHANGE:
+    'Google Drive access requirements changed. Reconnect and approve the updated access request.',
+  CONNECTOR_HEALTH_LAST_SOURCE_EVENT: 'Last source event',
+  CONNECTOR_HEALTH_LAST_CHANNEL_RENEWAL: 'Last channel renewal',
+  CONNECTOR_HEALTH_CHANNEL_EXPIRES: 'Push channel expires',
   CONNECTOR_HEALTH_REASON_GENERIC: 'This connector needs attention. Reconnect, or contact support if this continues.',
+} as const;
+
+export const RECORDS_PRIVATE_TAG_LABELS = {
+  INPUT: 'Private tag',
+  PLACEHOLDER: 'Filter by private tag',
+  SCOPE: 'Private tag scope',
+  USER_SCOPE: 'My tags',
+  ORGANIZATION_SCOPE: 'Organization tags',
+  PAGE_FILTER_NOTE: 'Folder, status, and filename filters apply to the current private-tag page.',
+  LOAD_ERROR: 'Private tag results could not be loaded.',
+  RETRY: 'Try again',
 } as const;
 
 // =============================================================================
@@ -5003,6 +5029,13 @@ export const SPREADSHEET_MODE_LABELS = {
   DOCUMENT_HINT: 'The whole file is secured as a single record, the same as a PDF or Word document.',
   FILE_SIZE_LABEL: 'Size',
   CHOOSE_DIFFERENT_FILE: 'Choose a different file',
+} as const;
+
+export const SPREADSHEET_IMPORT_ERRORS = {
+  INVALID_LEGACY_FILE: 'Invalid legacy .xls file.',
+  FILE_TOO_LARGE: 'File size must be less than 10MB.',
+  TOO_MANY_ROWS: (maxRows: number) =>
+    `File has too many rows (max ${maxRows.toLocaleString()}).`,
 } as const;
 
 // ─── QUEUE-01 / SCRUM-2894 (L2-A1) — Pending Documents page ─────────────────

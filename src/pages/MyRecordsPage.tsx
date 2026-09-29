@@ -28,6 +28,8 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
+import { usePrivateAnchorList, type PrivateTagScope } from '@/hooks/usePrivateAnchorList';
+import { useDebounce } from '@/hooks/useDebounce';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useFolders, type Folder } from '@/hooks/useFolders';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
@@ -64,7 +66,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS, RECORDS_PRIVATE_TAG_LABELS } from '@/lib/copy';
 import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
@@ -98,6 +100,11 @@ const statusConfig = {
 
 type StatusFilter = 'ALL' | 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
 
+export function resolveActiveAnchorRole(activeOrgId: string | null, membershipRole: string | undefined, profileRole: string | null | undefined): string | null | undefined {
+  if (!activeOrgId) return profileRole;
+  return membershipRole === 'owner' || membershipRole === 'admin' ? 'ORG_ADMIN' : 'INDIVIDUAL';
+}
+
 export function MyRecordsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -106,7 +113,7 @@ export function MyRecordsPage() {
   const { orgId: activeOrgId } = useActiveOrg();
   const { orgs } = useUserOrgs();
   const activeMembership = orgs.find((org) => org.orgId === activeOrgId);
-  const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
+  const { records: allRecords, loading: allRecordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord, assignRecords } = useFolders();
 
@@ -119,6 +126,16 @@ export function MyRecordsPage() {
   const [secureDialogOpen, setSecureDialogOpen] = useState(shouldAutoOpenUpload);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [privateTag, setPrivateTag] = useState('');
+  const debouncedPrivateTag = useDebounce(privateTag, 300);
+  const [privateTagScope, setPrivateTagScope] = useState<PrivateTagScope>('user');
+  const [privateTagPage, setPrivateTagPage] = useState(0);
+  const activeRole = resolveActiveAnchorRole(activeOrgId, activeMembership?.role, profile?.role);
+  const privateList = usePrivateAnchorList({ userId: user?.id, orgId: activeOrgId, role: activeRole, tag: debouncedPrivateTag, scope: privateTagScope, page: privateTagPage });
+  const { data: privateListData, isLoading: privateListLoading, error: privateListError, refetch: refetchPrivateList } = privateList;
+  const privateFilterActive = debouncedPrivateTag.trim().length > 0;
+  const records = useMemo(() => privateFilterActive ? (privateListData?.records ?? []) : allRecords, [allRecords, privateFilterActive, privateListData?.records]);
+  const recordsLoading = privateFilterActive ? privateListLoading : allRecordsLoading;
 
   // SCRUM-2940: folder sidebar/filter state + create/rename/delete/move dialogs.
   const [folderFilter, setFolderFilter] = useState<FolderSelection>('ALL');
@@ -140,6 +157,8 @@ export function MyRecordsPage() {
     setMoveTargets([]);
     setFolderDialog(null);
     setDeleteTarget(null);
+    setPrivateTagPage(0);
+    if (!activeOrgId) setPrivateTagScope('user');
   }, [activeOrgId]);
 
   useEffect(() => {
@@ -160,15 +179,19 @@ export function MyRecordsPage() {
     navigate(ROUTES.LOGIN);
   };
 
-  // Realtime subscription in useAnchors handles INSERT — no manual refresh needed
-  const handleSecureSuccess = useCallback(() => {}, []);
+  const refreshVisibleRecords = useCallback(async () => {
+    await refreshAnchors();
+    if (privateFilterActive) await refetchPrivateList();
+  }, [privateFilterActive, refetchPrivateList, refreshAnchors]);
+
+  const handleSecureSuccess = useCallback(() => { void refreshVisibleRecords(); }, [refreshVisibleRecords]);
 
   const handleRevokeRecord = useCallback(async (record: Record) => {
     const success = await revokeAnchor(record.id);
     if (success) {
-      await refreshAnchors();
+      await refreshVisibleRecords();
     }
-  }, [revokeAnchor, refreshAnchors]);
+  }, [revokeAnchor, refreshVisibleRecords]);
 
   // SCRUM-2940 — folder create/rename share one dialog; onSubmit rethrows on
   // failure so FolderFormDialog can show the inline duplicate-name/generic
@@ -215,6 +238,7 @@ export function MyRecordsPage() {
       setSelectedRecordIds(failedIds);
       setMoveTargets(requestedRecords.filter((record) => failedIds.has(record.id)));
       if (result.moved.length > 0) toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
+      if (result.moved.length > 0) await refreshVisibleRecords();
       if (result.failed.length > 0) {
         toast.warning(FOLDER_LABELS.PARTIAL_MOVE.replace('{count}', String(result.failed.length)));
         return false;
@@ -224,16 +248,17 @@ export function MyRecordsPage() {
       toast.error(FOLDER_LABELS.ERR_ASSIGN);
       return false;
     }
-  }, [activeOrgId, assignRecords, moveTargets]);
+  }, [activeOrgId, assignRecords, moveTargets, refreshVisibleRecords]);
 
   const handleRemoveFromFolder = useCallback(async (record: Record) => {
     try {
       await assignRecord(record.id, null);
       toast.success(FOLDER_LABELS.TOAST_UNFILED);
+      await refreshVisibleRecords();
     } catch {
       toast.error(FOLDER_LABELS.ERR_ASSIGN);
     }
-  }, [assignRecord]);
+  }, [assignRecord, refreshVisibleRecords]);
 
   // Filter records by folder, then search query and status.
   const selectedFolderIds = useMemo(() => {
@@ -307,8 +332,8 @@ export function MyRecordsPage() {
       <Card>
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 gap-2">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <div className="relative min-w-0 flex-1 sm:max-w-sm">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search by filename or fingerprint..."
@@ -333,9 +358,24 @@ export function MyRecordsPage() {
                   <SelectItem value="EXPIRED">Expired</SelectItem>
                 </SelectContent>
               </Select>
+              <Input
+                aria-label={RECORDS_PRIVATE_TAG_LABELS.INPUT}
+                placeholder={RECORDS_PRIVATE_TAG_LABELS.PLACEHOLDER}
+                value={privateTag}
+                maxLength={64}
+                onChange={(event) => { setPrivateTag(event.target.value); setPrivateTagPage(0); }}
+                className="w-full sm:max-w-[190px]"
+              />
+              <Select value={privateTagScope} onValueChange={(value) => { setPrivateTagScope(value as PrivateTagScope); setPrivateTagPage(0); }}>
+                <SelectTrigger aria-label={RECORDS_PRIVATE_TAG_LABELS.SCOPE} className="w-full sm:w-[190px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">{RECORDS_PRIVATE_TAG_LABELS.USER_SCOPE}</SelectItem>
+                  <SelectItem value="organization" disabled={!activeOrgId}>{RECORDS_PRIVATE_TAG_LABELS.ORGANIZATION_SCOPE}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <p className="text-sm text-muted-foreground">
-              {filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''}
+              {filteredRecords.length} record{filteredRecords.length !== 1 ? 's' : ''}{privateFilterActive ? ' on this page' : ''}
             </p>
             {selectedRecordIds.size > 0 && (
               <Button size="sm" variant="outline" onClick={() => setMoveTargets(
@@ -348,6 +388,14 @@ export function MyRecordsPage() {
         </CardHeader>
         <Separator />
         <CardContent className="pt-0">
+          {privateFilterActive && (
+            <p className="py-3 text-xs text-muted-foreground">
+              {RECORDS_PRIVATE_TAG_LABELS.PAGE_FILTER_NOTE}
+            </p>
+          )}
+          {privateFilterActive && privateListError && (
+            <Alert variant="destructive" className="my-4"><AlertDescription className="flex items-center justify-between gap-2"><span>{RECORDS_PRIVATE_TAG_LABELS.LOAD_ERROR}</span><Button variant="outline" size="sm" onClick={() => void refetchPrivateList()}>{RECORDS_PRIVATE_TAG_LABELS.RETRY}</Button></AlertDescription></Alert>
+          )}
           {recordsLoading ? (
             <div className="divide-y">
               {Array.from({ length: 5 }).map((_, idx) => (
@@ -507,6 +555,12 @@ export function MyRecordsPage() {
             </div>
           ))}
         </CardContent>
+        {privateFilterActive && (privateTagPage > 0 || privateListData?.hasMore) && (
+          <div className="flex justify-end gap-2 border-t p-4">
+            <Button variant="outline" size="sm" disabled={privateTagPage === 0 || recordsLoading} onClick={() => setPrivateTagPage((page) => Math.max(0, page - 1))}>Previous</Button>
+            <Button variant="outline" size="sm" disabled={!privateListData?.hasMore || recordsLoading} onClick={() => setPrivateTagPage((page) => page + 1)}>Next</Button>
+          </div>
+        )}
       </Card>
         </div>
       </div>

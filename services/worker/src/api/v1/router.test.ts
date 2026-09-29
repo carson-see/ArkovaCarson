@@ -26,13 +26,19 @@ describe('api v1 router attestation batch routes', () => {
     );
   });
 
-  it('mounts the ComputeID admission router before the JWT-only /agents mount so API-key callers are not 401ed by requireAuth', () => {
+  it('mounts ComputeID admission before the generic dual-auth lifecycle mount', () => {
     const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
     const admission = /router\.use\(\s*['"]\/agents\/computeid['"]\s*,\s*computeidGate\s*,\s*batchRateLimiter\s*,\s*requireScopeAnyAuth\(\s*['"]agents:manage['"]\s*\)\s*,\s*agentsComputeIdRouter\s*\)/.exec(routerSource);
-    const jwt = /router\.use\(\s*['"]\/agents['"]\s*,\s*requireAuth\s*,\s*agentsRouter\s*\)/.exec(routerSource);
+    const lifecycle = /router\.use\(\s*['"]\/agents['"]\s*,\s*requireAgentLifecycleAuth\s*,\s*agentsRouter\s*\)/.exec(routerSource);
     expect(admission).not.toBeNull();
-    expect(jwt).not.toBeNull();
-    expect(admission!.index).toBeLessThan(jwt!.index);
+    expect(lifecycle).not.toBeNull();
+    expect(admission!.index).toBeLessThan(lifecycle!.index);
+  });
+
+  it('rate-limits generic registration and key mint before the lifecycle router', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+    expect(routerSource).toMatch(/router\.post\(\s*['"]\/agents['"]\s*,\s*batchRateLimiter\s*\)/);
+    expect(routerSource).toMatch(/router\.post\(\s*['"]\/agents\/:agentId\/key['"]\s*,\s*batchRateLimiter\s*\)/);
   });
 
   it('mounts webhook self-service before the broad API-key webhook router so diagnostics are not double rate-limited', () => {
