@@ -37,7 +37,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
-import { issuerRegistryPath } from '@/lib/routes';
+import { issuerRegistryPath, verifyPath } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import {
   hasPublicVerificationProof,
@@ -55,6 +55,7 @@ import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCred
 import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
 import { isIssuerAuthenticated, parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import { parseFingerprintSource } from '@/lib/fingerprintSource';
+import { deriveDisplayTitle } from '@/lib/recordDisplay';
 
 interface PublicAnchorData {
   public_id: string;
@@ -115,6 +116,17 @@ interface PublicAnchorData {
    * Surfaced by the `get_public_anchor` RPC. extraction_confidence is never
    * rendered (CleMetadataSection redacts it). */
   cle_metadata?: Record<string, unknown> | null;
+  /**
+   * Readability pass (founder-reported, 2026-09-29): the verification API
+   * already returns these two (§1.8 additive-nullable — no schema change).
+   * `version_number` is 1 for an original record; `parent_public_id` is the
+   * public id of the version this one replaced, when there is one. Used only
+   * to state honestly that a superseded record remains valid evidence and to
+   * link back to the version it replaced — never to imply a forward link to
+   * a newer version, which this frozen response does not carry.
+   */
+  version_number?: number | null;
+  parent_public_id?: string | null;
   error?: string;
 }
 
@@ -419,6 +431,28 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <p className="text-xs text-amber-600 mt-2">
               {ANCHORING_STATUS_LABELS.PENDING_SINCE.replace('{time}', pendingSince)}
             </p>
+          )}
+          {/* Readability pass (founder-reported, 2026-09-29): a superseded
+              record must say plainly it remains valid evidence (supersede,
+              never revoke) and, when the API provided one, link back to the
+              version it replaced. No new field is requested from the frozen
+              API — version_number/parent_public_id are additive-nullable
+              fields it already returns (§1.8). */}
+          {isSuperseded && (
+            <div className="mt-3 max-w-sm text-xs text-muted-foreground" data-testid="public-superseded-version-note">
+              <p>{PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID}</p>
+              {data.parent_public_id && (
+                <p className="mt-1">
+                  <a
+                    href={verifyPath(data.parent_public_id)}
+                    className="text-primary hover:underline"
+                    data-testid="public-previous-version-link"
+                  >
+                    {PUBLIC_VERIFICATION_LABELS.VIEW_PREVIOUS_VERSION}
+                  </a>
+                </p>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -843,7 +877,11 @@ function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
   const jsonLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': isEducational ? 'EducationalOccupationalCredential' : 'CreativeWork',
-    'name': data.filename,
+    // Readability pass (founder-reported, 2026-09-29): the same connector
+    // internal-id problem as the detail page's title — a raw
+    // `google_drive:1IxoL...` filename must never become the published
+    // "name" of the credential either.
+    'name': deriveDisplayTitle(data.filename, data.metadata),
     'credentialCategory': credentialType.toLowerCase().replace(/_/g, ' '),
     'url': `https://app.arkova.ai/verify/${data.public_id}`,
     'identifier': data.public_id,
