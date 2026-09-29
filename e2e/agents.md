@@ -681,3 +681,7 @@ npx playwright test --config e2e/private-tag-search-local.config.ts
 ```
 
 The file-level guard skips the fixture under every named project in the ordinary Playwright config. No CI workflow invokes the dedicated config. Keep the `gitleaks:allow` annotations on its deterministic loopback-only JWT/session and anon-key placeholders; they are not credentials, but the scanner intentionally treats key-shaped fixture values conservatively.
+
+## 2026-09-29 — UAT-14 readiness classification
+
+The UAT-14 editor fixture calls `scripts/uat14/profile-avatar-readiness.ts` before the first avatar upload and exercises login, MFA, missing-editor and ready states in a local browser. Its failure record is bounded to a route class, document readiness, avatar visibility and HTTP error counts; it must never include page text, query strings, credentials or raw Playwright errors. These synthetic tests do not diagnose the failed hosted attempt or replace real Auth/Storage acceptance.
