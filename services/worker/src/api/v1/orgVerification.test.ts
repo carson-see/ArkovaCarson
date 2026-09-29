@@ -160,8 +160,13 @@ describe('POST /verify-ein', () => {
   function setupMocks(opts: {
     orgId?: string | null;
     existingEin?: { id: string; display_name: string } | null;
+    domainVerified?: boolean;
+    domain?: string | null;
+    domainReadError?: unknown;
+    updateRows?: unknown;
     updateError?: unknown;
     auditError?: unknown;
+    captureAudit?: Record<string, unknown>[];
   }) {
     const callIdx = { current: 0 };
     mockFrom.mockImplementation((table: string) => {
@@ -177,11 +182,34 @@ describe('POST /verify-ein', () => {
           // duplicate check
           return mockQuery({ data: opts.existingEin ?? null });
         }
-        // update
-        return mockQuery({ data: null, error: opts.updateError ?? null });
+        if (callIdx.current === 2) {
+          // domain state read, ahead of the write
+          return mockQuery({
+            data: {
+              domain: opts.domain === undefined ? 'example.com' : opts.domain,
+              domain_verified: opts.domainVerified ?? false,
+            },
+            error: opts.domainReadError ?? null,
+          });
+        }
+        // update — CAS-guarded when granting VERIFIED, plain otherwise; the
+        // mock always returns a row list so both shapes are covered.
+        return mockQuery({
+          data: opts.updateError ? null : (opts.updateRows === undefined ? [{ id: 'org-abc' }] : opts.updateRows),
+          error: opts.updateError ?? null,
+        });
       }
       if (table === 'audit_events') {
-        return mockQuery({ data: null, error: opts.auditError ?? null });
+        const chain = mockQuery({ data: null, error: opts.auditError ?? null });
+        if (opts.captureAudit) {
+          (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(
+            (payload: Record<string, unknown>) => {
+              opts.captureAudit?.push({ ...payload });
+              return chain;
+            },
+          );
+        }
+        return chain;
       }
       return mockQuery({ data: null });
     });
@@ -227,17 +255,120 @@ describe('POST /verify-ein', () => {
     expect(res.body.error).toContain('already registered');
   });
 
-  it('submits EIN and returns PENDING', async () => {
-    setupMocks({});
+  it('submits EIN and returns PENDING when the domain is not yet verified', async () => {
+    setupMocks({ domainVerified: false });
     const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('PENDING');
+    expect(res.body.message).toContain('Complete domain verification');
   });
 
   it('returns 500 when update fails', async () => {
     setupMocks({ updateError: { message: 'db error' } });
     const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
     expect(res.status).toBe(500);
+  });
+
+  it('returns 500 when the domain-state read fails', async () => {
+    setupMocks({ domainReadError: { message: 'db error' } });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(500);
+  });
+
+  // ─── Domain-first dead-end fix: submitting the EIN after the domain is
+  // already verified must COMPLETE verification, not reset it to PENDING. ───
+
+  it('grants VERIFIED and audits ORG_VERIFIED when the domain is already verified', async () => {
+    const captureAudit: Record<string, unknown>[] = [];
+    setupMocks({ domainVerified: true, domain: 'example.com', captureAudit });
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('VERIFIED');
+    expect(res.body.message.toLowerCase()).toContain('verif');
+
+    const grant = captureAudit.find((p) => p.event_type === 'ORG_VERIFIED');
+    expect(grant).toBeDefined();
+    expect(grant?.details).toBe('Organization fully verified (EIN + domain)');
+  });
+
+  it('does not demote an already-verified org back to PENDING on re-submission', async () => {
+    // The second defect: any member re-POSTing an EIN to an already-VERIFIED
+    // org used to unconditionally flip verification_status back to PENDING.
+    setupMocks({ domainVerified: true, domain: 'example.com' });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).not.toBe('PENDING');
+    expect(res.body.status).toBe('VERIFIED');
+  });
+
+  it('CAS-guards the VERIFIED grant against BOTH domain_verified and domain', async () => {
+    let updateChain: ReturnType<typeof mockQuery> | undefined;
+    const callIdx = { current: 0 };
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        callIdx.current++;
+        if (callIdx.current === 1) return mockQuery({ data: null }); // duplicate check
+        if (callIdx.current === 2) {
+          return mockQuery({ data: { domain: 'example.com', domain_verified: true }, error: null });
+        }
+        updateChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+        return updateChain;
+      }
+      return mockQuery({ data: null });
+    });
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+
+    const predicates = (updateChain?.eq as ReturnType<typeof vi.fn>).mock.calls;
+    expect(predicates).toContainEqual(['id', 'org-abc']);
+    expect(predicates).toContainEqual(['domain_verified', true]);
+    expect(predicates).toContainEqual(['domain', 'example.com']);
+    expect((updateChain?.select as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+  });
+
+  it('returns 409 verification_superseded and emits NO audit row when the CAS affects zero rows', async () => {
+    // The domain was un-verified (or changed) between the read and the write.
+    const captureAudit: Record<string, unknown>[] = [];
+    setupMocks({ domainVerified: true, domain: 'example.com', updateRows: [], captureAudit });
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('verification_superseded');
+    expect(res.body.status).toBeUndefined();
+    expect(captureAudit).toEqual([]);
+  });
+
+  it('treats a null affected-row list as zero rows for the VERIFIED grant too', async () => {
+    setupMocks({ domainVerified: true, domain: 'example.com', updateRows: null });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('verification_superseded');
+  });
+
+  it('never logs or audits the raw EIN value', async () => {
+    const captureAudit: Record<string, unknown>[] = [];
+    setupMocks({ domainVerified: true, domain: 'example.com', captureAudit });
+
+    const ein = '98-7654321-SECRET';
+    const res = await request(app).post('/org/verify-ein').send({ ein });
+    expect(res.status).toBe(200);
+
+    const { logger } = await import('../../utils/logger.js');
+    for (const level of ['info', 'warn', 'error', 'debug'] as const) {
+      for (const call of (logger[level] as ReturnType<typeof vi.fn>).mock.calls) {
+        expect(JSON.stringify(call)).not.toContain(ein);
+      }
+    }
+    for (const insert of captureAudit) {
+      expect(JSON.stringify(insert)).not.toContain(ein);
+    }
   });
 });
 
@@ -708,14 +839,49 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
   });
 
   it('verify-ein PENDING write stamps no kyb_* column', async () => {
-    // organizations is hit twice: duplicate-EIN check (maybeSingle → null), then update.
-    const updates = captureOrgUpdates(null);
+    // organizations is hit three times: duplicate-EIN check (maybeSingle →
+    // null), the domain-state read (single → a real, not-yet-verified row —
+    // the domain-first fix added this read ahead of the write), then update.
+    const captured: Record<string, unknown>[] = [];
+    let orgCalls = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
+      }
+      if (table === 'organizations') {
+        orgCalls += 1;
+        if (orgCalls === 1) return mockQuery({ data: null, error: null }); // no duplicate
+        if (orgCalls === 2) {
+          return mockQuery({
+            data: {
+              domain: 'example.com',
+              domain_verified: false,
+              // Provider-KYB state present on the row on purpose, same as the
+              // sibling fixtures above: a future carry-forward stamp must
+              // fire under this fixture so the ratchet catches it.
+              kyb_provider: 'middesk',
+              kyb_submitted_at: new Date(Date.now() - 3600_000).toISOString(),
+            },
+            error: null,
+          });
+        }
+        const writeChain = mockQuery({ data: [{ id: 'org-abc' }], error: null });
+        (writeChain.update as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            captured.push({ ...payload });
+            return writeChain;
+          },
+        );
+        return writeChain;
+      }
+      return mockQuery({ data: null });
+    });
 
     const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
     expect(res.status).toBe(200);
-    const pending = updates.find((p) => p.verification_status === 'PENDING');
+    const pending = captured.find((p) => p.verification_status === 'PENDING');
     expect(pending).toBeDefined();
-    expect(kybKeysOf(updates)).toEqual([]);
+    expect(kybKeysOf(captured)).toEqual([]);
   });
 
   it('dev-verify grants VERIFIED without any kyb_* column', async () => {
@@ -754,6 +920,7 @@ describe('ORG_ADMIN gate — self-serve verification routes', () => {
     platformAdmin?: boolean;
   }) {
     const tablesTouched: string[] = [];
+    let orgCallCount = 0;
     mockFrom.mockImplementation((table: string) => {
       tablesTouched.push(table);
       if (table === 'profiles') {
@@ -769,9 +936,16 @@ describe('ORG_ADMIN gate — self-serve verification routes', () => {
         return mockQuery({ data: opts.memberRow ?? null, error: opts.memberError ?? null });
       }
       if (table === 'organizations') {
-        // Benign default for the admin-success paths: duplicate-check misses,
-        // selects return a workable org row, updates succeed.
-        return mockQuery({ data: null, error: null });
+        // Benign default for the admin-success paths. Called with a
+        // per-invocation counter because verify-ein now reads organizations
+        // TWICE before its write (duplicate-EIN check, then the domain-state
+        // read the domain-first fix added): the first call must stay falsy
+        // (no duplicate), the second must be a real, not-yet-verified row so
+        // the handler doesn't 500 fetching organization state; updates
+        // succeed regardless of the fixture they read.
+        orgCallCount += 1;
+        if (orgCallCount === 1) return mockQuery({ data: null, error: null });
+        return mockQuery({ data: { domain: 'example.com', domain_verified: false }, error: null });
       }
       return mockQuery({ data: null });
     });
