@@ -306,3 +306,54 @@ input; the earlier713a qualification remains identified by its actual source.
 Keep verification links in the release commit message as well as the PR body:
 Mergify's initial speculative body may omit the source PR's artifact links,
 while the HANDOFF claim gate also inspects the inherited commit messages.
+
+## 2026-09-26 — 0489 machine revoke coverage (SCRUM-3980)
+
+`test-agent-revoke-concurrency-native.sh` now loads 0488 and 0489. Run it once
+normally for the human RPC and once with
+`REVOKE_RPC=revoke_agent_and_keys_as_api_key` for the machine RPC. Both modes
+force mint/revoke and resume/revoke lock orders; machine mode also proves a
+caller expiring while blocked on its row lock is denied without agent, key, or
+audit changes. The harness remains a focused local PostgreSQL fixture, not a
+full Supabase lineage replay.
+# AR20-13 agent webhook outbox native contract
+
+`test-agent-webhook-outbox-native.sql` runs against an isolated schema with
+0491–0497 applied. It covers atomic register/outbox commit, payload exclusions,
+explicit flag/null guards, atomic materialization, live/stale lease CAS, and
+refusal to adopt a semantically-equal foreign legacy delivery row. It also
+proves registered and revoked notifications that share one public agent UUID
+materialize under distinct logical outbox keys, while exact crash replay is
+adopted and same-event, wrong-payload, or foreign-owner conflicts remain visible.
+The script also executes the outbox MFA deny-all boundary (authenticated AAL2 still sees no
+rows while `service_role` retains access), the bounded Drive latest-health RPC,
+and the physical-delete lifecycle: an unresolved registered-event FK blocks
+deletion, while 90-day terminal retention releases the FK before the audited
+service delete. A second organization proves cross-tenant ownership rejection
+(`23503`) and drives `zero_targets` and flag-off `suppressed` through the real
+materializer. The eighth-attempt exception fixture proves the function returns
+the terminal state stored by the same update; the ordinary exception fixture
+proves persisted `pending`, incremented attempt count and future backoff are
+returned without being confused with terminal reporting. The script wraps
+fixtures in a transaction and rolls them back.
+
+## 2026-09-27 — full-schema generic-agent revoke concurrency
+
+`test-agent-revoke-concurrency-full-schema.sh` accepts only an explicit
+loopback `UAT03_DATABASE_URL` for an already-reset disposable Supabase
+database. It does not start PostgreSQL or replay migrations. Separate psql
+sessions force and observe both mint/revoke and actual status-RPC/revoke lock
+orders through `pg_stat_activity`/`pg_locks`; elapsed sleeps never establish
+ordering. The API-key case specifically forces the former machine mint/self-
+revoke inversion with two backends. It also proves lifecycle and physical-
+delete audit-failure rollback and retry idempotency through the current outbox
+wrappers, ratchets target-agent-before-caller mint order, and proves an
+internal physical delete cannot orphan a live/resumable key or
+overwrite an unrelated compromise reason. Audit/outbox failure deliberately
+rolls back revocation too: an operator must retry or escalate a failed call,
+because the key remains active rather than committing an unaudited revoke.
+Every backend and operational fixture is cleaned
+on exit. Audit rows are immutable, and deleting their referenced org/profile
+would itself require a forbidden audit UPDATE, so those rows plus their single
+auth/profile/org identity remain only in the disposable database and are
+reported as counts.

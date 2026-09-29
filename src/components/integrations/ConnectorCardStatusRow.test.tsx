@@ -130,6 +130,30 @@ describe('ConnectorCardStatusRow', () => {
       expect(status).toHaveTextContent('This connector has stopped picking up new file changes.');
     });
 
+    it('renders exact operational evidence and a bounded recovery action', () => {
+      const onRecover = vi.fn();
+      renderRow({ connected: true, health: {
+        kind: 'degraded', reasonText: 'Reconnect required.',
+        details: [
+          { label: 'Last source event', value: 'Sep 27, 2026, 10:00 AM' },
+          { label: 'Last channel renewal', value: 'Sep 27, 2026, 11:00 AM' },
+        ],
+        action: { label: 'Reconnect Google Drive', onClick: onRecover },
+      } });
+      expect(screen.getByText(/^Last source event:/)).toBeInTheDocument();
+      expect(screen.getByText('Sep 27, 2026, 10:00 AM')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Reconnect Google Drive' }));
+      expect(onRecover).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables the recovery action while OAuth startup is in flight', () => {
+      renderRow({ connected: true, health: {
+        kind: 'degraded', reasonText: 'Reconnect required.',
+        action: { label: 'Reconnect Google Drive', onClick: vi.fn(), loading: true },
+      } });
+      expect(screen.getByRole('button', { name: 'Reconnect Google Drive' })).toBeDisabled();
+    });
+
     it('renders the grant_exceeds_requested reason without crashing (TRUE in prod for the one connected org)', () => {
       renderRow({
         connected: true,

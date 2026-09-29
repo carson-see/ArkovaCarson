@@ -88,7 +88,7 @@ describe('ThirdPartyNoticesPage', () => {
   });
 
   // Was: "does not include a fabricated xlsx entry (no such dependency exists
-  // in the tree)" — written when xlsx was absent. xlsx@0.18.5 is a real
+  // in the tree)" — written when xlsx was absent. xlsx@0.20.3 is a real
   // production dependency in package.json today; the old assertion only
   // stayed green because the committed generated file predated it
   // (2026-07-28), i.e. the STALE data was masking a missing attribution. The

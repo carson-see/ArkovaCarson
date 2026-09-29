@@ -45,6 +45,7 @@ export const EXPECTED_SECRETS = [
   "SAM_GOV_API_KEY",
   "CLOUDFLARE_API_TOKEN",
   "CLOUDFLARE_TUNNEL_TOKEN",
+  "RECIPIENT_IDENTIFIER_PEPPER",
 ] as const;
 
 /** Optional secrets may be present, but missing values do not block production deploys. */

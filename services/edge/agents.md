@@ -1,6 +1,18 @@
 # agents.md — services/edge
 _Last updated: 2026-09-13 (SCRUM-3907 / SCRUM-1032 — edge deploy workflow + deployed-version parity)._
 
+## Isolated soak worker routing
+
+The isolated workers.dev MCP may reach a private staging worker through an
+Access-protected, per-rig Cloudflare Tunnel hostname. `WORKER_BASE_URL` and
+`WORKER_ACCESS_HOST` must name that exact `ar20-closure-*` host, and
+`WORKER_ACCESS_CLIENT_ID` / `WORKER_ACCESS_CLIENT_SECRET` must be present as a
+pair. The edge adds the Access pair without replacing the caller's API key or
+Supabase JWT. It never follows worker redirects. This is a staging-only bridge:
+do not point the Access variables at production, shared staging, or a Cloud Run
+URL. The Cloud Run service remains private; cloudflared runs as a separate,
+digest-pinned sidecar rather than inside the product worker image.
+
 ## SCRUM-3907 / SCRUM-1032 — edge deploy workflow + deployed-version parity (2026-09-13)
 
 CODE ONLY — this PR builds the pipeline; it does not run it. No `wrangler
@@ -272,8 +284,10 @@ meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0
   the key or full URL. Bearer callers (no raw key) degrade to text fallback.
 - **Graceful degrade:** any worker network/HTTP/shape failure → `null` →
   `nessieTextFallback` (PR-1 lowercase sources). The tool never throws.
-- **New env var `WORKER_BASE_URL`** (`env.ts`, `wrangler.toml`): OPTIONAL.
-  When unset (local dev / preview) nessie_query stays on text fallback. Set the
+- **New env var `WORKER_BASE_URL`** (`env.ts`, `wrangler.toml`): optional only
+  for the Nessie text fallback; required for all seven agent lifecycle tools.
+  When unset (local dev / preview) nessie_query stays on text fallback and
+  agent lifecycle tools return `AUTH_FORWARDING_REQUIRED`. Set the
   prod value at deploy — NOT hardcoded in source:
   `wrangler deploy --var WORKER_BASE_URL:https://api.arkova.ai`.
 - **Tests (`mcp-tools.test.ts`, `describe('handleNessieQuery worker proxy')`):**
@@ -438,7 +452,7 @@ Cloudflare Workers deployment at `edge.arkova.ai`. Handles MCP server, AI fallba
 - All internal routes require `X-Cron-Secret` header
 - Secret comparison uses constant-time algorithm to prevent timing attacks
 - No public ports — ingress via Cloudflare only
-- MCP server: API key (`X-API-Key`) OR Supabase JWT (`Authorization: Bearer`). `validateApiKey` + `validateBearer` race in parallel; first success wins. `validateBearer` verifies the Supabase JWT locally with `SUPABASE_JWT_SECRET` (`HS256`, `exp`, `iat`, `aud=authenticated`, `iss={SUPABASE_URL}/auth/v1`) before it calls `/auth/v1/user`, then rejects any response whose `user.id` does not match the JWT `sub`. User-id is threaded into a `ScopedConfig` object and passed to every tool handler so tools can org-scope (see `get_agents_for_user` pattern below).
+- MCP server: API key (`X-API-Key`) OR Supabase JWT (`Authorization: Bearer`). Presenting both distinct credentials is rejected; an exact duplicate API key in both supported header forms is normalized once. Validation waits for every presented credential and fails closed on any invalid or ambiguous combination. Hosted `register_agent`, `create_agent_key`, and `admit_computeid_agent` require API-key authentication so a one-time secret is never returned into a JWT-backed model session. `validateBearer` verifies the Supabase JWT locally with `SUPABASE_JWT_SECRET` (`HS256`, `exp`, `iat`, `aud=authenticated`, `iss={SUPABASE_URL}/auth/v1`) before it calls `/auth/v1/user`, then rejects any response whose `user.id` does not match the JWT `sub`. User-id is threaded into a `ScopedConfig` object and passed to every tool handler so tools can org-scope (see `get_agents_for_user` pattern below).
 - MCP tool errors: pass through `safeErrorText(err, context)` — never return `String(err)` directly (stack traces + URLs leak). Detail goes to `console.error`; clients get `{error, code: 'TOOL_ERROR'}`.
 
 ## MCP — rogue-agent posture (2026-04-20 audit)

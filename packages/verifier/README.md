@@ -46,9 +46,11 @@ result.observedTime;   // ISO-8601 UTC, read off the block header itself
 result.extractedMerkleRoot; // what was ACTUALLY on chain, on a mismatch
 ```
 
-`confirmInclusion` **never throws**. Every failure — including an unreachable or
-uncooperative node — maps to a `status`, and the result reports what was really
-found rather than only that something went wrong.
+`confirmInclusion` **never throws**. A transport exception or HTTP
+401/403/408/429/5xx maps
+to `node_unavailable`, which is distinct from a fetched proof that fails a
+cryptographic check. The result reports what was really found rather than only
+that something went wrong.
 
 The transport is injected, so you are never locked to one provider: pass any
 `(path) => Promise<{ ok, status?, json? }>` function. `createEsploraFetch` is a

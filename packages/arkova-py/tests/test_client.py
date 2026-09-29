@@ -40,6 +40,43 @@ def json_response(
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_list_anchors_forwards_private_filters_and_parses_safe_projection(asynchronous: bool) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response({"anchors": [{"public_id": "ARK-1", "status": "SECURED", "created_at": "2026-09-27T10:00:00Z", "updated_at": "2026-09-27T11:00:00Z", "filename": "proof.pdf", "description": None, "metadata": {"secret": True}}], "next_cursor": "next", "org_id": "secret"})
+
+    if asynchronous:
+        async def run() -> object:
+            async with AsyncArkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+                return await client.list_anchors(since="2026-09-01T00:00:00Z", tag="audit", tag_scope="organization", limit=25, cursor="cursor")
+        result = asyncio.run(run())
+    else:
+        with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+            result = client.list_anchors(since="2026-09-01T00:00:00Z", tag="audit", tag_scope="organization", limit=25, cursor="cursor")
+
+    assert seen[0].url.path == "/v1/anchors"
+    assert dict(seen[0].url.params) == {"limit": "25", "since": "2026-09-01T00:00:00Z", "tag": "audit", "tag_scope": "organization", "cursor": "cursor"}
+    assert result.anchors[0].public_id == "ARK-1"
+    assert result.next_cursor == "next"
+    assert not hasattr(result, "org_id")
+    assert not hasattr(result.anchors[0], "metadata")
+
+
+@pytest.mark.parametrize("kwargs", [{"tag": "audit"}, {"tag_scope": "user"}, {"limit": 101}, {"since": "2026-09-27"}])
+def test_list_anchors_rejects_invalid_filters_without_network(kwargs: dict[str, object]) -> None:
+    calls = 0
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return json_response({})
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client, pytest.raises(ArkovaError, match="tag|limit|since"):
+        client.list_anchors(**kwargs)  # type: ignore[arg-type]
+    assert calls == 0
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
 def test_anchor_import_uses_canonical_path_and_parses_207(asynchronous: bool) -> None:
     seen: list[httpx.Request] = []
 
@@ -741,6 +778,15 @@ _COMPLETE_WIRE_BUNDLE = {
     "proof_schema_version": 1,
     "signature": None,
 }
+_COHERENT_SINGLETON_WIRE_BUNDLE = {
+    **_COMPLETE_WIRE_BUNDLE,
+    "fingerprint": "ff" * 32,
+    "merkle_root": "FF" * 32,
+    "merkle_proof": [],
+    "merkle_index": 0,
+    "leaf_count": 1,
+    "op_return_payload": "41524b56" + "ff" * 32,
+}
 
 
 @pytest.mark.parametrize(
@@ -752,6 +798,16 @@ _COMPLETE_WIRE_BUNDLE = {
         {"block_header": None},
         {"merkle_proof": "nope"},
         {"merkle_proof": []},
+        {"merkle_proof": [], "leaf_count": 0, "merkle_index": 0},
+        {"merkle_proof": [], "leaf_count": 1, "merkle_index": 1},
+        {"merkle_proof": [], "leaf_count": 1, "merkle_index": 0},
+        {
+            "merkle_proof": [],
+            "leaf_count": 1,
+            "merkle_index": 0,
+            "fingerprint": "not-hex",
+            "merkle_root": "not-hex",
+        },
         {"merkle_proof": [{"hash": "bb" * 32, "position": "up"}]},
         {"fingerprint": None},
         {"op_return_payload": None},
@@ -784,6 +840,80 @@ def test_get_merkle_proof_malformed_bundle_fails_closed(mutation: dict) -> None:
     # The frozen top-level response still parses; only the bundle fails closed.
     assert result.verified is True
     assert result.proof_bundle is None
+
+
+@pytest.mark.parametrize("branch", [None, pytest.param("missing", id="missing")])
+def test_get_merkle_proof_singleton_missing_or_null_branch_fails_closed(branch: object) -> None:
+    bad_bundle = dict(_COHERENT_SINGLETON_WIRE_BUNDLE)
+    if branch == "missing":
+        bad_bundle.pop("merkle_proof")
+    else:
+        bad_bundle["merkle_proof"] = branch
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "singleton",
+                "fingerprint": "ff" * 32,
+                "merkle_root": "FF" * 32,
+                "merkle_proof": [],
+                "verified": True,
+                "proof_bundle": bad_bundle,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_merkle_proof("singleton")
+
+    assert result.proof_bundle is None
+
+
+def test_get_merkle_proof_accepts_coherent_singleton_empty_branch() -> None:
+    fingerprint = "ff" * 32
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "singleton",
+                "fingerprint": fingerprint,
+                "merkle_root": fingerprint.upper(),
+                "merkle_proof": [],
+                "verified": True,
+                "proof_bundle": _COHERENT_SINGLETON_WIRE_BUNDLE,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_merkle_proof("singleton")
+
+    assert result.proof_bundle is not None
+    assert result.proof_bundle.merkle_proof == []
+    assert result.proof_bundle.leaf_count == 1
+    assert result.proof_bundle.merkle_index == 0
+
+
+def test_async_get_merkle_proof_accepts_coherent_singleton_empty_branch() -> None:
+    async def run():
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return json_response(
+                {
+                    "public_id": "singleton",
+                    "fingerprint": "ff" * 32,
+                    "merkle_root": "FF" * 32,
+                    "merkle_proof": [],
+                    "verified": True,
+                    "proof_bundle": _COHERENT_SINGLETON_WIRE_BUNDLE,
+                }
+            )
+
+        async with AsyncArkova(
+            api_key="ak_test", transport=httpx.MockTransport(handler)
+        ) as client:
+            return await client.get_merkle_proof("singleton")
+
+    result = asyncio.run(run())
+    assert result.proof_bundle is not None
+    assert result.proof_bundle.merkle_proof == []
 
 
 def test_get_merkle_proof_missing_required_member_fails_closed() -> None:

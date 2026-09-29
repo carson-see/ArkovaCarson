@@ -42,6 +42,9 @@ describe('useConnectorHealth', () => {
       state: 'unknown',
       health_reason: null,
       last_error: null,
+      last_event_at: null,
+      last_renewal_at: null,
+      next_expires_at: null,
     });
   });
 
@@ -62,8 +65,24 @@ describe('useConnectorHealth', () => {
       state: 'connected',
       health_reason: 'none',
       last_error: null,
+      last_event_at: null,
+      last_renewal_at: null,
+      next_expires_at: null,
     });
     expect(result.current.error).toBeNull();
+  });
+
+  it('preserves the backend operational timestamps without relabeling them as a poll', async () => {
+    workerFetch.mockResolvedValue(jsonResponse({ connectors: [{
+      id: 'google_drive', state: 'degraded', health_reason: 'reconnect_required_scope_change', last_error: 'redacted',
+      last_event_at: '2026-09-27T10:00:00Z', last_renewal_at: '2026-09-27T11:00:00Z', next_expires_at: '2026-10-01T11:00:00Z',
+    }] }));
+    const { result } = renderHook(() => useConnectorHealth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.getHealth('google_drive')).toMatchObject({
+      health_reason: 'reconnect_required_scope_change',
+      last_event_at: '2026-09-27T10:00:00Z', last_renewal_at: '2026-09-27T11:00:00Z', next_expires_at: '2026-10-01T11:00:00Z',
+    });
   });
 
   it('surfaces cursor_stale as degraded with its reason', async () => {
@@ -157,6 +176,9 @@ describe('useConnectorHealth', () => {
       state: 'unknown',
       health_reason: null,
       last_error: null,
+      last_event_at: null,
+      last_renewal_at: null,
+      next_expires_at: null,
     });
   });
 });
@@ -171,8 +193,11 @@ describe('describeConnectorHealthReason', () => {
       'changes_list_never_succeeded',
       'file_access_not_granted',
       'changes_gap',
+      'folder_mirror_failed',
       'fetch_job_failures',
       'processing_failure',
+      'oauth_client_mismatch',
+      'reconnect_required_scope_change',
     ] as const;
     for (const reason of reasons) {
       expect(describeConnectorHealthReason(reason)).toEqual(expect.any(String));

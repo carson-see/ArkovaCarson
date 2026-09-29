@@ -1,4 +1,17 @@
 # services/worker/src/api/v1/agents.md
+
+## Agent lifecycle OpenAPI contract
+
+`agents.openapi.ts` supplies the six generic lifecycle operations and API-key-only ComputeID admission to the served specification. `agents.openapi.test.ts` exercises the real docs router and checks the published YAML mirror, security boundary, signed receipt passthrough, one-time-key response, nullable metadata, and component references. Keep it aligned with `agents.ts`, `agents-computeid.ts`, and `integrations/computeid/schemas.ts`.
+
+## 2026-09-27 — transactional agent webhook producers (AR20-13)
+
+Generic register, update, revoke, and key-mint routes call migration 0491's
+versioned `*_with_outbox` RPCs. ComputeID admission and provider transitions
+do the same. The domain write, audit, and secret-free logical event commit in
+one database transaction. Routes return the authoritative RPC result and only
+hint the bounded drainer after commit; hint failure cannot hide a mutation or
+a one-time key, and `/cron/webhook-retries` owns scheduled recovery.
 PR #2904 review: `webhooks-self-service.test.ts` explicitly disables descendant fanout in its config seam while preserving the real delivery module used by signed-ping and replay assertions.
 
 
@@ -127,6 +140,8 @@ Scopes a passport-admitted agent may hold are typed against `ApiKeyScope` and cl
 
 `PATCH /:agentId` now refuses status changes on a `revoked` agent (`409`) — revoked is terminal for partner revocations and `DELETE /:agentId` alike; before this an org admin could PATCH `{status:'active'}` and mint keys for a passport ComputeID had revoked. **Fixed 2026-09-25 (SCRUM-5290):** `PATCH {status:'suspended'}` now deactivates the agent's active keys, and `{status:'active'}` restores them — the auth path reads only `api_keys`, so a status change alone was inert and org-side suspension was decorative. Reactivation matches `revocation_reason = 'admin:agent.suspended'`, a marker deliberately distinct from 0448's `computeid:…` values: an org admin resuming an agent must never revive a key ComputeID suspended. A key-write failure returns 500 rather than reporting a suspension that did not take effect. See `agents-suspend-keys.test.ts`.
 
+_Historical, superseded by the single-transaction design below (migration 0489) — kept verbatim for history:_
+
 **Order is the design, because these are two round-trips and not one transaction.**
 The write that RESTRICTS access commits first, so the crash window fails CLOSED:
 suspend does `keys off -> status suspended` (a crash leaves dead keys and a stale
@@ -136,6 +151,16 @@ cannot act). Reversing either would leave a suspended agent holding a LIVE key �
 the exact defect this closes. Full atomicity needs a SECURITY DEFINER function
 doing both writes under a row lock, the way 0448 does; that is a migration (T3)
 and is deliberate follow-up, not an oversight.
+
+**Status transitions are now one transaction.** Migration 0489's
+`apply_admin_agent_status_transition` locks the agent row shared with provider
+transitions, applies any accompanying PATCH fields, moves eligible keys, and
+writes one audit event. An explicit organization suspension owns the
+`admin:agent.suspended` marker even when it overlaps a provider suspension;
+provider reinstatement clears only provider authority and cannot resume the
+organization-owned suspension. Resume restores only admin-marked keys whose
+scopes remain within the agent's current `allowed_scopes`; broader historical
+keys stay inactive and an operator may mint a replacement within the ceiling.
 
 **The marker namespace is closed at the input boundary.** `revocation_reason` on
 `PATCH /api/v1/keys/:keyId` is otherwise free text, so an admin could have
@@ -1968,3 +1993,51 @@ no key insert; ORG_ADMIN still succeeds).
 SCRUM-1277 contract test (`agents-org-scope.test.ts`) scans this file's SOURCE
 TEXT for selectors and will read prose as a query.
 
+
+## 2026-09-26 — generic lifecycle dual authentication (SCRUM-3980)
+
+The generic `/agents` mount accepts exactly one Supabase JWT or one API key with
+`agents:manage`; `/agents/computeid` remains mounted first. JWT members retain
+read access and JWT mutations remain `ORG_ADMIN` only. Machine tenant authority
+comes only from the verified key's `orgId`. Registration, `allowed_scopes`
+updates, and child-key minting reject any scope the calling key does not satisfy;
+the mint also uses typed `config.apiKeyHmacSecret`. API-key audit records use a
+NULL human actor and JSON details containing the key id/prefix; `registered_by`
+and `created_by` retain the owning user only to satisfy their FK contracts.
+Terminal machine revoke calls the distinct service-only 0489 RPC. SDK, CLI, MCP,
+and outbound-event exposure are outside this server repair.
+
+## 2026-09-27 — credential source preview recipient-hash suppression
+
+`credential-sources.ts` does not pass `RECIPIENT_IDENTIFIER_PEPPER` into the
+caller-controlled source preview builder. Preview, confirm, and duplicate
+responses retain the deprecated `credential_recipient_hash` property as
+`null`; the source evidence package also omits the recipient identifier, so
+`evidence_package_hash` cannot act as a secondary comparison channel. The
+private self-link remains `buildSelfImportRecipientHash(userId)` and must not be
+replaced with an extracted external recipient identifier.
+
+## 2026-09-27 — private anchor list contract
+
+`GET /api/v1/anchors` is API-key-only and requires `read:records`. It rechecks
+the current key, its current scopes, creator, bound organization, and the
+creator's present organization membership before reading. The query derives
+the tenant from that authority, excludes deleted and non-public-ID rows, and
+uses a stable `created_at,public_id` cursor and a `[since, until)` interval.
+Private user tags are creator-owned rows
+whose `org_id` is NULL; organization tags are bound to the exact key org. Tag
+filters stay in the anchor query as an inner relation. Responses expose only
+the public ID, state, timestamps, filename, and description—never tag values,
+fingerprints, metadata, recipient data, or internal IDs.
+
+## 2026-09-28 — terminal agent-webhook materialization recovery
+
+`POST /api/v1/webhooks/outbox/:id/retry-materialization` is an API-key-only
+`webhooks:manage` operator path. It accepts a caller-generated `request_id`
+UUID and delegates authority, one-use, immutable-snapshot, and audit work to
+0498. It returns `202` after re-arming the row for the existing materializer;
+it never materializes or sends inline. Cross-tenant targets are `404`, an
+exhausted recovery or wrong state is `409`, and logs contain only a validated
+outbox UUID plus a bounded SQL code—never payload, secret, or stored failure
+text. The in-process webhook retry timer may claim the row after commit, so
+operators must record state promptly rather than expect it to remain pending.

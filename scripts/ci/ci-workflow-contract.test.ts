@@ -880,6 +880,78 @@ describe("Zapier required clean-build contract", () => {
   });
 });
 
+describe("agent webhook outbox native SQL CI contract", () => {
+  it("runs the tracked full-schema harness after reset and aggregates its outcome", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const testsJob = workflow.match(/^ {2}test:\n([\s\S]*?)(?=^ {2}[a-z][a-z0-9_-]*:|$(?![\s\S]))/mu)?.[0] ?? "";
+    const steps = workflowSteps(testsJob);
+    const native = steps.filter((step) => /^\s+id: agent-outbox-native$/mu.test(step));
+    expect(native).toHaveLength(1);
+    expect(native[0]).toMatch(/steps\.supabase-keys\.outcome == 'success'/u);
+    expect(native[0]).toMatch(/steps\.db-reset\.outcome == 'success'/u);
+    expect(native[0]).toMatch(/timeout 180s psql/u);
+    expect(native[0]).toContain("services/worker/scripts/test-agent-webhook-outbox-native.sql");
+    expect(native[0]).toContain("UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}");
+    const aggregate = steps.find((step) => step.includes("name: Aggregate test suite results")) ?? "";
+    expect(aggregate).toContain('[agent-outbox-native]="${{ steps.agent-outbox-native.outcome }}"');
+    expect(aggregate).toMatch(/for name [^\n]*\bagent-outbox-native\b/u);
+  });
+});
+
+describe("agent revoke full-schema concurrency CI contract", () => {
+  it("reuses the reset Supabase database and aggregates the bounded native driver", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const testsJob = workflow.match(/^ {2}test:\n([\s\S]*?)(?=^ {2}[a-z][a-z0-9_-]*:|$(?![\s\S]))/mu)?.[0] ?? "";
+    const steps = workflowSteps(testsJob);
+    const native = steps.filter((step) => /^\s+id: agent-revoke-native$/mu.test(step));
+    expect(native).toHaveLength(1);
+    expect(native[0]).toMatch(/steps\.supabase-keys\.outcome == 'success'/u);
+    expect(native[0]).toMatch(/steps\.db-reset\.outcome == 'success'/u);
+    expect(native[0]).toMatch(/timeout 180s bash/u);
+    expect(native[0]).toContain("services/worker/scripts/test-agent-revoke-concurrency-full-schema.sh");
+    expect(native[0]).toContain("UAT03_DATABASE_URL: ${{ steps.supabase-keys.outputs.uat03_database_url }}");
+    const aggregate = steps.find((step) => step.includes("name: Aggregate test suite results")) ?? "";
+    expect(aggregate).toContain('[agent-revoke-native]="${{ steps.agent-revoke-native.outcome }}"');
+    expect(aggregate).toMatch(/for name [^\n]*\bagent-revoke-native\b/u);
+  });
+
+  it("rejects libpq redirect parameters before invoking psql", async () => {
+    const { existsSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { spawnSync } = await import("node:child_process");
+    const directory = mkdtempSync(resolve(tmpdir(), "agent-revoke-url-"));
+    const marker = resolve(directory, "psql-invoked");
+    const executable = resolve(directory, "psql");
+    try {
+      writeFileSync(executable, `#!/bin/sh\ntouch "${marker}"\nexit 99\n`, { mode: 0o700 });
+      const urls = [
+        "postgresql://127.0.0.1/postgres?host=example.invalid",
+        "postgresql://127.0.0.1/postgres?hostaddr=203.0.113.1",
+        "postgresql://127.0.0.1/postgres?service=remote-service",
+        "postgresql://127.0.0.1/postgres#host=example.invalid",
+      ];
+      for (const url of urls) {
+        const result = spawnSync("bash", [resolve(REPO,
+          "services/worker/scripts/test-agent-revoke-concurrency-full-schema.sh")], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            PGHOSTADDR: "203.0.113.1",
+            PGSERVICE: "remote-service",
+            UAT03_DATABASE_URL: url,
+          },
+        });
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("must not contain query parameters or a fragment");
+      }
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Tests job cancellation-aware independent suites", () => {
   const independentIds = [
     "sdk-tests", "worker-deps", "edge-deps", "zapier-validation",

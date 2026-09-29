@@ -10,6 +10,7 @@ const loadDriveAccessTokenMock = vi.fn();
 const createChangesWatchMock = vi.fn();
 const stopDriveChannelMock = vi.fn();
 const captureMessageMock = vi.fn();
+const runDriveFolderReconciliationMock = vi.fn();
 
 // PR #1944 review follow-up: WORKER_PUBLIC_URL is resolved through the
 // Zod-validated `config` export (config.ts), not an ad-hoc process.env read
@@ -59,8 +60,16 @@ vi.mock('../integrations/connectors/drive-subscription-renewal.js', async () => 
     renewDriveSubscriptions: (...args: unknown[]) => renewDriveSubscriptionsMock(...args),
   };
 });
+vi.mock('../integrations/connectors/drive-folder-reconciliation.js', () => ({
+  DRIVE_FOLDER_RECONCILIATION_RUN_BUDGET_MS: 8 * 60_000,
+  DriveFolderReconciliationError: class DriveFolderReconciliationError extends Error {
+    constructor(public readonly summary: unknown) { super('drive folder reconciliation failed'); }
+  },
+  runDriveFolderReconciliation: (...args: unknown[]) => runDriveFolderReconciliationMock(...args),
+}));
 
 import { DriveRunnerError } from '../integrations/connectors/drive-changes-runner.js';
+import { DriveFolderReconciliationError } from '../integrations/connectors/drive-folder-reconciliation.js';
 import { DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE } from './run-lease.js';
 import { createRunLeaseStore } from './__tests__/__testHelpers.js';
 import {
@@ -444,6 +453,11 @@ describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 corre
     renewDriveSubscriptionsMock.mockReset();
     runDriveReconciliationSweepMock.mockReset();
     runDriveReconciliationSweepMock.mockResolvedValue({ scanned: 0, ran: 0, skipped: 0, errored: 0 });
+    runDriveFolderReconciliationMock.mockReset();
+    runDriveFolderReconciliationMock.mockResolvedValue({
+      candidates: 0, page: 0, pages: 1, scanned: 0, eligible: 0,
+      created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
+    });
   });
 
   it('acquires the lease and runs the sweep, returning its summary plus the reconciliation result', async () => {
@@ -455,6 +469,10 @@ describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 corre
     expect(result).toEqual({
       scanned: 3, renewed: 2, degraded: 0, failed: 1,
       reconciliation: { scanned: 0, ran: 0, skipped: 0, errored: 0 },
+      folderReconciliation: {
+        candidates: 0, page: 0, pages: 1, scanned: 0, eligible: 0,
+        created: 0, existing: 0, skipped: 0, errored: 0, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
+      },
     });
     expect(renewDriveSubscriptionsMock).toHaveBeenCalledTimes(1);
   });
@@ -492,6 +510,40 @@ describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 corre
       await runDriveSubscriptionRenewal({ db: store.client });
 
       expect(runDriveReconciliationSweepMock).not.toHaveBeenCalled();
+      expect(runDriveFolderReconciliationMock).not.toHaveBeenCalled();
+    });
+
+    it('runs folder recovery even when renewal throws, then rethrows so the scheduler observes failure', async () => {
+      const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+      renewDriveSubscriptionsMock.mockRejectedValueOnce(new Error('renewal database unavailable'));
+
+      await expect(runDriveSubscriptionRenewal({ db: store.client })).rejects.toThrow('renewal database unavailable');
+
+      expect(runDriveReconciliationSweepMock).toHaveBeenCalledTimes(1);
+      expect(runDriveFolderReconciliationMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces a folder-scan failure after the other reconciliation pass runs', async () => {
+      const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+      renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 0, renewed: 0, degraded: 0, failed: 0 });
+      runDriveFolderReconciliationMock.mockRejectedValueOnce(new Error('rule scan unavailable'));
+
+      await expect(runDriveSubscriptionRenewal({ db: store.client })).rejects.toThrow('rule scan unavailable');
+
+      expect(runDriveReconciliationSweepMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a folder reconciliation aggregate carrying partial counters', async () => {
+      const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+      renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 0, renewed: 0, degraded: 0, failed: 0 });
+      const aggregate = new DriveFolderReconciliationError({
+        candidates: 2, page: 0, pages: 1, scanned: 2, eligible: 2,
+        created: 1, existing: 0, skipped: 0, errored: 1, invalid: 0, needsAdminRepair: 0, deadlineExceeded: false,
+      });
+      runDriveFolderReconciliationMock.mockRejectedValueOnce(aggregate);
+
+      await expect(runDriveSubscriptionRenewal({ db: store.client })).rejects.toBe(aggregate);
+      expect(runDriveReconciliationSweepMock).toHaveBeenCalledTimes(1);
     });
   });
 

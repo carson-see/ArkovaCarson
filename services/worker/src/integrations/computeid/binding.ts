@@ -36,6 +36,8 @@ export interface ComputeIdBinding {
   last_event_at?: string;
   /** Set when a `passport.suspended` WE applied caused the current suspension. */
   suspended_by?: 'computeid';
+  /** True while the latest authenticated provider state is suspended, even if the org already owned suspension. */
+  provider_suspended?: true;
 }
 
 export type AgentStatus = 'active' | 'suspended' | 'revoked';
@@ -83,6 +85,7 @@ export function readBinding(metadata: unknown): ComputeIdBinding | null {
     ...(typeof raw.last_event === 'string' ? { last_event: raw.last_event } : {}),
     ...(lastEventAt ? { last_event_at: lastEventAt } : {}),
     ...(raw.suspended_by === 'computeid' ? { suspended_by: 'computeid' as const } : {}),
+    ...(raw.provider_suspended === true ? { provider_suspended: true as const } : {}),
   };
 }
 
@@ -160,20 +163,25 @@ export function applyPassportEvent(agent: AgentState, event: PassportEventInput,
   switch (decision.action) {
     case 'revoke': {
       delete next.suspended_by;
+      delete next.provider_suspended;
       const metadata = writeBinding(agent.metadata, next);
       return { decision, update: { status: 'revoked', revoked_at: timestamp, metadata }, keyEnforcement: 'deactivate' };
     }
     case 'suspend': {
       next.suspended_by = 'computeid';
+      next.provider_suspended = true;
       const metadata = writeBinding(agent.metadata, next);
       return { decision, update: { status: 'suspended', suspended_at: timestamp, metadata }, keyEnforcement: 'deactivate' };
     }
     case 'reinstate': {
       delete next.suspended_by;
+      delete next.provider_suspended;
       const metadata = writeBinding(agent.metadata, next);
       return { decision, update: { status: 'active', suspended_at: null, metadata }, keyEnforcement: 'reactivate' };
     }
     default: {
+      if (event.event === 'passport.suspended') next.provider_suspended = true;
+      if (event.event === 'passport.reinstated') delete next.provider_suspended;
       const metadata = writeBinding(agent.metadata, next);
       let keyEnforcement: KeyEnforcement = 'none';
       if (decision.reason === 'already_revoked') keyEnforcement = 'deactivate';

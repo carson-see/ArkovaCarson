@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from .models import ProblemDetail
 
 
@@ -24,9 +26,11 @@ class ArkovaError(Exception):
         code: str | None = None,
         problem: ProblemDetail | None = None,
         retry_after: float | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.problem = problem
         self.retry_after = retry_after
+        self.details = details

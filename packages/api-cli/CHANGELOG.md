@@ -1,9 +1,19 @@
 # Changelog
 
+## 0.3.0 — unreleased candidate
+
+- Add explicit private anchor listing with date, private-tag scope, limit, and cursor filters. This remains part of the private candidate and is not a public CLI release.
+
 All notable changes to the `arkova-api-cli` package. This file starts at 0.2.0;
 for anything earlier, see `git log -- packages/api-cli/`. Versions are released
 independently from the `arkova` TypeScript SDK, the `arkova-mcp-server` npm
 package and the `arkova` Python package.
+
+## 0.3.0
+
+- Add JSON-output commands for all six generic agent lifecycle operations and ComputeID admission from a local receipt file.
+- Validate agent and passport inputs before calling the SDK and redact one-time keys even when output fails after a successful response.
+- This package remains private and still uses the repository-local `file:../sdk` dependency; this version does not claim registry availability.
 
 ## 0.2.0
 

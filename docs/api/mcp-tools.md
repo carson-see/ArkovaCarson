@@ -2,7 +2,7 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen default launch tools plus three conditionally registered submission-lifecycle tools. They let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, query verified public records, organize records, submit client-computed fingerprints, import bounded spreadsheet rows, and inspect caller-scoped submission state through the same authorization checks as the REST API. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes 23 default launch tools plus three conditionally registered submission-lifecycle tools. They let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, query verified public records, organize records, submit client-computed fingerprints, import bounded spreadsheet rows, and inspect caller-scoped submission state through the same authorization checks as the REST API. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`arkova_search`, `arkova_verify`, `arkova_list_orgs`, `arkova_get_anchor`, `arkova_get_organization`, `arkova_get_record`, `arkova_get_fingerprint`, `arkova_get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
 `arkova_anchor_document`, `arkova_get_submission_status` and `arkova_import_rows` are intentionally outside the default MCP launch surface. All three are registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Folder mutations remain separately available through `arkova_manage_folders` only to callers with `anchor:write` and the exact folder/record authority checked by the REST API. When the hosted feature flag is off, callers that still hold `anchor:write` or its `write:anchors` alias can read historical submission status through the authenticated REST API, TypeScript/Python SDK status method, or API CLI; read-only callers cannot use another transport to bypass that authorization requirement.
 
@@ -57,6 +57,7 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 13 | **`arkova_verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
 | 14 | `arkova_oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
 | 15 | `arkova_list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
+| 15a | `arkova_list_anchors` | API-key-only private record listing with time and scoped private-tag filters | Client parity |
 | 16 | **`arkova_manage_folders`** | **List and manage nested personal or organization record folders** | **SCRUM-5142** |
 | 17 | **`arkova_get_submission_status`** | **Read caller-scoped durable queue/instant state; hosted edge registration is conditional on the same flag and write scope as submission** | **UAT-12** |
 | 18 | `arkova_anchor_document` | Submit a client-computed fingerprint; hosted edge registration is conditional on `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus `write:anchors` or `anchor:write` | UAT-12 |
@@ -512,3 +513,17 @@ curl -X POST https://edge.arkova.ai/mcp \
 - [API docs index](./README.md)
 - [arkova](../../packages/sdk/README.md) — TypeScript SDK
 - [@arkova/embed](../../packages/embed/README.md) — Embeddable widget
+
+## Generic agent lifecycle
+
+For API-key callers, the six generic management tools require an organization API key with `agents:manage`. A restricted key returned for an admitted or registered agent is not automatically a management key. Bearer/JWT callers retain the server's existing read-versus-admin-write authorization rules. ComputeID admission is API-key-only.
+
+`arkova_list_agents` now uses the canonical worker route and therefore requires `agents:manage` for API-key callers. This intentionally tightens authorization from the earlier legacy service-role RPC behavior.
+
+- `arkova_register_agent` — Register a generic agent with bounded delegated scopes.
+- `arkova_list_agents` — List generic agents in the caller organization.
+- `arkova_get_agent` — Get one agent and active key summaries.
+- `arkova_update_agent` — Update or suspend/resume an agent; revocation remains terminal.
+- `arkova_revoke_agent` — Permanently revoke an agent and its keys.
+- `arkova_create_agent_key` — Create a one-time agent key; capture the returned key directly into a secret store.
+- `arkova_admit_computeid_agent` — Admit a provider-bound agent using the complete signed verification receipt. This route requires an organization API key and returns a one-time key.

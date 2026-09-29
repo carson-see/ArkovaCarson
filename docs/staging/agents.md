@@ -127,3 +127,7 @@ denials. This remains local evidence; it is not hosted or soak evidence.
 `uat14-completion-20260919/` is a proposed T3 plan and local evidence only. Preserve the 30-second already-issued signed-URL residual disclosure and the existing always-public organization registry policy; no soak, deployment or hosted migration is claimed.
 
 UAT-23 T3 planning requires a closing cycle begun after both 25-hour clocks, exact candidate identity, JWT/API-key route parity, and preservation of activation-delivery claims during rollback.
+
+## 2026-09-28 — AR20 execution authority
+
+The founder assigned the tech-lead session isolated signet provisioning, admission, soak start and monitoring. The earlier separate-session restriction in the sprint-closure plan is superseded. Read current HANDOFF.md and the immutable operator manifest; historical reviewed SHAs are not deployment pins. The new rig exists, but setup/health checks do not start its acceptance clock. Production changes and merge-gate bypass remain unauthorized.

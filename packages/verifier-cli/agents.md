@@ -54,6 +54,10 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   the Python verifier (`packages/arkova-py/src/arkova/proofs.py`). Append-only:
   never rename/reorder; bump `reason_enum_version`; `test/manifest.test.ts`
   pins the freeze and requires every code to be exercised by a fixture.
+- **Availability is not a negative proof.** Transport exceptions and HTTP
+  429/5xx render `INDETERMINATE`, carry `availabilityCode=NETWORK_UNAVAILABLE`,
+  and exit 3. They do not consume or reinterpret the frozen NOT-VERIFIED reason
+  enum. `ok` remains false for backward compatibility.
 - **Adversarial fixtures are authored FROM SPEC, never from the builder.**
   `fixtures/adversarial-vectors.json` is emitted by
   `fixtures/author-adversarial.py` — a clean-room Python implementation of the
@@ -149,7 +153,7 @@ that at the transport layer, not just by convention). CI job: `verifier-cli` in
 Python verifier over the same manifest) — suggested as its own CI job; it is
 deliberately NOT part of `npm test`.
 
-## 2026-08-31 — B3: the packet carries the bitcoin-tree evidence; the CLI does NOT fold it
+## 2026-08-31 — B3: the packet carries the bitcoin-tree evidence (historical; superseded below)
 
 `ProofPacket` gains `block_header`, `tx_inclusion_branch` and `tx_block_index`
 (migration 0427), and `VerifyReport` gains `packetTxInclusion` so the evidence is
@@ -225,4 +229,12 @@ host and vanity host with a root dot. Review evidence and release status are on
 Confluence page `137101729`, with the finding in master bug log `88768514`.
 ## 2026-09-05 — live proof envelope parity
 
-The actual signed API payload nests the 0427 pair under proof_bundle. A live downloaded package verified but reported packetTxInclusion=null because the CLI read flat fields only. Read a complete pair from either shape; explicit top-level fields take precedence and never borrow a missing counterpart from the nested object. The nested-wire regression failed before the fix. This only restores structural reporting; no independent-network or local branch-fold verdict is added.
+The actual signed API payload nests the 0427 pair under proof_bundle. A live downloaded package verified but reported packetTxInclusion=null because the CLI read flat fields only. Read a complete pair from either shape; explicit top-level fields take precedence and never borrow a missing counterpart from the nested object. The nested-wire regression failed before the fix. This originally restored structural reporting only; the 2026-09-28 rule below supersedes that limitation.
+
+## 2026-09-28 — transaction inclusion evidence is verdict-bearing
+
+The named PROOF-1 acceptance matrix requires an altered exported branch to fail. A hosted schema-v1 packet with a changed `tx_inclusion_branch` previously remained `VERIFIED`, because the CLI only checked shape and trusted the independent node's separately fetched proof. When a packet claims `tx_inclusion_branch` or `tx_block_index`, treat branch, index and the 80-byte `block_header` as one required fact: reject partial/malformed evidence; require direction bits to match the index; reverse display hashes to Bitcoin internal byte order; double-SHA256 fold `tx_id` through every sibling; and compare the result to header bytes `[36,68)`. When `block_hash` is present, double-SHA256 the supplied header and compare its reversed display hash too.
+
+This local check proves the exported packet is internally coherent. It does not prove proof-of-work, chain selection, or that the header belongs to a canonical network; the independent-node phase remains the authority for those claims. A legacy packet that claims no transaction branch/index keeps its established behavior. Explicit top-level partial evidence never borrows missing fields from a nested bundle.
+
+When an independent node supplies and validates the selected block header, also SHA256d the packet-supplied header and require its display-endian hash to equal the independently confirmed `blockHash`. A substituted header with a recomputed packet `block_hash` can be locally self-consistent; it must still fail `BLOCK_HASH_MISMATCH` against the independent node. If the node is unavailable and the local packet proof is valid, availability remains `INDETERMINATE` rather than being mislabeled as cryptographic invalidity.

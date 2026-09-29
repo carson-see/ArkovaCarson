@@ -2,6 +2,9 @@
 
 `arkova` — TypeScript SDK for the Arkova Verification API (PH1-SDK-01 + INT-01).
 
+## 2026-09-26 — agent lifecycle parity
+`Arkova.agents` mirrors the six generic lifecycle operations and API-key-only ComputeID admission. Mutation calls never opt into retry. One-time key responses and nested errors are runtime-validated and scrubbed; keep malformed-response and no-retry tests with this surface.
+
 ## Structure
 - **`src/`** — client, types, barrel export.
 - **`examples/`** — usage examples.
@@ -161,6 +164,16 @@ reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
 
 UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–100 fingerprint rows, API-key-derived tenant, and no automatic write retry.
+
+## 2026-09-26 — singleton proof-bundle parity repair
+
+`getMerkleProof()` accepts an empty application-tree branch only when the wire
+bundle describes the one valid empty-branch case: `leaf_count=1`,
+`merkle_index=0`, and `fingerprint == merkle_root`. Multi-leaf, wrong-index,
+and root-mismatch empty branches still map to `proofBundle = null`.
+The repair was first packaged as 3.2.1 and is folded into the unreleased 3.3.0
+combined candidate; publishing is not authorized here.
+
 ## 2026-09-19 — Finality webhook event types
 
 The SDK webhook union includes `anchor.revocation_anchored` and
@@ -187,3 +200,9 @@ downgraded the version, never dropped the newer status sets or folder events) an
 #2986's `DEFAULT_BASE_URL`/`engines`/`@types/node` qualification fixes on top. See
 `packages/embed/agents.md`, `sdks/langchain-ts/agents.md`, `sdks/mcp-server/agents.md`, and
 `packages/api-cli/agents.md` for the sibling-package side of the same recovery.
+
+## 2026-09-26 — agent lifecycle webhook subscription types
+
+The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized; the combined candidate includes the singleton proof repair and still requires qualification.
+
+The singleton candidate widens `ProofBundle.merkleProof` from a non-empty tuple to an array; consumers must check length. Bundle decoding is not a cryptographic verification verdict.

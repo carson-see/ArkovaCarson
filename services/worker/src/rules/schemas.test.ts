@@ -174,6 +174,15 @@ describe('TriggerConfig discriminator', () => {
     ).toThrow();
   });
 
+  it('rejects a legacy folder_id without the drive_folder discriminator', () => {
+    expect(() =>
+      TriggerConfig.parse({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        config: { folder_id: 'folder-a' },
+      }),
+    ).toThrow();
+  });
+
   it('rejects semantic_match threshold above 1.0', () => {
     expect(() =>
       TriggerConfig.parse({

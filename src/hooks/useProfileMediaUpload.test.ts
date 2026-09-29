@@ -120,6 +120,132 @@ describe('useProfileMediaUpload', () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
+  it('refuses the pointer commit when the owner changes after object upload', async () => {
+    let release!: () => void;
+    const uploaded = new Promise<void>((resolve) => { release = resolve; });
+    const commit = vi.fn().mockResolvedValue(true);
+    replaceProfileMedia.mockImplementationOnce(async (opts: { commit: (path: string) => Promise<boolean> }) => {
+      await uploaded;
+      const committed = await opts.commit('organizations/pub_acme/logo/stale.png');
+      if (!committed) throw new ProfileMediaError(PROFILE_MEDIA_LABELS.METADATA_UPDATE_FAILED);
+      return 'organizations/pub_acme/logo/stale.png';
+    });
+    const { result, rerender } = renderHook(
+      ({ ownerId }: { ownerId: string }) => useProfileMediaUpload({
+        scope: 'organizations', scopeId: 'pub_acme', ownerId,
+        previousPathFor: () => null, commit,
+        successMessage: () => 'Logo updated successfully.',
+      }),
+      { initialProps: { ownerId: 'org-1' } },
+    );
+    const { event } = fileInputEvent(png());
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.onInputChange('logo')(event); });
+    rerender({ ownerId: 'org-2' });
+    await act(async () => { release(); await pending; });
+    expect(commit).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('lets the new owner upload while the old owner request settles', async () => {
+    let releaseOld!: () => void;
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    replaceProfileMedia
+      .mockImplementationOnce(async () => { await oldGate; return 'organizations/pub_acme/logo/old.png'; })
+      .mockResolvedValueOnce('organizations/pub_acme/logo/new.png');
+    const { result, rerender } = renderHook(
+      ({ ownerId }: { ownerId: string }) => useProfileMediaUpload({
+        scope: 'organizations', scopeId: 'pub_acme', ownerId,
+        previousPathFor: () => null, commit: vi.fn().mockResolvedValue(true),
+        successMessage: () => 'Logo updated successfully.',
+      }),
+      { initialProps: { ownerId: 'org-1' } },
+    );
+    let oldPending!: Promise<void>;
+    act(() => { oldPending = result.current.onInputChange('logo')(fileInputEvent(png()).event); });
+    rerender({ ownerId: 'org-2' });
+    expect(result.current.busy).toBe(false);
+    await act(async () => { await result.current.onInputChange('logo')(fileInputEvent(png()).event); });
+    expect(replaceProfileMedia).toHaveBeenCalledTimes(2);
+    await act(async () => { releaseOld(); await oldPending; });
+    expect(result.current.busy).toBe(false);
+  });
+
+  it('rejects an old request after an A to B to A owner cycle', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const commit = vi.fn().mockResolvedValue(true);
+    replaceProfileMedia.mockImplementationOnce(async (opts: { commit: (path: string) => Promise<boolean> }) => {
+      await gate;
+      await opts.commit('organizations/pub_acme/logo/stale.png');
+      return 'organizations/pub_acme/logo/stale.png';
+    });
+    const { result, rerender } = renderHook(
+      ({ ownerId }: { ownerId: string }) => useProfileMediaUpload({
+        scope: 'organizations', scopeId: 'pub_acme', ownerId,
+        previousPathFor: () => null, commit,
+        successMessage: () => 'Logo updated successfully.',
+      }),
+      { initialProps: { ownerId: 'org-a' } },
+    );
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.onInputChange('logo')(fileInputEvent(png()).event); });
+    rerender({ ownerId: 'org-b' });
+    rerender({ ownerId: 'org-a' });
+    await act(async () => { release(); await pending; });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('rejects the pointer commit after unmount', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const commit = vi.fn().mockResolvedValue(true);
+    replaceProfileMedia.mockImplementationOnce(async (opts: { commit: (path: string) => Promise<boolean> }) => {
+      await gate;
+      await opts.commit('organizations/pub_acme/logo/unmounted.png');
+      return 'organizations/pub_acme/logo/unmounted.png';
+    });
+    const { result, unmount } = setup({ commit });
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.onInputChange('logo')(fileInputEvent(png()).event); });
+    unmount();
+    await act(async () => { release(); await pending; });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('suppresses a stale cleanup warning after the owner changes', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    replaceProfileMedia.mockImplementationOnce(async (opts: { onCleanupWarning?: () => void }) => {
+      await gate;
+      opts.onCleanupWarning?.();
+      return 'organizations/pub_acme/logo/stale.png';
+    });
+    const { result, rerender } = renderHook(
+      ({ ownerId }: { ownerId: string }) => useProfileMediaUpload({
+        scope: 'organizations', scopeId: 'pub_acme', ownerId,
+        previousPathFor: () => null, commit: vi.fn().mockResolvedValue(true),
+        successMessage: () => 'Logo updated successfully.',
+      }),
+      { initialProps: { ownerId: 'org-1' } },
+    );
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.onInputChange('logo')(fileInputEvent(png()).event); });
+    rerender({ ownerId: 'org-2' });
+    await act(async () => { release(); await pending; });
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  it('retains a cleanup warning for the current owner', async () => {
+    replaceProfileMedia.mockImplementationOnce(async (opts: { onCleanupWarning?: () => void }) => {
+      opts.onCleanupWarning?.();
+      return 'organizations/pub_acme/logo/current.png';
+    });
+    const { result } = setup();
+    await act(async () => { await result.current.onInputChange('logo')(fileInputEvent(png()).event); });
+    expect(toastWarning).toHaveBeenCalledWith(PROFILE_MEDIA_LABELS.CLEANUP_WARNING);
+  });
+
   // D1: the org logo goes to the private CAS object AND a public mirror, and
   // the resulting public URL reaches the commit so it can be written alongside
   // the storage path in one row update.

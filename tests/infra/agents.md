@@ -46,3 +46,7 @@ against `wrangler.toml` so a var missing on the rig cannot produce a green hollo
 
 The registered/server-card tool-set ratchet is 18: 15 default plus the 3 write-gated anchor, status, and UAT-23 import tools. Update the exact-count assertion only with a matching registry and server-card change.
 The registered/server-card tool-set ratchet is 18: 16 default launch tools (including the UAT-24 `arkova_manage_folders` tool) plus the two write-gated UAT-12 submission-lifecycle tools (`arkova_anchor_document`, `arkova_get_submission_status`). Update the exact-count assertion only with a matching registry and server-card change.
+
+_Historical (both counts above superseded below):_
+
+`mcp-manifest-parity.test.ts` derives names and the exact tool count from hosted `TOOL_DEFINITIONS`. It also pins public-card descriptions and input-property descriptions to that canonical registry; do not maintain a second hard-coded total.

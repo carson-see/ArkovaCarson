@@ -14,6 +14,7 @@ import { API_KEY_SCOPES } from '../apiScopes.js';
 vi.mock('../../utils/db.js', () => ({
   db: { from: vi.fn() },
 }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 vi.mock('../../utils/logger.js', () => ({
   logger: {
@@ -75,6 +76,11 @@ describe('Agent Identity schemas', () => {
     it('rejects stale pre-canonical agent scope names', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['attest'] }).success).toBe(false);
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['oracle'] }).success).toBe(false);
+    });
+
+    it('rejects caller-supplied provider metadata', () => {
+      const result = CreateAgentSchema.safeParse({ name: 'forged', metadata: { computeid: { passport_id: 'fake' } } });
+      expect(result.success).toBe(false);
     });
 
     it('rejects empty scopes array', () => {

@@ -260,6 +260,45 @@ describe('confirmInclusion (independent Esplora node)', () => {
     expect(result.observedTime).toBeNull();
   });
 
+  it.each(['throw', 'no-status', '401', '403', '408', '429', '503'] as const)('reports node_unavailable for a tx transport %s', async (mode) => {
+    const fetch: IndependentNodeFetch = async () => {
+      if (mode === 'throw') throw new Error('offline');
+      if (mode === 'no-status') return { ok: false };
+      return { ok: false, status: Number(mode) };
+    };
+    const result = await confirmInclusion(
+      { txId: TXID_A, expectedMerkleRoot: fp(0x01), blockHeight: 800_000 },
+      { fetch },
+    );
+    expect(result).toMatchObject({ confirmed: false, status: 'node_unavailable' });
+  });
+
+  it.each([
+    { stage: 'height', matches: (path: string) => path.startsWith('/block-height/') },
+    { stage: 'header', matches: (path: string) => path.endsWith('/header') },
+    { stage: 'proof', matches: (path: string) => path.endsWith('/merkle-proof') },
+  ])('keeps a $stage transport outage distinct from invalid evidence', async ({ matches }) => {
+    const merkleRoot = fp(0x5d);
+    const { fetch: goodFetch } = makeFixture({
+      targetTxId: TXID_A,
+      opReturnScriptHex: opReturnScript(merkleRoot),
+      otherTxids: OTHER.slice(0, 4),
+      targetIndex: 1,
+      height: 800_000,
+    });
+    for (const unavailable of [
+      async (): Promise<never> => { throw new Error('offline'); },
+      async () => ({ ok: false, status: 503 }),
+    ]) {
+      const fetch: IndependentNodeFetch = async (path) => matches(path) ? unavailable() : goodFetch(path);
+      const result = await confirmInclusion(
+        { txId: TXID_A, expectedMerkleRoot: merkleRoot, blockHeight: 800_000 },
+        { fetch },
+      );
+      expect(result).toMatchObject({ confirmed: false, status: 'node_unavailable' });
+    }
+  });
+
   it('confirms a valid inclusion with an 8-byte metadata suffix on the OP_RETURN', async () => {
     const merkleRoot = fp(0x5c);
     const meta = '0011223344556677';

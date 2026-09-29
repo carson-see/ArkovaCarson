@@ -14,10 +14,12 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChainableBuilder as builder, routeDbTables } from '../../test-utils/chainable-builder.js';
 
-const dbFromMock = vi.fn();
-vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: vi.fn() } }));
+const { dbFromMock, rpcMock } = vi.hoisted(() => ({ dbFromMock: vi.fn(), rpcMock: vi.fn() }));
+vi.mock('../../utils/db.js', () => ({ db: { from: (...args: unknown[]) => dbFromMock(...args), rpc: rpcMock } }));
 vi.mock('../../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('../../utils/auditEvent.js', () => ({ recordAuditEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../config.js', () => ({ config: { apiKeyHmacSecret: 'test-hmac-secret' } }));
+vi.mock('../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 import { agentsRouter } from './agents.js';
 
@@ -57,7 +59,7 @@ function setup(role: string) {
   return { agents, apiKeys };
 }
 
-beforeEach(() => { vi.clearAllMocks(); dbFromMock.mockReset(); });
+beforeEach(() => { vi.clearAllMocks(); dbFromMock.mockReset(); rpcMock.mockReset(); });
 
 describe('POST /:agentId/key — key minting is ORG_ADMIN-only', () => {
   it('refuses a non-admin org member with 403 and never inserts a key row', async () => {
@@ -74,13 +76,23 @@ describe('POST /:agentId/key — key minting is ORG_ADMIN-only', () => {
 
   it('still allows an ORG_ADMIN to mint a key', async () => {
     const { apiKeys } = setup('ORG_ADMIN');
+    rpcMock.mockResolvedValue({ data: { found: true, agent: activeRow, key: mintedKeyRow }, error: null });
 
     const res = await request(createApp()).post(`/api/v1/agents/${AGENT_ID}/key`);
 
     expect(res.status).toBe(201);
-    expect(apiKeys.insert).toHaveBeenCalledWith(expect.objectContaining({
-      org_id: ORG_ID,
-      agent_id: AGENT_ID,
+    expect(rpcMock).toHaveBeenCalledWith('create_agent_key_with_outbox', expect.objectContaining({
+      p_org_id: ORG_ID, p_agent_id: AGENT_ID, p_actor_kind: 'user', p_actor_id: USER_ID,
     }));
+    expect(res.body.key).toMatch(/^ak_live_/);
+    expect(JSON.stringify(rpcMock.mock.calls[0])).not.toContain(res.body.key);
+    expect(apiKeys.insert).not.toHaveBeenCalled();
+  });
+  it('returns no one-time key when the transactional wrapper fails', async () => {
+    setup('ORG_ADMIN');
+    rpcMock.mockResolvedValue({ data: null, error: { message: 'outbox insert failed' } });
+    const res = await request(createApp()).post(`/api/v1/agents/${AGENT_ID}/key`);
+    expect(res.status).toBe(500);
+    expect(res.body.key).toBeUndefined();
   });
 });

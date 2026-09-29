@@ -5,6 +5,7 @@ Tests for the Arkova Python SDK.
 ## Files
 - **`conftest.py`** — puts `src/` on `sys.path` for repo-checkout runs (no `pip install -e .` needed).
 - **`test_client.py`** — pytest tests for sync/async clients: search, verify, `anchor()`/`anchor_bulk()` write path (HAKI-REQ-02 — cap boundary, mixed fingerprint+data rows, dry-run, per-row errors, 409/402 error codes), auth header, User-Agent (tracks installed package version, "unknown" in uninstalled checkouts), error handling, retry logic. Its last block (search `BUG-2026-08-12-007`) is the
+- `list_anchors()` tests pin sync/async `/api/v1/anchors` projection, paired private-tag filters, timezone validation, pagination, and zero-network client validation failures.
   wire-contract ratchet for `compliance_controls`: a prod-shaped
   `GET /api/v1/verify/{public_id}` body built from the worker source (not a
   sample response), the omitted / explicit-null control paths that kept working
@@ -84,3 +85,23 @@ bounded `ArkovaError("unexpected response shape")`, not enter the typed model.
 statuses validate, that the additive counter parses, and that
 `created + skipped + failed == total` with recipient-link rows counted inside
 `created`/`skipped`.
+
+## 2026-09-26 — singleton proof-bundle parity
+
+Sync and async proof readers accept the producer's complete singleton shape:
+empty branch, count one, index zero, and case-insensitive root=fingerprint.
+Focused negatives pin missing/null branches, multi-leaf empties, wrong indexes,
+and root mismatches as fail-closed `None` results.
+
+Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on agent reads so one older row cannot make list/get fail. Arrays, strings and numbers remain invalid. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## Agent permission-denial recovery
+
+Both flat and nested worker errors retain bounded `required`, `granted`,
+`missing` and `permitted` scope fields. Each token is 1–80 ASCII scope
+characters; lists are at most 32 entries and are omitted whole when malformed,
+so a filtered list cannot misstate authority. Unknown keys and signed receipt
+fields are never copied. This is diagnostic information, not permission to
+retry a mutation or change the caller credential automatically.
+
+Singleton proof negatives explicitly include zero leaves with an empty branch. SDK decoding does not replace the independent proof verifier.

@@ -644,6 +644,10 @@ describe('WebhookSettings', () => {
         'suborg.credits_reclaimed',
         'suborg.suspended',
         'suborg.offboarded',
+        'agent.registered',
+        'agent.updated',
+        'agent.revoked',
+        'agent.key_created',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);

@@ -80,6 +80,14 @@ dialog open instead of implying a change that did not happen.
 
 # agents.md — hooks
 
+## 2026-09-28 — organization bulk imports use the organization quota boundary
+
+`useBulkAnchors({ orgId })` must not apply the submitting user's personal
+monthly-plan limit to an organization batch. Organization submissions carry
+the target `org_id`; the worker revalidates membership and enforces that
+organization's configured anchor quota. Personal submissions retain the local
+monthly-plan precheck.
+
 ## 2026-09-19 — UAT-12 capability and tag suggestions
 
 `useSecuringCapability` validates the worker response with Zod and fails closed on
@@ -313,10 +321,14 @@ the query; account switches and AAL downgrades mask cached data immediately.
 strictly and fail closed. Status reads use the selected exact organization or an
 explicit personal scope, poll only active instant intents, and refresh on focus.
 `usePrivateTagSuggestions` partitions RLS-scoped user tags from exact-org tags;
+`usePrivateAnchorList` is the corresponding authenticated record lookup. It uses an `anchor_private_tags!inner` relational filter so it never enumerates tag IDs through a capped client-side `.in(...)` list. User scope explicitly binds `owner_user_id` and `org_id IS NULL`; organization scope binds the active org. The anchor query retains the existing exact-org/user role predicates and RLS, fetches 26 rows for a 25-row page, and exposes only `hasMore` rather than inventing an API cursor.
 its query key includes both user and selected organization to prevent stale scope
 reuse. Private tag parsing enforces ten tags per scope and 64 characters per tag.
 
 UAT-23 bulk imports use only the JWT canonical HTTP bridge; preserve prior-chunk receipts, never auto-retry an ambiguous write, and keep the invocation's original organization scope.
+
+Profile-media uploads are bound to a distinct owner-lifetime token, not only an owner ID. If the owner changes, cycles A→B→A, or the hook unmounts before completion, the wrapped pointer commit must return false so `replaceProfileMedia` removes the new private object and public mirror. Suppress stale success, error, and cleanup-warning toasts; retain cleanup warnings for the current owner.
+
 ## 2026-09-19 — `useOrgProfileFolders`
 
 This additive wrapper is deliberately route-org scoped and never consults profile/active-org state. Its query key includes caller, explicit org, resolved authorization, and manager authority; reads stay disabled and cached rows stay hidden until route authorization resolves. Mutations require the caller-visible manager gate and capture the explicit org. Worker authorization remains authoritative. `descendantFolderIds` is cycle-safe.
@@ -376,3 +388,7 @@ despite the reported failure), or `null` when the readback itself also
 failed. `undefined` (the default) means no readback was attempted. Deleted
 `refresh` — it was byte-identical to `invalidate` and unused outside this
 file.
+
+## 2026-09-27 — Connector health keeps operational evidence
+
+`useConnectorHealth` now preserves the backend's `last_event_at`, `last_renewal_at`, and `next_expires_at` fields instead of discarding them, and recognizes `oauth_client_mismatch` plus `reconnect_required_scope_change`. These timestamps retain their backend meanings; callers must not rename them to “last poll” or infer scheduler health.

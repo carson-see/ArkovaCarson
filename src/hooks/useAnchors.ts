@@ -58,7 +58,7 @@ type AnchorPartial = Pick<AnchorRow,
 >;
 
 /** Map a Supabase anchor row to the UI Record interface. */
-function mapAnchorToRecord(anchor: AnchorPartial): Record {
+export function mapAnchorToRecord(anchor: AnchorPartial): Record {
   const meta = anchor.metadata as { issuer?: string; [k: string]: unknown } | null;
   return {
     id: anchor.id,

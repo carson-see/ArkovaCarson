@@ -20,12 +20,23 @@ vi.mock('../api/v1/anchor-submit.js', () => ({
     state.captured = { orgId: req.apiKey?.orgId ?? null, body: req.body, method: req.method, url: req.url };
     res.json({ ok: true });
   },
-  handleAnchorSubmit: async (req: { body: Record<string, unknown> }, res: { status: (code: number) => unknown; json: (value: unknown) => void }) => {
+  handleAnchorSubmit: async (req: { body: Record<string, unknown> }, res: {
+    status: (code: number) => typeof res;
+    type: (value: string) => typeof res;
+    json: (value: unknown) => void;
+  }) => {
     state.bulkBodies.push(req.body);
     const fingerprint = req.body.fingerprint as string;
     if (fingerprint.startsWith('f')) {
       res.status(503);
       res.json({ error: 'instant_intent_unavailable' });
+      return;
+    }
+    if (fingerprint.startsWith('e')) {
+      res.status(402).type('application/problem+json').json({
+        error: 'quota_exhausted',
+        message: 'Anchor quota exhausted',
+      });
       return;
     }
     res.status(fingerprint.startsWith('b') ? 200 : 201);
@@ -153,6 +164,31 @@ describe('anchor self-service context bridge', () => {
     });
     expect(state.bulkBodies[0]).not.toHaveProperty('recipient_email');
     expect(state.bulkBodies[0]).not.toHaveProperty('fingerprint_provided');
+  });
+
+  it('preserves the canonical quota-exhausted response instead of degrading to submission_failed', async () => {
+    const response = await request(app()).post('/bulk').send({
+      org_id: null,
+      action: 'queue',
+      rows: [{
+        fingerprint: 'e'.repeat(64),
+        filename: 'quota.pdf',
+        fingerprint_provided: true,
+      }],
+    });
+
+    expect(response.status).toBe(207);
+    expect(response.body).toMatchObject({
+      total: 1,
+      created: 0,
+      skipped: 0,
+      failed: 1,
+      results: [{
+        fingerprint: 'e'.repeat(64),
+        status: 'failed',
+        reason: 'quota_exhausted',
+      }],
+    });
   });
 
   // SHOULD-FIX from the #3020 review: a row whose anchor was created but whose

@@ -53,7 +53,11 @@ export type WebhookEventType =
   | 'suborg.credits_allocated'
   | 'suborg.credits_reclaimed'
   | 'suborg.suspended'
-  | 'suborg.offboarded';
+  | 'suborg.offboarded'
+  | 'agent.registered'
+  | 'agent.updated'
+  | 'agent.revoked'
+  | 'agent.key_created';
 export interface Folder {
   id: string;
   publicId: string;
@@ -167,6 +171,67 @@ export interface ArkovaConfig {
     /** Function to sign x402 payment */
     signPayment: (amount: string, payTo: string) => Promise<string>;
   };
+}
+
+export type AgentType = 'llm_agent' | 'ats_integration' | 'hr_platform' | 'compliance_tool' | 'custom';
+export type AgentStatus = 'active' | 'suspended' | 'revoked';
+export type AgentScope =
+  | 'read:records' | 'read:orgs' | 'read:search' | 'write:anchors' | 'admin:rules'
+  | 'verify' | 'verify:batch' | 'usage:read' | 'keys:manage'
+  | 'compliance:read' | 'compliance:write' | 'oracle:read' | 'oracle:write'
+  | 'anchor:write' | 'anchor:read' | 'attestations:write' | 'attestations:read'
+  | 'webhooks:manage' | 'agents:manage' | 'keys:read' | 'orgs:manage';
+export type ComputeIdAgentScope = Extract<AgentScope, 'verify' | 'verify:batch' | 'anchor:write' | 'write:anchors' | 'anchor:read' | 'read:records' | 'read:search'>;
+
+export interface CreateAgentInput {
+  name: string;
+  description?: string;
+  agentType?: AgentType;
+  allowedScopes?: AgentScope[];
+  framework?: string;
+  version?: string;
+  callbackUrl?: string;
+  metadata?: Record<string, unknown>;
+}
+export interface UpdateAgentInput {
+  name?: string;
+  description?: string;
+  allowedScopes?: AgentScope[];
+  status?: Extract<AgentStatus, 'active' | 'suspended'>;
+  framework?: string;
+  version?: string;
+  callbackUrl?: string | null;
+}
+export interface AgentKeySummary {
+  id: string; name: string; keyPrefix: string; scopes: string[]; isActive: boolean;
+  lastUsedAt: string | null; createdAt: string; expiresAt: string | null;
+}
+export interface Agent {
+  id: string; name: string; description: string | null; agentType: string; status: AgentStatus;
+  allowedScopes: string[]; framework: string | null; version: string | null;
+  callbackUrl: string | null; metadata: Record<string, unknown>; apiKeys?: AgentKeySummary[];
+}
+export interface AgentRevocation { status: 'revoked'; agentId: string }
+export interface AgentKeyCreated {
+  key: string; keyId: string; keyPrefix: string; agentId: string; agentName: string;
+  scopes: string[]; createdAt: string; warning: string;
+}
+export interface ComputeIdVerificationReceipt {
+  passport_id: string; status: string; signature_valid?: boolean | null; issued_at: string;
+  expires_at: string; key_id: string; receipt_signature: string; receipt_algorithm: string;
+  receipt_payload: string; [key: string]: unknown;
+}
+export interface ComputeIdAdmissionInput {
+  passportId: string; verificationReceipt: ComputeIdVerificationReceipt; name?: string;
+  description?: string; allowedScopes?: ComputeIdAgentScope[];
+}
+export interface ComputeIdBinding {
+  issuer: 'computeid'; passport_id: string; bound_at: string;
+  receipt_issued_at?: string; receipt_expires_at: string;
+}
+export interface ComputeIdAdmissionResult {
+  agent: Agent; binding: ComputeIdBinding; key: string; keyId: string;
+  keyPrefix: string; scopes: string[]; warning: string;
 }
 
 /** RFC 7807 problem+json payload returned by API v2 errors */
@@ -399,6 +464,28 @@ export interface SearchResponse {
   nextCursor: string | null;
 }
 
+export type PrivateAnchorTagScope = 'user' | 'organization';
+export interface ListAnchorsOptions {
+  since?: string;
+  until?: string;
+  tag?: string;
+  tagScope?: PrivateAnchorTagScope;
+  limit?: number;
+  cursor?: string;
+}
+export interface PrivateAnchorSummary {
+  publicId: string;
+  status: AnchorLifecycleStatus;
+  createdAt: string;
+  updatedAt: string;
+  filename: string;
+  description: string | null;
+}
+export interface ListAnchorsResponse {
+  anchors: PrivateAnchorSummary[];
+  nextCursor: string | null;
+}
+
 export interface FingerprintVerification extends RichVerificationFields {
   verified: boolean;
   status: string;
@@ -441,12 +528,17 @@ export interface ProofBundleSignature {
 }
 
 /**
- * PROOF-05 (SCRUM-2338): self-contained, independently-checkable two-layer
- * proof bundle. Carries only cryptographic evidence — never raw document
+ * PROOF-05 (SCRUM-2338): structurally complete, decoded two-layer proof
+ * bundle. Carries only cryptographic evidence — never raw document
  * content or PII. `null` on the parent response when the proof is incomplete
  * (the API only emits it when ALL fields below are present + well-formed:
  * receipt txid/height/timestamp, 160-hex header, 64-hex block hash, canonical
  * ARKV OP_RETURN, merkleIndex AND leafCount).
+ *
+ * Non-null means the SDK accepted the wire shape and singleton constraints;
+ * it does not mean the SDK cryptographically verified the branches, header,
+ * or that `opReturnPayload` commits `merkleRoot`. Use the independent verifier
+ * for that guarantee.
  *
  * Field names are camelCase per SDK convention; the wire form is snake_case.
  */
@@ -454,12 +546,11 @@ export interface ProofBundle {
   fingerprint: string;
   merkleRoot: string;
   /**
-   * The inclusion branch. A complete (non-null) bundle always ships a non-empty
-   * branch — `mapProofBundle` fails closed (returns null) on an empty/malformed
-   * array, so consumers can rely on `proofBundle !== null ⇒ independently
-   * verifiable` (CodeRabbit).
+   * The inclusion branch. An empty branch is complete only for a coherent
+   * single-leaf tree (`leafCount=1`, `merkleIndex=0`, root=fingerprint).
+   * Other empty or malformed branches fail closed in `mapProofBundle`.
    */
-  merkleProof: [MerkleProofEntry, ...MerkleProofEntry[]];
+  merkleProof: MerkleProofEntry[];
   /**
    * The leaf's index in the batch tree. Non-null in a complete bundle — together
    * with `leafCount` it arms the CVE-2012-2459 duplicate-leaf structural guard.

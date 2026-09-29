@@ -19,23 +19,16 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { toPublicAgent } from './agents.js';
-import type { ApiKeyScope } from '../apiScopes.js';
+import { scopeSatisfies, type ApiKeyScope } from '../apiScopes.js';
+import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
 import { loadPinnedCa, type PinnedCa } from '../../integrations/computeid/ca-cert.js';
 import { verifyComputeIdReceipt } from '../../integrations/computeid/receipt-verifier.js';
 import { ComputeIdAdmissionRequest, isRecord } from '../../integrations/computeid/schemas.js';
+import { hintAgentWebhookDrain } from '../../webhooks/agentEvents.js';
 
 export const agentsComputeIdRouter = Router();
 
-/** Scopes a passport-admitted agent may hold. Deliberately excludes every management scope. */
-export const PASSPORT_AGENT_SCOPE_ALLOWLIST: readonly ApiKeyScope[] = [
-  'verify',
-  'verify:batch',
-  'anchor:write',
-  'write:anchors', // V2 spelling; scopeSatisfies() treats it as anchor:write
-  'anchor:read',
-  'read:records',
-  'read:search',
-];
+export { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
 const DEFAULT_PASSPORT_AGENT_SCOPES: ApiKeyScope[] = ['verify'];
 
 let cachedCa: { pem: string; ca: PinnedCa } | null = null;
@@ -53,92 +46,142 @@ function getPinnedCa(): PinnedCa | null {
   }
 }
 
-function clampScopes(requested: readonly ApiKeyScope[] | undefined): ApiKeyScope[] {
+function clampScopes(requested: readonly ApiKeyScope[] | undefined, callerScopes: string[]): ApiKeyScope[] {
   const allow = new Set<string>(PASSPORT_AGENT_SCOPE_ALLOWLIST);
   const wanted = requested && requested.length > 0 ? requested : DEFAULT_PASSPORT_AGENT_SCOPES;
-  return [...new Set(wanted.filter((s) => allow.has(s)))];
+  return [...new Set(wanted.filter((s) => allow.has(s) && scopeSatisfies(callerScopes, s)))];
 }
 
-agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
+type AdmissionAgentStatus = 'active' | 'suspended' | 'revoked';
+
+interface AdmissionResult {
+  agent: Record<string, unknown> & { id: string; status: AdmissionAgentStatus };
+  key: Record<string, unknown> & { id: string; key_prefix: string; scopes: unknown[] };
+  binding: Record<string, unknown>;
+}
+
+function hasCommittedAdmissionCore(data: Record<string, unknown>): data is Record<string, unknown> & Omit<AdmissionResult, 'agent'|'binding'> & { agent: Record<string, unknown>; binding: unknown } {
+  if (!isRecord(data.agent) || !isRecord(data.key) || !isRecord(data.binding)) return false;
+  if (typeof data.agent.id !== 'string' || typeof data.agent.name !== 'string'
+    || typeof data.agent.agent_type !== 'string' || !Array.isArray(data.agent.allowed_scopes)
+    || typeof data.agent.created_at !== 'string') return false;
+  return typeof data.key.id === 'string'
+    && typeof data.key.key_prefix === 'string'
+    && Array.isArray(data.key.scopes);
+}
+
+interface AdmissionContext {
+  hmacSecret: string;
+  orgId: string;
+  actorApiKeyId: string;
+  passportId: string;
+  name: string;
+  description?: string;
+  scopes: ApiKeyScope[];
+  issuedAt?: Date;
+  expiresAt: Date;
+}
+
+function prepareAdmission(req: Request, res: Response): AdmissionContext | null {
   if (!config.enableComputeidIntegration) {
     res.status(503).json({
       error: { code: 'vendor_gated', message: 'ComputeID integration is not enabled in this environment.' },
     });
-    return;
+    return null;
   }
-
   const apiKey = req.apiKey;
   if (!apiKey) {
     res.status(401).json({ error: { code: 'api_key_required', message: 'Admission requires an organization API key.' } });
-    return;
+    return null;
   }
-  // From typed config, NOT req.hmacSecret: that field is attached only by the
-  // JWT `requireAuth` middleware, which this API-key mount deliberately omits.
   const hmacSecret = config.apiKeyHmacSecret;
-  if (!hmacSecret) {
-    res.status(500).json({ error: { code: 'hmac_unconfigured' } });
-    return;
-  }
+  if (!hmacSecret) { res.status(500).json({ error: { code: 'hmac_unconfigured' } }); return null; }
   const ca = getPinnedCa();
-  if (!ca) {
-    res.status(500).json({ error: { code: 'ca_unconfigured' } });
-    return;
-  }
-
+  if (!ca) { res.status(500).json({ error: { code: 'ca_unconfigured' } }); return null; }
   const parsed = ComputeIdAdmissionRequest.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: { code: 'invalid_request', details: parsed.error.issues } });
-    return;
+    return null;
   }
-  const { passport_id: passportId, verification_receipt: receipt } = parsed.data;
-
-  const verdict = verifyComputeIdReceipt({ receipt, ca, expectedPassportId: passportId });
+  const passportId = parsed.data.passport_id;
+  const verdict = verifyComputeIdReceipt({
+    receipt: parsed.data.verification_receipt, ca, expectedPassportId: passportId,
+  });
   if (!verdict.ok) {
     res.status(401).json({ error: { code: 'receipt_invalid', reason: verdict.reason } });
-    return;
+    return null;
   }
-
-  const scopes = clampScopes(parsed.data.allowed_scopes);
+  const explicitlyRequestedPassportScopes = parsed.data.allowed_scopes?.filter((scope) =>
+    PASSPORT_AGENT_SCOPE_ALLOWLIST.includes(scope));
+  if (explicitlyRequestedPassportScopes?.some((scope) => !scopeSatisfies(apiKey.scopes ?? [], scope))) {
+    res.status(403).json({ error: { code: 'delegation_scope_exceeded' } });
+    return null;
+  }
+  const scopes = clampScopes(parsed.data.allowed_scopes, apiKey.scopes ?? []);
   if (scopes.length === 0) {
     res.status(400).json({ error: { code: 'no_permitted_scopes', permitted: PASSPORT_AGENT_SCOPE_ALLOWLIST } });
-    return;
+    return null;
   }
+  return {
+    hmacSecret, scopes, passportId,
+    orgId: apiKey.orgId,
+    actorApiKeyId: apiKey.keyId,
+    name: parsed.data.name ?? `computeid-${passportId.slice(0, 8)}`,
+    ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
+    ...(verdict.issuedAt ? { issuedAt: verdict.issuedAt } : {}),
+    expiresAt: verdict.expiresAt,
+  };
+}
 
-  const orgId = apiKey.orgId;
-  const principalUserId = apiKey.userId;
-  const shortId = passportId.slice(0, 8);
-  const name = parsed.data.name ?? `computeid-${shortId}`;
+agentsComputeIdRouter.post('/admit', async (req: Request, res: Response) => {
+  const admission = prepareAdmission(req, res);
+  if (!admission) return;
+  const { hmacSecret, orgId, actorApiKeyId, passportId, name, description,
+    scopes, issuedAt, expiresAt } = admission;
 
   try {
     const key = generateApiKey(hmacSecret);
-    const { data, error } = await db.rpc('admit_computeid_agent', {
+    const { data, error } = await db.rpc('admit_computeid_agent_as_api_key_with_outbox', {
       p_org_id: orgId,
-      p_principal_id: principalUserId,
+      p_actor_api_key_id: actorApiKeyId,
       p_passport_id: passportId,
-      ...(verdict.issuedAt ? { p_receipt_issued_at: verdict.issuedAt.toISOString() } : {}),
-      p_receipt_expires_at: verdict.expiresAt.toISOString(),
+      ...(issuedAt ? { p_receipt_issued_at: issuedAt.toISOString() } : {}),
+      p_receipt_expires_at: expiresAt.toISOString(),
       p_name: name,
-      ...(parsed.data.description !== undefined ? { p_description: parsed.data.description } : {}),
+      ...(description !== undefined ? { p_description: description } : {}),
       p_scopes: scopes,
       p_key_hash: key.hash,
       p_key_prefix: key.prefix,
     });
+    if (error?.code === '42501') {
+      res.status(403).json({ error: { code: 'delegation_scope_exceeded' } });
+      return;
+    }
     if (error) throw error;
     if (!isRecord(data)) throw new Error('invalid_admission_result');
     if (data.error === 'passport_revoked' || data.error === 'passport_already_bound') {
       res.status(409).json({ error: { code: data.error, ...(typeof data.agent_id === 'string' ? { agent_id: data.agent_id } : {}) } });
       return;
     }
-    if (!isRecord(data.agent) || !isRecord(data.key) || !isRecord(data.binding)
-        || typeof data.agent.id !== 'string' || typeof data.key.id !== 'string'
-        || typeof data.key.key_prefix !== 'string' || !Array.isArray(data.key.scopes)) {
-      throw new Error('invalid_admission_result');
+    if (!hasCommittedAdmissionCore(data)) throw new Error('invalid_admission_result');
+    const status = typeof data.agent.status === 'string' && ['active', 'suspended', 'revoked'].includes(data.agent.status)
+      ? data.agent.status as AdmissionAgentStatus : 'active';
+    const binding = isRecord(data.binding) && data.binding.issuer === 'computeid'
+      && typeof data.binding.passport_id === 'string'
+      && data.binding.passport_id.toLowerCase() === passportId.toLowerCase()
+      && typeof data.binding.bound_at === 'string'
+      ? data.binding
+      : { issuer: 'computeid', passport_id: passportId, bound_at: new Date().toISOString(),
+        ...(issuedAt ? { receipt_issued_at: issuedAt.toISOString() } : {}), receipt_expires_at: expiresAt.toISOString() };
+    if (status !== data.agent.status || binding !== data.binding) {
+      logger.error({ agentId: data.agent.id }, 'ComputeID admission committed with malformed ancillary projection');
     }
+    hintAgentWebhookDrain();
     // The same transaction wrote both security audit rows. No compensation:
     // an uncertain reply must preserve any committed agent/key and its audit.
     res.status(201).json({
-      agent: toPublicAgent(data.agent),
-      binding: data.binding,
+      agent: toPublicAgent({ ...data.agent, status }),
+      binding,
       key: key.raw,
       key_id: data.key.id,
       key_prefix: data.key.key_prefix,

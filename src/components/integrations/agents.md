@@ -165,3 +165,7 @@ Third-party integration connector cards for org admins and members to manage OAu
 ## 2026-09-05 — Shared signature connector status and redirect
 
 Adobe Sign and org DocuSign now share `useSignatureConnection` for their identical public-column status query and `followSignatureOAuthStart` for the successful authorization-URL response. Error copy, entitlement gating and partial-disconnect warnings remain in each card. The hook accepts only `adobe_sign` or `docusign`; never extend its account-label projection to Google Drive, whose label stores a credential-bearing blob. Existing card tests continue to assert tenant/provider filters, credential-column exclusion, denials, redirect behavior and stranded Adobe webhook feedback.
+
+## 2026-09-27 — Health evidence and bounded recovery action
+
+`ConnectorCardStatusRow` may render labeled operational timestamps and one caller-supplied recovery action inside a degraded status. It never renders raw backend error text. The action is optional so non-auth failures keep their automatic/support recovery semantics.

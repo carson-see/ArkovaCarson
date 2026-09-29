@@ -114,6 +114,15 @@ describe('evaluateRule — ESIGN_COMPLETED', () => {
 });
 
 describe('evaluateRule — WORKSPACE_FILE_MODIFIED', () => {
+  it('fails closed when persisted folder_id lacks the drive_folder discriminator', () => {
+    const r = evaluateRule(
+      rule({ trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: { folder_id: 'folder-a' } }),
+      event({ trigger_type: 'WORKSPACE_FILE_MODIFIED', vendor: 'google_drive', payload: { parent_ids: ['folder-z'] } }),
+    );
+    expect(r.matched).toBe(false);
+    expect(r.reason).toBe('drive_folder_filter_rejected');
+  });
+
   it('filters folder_path_starts_with case-insensitively', () => {
     const r = evaluateRule(
       rule({

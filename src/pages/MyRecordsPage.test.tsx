@@ -9,12 +9,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Record } from '@/components/records';
 import type { Folder } from '@/hooks/useFolders';
 
 const mockUseAnchors = vi.hoisted(() => vi.fn());
+const mockUsePrivateAnchorList = vi.hoisted(() => vi.fn());
 const mockUseFolders = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.hoisted(() => vi.fn());
 
@@ -27,6 +28,7 @@ vi.mock('@/hooks/useProfile', () => ({
 vi.mock('@/hooks/useActiveOrg', () => ({ useActiveOrg: () => ({ orgId: null, loading: false }) }));
 vi.mock('@/hooks/useUserOrgs', () => ({ useUserOrgs: () => ({ orgs: [], loading: false }) }));
 vi.mock('@/hooks/useAnchors', () => ({ useAnchors: mockUseAnchors }));
+vi.mock('@/hooks/usePrivateAnchorList', () => ({ usePrivateAnchorList: mockUsePrivateAnchorList }));
 vi.mock('@/hooks/useFolders', () => ({ useFolders: mockUseFolders }));
 vi.mock('@/hooks/useRevokeAnchor', () => ({
   useRevokeAnchor: () => ({ revokeAnchor: vi.fn(), error: null, clearError: vi.fn() }),
@@ -76,6 +78,21 @@ async function renderPage() {
 }
 
 describe('MyRecordsPage — Folders UI', () => {
+  it('does not inherit a profile admin role into an active member organization', async () => {
+    const { resolveActiveAnchorRole } = await import('./MyRecordsPage');
+    expect(resolveActiveAnchorRole('org-1','member','ORG_ADMIN')).toBe('INDIVIDUAL');
+    expect(resolveActiveAnchorRole('org-1','admin','INDIVIDUAL')).toBe('ORG_ADMIN');
+  });
+  it('exposes a generic private-tag filter and forwards the selected scope to the RLS hook', async () => {
+    await renderPage();
+    const initialCalls = mockUsePrivateAnchorList.mock.calls.length;
+    fireEvent.change(screen.getByRole('textbox', { name: 'Private tag' }), { target: { value: 'internal-review' } });
+    expect(mockUsePrivateAnchorList.mock.calls.slice(initialCalls)).not.toEqual(
+      expect.arrayContaining([expect.arrayContaining([expect.objectContaining({ tag: 'internal-review' })])]),
+    );
+    await waitFor(() => expect(mockUsePrivateAnchorList).toHaveBeenLastCalledWith(expect.objectContaining({ tag: 'internal-review', scope: 'user', page: 0 })));
+    expect(screen.getByRole('combobox', { name: 'Private tag scope' })).toBeInTheDocument();
+  });
   let createFolder: ReturnType<typeof vi.fn>;
   let renameFolder: ReturnType<typeof vi.fn>;
   let deleteFolder: ReturnType<typeof vi.fn>;
@@ -84,6 +101,12 @@ describe('MyRecordsPage — Folders UI', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUsePrivateAnchorList.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
     createFolder = vi.fn().mockResolvedValue(undefined);
     renameFolder = vi.fn().mockResolvedValue(undefined);
     deleteFolder = vi.fn().mockResolvedValue(undefined);
@@ -115,6 +138,21 @@ describe('MyRecordsPage — Folders UI', () => {
     expect(screen.getByRole('button', { name: 'Unfiled' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Invoices' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Certificates' })).toBeInTheDocument();
+  });
+
+  it('offers a working retry and identifies filters as current-page only', async () => {
+    const refetch = vi.fn().mockResolvedValue(undefined);
+    mockUsePrivateAnchorList.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('unavailable'),
+      refetch,
+    });
+    await renderPage();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Private tag' }), 'internal-review');
+    expect(await screen.findByText('Folder, status, and filename filters apply to the current private-tag page.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(refetch).toHaveBeenCalledOnce();
   });
 
   it('shows all records by default', async () => {
@@ -267,5 +305,25 @@ describe('MyRecordsPage — Folders UI', () => {
     await user.click(await screen.findByText('Remove from folder'));
 
     expect(assignRecord).toHaveBeenCalledWith('anchor-1', null);
+  });
+
+  it('refreshes active private-tag results after a successful record mutation', async () => {
+    const refetch = vi.fn().mockResolvedValue(undefined);
+    mockUsePrivateAnchorList.mockReturnValue({
+      data: { records, hasMore: false },
+      isLoading: false,
+      error: null,
+      refetch,
+    });
+    const user = userEvent.setup();
+    await renderPage();
+    await user.type(screen.getByRole('textbox', { name: 'Private tag' }), 'internal-review');
+    await screen.findByText('Folder, status, and filename filters apply to the current private-tag page.');
+
+    const row = screen.getByText('invoice.pdf').closest('div[role="button"]') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Actions' }));
+    await user.click(await screen.findByText('Remove from folder'));
+
+    await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
   });
 });

@@ -11,6 +11,7 @@ const mockRpc = vi.hoisted(() => vi.fn());
 const mockRefreshEntitlements = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockCanCreateCount = vi.hoisted(() => vi.fn().mockReturnValue(true));
 const mockRemaining = vi.hoisted(() => ({ current: 100 as number | null }));
+const mockEntitlementsLoading = vi.hoisted(() => ({ current: false }));
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastWarning = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -41,7 +42,7 @@ vi.mock('@/hooks/useEntitlements', () => ({
     percentUsed: 0,
     isNearLimit: false,
     planName: 'Professional',
-    loading: false,
+    loading: mockEntitlementsLoading.current,
     error: null,
   }),
 }));
@@ -60,6 +61,9 @@ describe('useBulkAnchors', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCanCreateCount.mockReturnValue(true);
+    mockRemaining.current = 100;
+    mockEntitlementsLoading.current = false;
     mockWorkerFetch.mockImplementation(async (_url, init) => {
       const body = JSON.parse(String((init as RequestInit).body));
       const legacy = await mockRpc('bulk_create_anchors', {
@@ -511,6 +515,68 @@ describe('useBulkAnchors', () => {
     expect(result.current.error).toContain('1 records remaining');
     expect(result.current.error).toContain('3');
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('does not apply the submitter personal-plan limit to an organization batch', async () => {
+    mockCanCreateCount.mockReturnValue(false);
+    mockRemaining.current = 0;
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0, results: [],
+    }), { status: 200 }));
+
+    const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+    let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+    await act(async () => {
+      finalResult = await result.current.createBulkAnchors([mockRecords[0]]);
+    });
+
+    expect(finalResult).toMatchObject({ created: 1 });
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(mockWorkerFetch.mock.calls[0][1].body))).toMatchObject({ org_id: 'org-1' });
+  });
+
+  it('does not wait on personal entitlement loading for an organization batch', async () => {
+    mockEntitlementsLoading.current = true;
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      total: 1, created: 1, skipped: 0, failed: 0, results: [],
+    }), { status: 200 }));
+
+    const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+    await act(async () => {
+      await result.current.createBulkAnchors([mockRecords[0]]);
+    });
+
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for personal entitlement loading before a personal batch', async () => {
+    mockEntitlementsLoading.current = true;
+    const { result } = renderHook(() => useBulkAnchors());
+
+    await act(async () => {
+      await result.current.createBulkAnchors([mockRecords[0]]);
+    });
+
+    expect(result.current.error).toBe('Checking plan quota — please try again');
+    expect(mockWorkerFetch).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an authoritative organization quota rejection from the worker', async () => {
+    mockCanCreateCount.mockReturnValue(false);
+    mockRemaining.current = 0;
+    mockWorkerFetch.mockResolvedValue(new Response(JSON.stringify({
+      error: 'quota_exhausted',
+    }), { status: 402 }));
+
+    const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+    let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+    await act(async () => {
+      finalResult = await result.current.createBulkAnchors([mockRecords[0]]);
+    });
+
+    expect(finalResult).toBeNull();
+    expect(result.current.error).toBe('Failed to process batch');
+    expect(mockWorkerFetch).toHaveBeenCalledTimes(1);
   });
 
   it('should refresh entitlements after successful bulk creation', async () => {

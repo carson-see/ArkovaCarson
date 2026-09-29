@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SearchType = Literal["all", "org", "record", "fingerprint", "document"]
 SearchResultType = Literal["org", "record", "fingerprint", "document"]
@@ -78,6 +79,99 @@ class FolderEnvelope(ArkovaModel):
     folder: Folder
 
 
+class AgentKeySummary(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str
+    name: str
+    key_prefix: str
+    scopes: list[str]
+    is_active: bool
+    last_used_at: str | None = None
+    created_at: str
+    expires_at: str | None = None
+
+
+class Agent(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str
+    name: str
+    description: str | None = None
+    agent_type: str
+    status: str
+    allowed_scopes: list[str]
+    framework: str | None = None
+    version: str | None = None
+    callback_url: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    api_keys: list[AgentKeySummary] | None = None
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_nullable_metadata(cls, value: Any) -> Any:
+        return {} if value is None else value
+
+
+class AgentList(ArkovaModel):
+    agents: list[Agent]
+
+
+class AgentRevocation(ArkovaModel):
+    status: Literal["revoked"]
+    agent_id: str
+
+
+class AgentKeyCreated(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    key: str = Field(min_length=1)
+    key_id: str = Field(min_length=1)
+    key_prefix: str = Field(min_length=1)
+    agent_id: str
+    agent_name: str
+    scopes: list[str]
+    created_at: str
+    warning: str
+
+
+class ComputeIdBinding(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    issuer: Literal["computeid"]
+    passport_id: str
+    bound_at: str
+    receipt_issued_at: str | None = None
+    receipt_expires_at: str
+
+
+class ComputeIdVerificationReceipt(ArkovaModel):
+    passport_id: str
+    status: str
+    signature_valid: bool | None = None
+    issued_at: str
+    expires_at: str
+    key_id: str
+    receipt_signature: str
+    receipt_algorithm: str
+    receipt_payload: str
+
+
+class ComputeIdAdmissionInput(ArkovaModel):
+    passport_id: str
+    verification_receipt: ComputeIdVerificationReceipt
+    name: str | None = None
+    description: str | None = None
+    allowed_scopes: list[str] | None = None
+
+
+class ComputeIdAdmissionResult(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    agent: Agent
+    binding: ComputeIdBinding
+    key: str = Field(min_length=1)
+    key_id: str = Field(min_length=1)
+    key_prefix: str = Field(min_length=1)
+    scopes: list[str]
+    warning: str
+
+
 class FolderMoveFailure(ArkovaModel):
     anchor_id: str
     code: str
@@ -146,6 +240,30 @@ class SearchResult(ArkovaModel):
 class SearchResponse(ArkovaModel):
     results: list[SearchResult]
     next_cursor: str | None = None
+
+
+class AnchorListItem(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    public_id: str
+    status: Literal["PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "EXPIRED", "SUPERSEDED", "PENDING_RESOLUTION"]
+    created_at: str
+    updated_at: str
+    filename: str
+    description: str | None = None
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def timestamp_is_rfc3339(cls, value: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})", value):
+            raise ValueError("timestamp must be RFC3339 with a timezone")
+        return value
+
+
+class AnchorListResponse(ArkovaModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    anchors: list[AnchorListItem]
+    next_cursor: str | None = None
+
 
 
 class RichVerificationFields(ArkovaModel):
@@ -265,6 +383,11 @@ class ProofBundle(ArkovaModel):
 
     Canonical op_return_payload shape: "ARKV" (41524b56) + 32-byte app root
     (64 hex), NO version byte, optional trailing metadata hash.
+
+    A non-None model means the SDK accepted the wire shape and singleton
+    constraints. It does not mean the SDK cryptographically verified either
+    inclusion branch, the block header, or that op_return_payload commits
+    merkle_root; use the independent verifier for that guarantee.
     """
 
     # strict=True so a wrong-typed member (e.g. leaf_count="4") is REJECTED, not
@@ -275,14 +398,14 @@ class ProofBundle(ArkovaModel):
 
     # CodeRabbit (SCRUM-2338): every required member is NON-nullable with NO
     # default. A complete (non-None) bundle must satisfy the
-    # ``proof_bundle is not None ⇒ independently verifiable`` contract, so a
-    # malformed payload (missing/wrong-typed member, or an empty merkle_proof)
+    # ``proof_bundle is not None ⇒ structurally complete`` contract, so a
+    # malformed payload (missing/wrong-typed member, or an incoherent empty proof)
     # must NOT validate into a valid-looking bundle. The parent response coerces
     # any such failure to ``proof_bundle = None`` (see the validator below)
     # rather than defaulting members to None/0/1.
     fingerprint: str
     merkle_root: str
-    merkle_proof: list[MerkleProofEntry] = Field(min_length=1)
+    merkle_proof: list[MerkleProofEntry]
     merkle_index: int
     # Total leaves in the batch tree this proof belongs to; with merkle_index it
     # arms the CVE-2012-2459 duplicate-leaf guard during local verification.
@@ -298,6 +421,18 @@ class ProofBundle(ArkovaModel):
     # ?format=signed response wrapper, not an inline bundle field. The one
     # legitimately-nullable member of the bundle.
     signature: ProofBundleSignature | None = None
+
+    @model_validator(mode="after")
+    def _empty_branch_requires_coherent_singleton(self) -> ProofBundle:
+        if not self.merkle_proof and not (
+            self.leaf_count == 1
+            and self.merkle_index == 0
+            and re.fullmatch(r"[0-9a-fA-F]{64}", self.fingerprint) is not None
+            and re.fullmatch(r"[0-9a-fA-F]{64}", self.merkle_root) is not None
+            and self.fingerprint.lower() == self.merkle_root.lower()
+        ):
+            raise ValueError("empty merkle_proof requires a coherent single-leaf tree")
+        return self
 
 
 class MerkleProofResponse(ArkovaModel):
