@@ -221,6 +221,20 @@ function validateImportRows(value: unknown): Array<Record<string, unknown>> {
   });
 }
 
+function parseTimeoutMs(stdinConfig: Record<string, unknown>, envValue: string | undefined): number | undefined {
+  const fromStdin = Object.hasOwn(stdinConfig, 'timeoutMs');
+  let timeoutMs: number | undefined;
+  if (fromStdin) {
+    timeoutMs = typeof stdinConfig.timeoutMs === 'number' ? stdinConfig.timeoutMs : Number.NaN;
+  } else if (envValue !== undefined) {
+    timeoutMs = /^[1-9]\d*$/.test(envValue) ? Number(envValue) : Number.NaN;
+  }
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)) {
+    throw new UsageError('ARKOVA_TIMEOUT_MS or stdin timeoutMs must be an integer from 1 to 120000');
+  }
+  return timeoutMs;
+}
+
 async function loadConfig(args: string[], io: CliIo): Promise<ArkovaConfig> {
   const source = takeOption(args, '--config');
   if (source != null && source !== '-') throw new UsageError('--config accepts only - (stdin)');
@@ -236,14 +250,7 @@ async function loadConfig(args: string[], io: CliIo): Promise<ArkovaConfig> {
   }
   const apiKey = typeof stdinConfig.apiKey === 'string' ? stdinConfig.apiKey : io.env.ARKOVA_API_KEY;
   const baseUrl = typeof stdinConfig.baseUrl === 'string' ? stdinConfig.baseUrl : io.env.ARKOVA_BASE_URL;
-  const fromStdin = Object.prototype.hasOwnProperty.call(stdinConfig, 'timeoutMs');
-  const timeoutRaw = fromStdin ? stdinConfig.timeoutMs : io.env.ARKOVA_TIMEOUT_MS;
-  const timeoutMs = fromStdin
-    ? (typeof timeoutRaw === 'number' ? timeoutRaw : Number.NaN)
-    : (timeoutRaw === undefined ? undefined : typeof timeoutRaw === 'string' && /^[1-9][0-9]*$/.test(timeoutRaw) ? Number(timeoutRaw) : Number.NaN);
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)) {
-    throw new UsageError('ARKOVA_TIMEOUT_MS or stdin timeoutMs must be an integer from 1 to 120000');
-  }
+  const timeoutMs = parseTimeoutMs(stdinConfig, io.env.ARKOVA_TIMEOUT_MS);
   return { ...(apiKey ? { apiKey } : {}), ...(baseUrl ? { baseUrl } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
 }
 

@@ -185,6 +185,60 @@ function mapAgentKeyCreated(value: Record<string, unknown>): AgentKeyCreated {
   };
 }
 
+interface RequestDeadline {
+  signal: AbortSignal;
+  cleanup(): void;
+  failure(error: unknown): unknown;
+}
+
+function createRequestDeadline(callerSignal: AbortSignal | null | undefined, timeoutMs: number): RequestDeadline {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) forwardAbort();
+  else callerSignal?.addEventListener('abort', forwardAbort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    cleanup();
+  }, timeoutMs);
+  const cleanup = () => {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', forwardAbort);
+  };
+  return {
+    signal: controller.signal,
+    cleanup,
+    failure(error: unknown) {
+      return timedOut && !callerSignal?.aborted
+        ? new ArkovaError('Arkova API request timed out', 408, 'request_timeout') : error;
+    },
+  };
+}
+
+function guardResponseBody(response: Response, deadline: RequestDeadline): Response {
+  // All SDK response parsing uses json/text. Keep this attempt's deadline
+  // active through body consumption, including a stalled stream.
+  if (response instanceof Response && response.body === null) deadline.cleanup();
+  return new Proxy(response, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (['json', 'text', 'arrayBuffer', 'blob', 'formData'].includes(String(key)) && typeof value === 'function') {
+        return async (...args: unknown[]) => {
+          try {
+            return await value.apply(target, args);
+          } catch (error) {
+            throw deadline.failure(error);
+          } finally {
+            deadline.cleanup();
+          }
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 export class Arkova {
   private readonly baseUrl: string;
   // ECMAScript private fields (not TS `private`): a `private` class member is
@@ -1167,57 +1221,23 @@ export class Arkova {
     while (true) {
       const callerSignal = init?.signal;
       if (callerSignal?.aborted) throw callerSignal.reason ?? new DOMException('Request aborted', 'AbortError');
-      const controller = new AbortController();
-      const forwardAbort = () => controller.abort(callerSignal?.reason);
-      if (callerSignal?.aborted) forwardAbort();
-      else callerSignal?.addEventListener('abort', forwardAbort, { once: true });
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-        cleanup();
-      }, this.timeoutMs);
-      const cleanup = () => {
-        clearTimeout(timer);
-        callerSignal?.removeEventListener('abort', forwardAbort);
-      };
+      const deadline = createRequestDeadline(callerSignal, this.timeoutMs);
       try {
-        const response = await globalThis.fetch(url, { ...requestInit, signal: controller.signal });
+        const response = await globalThis.fetch(url, { ...requestInit, signal: deadline.signal });
         if (!retryable || !shouldRetryResponse(response) || attempt >= this.retry.retries) {
-          // All SDK response parsing uses json/text. Keep the deadline active
-          // until body consumption ends, not just until headers arrive.
-          if (response instanceof Response && response.body === null) cleanup();
-          const guardedResponse = new Proxy(response, {
-            get(target, key) {
-              const value = Reflect.get(target, key, target);
-              if (['json', 'text', 'arrayBuffer', 'blob', 'formData'].includes(String(key)) && typeof value === 'function') {
-                return async (...args: unknown[]) => {
-                  try {
-                    return await value.apply(target, args);
-                  } catch (error) {
-                    if (timedOut && !callerSignal?.aborted) throw new ArkovaError('Arkova API request timed out', 408, 'request_timeout');
-                    throw error;
-                  } finally {
-                    cleanup();
-                  }
-                };
-              }
-              return typeof value === 'function' ? value.bind(target) : value;
-            },
-          });
-          this.responseCleanup.set(guardedResponse, cleanup);
+          const guardedResponse = guardResponseBody(response, deadline);
+          this.responseCleanup.set(guardedResponse, deadline.cleanup);
           return guardedResponse;
         }
         // The retried response is discarded — release its body so the
         // connection is not held open until GC.
-        cleanup();
+        deadline.cleanup();
         await response.body?.cancel().catch(() => {});
         await this.sleep(retryDelayMs(response, attempt, this.retry));
         attempt += 1;
       } catch (err) {
-        cleanup();
-        const failure = timedOut && !callerSignal?.aborted
-          ? new ArkovaError('Arkova API request timed out', 408, 'request_timeout') : err;
+        deadline.cleanup();
+        const failure = deadline.failure(err);
         if (callerSignal?.aborted) throw failure;
         if (!retryable || attempt >= this.retry.retries) {
           throw failure;
@@ -1277,10 +1297,6 @@ function getHeader(response: Response, name: string): string | null {
     : null;
 }
 
-/**
- * Parse a fetch Response as JSON; throw a typed ArkovaError with the
- * server's machine-readable `error` code if the status is not 2xx.
- */
 // Keep permission-denial recovery useful without reflecting arbitrary response data.
 function scopeErrorDetails(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -1296,7 +1312,17 @@ function scopeErrorDetails(value: unknown): Record<string, unknown> {
   return details;
 }
 
-async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise<T> {
+type JsonBody<T> = {
+  message?: string;
+  error?: string | { code?: string; message?: string; [key: string]: unknown };
+  type?: string;
+  title?: string;
+  status?: number;
+  detail?: string;
+  instance?: string;
+} & T;
+
+async function decodeJsonBody<T>(response: Response): Promise<JsonBody<T>> {
   let decoded: unknown;
   try {
     decoded = await response.json();
@@ -1305,15 +1331,25 @@ async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise
     if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
     decoded = {};
   }
-  const json = (decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}) as {
-    message?: string;
-    error?: string | { code?: string; message?: string; [key: string]: unknown };
-    type?: string;
-    title?: string;
-    status?: number;
-    detail?: string;
-    instance?: string;
-  } & T;
+  return (decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}) as JsonBody<T>;
+}
+
+function nestedHttpError(json: JsonBody<unknown>): Record<string, unknown> | undefined {
+  const nestedRaw = typeof json.error === 'object' && json.error !== null ? json.error : undefined;
+  const scopeDetails = scopeErrorDetails(nestedRaw ?? json);
+  if (!nestedRaw) return Object.keys(scopeDetails).length > 0 ? scopeDetails : undefined;
+  return {
+    ...(typeof nestedRaw.code === 'string' ? { code: nestedRaw.code } : {}),
+    ...(typeof nestedRaw.message === 'string' ? { message: nestedRaw.message } : {}),
+    ...(typeof nestedRaw.reason === 'string' ? { reason: nestedRaw.reason } : {}),
+    ...(typeof nestedRaw.agent_id === 'string' ? { agent_id: nestedRaw.agent_id } : {}),
+    ...scopeDetails,
+  };
+}
+
+/** Parse a response and preserve the server's machine-readable error code. */
+async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise<T> {
+  const json = await decodeJsonBody<T>(response);
   if (!response.ok) {
     const problem = isProblemDetail(json)
       ? {
@@ -1327,15 +1363,7 @@ async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise
     const retryAfter = parseRetryAfter(getHeader(response, 'Retry-After')) ?? undefined;
     // Prefer server `message`, fall back to legacy endpoints that only send `error`,
     // then to a generic label. Code field is carried on the error for programmatic checks.
-    const nestedRaw = typeof json.error === 'object' && json.error !== null ? json.error : undefined;
-    const scopeDetails = scopeErrorDetails(nestedRaw ?? json);
-    const nestedError: Record<string, unknown> | undefined = nestedRaw ? {
-      ...(typeof nestedRaw.code === 'string' ? { code: nestedRaw.code } : {}),
-      ...(typeof nestedRaw.message === 'string' ? { message: nestedRaw.message } : {}),
-      ...(typeof nestedRaw.reason === 'string' ? { reason: nestedRaw.reason } : {}),
-      ...(typeof nestedRaw.agent_id === 'string' ? { agent_id: nestedRaw.agent_id } : {}),
-      ...scopeDetails,
-    } : Object.keys(scopeDetails).length > 0 ? scopeDetails : undefined;
+    const nestedError = nestedHttpError(json);
     const legacyError = typeof json.error === 'string' ? json.error : undefined;
     throw new ArkovaError(
       problem?.detail ?? (typeof nestedError?.message === 'string' ? nestedError.message : undefined) ?? json.message ?? legacyError ?? `${failureLabel}: HTTP ${response.status}`,

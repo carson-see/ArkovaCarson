@@ -80,3 +80,9 @@ installs it with scripts disabled into an OS temp directory outside the checkout
 the installed bin, and asserts no standalone runtime `arkova` dependency. The controlled
 backend seven-operation UAT is candidate transport evidence only; it cannot prove live
 tenant enforcement, real signed ComputeID receipt verification, or partner acceptance.
+
+The 2026-09-29 timeout parser accepts a numeric JSON `timeoutMs` when the
+property is present, otherwise an ASCII positive-decimal `ARKOVA_TIMEOUT_MS`;
+both must be integers from 1 through 120000. The 10-second default applies to
+each fetch/body attempt. Safe/idempotent retries and backoff can extend total
+command time; agent registration, key creation and admission stay single-attempt.

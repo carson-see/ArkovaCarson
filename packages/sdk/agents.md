@@ -210,9 +210,10 @@ The singleton candidate widens `ProofBundle.merkleProof` from a non-empty tuple 
 ## 2026-09-29 — bounded HTTP deadline for the unreleased 3.3.0 client candidate
 
 `ArkovaConfig.timeoutMs` defaults to 10,000 ms and accepts only integer values
-from 1 through 120,000. The deadline covers response headers and body parsing;
+from 1 through 120,000. The per-attempt deadline covers response headers and body parsing;
 expiry raises a sanitized `ArkovaError` with code `request_timeout` and status
 408. A caller's `AbortSignal` on `request()` keeps its own abort semantics.
+Safe/idempotent retries and backoff can extend the total wall-clock duration.
 Agent registration, key creation, admission and other non-idempotent writes
 remain single-attempt after timeout or a dropped response. Reconcile state
 before an operator retries either one-time operation.
