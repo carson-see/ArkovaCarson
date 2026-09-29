@@ -1,3 +1,49 @@
+## 2026-09-29 (PR #3190 review) — `useAnchorVersions.ts` stale-lineage fix; `usePublicAnchorParent.ts` (new)
+
+**Finding 3 — stale lineage across a route change without remount.** `useAnchorVersions`'s
+resolved chain used to be plain `versions` state, cleared only when a NEW effect's `run()`
+finished — a route change from record A to record B (RecordDetailPage stays mounted, only the
+`:id` param and `useAnchor` result change) left A's already-resolved lineage in state for the
+whole window until B's fetch resolved, and if A's slower in-flight request resolved AFTER B's, it
+would OVERWRITE B's correct data with A's stale one. Fixed by keying the stored result
+(`{key, versions}`) by the anchor id it was fetched FOR: the hook's publicly returned `versions`
+is `result.key === currentId ? result.versions : []`, which is a plain derived value computed on
+every render — so it clears the instant `anchor.id` changes, even before the new effect's async
+work starts, with no extra `setState` needed for the clearing itself. A `requestIdRef` generation
+counter additionally drops a response whose request has been superseded by a newer one,
+belt-and-suspenders alongside the effect's existing `cancelled` cleanup flag (which already
+handled the SAME-ordering case but not truly out-of-order resolution robustly enough to rely on
+alone). Tests: `useAnchorVersions.test.ts` gained a `describe('stale-lineage guard ...')` block (2
+cases, TDD red-first — the "clears synchronously" case was confirmed RED pre-fix; the
+"out-of-order resolution" case happened to already pass thanks to the pre-existing `cancelled`
+flag, which is why the key-based fix is a real strengthening, not a no-op).
+`src/pages/RecordDetailPage.stale-lineage.test.tsx` (new) exercises the SAME fix end-to-end
+through the real page (mocking only `@/lib/supabase`), with anchor A given a REAL 2-entry lineage
+(a self-only chain would pass even pre-fix, since `RecordDetailPage`'s existing
+`versions.length > 1 ? versions : undefined` gating already hides that trivially) — confirmed RED
+against the pre-fix hook by temporarily reverting it and re-running both suites.
+
+## `usePublicAnchorParent.ts` (new) — PR #3190 review finding 2
+
+`PublicVerification.tsx`'s SUPERSEDED "view previous version" link was built against a FABRICATED
+response shape — `version_number`/`parent_public_id` typed directly on the `get_public_anchor`
+RPC's response, which (confirmed against production) never emits either field. `get_anchor_lineage`
+does, but is SECURITY DEFINER with EXECUTE granted to neither `anon` nor `authenticated`. This new
+hook instead calls `GET /api/v1/verify/:publicId` (`services/worker/src/api/v1/verify.ts`) — a
+genuinely public, anonymous-GET-allowed endpoint that ALREADY returns `parent_public_id`
+(API-RICH-01, documented in that file's OpenAPI schema) — no SQL/RPC/schema change. Same router
+family `useProofAvailability` already calls from this exact page (its `/proof` sub-path); this
+hook calls the sibling base route. Gated on `enabled: status === 'SUPERSEDED'` so it only fires
+for the page views that would actually show the link. Degrades to `parentPublicId: null` (never
+throws, never blocks the page) on any non-200, malformed body, or network failure — this is a
+supplementary fetch, not a page-blocking one. **Documented side effect, not introduced by this
+hook:** the endpoint's handler writes a `VERIFICATION_QUERIED` audit row on every call (and may
+dispatch a `credential.verified` webhook when that flag is on) — calling it means a SUPERSEDED
+public page view now also produces that audit row, which the RPC path never did. See
+`src/components/verification/agents.md`'s matching correction entry for the full trade-off. Tests:
+`usePublicAnchorParent.test.ts` (8 cases), using the documented response shape from
+`services/worker/src/api/v1/docs.ts`, not an invented one.
+
 ## 2026-09-29 — `useAnchorVersions.ts` (new); `useAnchors.ts`/`usePrivateAnchorList.ts` gain version-lineage columns
 
 `useAnchorVersions(anchor)` (new) walks an anchor's version lineage — up through

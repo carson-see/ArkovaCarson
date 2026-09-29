@@ -214,4 +214,91 @@ describe('useAnchorVersions', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.versions).toEqual([]);
   });
+
+  // PR #3190 review finding 3: navigating from record A to record B (a route
+  // param change, no remount) used to leave A's already-resolved `versions`
+  // in state until B's fetch resolved — and if A's slower in-flight request
+  // resolved AFTER B's, it would OVERWRITE B's correct data with A's stale
+  // lineage. The fix keys the stored result by anchor id and ignores a
+  // response whose request has been superseded by a newer one.
+  describe('stale-lineage guard (navigating A -> B without remount)', () => {
+    function controllableChain(resolvers: Record<string, (value: unknown) => void>) {
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn((_col: string, val: string) => ({
+            is: vi.fn().mockReturnValue({
+              single: vi.fn(
+                () => new Promise((resolve) => {
+                  resolvers[val] = resolve;
+                }),
+              ),
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          })),
+        }),
+      };
+    }
+
+    function row(id: string, filename: string) {
+      return {
+        id,
+        public_id: `ARK-${id}`,
+        version_number: 1,
+        status: 'SECURED',
+        created_at: '2026-01-01T00:00:00Z',
+        filename,
+        fingerprint: 'a'.repeat(64),
+      };
+    }
+
+    it('never shows anchor A while the hook is displaying B, even when A resolves LATE (out of order)', async () => {
+      const resolvers: Record<string, (value: unknown) => void> = {};
+      mockFrom.mockImplementation(() => controllableChain(resolvers));
+
+      const { useAnchorVersions } = await import('./useAnchorVersions');
+      const { result, rerender } = renderHook(
+        ({ anchor }: { anchor: { id: string; versionNumber: number; parentAnchorId: null; status: string } }) =>
+          useAnchorVersions(anchor),
+        { initialProps: { anchor: { id: 'anchor-A', versionNumber: 1, parentAnchorId: null, status: 'SECURED' } } },
+      );
+
+      // Navigate to B before A's request has resolved at all.
+      rerender({ anchor: { id: 'anchor-B', versionNumber: 1, parentAnchorId: null, status: 'SECURED' } });
+
+      // B resolves first.
+      resolvers['anchor-B']({ data: row('anchor-B', 'b.pdf'), error: null });
+      await waitFor(() => expect(result.current.versions.map((v) => v.id)).toEqual(['anchor-B']));
+
+      // A's superseded request resolves LATE.
+      resolvers['anchor-A']({ data: row('anchor-A', 'a.pdf'), error: null });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Must still show B — A's late result must never overwrite it.
+      expect(result.current.versions.map((v) => v.id)).toEqual(['anchor-B']);
+    });
+
+    it('clears the previous record\'s lineage as soon as the anchor id changes, before the new fetch resolves', async () => {
+      const resolvers: Record<string, (value: unknown) => void> = {};
+      mockFrom.mockImplementation(() => controllableChain(resolvers));
+
+      const { useAnchorVersions } = await import('./useAnchorVersions');
+      const { result, rerender } = renderHook(
+        ({ anchor }: { anchor: { id: string; versionNumber: number; parentAnchorId: null; status: string } }) =>
+          useAnchorVersions(anchor),
+        { initialProps: { anchor: { id: 'anchor-A', versionNumber: 1, parentAnchorId: null, status: 'SECURED' } } },
+      );
+
+      resolvers['anchor-A']({ data: row('anchor-A', 'a.pdf'), error: null });
+      await waitFor(() => expect(result.current.versions.map((v) => v.id)).toEqual(['anchor-A']));
+
+      rerender({ anchor: { id: 'anchor-B', versionNumber: 1, parentAnchorId: null, status: 'SECURED' } });
+
+      // Immediately after the id change — before B's fetch has resolved —
+      // the hook must not still be reporting A's lineage as current.
+      expect(result.current.versions.map((v) => v.id)).not.toEqual(['anchor-A']);
+      expect(result.current.loading).toBe(true);
+    });
+  });
 });

@@ -23,7 +23,7 @@
  * @see src/components/anchor/AssetDetailView.tsx
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export interface AnchorVersionEntry {
@@ -83,15 +83,34 @@ interface UseAnchorVersionsReturn {
 }
 
 export function useAnchorVersions(anchor: AnchorVersionsInput | null | undefined): UseAnchorVersionsReturn {
-  const [versions, setVersions] = useState<AnchorVersionEntry[]>([]);
+  // PR #3190 review finding 3 (stale lineage across a route change without
+  // remount): the resolved chain is keyed by the anchor id it was fetched
+  // FOR. Navigating A -> B changes `anchor?.id` before the new fetch
+  // resolves, so `result.key !== currentId` for that whole gap — the
+  // PUBLICLY RETURNED `versions` below is computed from that comparison, not
+  // from the raw state, so A's already-resolved lineage can never leak into
+  // a render for B, even for one frame. `requestIdRef` is a belt-and-suspenders
+  // generation guard: a request that resolves after a NEWER request has
+  // already started is dropped even if it would otherwise win a race
+  // (out-of-order network resolution), rather than relying solely on the
+  // effect's `cancelled` cleanup flag.
+  const [result, setResult] = useState<{ key: string | null; versions: AnchorVersionEntry[] }>({
+    key: null,
+    versions: [],
+  });
   const [loading, setLoading] = useState(false);
+  const requestIdRef = useRef(0);
+
+  const currentId = anchor?.id ?? null;
 
   useEffect(() => {
     let cancelled = false;
+    requestIdRef.current += 1;
+    const myRequestId = requestIdRef.current;
 
-    if (!anchor?.id) {
+    if (!currentId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clear versions when there is no anchor to walk
-      setVersions([]);
+      setResult({ key: null, versions: [] });
       setLoading(false);
       return;
     }
@@ -142,11 +161,17 @@ export function useAnchorVersions(anchor: AnchorVersionsInput | null | undefined
           currentParent = child.id;
         }
 
-        if (!cancelled) {
-          setVersions(collected.sort((a, b) => b.versionNumber - a.versionNumber));
+        // Ignore a response whose request has been superseded by a newer one
+        // (out-of-order network resolution) — belt-and-suspenders alongside
+        // the `cancelled` cleanup flag below.
+        if (!cancelled && requestIdRef.current === myRequestId) {
+          setResult({
+            key: currentId,
+            versions: collected.sort((a, b) => b.versionNumber - a.versionNumber),
+          });
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && requestIdRef.current === myRequestId) setLoading(false);
       }
     }
 
@@ -155,7 +180,13 @@ export function useAnchorVersions(anchor: AnchorVersionsInput | null | undefined
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- status is not read by the walk itself
-  }, [anchor?.id, anchor?.parentAnchorId]);
+  }, [currentId, anchor?.parentAnchorId]);
+
+  // The chain is only reported "current" when it was fetched FOR the anchor
+  // being asked about right now — this is what makes a route change (A -> B,
+  // no remount) synchronously stop reporting A's lineage the instant the id
+  // changes, rather than waiting for B's fetch to resolve.
+  const versions = result.key === currentId ? result.versions : [];
 
   return { versions, loading };
 }
