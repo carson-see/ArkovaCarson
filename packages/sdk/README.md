@@ -86,6 +86,9 @@ const arkova = new Arkova({
   /** Override the API base URL (default: https://api.arkova.ai) */
   baseUrl: 'https://api.arkova.ai',
 
+  /** Per-request deadline, including response body (default: 10 seconds). */
+  timeoutMs: 10_000,
+
   /** Optional retry tuning. Retries apply when the method is safe (GET/HEAD/OPTIONS)
    *  or the call is idempotent (verifyBatch, anchor, anchorBulk). 429 responses
    *  honor Retry-After automatically. */
@@ -103,6 +106,8 @@ const arkova = new Arkova({
 ```
 
 The `apiKey` is the only thing you usually need. The SDK ships pointed at the public production API hostname; only override `baseUrl` for local development or staging.
+
+`timeoutMs` accepts an integer from 1 to 120,000. A deadline failure raises `ArkovaError` with code `request_timeout` and status 408. Agent registration, key creation, and ComputeID admission are non-idempotent and are not retried automatically after a timeout; reconcile their state before retrying. A caller-provided `AbortSignal` on `request()` remains effective.
 
 ---
 

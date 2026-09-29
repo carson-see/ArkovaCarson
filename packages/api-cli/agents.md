@@ -61,10 +61,22 @@ See `packages/sdk/agents.md`, `packages/embed/agents.md`, `sdks/langchain-ts/age
 `sdks/mcp-server/agents.md` for the sibling-package side of the same recovery.
 ## 2026-09-26 — agent lifecycle parity
 
-The private CLI exposes generic agent lifecycle and ComputeID admission through the sibling SDK. Validate request files and flags before the SDK call, and add returned one-time keys to the redaction set before stdout serialization. The `file:../sdk` dependency remains a release limitation.
+The private CLI exposes generic agent lifecycle and ComputeID admission through the sibling SDK. Validate request files and flags before the SDK call, and add returned one-time keys to the redaction set before stdout serialization. The local `file:../sdk` link is now build-time only; the packed executable bundles the SDK and has no runtime sibling-path dependency. See the 2026-09-29 candidate entry below.
 
 An agent update with no fields is a local usage error: exit 2 without invoking the SDK or network. Keep the machine-readable help's register/update flags complete. API failures may expose only the bounded SDK detail allowlist (`code`, `reason`, `permitted`, `agent_id`, `request_id`, `retryable`, `required`, `granted`, `missing`); arbitrary detail keys and secret-like values must never reach stderr.
 
 ## 2026-09-27 — private anchor listing candidate
 
 `anchors list` calls the authenticated organization-bound v1 list contract through `Arkova.listAnchors`; it never substitutes public v2 search. `--tag` requires an explicit `--tag-scope user|organization`. Relative `--since Nh` is converted locally to an RFC3339 timestamp. One invocation returns one bounded page and its cursor; plain-language intent parsing and automatic all-page traversal are later parity slices. Version 0.3.0 remains private/unreleased.
+
+## 2026-09-29 — clean-installed ComputeID client candidate
+
+An isolated consumer exposed a real distribution bug: the packed CLI retained a runtime
+`arkova: file:../sdk` dependency, so npm installed a dangling sibling symlink outside this
+repository. Bundle the SDK into `dist/cli.js` with tsup after a package-local TypeScript
+check, keep `arkova` as a build-time devDependency, and retain `private: true` until a
+separate publication decision. `src/package-metadata.test.ts` now packs the candidate,
+installs it with scripts disabled into an OS temp directory outside the checkout, invokes
+the installed bin, and asserts no standalone runtime `arkova` dependency. The controlled
+backend seven-operation UAT is candidate transport evidence only; it cannot prove live
+tenant enforcement, real signed ComputeID receipt verification, or partner acceptance.

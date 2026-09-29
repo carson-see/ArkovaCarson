@@ -1428,6 +1428,15 @@ describe('verifyBatch', () => {
     });
   });
 
+  it('keeps malformed 202 job responses as async_job_not_supported with unknown ID', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 202, json: async () => { throw new SyntaxError('invalid JSON'); } });
+    await expect(new Arkova({ apiKey: 'ak_test' }).verifyBatch(['ARK-1'])).rejects.toMatchObject({
+      statusCode: 202,
+      code: 'async_job_not_supported',
+      message: expect.stringContaining('job_id=unknown'),
+    });
+  });
+
   it('returns mapped results in input order', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValueOnce({

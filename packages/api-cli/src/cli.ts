@@ -65,7 +65,7 @@ const HELP = {
     'arkova agent computeid admit --request-json file',
   ],
   credentials: 'Set ARKOVA_API_KEY or pass --config - and pipe JSON on stdin.',
-  config: { apiKey: 'required for authenticated commands', baseUrl: 'optional API origin' },
+  config: { apiKey: 'required for authenticated commands', baseUrl: 'optional API origin', timeoutMs: 'optional request deadline (1-120000 ms); ARKOVA_TIMEOUT_MS' },
 };
 
 function writeJson(write: (text: string) => void, value: unknown): void {
@@ -236,7 +236,15 @@ async function loadConfig(args: string[], io: CliIo): Promise<ArkovaConfig> {
   }
   const apiKey = typeof stdinConfig.apiKey === 'string' ? stdinConfig.apiKey : io.env.ARKOVA_API_KEY;
   const baseUrl = typeof stdinConfig.baseUrl === 'string' ? stdinConfig.baseUrl : io.env.ARKOVA_BASE_URL;
-  return { ...(apiKey ? { apiKey } : {}), ...(baseUrl ? { baseUrl } : {}) };
+  const fromStdin = Object.prototype.hasOwnProperty.call(stdinConfig, 'timeoutMs');
+  const timeoutRaw = fromStdin ? stdinConfig.timeoutMs : io.env.ARKOVA_TIMEOUT_MS;
+  const timeoutMs = fromStdin
+    ? (typeof timeoutRaw === 'number' ? timeoutRaw : Number.NaN)
+    : (timeoutRaw === undefined ? undefined : typeof timeoutRaw === 'string' && /^[1-9][0-9]*$/.test(timeoutRaw) ? Number(timeoutRaw) : Number.NaN);
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)) {
+    throw new UsageError('ARKOVA_TIMEOUT_MS or stdin timeoutMs must be an integer from 1 to 120000');
+  }
+  return { ...(apiKey ? { apiKey } : {}), ...(baseUrl ? { baseUrl } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
 }
 
 async function runCommand(args: string[], client: CliClient, readLocalFile: (path: string) => Promise<Buffer>, now: () => Date): Promise<{ value: unknown; exitCode?: number }> {

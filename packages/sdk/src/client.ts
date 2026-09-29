@@ -196,9 +196,16 @@ export class Arkova {
   #apiKey?: string;
   #x402Config?: ArkovaConfig['x402'];
   private readonly retry: Required<Omit<RetryConfig, 'sleep'>>;
+  private readonly timeoutMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly responseCleanup = new WeakMap<Response, () => void>();
 
   constructor(config: ArkovaConfig = {}) {
+    const timeoutMs = config.timeoutMs ?? 10_000;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
+      throw new RangeError('timeoutMs must be an integer from 1 to 120000');
+    }
+    this.timeoutMs = timeoutMs;
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.#apiKey = config.apiKey;
     this.#x402Config = config.x402;
@@ -575,7 +582,7 @@ export class Arkova {
     // This should not happen given the client-side cap above, but guard
     // defensively so the SDK never crashes on `.results.map()` of undefined.
     if (response.status === 202) {
-      const job = await response.json().catch(() => ({})) as { job_id?: string };
+      const job = await jsonOrThrow<{ job_id?: string }>(response, 'Batch verification failed');
       throw new ArkovaError(
         `verifyBatch received an async job response (job_id=${job.job_id ?? 'unknown'}). Reduce batch size to ${VERIFY_BATCH_SYNC_LIMIT} or fewer.`,
         202,
@@ -800,6 +807,7 @@ export class Arkova {
     delete: async (id: string): Promise<void> => {
       const response = await this.fetch(`/api/v1/folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!response.ok) await jsonOrThrow(response, 'Folder delete failed');
+      else await this.discardResponse(response);
     },
     moveRecords: async (anchorIds: string[], folderId: string | null): Promise<BulkFolderMoveResult> => {
       const response = await this.fetch('/api/v1/folders/bulk-move', {
@@ -1001,7 +1009,7 @@ export class Arkova {
       // 204 has no body but Response.ok is true; jsonOrThrow handles the error case.
       if (!response.ok) {
         await jsonOrThrow(response, 'Webhook delete failed');
-      }
+      } else await this.discardResponse(response);
     },
 
     /**
@@ -1037,6 +1045,7 @@ export class Arkova {
     const response = await this.fetch(`/api/v1/nessie/query?${params}`);
 
     if (!response.ok) {
+      await this.discardResponse(response);
       throw new ArkovaError(`Query failed: HTTP ${response.status}`, response.status);
     }
 
@@ -1084,6 +1093,7 @@ export class Arkova {
     const response = await this.fetch(`/api/v1/nessie/query?${params}`);
 
     if (!response.ok) {
+      await this.discardResponse(response);
       throw new ArkovaError(`Query failed: HTTP ${response.status}`, response.status);
     }
 
@@ -1155,24 +1165,73 @@ export class Arkova {
     let attempt = 0;
 
     while (true) {
+      const callerSignal = init?.signal;
+      if (callerSignal?.aborted) throw callerSignal.reason ?? new DOMException('Request aborted', 'AbortError');
+      const controller = new AbortController();
+      const forwardAbort = () => controller.abort(callerSignal?.reason);
+      if (callerSignal?.aborted) forwardAbort();
+      else callerSignal?.addEventListener('abort', forwardAbort, { once: true });
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        cleanup();
+      }, this.timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        callerSignal?.removeEventListener('abort', forwardAbort);
+      };
       try {
-        const response = await globalThis.fetch(url, requestInit);
+        const response = await globalThis.fetch(url, { ...requestInit, signal: controller.signal });
         if (!retryable || !shouldRetryResponse(response) || attempt >= this.retry.retries) {
-          return response;
+          // All SDK response parsing uses json/text. Keep the deadline active
+          // until body consumption ends, not just until headers arrive.
+          if (response instanceof Response && response.body === null) cleanup();
+          const guardedResponse = new Proxy(response, {
+            get(target, key) {
+              const value = Reflect.get(target, key, target);
+              if (['json', 'text', 'arrayBuffer', 'blob', 'formData'].includes(String(key)) && typeof value === 'function') {
+                return async (...args: unknown[]) => {
+                  try {
+                    return await value.apply(target, args);
+                  } catch (error) {
+                    if (timedOut && !callerSignal?.aborted) throw new ArkovaError('Arkova API request timed out', 408, 'request_timeout');
+                    throw error;
+                  } finally {
+                    cleanup();
+                  }
+                };
+              }
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
+          this.responseCleanup.set(guardedResponse, cleanup);
+          return guardedResponse;
         }
         // The retried response is discarded — release its body so the
         // connection is not held open until GC.
+        cleanup();
         await response.body?.cancel().catch(() => {});
         await this.sleep(retryDelayMs(response, attempt, this.retry));
         attempt += 1;
       } catch (err) {
+        cleanup();
+        const failure = timedOut && !callerSignal?.aborted
+          ? new ArkovaError('Arkova API request timed out', 408, 'request_timeout') : err;
+        if (callerSignal?.aborted) throw failure;
         if (!retryable || attempt >= this.retry.retries) {
-          throw err;
+          throw failure;
         }
         await this.sleep(backoffDelayMs(attempt, this.retry));
         attempt += 1;
       }
     }
+  }
+
+  private async discardResponse(response: Response): Promise<void> {
+    this.responseCleanup.get(response)?.();
+    this.responseCleanup.delete(response);
+    await response.body?.cancel().catch(() => {});
   }
 }
 
@@ -1238,7 +1297,14 @@ function scopeErrorDetails(value: unknown): Record<string, unknown> {
 }
 
 async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise<T> {
-  const decoded: unknown = await response.json().catch(() => ({}));
+  let decoded: unknown;
+  try {
+    decoded = await response.json();
+  } catch (error) {
+    if (error instanceof ArkovaError && error.code === 'request_timeout') throw error;
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
+    decoded = {};
+  }
   const json = (decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}) as {
     message?: string;
     error?: string | { code?: string; message?: string; [key: string]: unknown };
