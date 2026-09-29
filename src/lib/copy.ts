@@ -729,6 +729,10 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'suborg.credits_reclaimed': 'A parent organization reclaimed credits from an affiliated organization.',
   'suborg.suspended': 'An affiliated organization was suspended by its parent organization.',
   'suborg.offboarded': 'An affiliated organization was offboarded — credits returned and the organization suspended.',
+  'agent.registered': 'An agent was registered and its current authorized state can be refreshed.',
+  'agent.updated': 'An agent profile or effective authorization state changed and should be refreshed.',
+  'agent.revoked': 'An agent was permanently revoked.',
+  'agent.key_created': 'A new key was created for an agent. The key secret is never included.',
 };
 
 // =============================================================================

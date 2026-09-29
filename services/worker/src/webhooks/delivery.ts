@@ -782,6 +782,10 @@ export function deriveResourceKey(
     const family = eventType.split('.')[0] || 'event';
     return `${family}:${pid}`;
   }
+  const agentId = data.agent_id;
+  if (eventType.startsWith('agent.') && typeof agentId === 'string' && agentId.length > 0) {
+    return `agent:${agentId}`;
+  }
   return null;
 }
 

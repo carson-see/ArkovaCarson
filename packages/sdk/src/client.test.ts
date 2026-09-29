@@ -1534,6 +1534,10 @@ const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
   'suborg.credits_reclaimed': true,
   'suborg.suspended': true,
   'suborg.offboarded': true,
+  'agent.registered': true,
+  'agent.updated': true,
+  'agent.revoked': true,
+  'agent.key_created': true,
 };
 
 describe('WebhookEventType', () => {
@@ -1570,6 +1574,10 @@ describe('WebhookEventType', () => {
         'suborg.offboarded',
         'suborg.revoked',
         'suborg.suspended',
+        'agent.registered',
+        'agent.updated',
+        'agent.revoked',
+        'agent.key_created',
       ].sort(),
     );
   });
@@ -2103,6 +2111,15 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
     proof_schema_version: 1,
     signature: null,
   };
+  const COHERENT_SINGLETON_WIRE_BUNDLE = {
+    ...COMPLETE_WIRE_BUNDLE,
+    fingerprint: 'ff'.repeat(32),
+    merkle_root: 'FF'.repeat(32),
+    merkle_proof: [],
+    merkle_index: 0,
+    leaf_count: 1,
+    op_return_payload: '41524b56' + 'ff'.repeat(32),
+  };
 
   const malformedBundles: Array<[string, Record<string, unknown>]> = [
     ['missing tx_id', { ...COMPLETE_WIRE_BUNDLE, tx_id: undefined }],
@@ -2110,7 +2127,21 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
     ['wrong-typed leaf_count (string)', { ...COMPLETE_WIRE_BUNDLE, leaf_count: '4' }],
     ['missing block_header', { ...COMPLETE_WIRE_BUNDLE, block_header: undefined }],
     ['non-array merkle_proof', { ...COMPLETE_WIRE_BUNDLE, merkle_proof: 'nope' }],
-    ['empty merkle_proof', { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [] }],
+    ['missing singleton merkle_proof', { ...COHERENT_SINGLETON_WIRE_BUNDLE, merkle_proof: undefined }],
+    ['null singleton merkle_proof', { ...COHERENT_SINGLETON_WIRE_BUNDLE, merkle_proof: null }],
+    [
+      'empty singleton merkle_proof with equal non-hex leaf and root',
+      { ...COHERENT_SINGLETON_WIRE_BUNDLE, fingerprint: 'not-hex', merkle_root: 'not-hex' },
+    ],
+    ['empty multi-leaf merkle_proof', { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [] }],
+    [
+      'empty singleton merkle_proof with nonzero index',
+      { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [], leaf_count: 1, merkle_index: 1 },
+    ],
+    [
+      'empty singleton merkle_proof whose root differs from fingerprint',
+      { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [], leaf_count: 1, merkle_index: 0 },
+    ],
     [
       'malformed merkle_proof entry (bad position)',
       { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [{ hash: 'bb'.repeat(32), position: 'up' }] },
@@ -2147,4 +2178,27 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
       expect(result.proofBundle).toBeNull();
     },
   );
+
+  it('preserves a coherent single-leaf bundle whose inclusion branch is empty', async () => {
+    const fingerprint = 'ff'.repeat(32);
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'singleton',
+        fingerprint,
+        merkle_root: fingerprint.toUpperCase(),
+        merkle_proof: [],
+        verified: true,
+        proof_bundle: COHERENT_SINGLETON_WIRE_BUNDLE,
+      }),
+    });
+
+    const result = await client.getMerkleProof('singleton');
+    expect(result.proofBundle).not.toBeNull();
+    expect(result.proofBundle?.merkleProof).toEqual([]);
+    expect(result.proofBundle?.leafCount).toBe(1);
+    expect(result.proofBundle?.merkleIndex).toBe(0);
+  });
 });

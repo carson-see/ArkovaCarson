@@ -53,7 +53,11 @@ export type WebhookEventType =
   | 'suborg.credits_allocated'
   | 'suborg.credits_reclaimed'
   | 'suborg.suspended'
-  | 'suborg.offboarded';
+  | 'suborg.offboarded'
+  | 'agent.registered'
+  | 'agent.updated'
+  | 'agent.revoked'
+  | 'agent.key_created';
 export interface Folder {
   id: string;
   publicId: string;
@@ -515,12 +519,11 @@ export interface ProofBundle {
   fingerprint: string;
   merkleRoot: string;
   /**
-   * The inclusion branch. A complete (non-null) bundle always ships a non-empty
-   * branch — `mapProofBundle` fails closed (returns null) on an empty/malformed
-   * array, so consumers can rely on `proofBundle !== null ⇒ independently
-   * verifiable` (CodeRabbit).
+   * The inclusion branch. An empty branch is complete only for a coherent
+   * single-leaf tree (`leafCount=1`, `merkleIndex=0`, root=fingerprint).
+   * Other empty or malformed branches fail closed in `mapProofBundle`.
    */
-  merkleProof: [MerkleProofEntry, ...MerkleProofEntry[]];
+  merkleProof: MerkleProofEntry[];
   /**
    * The leaf's index in the batch tree. Non-null in a complete bundle — together
    * with `leafCount` it arms the CVE-2012-2459 duplicate-leaf structural guard.

@@ -164,6 +164,16 @@ reachable yet — no delivery of that event has occurred. See
 `services/worker/src/webhooks/agents.md`.
 
 UAT-23 adds `anchorImport()` without changing legacy `anchorBulk()`: strict 1–100 fingerprint rows, API-key-derived tenant, and no automatic write retry.
+
+## 2026-09-26 — singleton proof-bundle parity repair
+
+`getMerkleProof()` accepts an empty application-tree branch only when the wire
+bundle describes the one valid empty-branch case: `leaf_count=1`,
+`merkle_index=0`, and `fingerprint == merkle_root`. Multi-leaf, wrong-index,
+and root-mismatch empty branches still map to `proofBundle = null`.
+The repair was first packaged as 3.2.1 and is folded into the unreleased 3.3.0
+combined candidate; publishing is not authorized here.
+
 ## 2026-09-19 — Finality webhook event types
 
 The SDK webhook union includes `anchor.revocation_anchored` and
@@ -190,3 +200,7 @@ downgraded the version, never dropped the newer status sets or folder events) an
 #2986's `DEFAULT_BASE_URL`/`engines`/`@types/node` qualification fixes on top. See
 `packages/embed/agents.md`, `sdks/langchain-ts/agents.md`, `sdks/mcp-server/agents.md`, and
 `packages/api-cli/agents.md` for the sibling-package side of the same recovery.
+
+## 2026-09-26 — agent lifecycle webhook subscription types
+
+The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized; the combined candidate includes the singleton proof repair and still requires qualification.

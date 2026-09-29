@@ -62,6 +62,11 @@ If you are here to settle it, the question is: for a SINGLE-LEAF app tree, is
 `merkleProof: []` an honest complete branch (root == leaf) or an unverifiable
 one? The bitcoin-tree side has already answered the analogous question with
 "complete". Whichever way it goes, the two should end up agreeing.
+
+Settled 2026-09-26: `[]` is complete only for a coherent singleton bundle
+(`leaf_count=1`, `merkle_index=0`, case-insensitive root=fingerprint). The
+mapper keeps missing/null branches and every incoherent empty branch fail-closed.
+
 ## DI-775 / SCRUM-3538 — `WebhookEventType` mirrors the worker allowlist
 
 `WebhookEventType` in `types.ts` is a hand-maintained mirror of
@@ -121,6 +126,10 @@ The folder contract suite must cover omission-safe rename, explicit root reparen
 ## 2026-09-19 — remaining webhook types mirrored
 
 `WebhookEventType` includes `job.completed` plus the four registered compliance contracts. The exhaustive client-test pin and repository drift gate keep the SDK union aligned with the worker allowlist; this is a source change for the next artifact freeze and does not claim a package release.
+
+## 2026-09-26 — agent lifecycle webhook event names
+
+`WebhookEventType` and its exhaustive `WEBHOOK_EVENT_TYPE_PIN` include `agent.registered`, `agent.updated`, `agent.revoked`, and `agent.key_created` in worker registry order. This additive source change remains part of the unreleased 3.3.0 artifact; it does not authorize publishing; the combined candidate includes the singleton proof repair and still requires qualification.
 
 ## SCRUM-5211 — authenticated redirects fail closed
 

@@ -423,6 +423,36 @@ describe('HMAC-SHA256 webhook signing', () => {
     expect(headers['X-Arkova-Signature']).toBe(expectedHmac);
   });
 
+  it('delivers a tenant-scoped secret-free agent.key_created event through signing and delivery-log identity', async () => {
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-agent-key' }, error: null });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    setupDbRouting();
+    const data = { agent_id: '22222222-2222-4222-8222-222222222222', key_id: '44444444-4444-4444-8444-444444444444', source: 'api', occurred_at: '2026-03-10T12:00:00.000Z' };
+    await dispatchWebhookEvent('org-001', 'agent.key_created', '44444444-4444-4444-8444-444444444444', data);
+    expect(endpointsSelect.eq).toHaveBeenCalledWith('org_id', 'org-001');
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Arkova-Event']).toBe('agent.key_created');
+    const expectedHmac = crypto.createHmac('sha256', MOCK_ENDPOINT.secret_hash)
+      .update(`${options.headers['X-Arkova-Timestamp']}.${options.body}`).digest('hex');
+    expect(options.headers['X-Arkova-Signature']).toBe(expectedHmac);
+    expect(JSON.parse(options.body).data).toEqual(data);
+    expect(options.body).not.toMatch(/raw|hash|prefix|passport|receipt|metadata/i);
+    expect(deliveryLogInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+      event_id: '44444444-4444-4444-8444-444444444444',
+      idempotency_key: 'ep-001-agent.key_created-44444444-4444-4444-8444-444444444444',
+      payload: expect.objectContaining({
+        event_type: 'agent.key_created',
+        event_id: '44444444-4444-4444-8444-444444444444',
+        resource_key: 'agent:22222222-2222-4222-8222-222222222222',
+        data,
+      }),
+    }));
+  });
+
   it('produces different signatures for different secrets', () => {
     const payload = '{"test":true}';
     const hmac1 = crypto.createHmac('sha256', HMAC_FIXTURE_A).update(payload).digest('hex');
@@ -1651,6 +1681,41 @@ describe('processWebhookRetries', () => {
     );
   });
 
+  it('retries the same logical agent event with its frozen payload and resource identity', async () => {
+    const payload = {
+      event_type: 'agent.key_created',
+      event_id: '44444444-4444-4444-8444-444444444444',
+      timestamp: '2026-03-10T11:55:00Z',
+      resource_key: 'agent:22222222-2222-4222-8222-222222222222',
+      sequence: 42,
+      data: { agent_id: '22222222-2222-4222-8222-222222222222', key_id: '44444444-4444-4444-8444-444444444444', source: 'api', occurred_at: '2026-03-10T11:55:00Z' },
+    };
+    retryLogsSelect.limit.mockResolvedValue({ data: [{
+      id: 'log-agent-retry', attempt_number: 1, payload, webhook_endpoints: MOCK_ENDPOINT,
+    }], error: null });
+    deliveryLogSelect.single.mockResolvedValue({
+      data: { id: 'log-agent-retry', status: 'retrying', attempt_number: 1 }, error: null,
+    });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockDbFrom.mockImplementation((table: string) => table === 'webhook_delivery_logs' ? {
+      select: (...args: string[]) => args[0]?.includes('webhook_endpoints')
+        ? { eq: retryLogsSelect.eq }
+        : { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) },
+      insert: deliveryLogInsert.insert,
+      update: deliveryLogUpdate.update,
+    } : {});
+
+    expect(await processWebhookRetries()).toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual(payload);
+    expect(deliveryLogUpdate.update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      status: 'pending', attempt_number: 2,
+    }));
+    expect(deliveryLogUpdate.update).toHaveBeenNthCalledWith(2, expect.objectContaining({ status: 'success' }));
+    expect(deliveryLogInsert.insert).not.toHaveBeenCalled();
+  });
+
   it('queries for retrying status with past next_retry_at', async () => {
     retryLogsSelect.limit.mockResolvedValue({ data: [], error: null });
 
@@ -1688,6 +1753,10 @@ describe('processWebhookRetries', () => {
 // ================================================================
 
 describe('deriveResourceKey (SCRUM-2250)', () => {
+  it('groups agent lifecycle retries by customer-visible agent id', () => {
+    expect(deriveResourceKey('agent.key_created', { agent_id: '22222222-2222-4222-8222-222222222222' }))
+      .toBe('agent:22222222-2222-4222-8222-222222222222');
+  });
   it('derives a family-namespaced key from data.public_id', () => {
     expect(deriveResourceKey('anchor.secured', { public_id: 'pub-001' })).toBe('anchor:pub-001');
     expect(deriveResourceKey('credential.issued', { public_id: 'pub-001' })).toBe(
