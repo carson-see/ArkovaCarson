@@ -1,3 +1,25 @@
+## 2026-09-29 — DRIVE-BACKFILL: `drive-initial-sync-runner.ts` (founder directive 2026-09-29)
+
+New file, the Drive twin of `drive-file-changed.ts` relative to
+`integrations/connectors/drive-artifact-producer.ts`: real DB/Drive/job_queue
+wiring for `processDriveInitialSyncJob`
+(`integrations/connectors/drive-initial-sync.ts` — see that folder's agents.md
+for the full feature). `makeDriveInitialSyncJobDeps` resolves the access token
+via the SAME `loadDriveAccessToken` (`drive-changes-runner.ts`) + one shared
+KMS client per deps instance (same leaked-gRPC-channel fix as
+`drive-file-changed.ts`'s `makeDriveFileChangedJobDeps`); `enqueueFileChangedJob`
+validates against the EXACT `DriveFileChangedJobPayload` schema the live
+changes runner enqueues against, so the two producers can never drift.
+`runDriveInitialSyncJobs` drains the `google_drive.initial_sync` job_queue type
+under a per-org run lease (`driveInitialSyncRunLeaseSpec`, reusing
+`run-lease.ts`'s TTL-lease primitive exactly like `drive-changes-runner.ts`'s
+`driveChangesRunLeaseSpec`) — a lease miss throws `drive_initial_sync_locked`
+so `utils/jobQueue.ts`'s own exponential backoff retries later, rather than
+busy-looping or silently dropping the run. Wired into `routes/cron.ts`
+(`POST /jobs/drive-initial-sync`, Cloud Scheduler) and `routes/scheduled.ts`
+(in-process node-cron backup), same dual-wiring pattern as every other
+connector job drain in this file.
+
 ## 2026-09-25 — Founder decision: connector document updates SUPERSEDE, never duplicate or REVOKE
 
 `connector-artifact-drain.ts` previously did a plain `INSERT INTO anchors(...)` per drained
