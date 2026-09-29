@@ -8,7 +8,7 @@
  */
 
 export { verifyProof } from './verify.js';
-export type { VerifyReport, VerifyStep, VerifyOptions, StepStatus } from './verify.js';
+export type { VerifyReport, VerifyStep, VerifyOptions, StepStatus, VerifyVerdict } from './verify.js';
 export { renderReport } from './lib/report.js';
 export { assertIndependentEndpoint, DEFAULT_ESPLORA } from './lib/independent-endpoint.js';
 export { verifyBundleSignature } from './lib/signature.js';

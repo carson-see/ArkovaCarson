@@ -2,6 +2,13 @@
 
 _Last updated: 2026-04-24_
 
+## 2026-09-27 — recipient identity pepper inventory
+
+`RECIPIENT_IDENTIFIER_PEPPER` is production-required and therefore belongs in
+`EXPECTED_SECRETS`. Its deploy binding is deliberately pinned to Secret Manager
+version 1 because rotating this durable key would break matching against stored
+recipient identifiers unless a versioned identifier migration accompanies it.
+
 ## What This Folder Contains
 
 SEC-HARDEN-02 secret-inventory audit tooling. The CLI here is the enforcement backbone for [SCRUM-1055](https://arkova.atlassian.net/browse/SCRUM-1055) — it flags drift between the required Secret Manager inventory (`EXPECTED_SECRETS`) and the actual `--set-secrets` bindings in `.github/workflows/deploy-worker.yml`, while reporting optional tooling-only secrets separately.

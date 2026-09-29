@@ -50,7 +50,7 @@
  * `manualChunks` for `vendor-tiff` / `vendor-heic` / `vendor-png-encode`).
  */
 
-import { OCR_LABELS } from './copy';
+import { OCR_LABELS, SPREADSHEET_IMPORT_ERRORS } from './copy';
 import { OcrEngineLoadError, UnsupportedImageFormatError } from './ocrFailClosed';
 
 /** Lower-cased file extension including the leading dot (e.g. `.heic`). */
@@ -85,6 +85,9 @@ const HEIC_MIME_TYPES = new Set([
   'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
 ]);
 const HEIC_EXTENSIONS = new Set(['.heic', '.heif']);
+
+const MAX_SPREADSHEET_ROWS_PER_SHEET = 10_000;
+const MAX_SPREADSHEET_BYTES = 10 * 1024 * 1024;
 
 /** Detects TIFF by MIME OR extension — real browser file metadata is often empty/generic for this format. */
 function isTiffFile(file: File): boolean {
@@ -681,14 +684,35 @@ async function extractTextFromSpreadsheet(
   const start = Date.now();
   onProgress?.({ stage: 'loading', progress: 10 });
 
+  // Reject before importing SheetJS or materializing an ArrayBuffer. Row
+  // limits bound worksheet conversion, but do not bound ZIP/CFB parse work.
+  if (file.size > MAX_SPREADSHEET_BYTES) {
+    throw new Error(SPREADSHEET_IMPORT_ERRORS.FILE_TOO_LARGE);
+  }
+
   const XLSX = await import('xlsx');
   const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const workbook = XLSX.read(arrayBuffer, {
+    type: 'array',
+    dense: true,
+    cellFormula: false,
+    cellHTML: false,
+    sheetRows: MAX_SPREADSHEET_ROWS_PER_SHEET + 1,
+  });
 
   onProgress?.({ stage: 'processing', progress: 50, totalPages: workbook.SheetNames.length });
 
   const sheetTexts = workbook.SheetNames.map((sheetName) => {
     const sheet = workbook.Sheets[sheetName];
+    const declaredRange = sheet?.['!fullref'] ?? sheet?.['!ref'];
+    if (
+      declaredRange &&
+      XLSX.utils.decode_range(declaredRange).e.r + 1 > MAX_SPREADSHEET_ROWS_PER_SHEET
+    ) {
+      throw new Error(
+        SPREADSHEET_IMPORT_ERRORS.TOO_MANY_ROWS(MAX_SPREADSHEET_ROWS_PER_SHEET),
+      );
+    }
     const csv = sheet ? XLSX.utils.sheet_to_csv(sheet) : '';
     return `# ${sheetName}\n${csv}`.trimEnd();
   });

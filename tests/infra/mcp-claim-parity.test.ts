@@ -25,6 +25,7 @@ import {
   PROSE_SURFACES,
   type Baseline,
 } from '../../scripts/ci/check-mcp-claim-parity.js';
+import { TOOL_DEFINITIONS } from '../../services/edge/src/mcp-tools';
 
 const ROOT = join(__dirname, '..', '..');
 const baseline = JSON.parse(readFileSync(join(ROOT, BASELINE_FILE), 'utf-8')) as Baseline;
@@ -45,7 +46,7 @@ describe('MCP claim parity — live surfaces', () => {
     // (renamed file, changed constant), every rule over it would report clean.
     const paths = input.surfaces.map((s) => s.path);
     for (const prose of PROSE_SURFACES) expect(paths).toContain(prose);
-    expect(input.canonical.length).toBe(19);
+    expect(input.canonical.length).toBe(TOOL_DEFINITIONS.length);
     for (const surface of input.surfaces) {
       expect(
         (surface.text?.length ?? 0) > 0 || Object.keys(surface.descriptions ?? {}).length > 0,

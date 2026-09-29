@@ -519,6 +519,15 @@ New `copy.ts` block: `FingerprintSource` type, `FINGERPRINT_SOURCE_LABELS`/`_DES
 **R-7 claims gate invariant:** `issuer_record_attestation` copy must never state or imply Arkova received, reviewed, or verified a source document. Enforced by `fingerprintSource.test.ts` + `FingerprintSourceDisplay.test.tsx`.
 ## 2026-07-28 W2 / F1 spreadsheet dual-mode document extraction (founder ruling, PR TBD)
 
+Legacy spreadsheet reads use the exact official SheetJS 0.20.3 CDN artifact.
+Every untrusted SheetJS read must remain bounded (`sheetRows` plus declared-range
+validation), dense, configured with formula/HTML metadata parsing disabled, and
+preceded by the 10 MiB byte limit before the module import or `arrayBuffer()`.
+Row-mode also defines header properties without invoking `__proto__` setters.
+Do not restore an npm-registry SheetJS version below 0.20.2 or add a new
+unbounded `XLSX.read` call; both the row importer and document OCR path share
+this security boundary.
+
 `ocrWorker.ts` gained a new `extractTextFromSpreadsheet()` handler (dynamic `import('xlsx')`, the SheetJS package, added as a new pinned dependency `xlsx@0.18.5`) routed for `.xlsx`/`.xls`/`.ods` (by MIME OR extension, same dispatch pattern as the existing PDF/DOCX branches). Each sheet in the workbook is rendered via `XLSX.utils.sheet_to_csv` and joined into one text block; `OCRResult.method` gained a `'spreadsheet'` member. `.csv` is deliberately left on the pre-existing `TEXT_TYPES`/`TEXT_EXTENSIONS` plain-text path — it was never broken. Before this change, `.xlsx`/`.xls`/`.ods` fell through every branch in `extractText` and hit the generic `UNSUPPORTED_FILE_TYPE` throw — a silent soft-fail (the F1 sprint amendment specifically bans soft-fail-to-manual-entry for the 22 launch formats). New fixtures `src/lib/fixtures/spreadsheets/sample-roster.{xlsx,xls,ods,csv}` are REAL binary files generated with the `xlsx` package's own writer (see that folder's `agents.md`), consumed by `ocrWorker.test.ts` and `xlsxParser.test.ts` for genuine (non-mocked) round-trip extraction tests. Row-mode (`xlsxParser.ts`, backed by `read-excel-file`, powering per-record bulk/credential-issuance import) is completely untouched — this is a NEW, separate document-mode path, not a replacement.
 
 The actual mode CHOICE lives in `src/components/anchor/FileUpload.tsx` (see that folder's `agents.md`) — a single dropped spreadsheet now pauses on an explicit "Import as a list of records" vs "Secure this file as a document" step before either `onBulkDetected` or the normal single-doc `generateFingerprint`/`onFileSelect` path fires. New copy block `SPREADSHEET_MODE_LABELS` in `copy.ts` (§1.3-clean; `lint:copy` green).

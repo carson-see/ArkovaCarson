@@ -39,6 +39,8 @@ The application publishes machine-readable discovery resources at:
 - `/.well-known/openid-configuration` — redirect to the canonical production OIDC issuer
 - `/.well-known/oauth-protected-resource` — RFC 9728 protected-resource metadata
 - `/.well-known/mcp/server-card.json` — remote MCP server card
+
+The server card mirrors every hosted `TOOL_DEFINITIONS` name, description, and input-property description exactly. Registry growth must update this file through parity tests rather than by copying an independent count.
 - `/.well-known/agent-skills/index.json` — Agent Skills Discovery v0.2.0 index
 - `/auth.md` — administrator-mediated API-key provisioning and OIDC instructions
 

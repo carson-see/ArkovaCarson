@@ -12,10 +12,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from './cli.js';
 import { TOOL_DEFINITIONS } from './index.js';
+
+const packageVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -33,6 +36,14 @@ async function connectedClient(): Promise<Client> {
 }
 
 describe('createServer', () => {
+  it('reports the package version during MCP initialization', async () => {
+    const client = await connectedClient();
+    expect(client.getServerVersion()).toMatchObject({
+      name: 'arkova-mcp-server',
+      version: packageVersion,
+    });
+  });
+
   it('lists every TOOL_DEFINITIONS entry over the real MCP protocol', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();

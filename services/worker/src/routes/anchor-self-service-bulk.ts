@@ -53,6 +53,7 @@ export async function submitCanonicalRow(req: Request, body: Record<string, unkn
   const headers = new Map<string, string | number | readonly string[]>();
   const response = {
     status(code: number) { status = code; return this; },
+    type(value: string) { headers.set('content-type', value); return this; },
     json(value: Record<string, unknown>) { responseBody = value; return this; },
     setHeader(name: string, value: string | number | readonly string[]) { headers.set(name.toLowerCase(), value); return this; },
     getHeader(name: string) { return headers.get(name.toLowerCase()); },

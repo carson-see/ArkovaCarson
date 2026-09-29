@@ -84,7 +84,7 @@ export interface ToolDefinition {
 }
 
 export interface ToolInputSchemaProperty {
-  type: string;
+  type: string | string[];
   description?: string;
   enum?: string[];
   format?: string;
@@ -93,7 +93,12 @@ export interface ToolInputSchemaProperty {
   maxItems?: number;
   minLength?: number;
   maxLength?: number;
+  minimum?: number;
+  maximum?: number;
   pattern?: string;
+  properties?: Record<string, ToolInputSchemaProperty>;
+  required?: string[];
+  additionalProperties?: boolean;
 }
 
 export interface ToolResult {
@@ -231,6 +236,11 @@ export interface SupabaseConfig {
    * the lowercase text fallback only.
    */
   workerBaseUrl?: string;
+  /** Exact isolated-staging Access host; never a production/shared host. */
+  workerAccessHost?: string;
+  /** Rig-only Cloudflare Access service-token credentials. Never logged. */
+  workerAccessClientId?: string;
+  workerAccessClientSecret?: string;
   /**
    * The RAW API key the caller presented on the inbound MCP request
    * (X-API-Key auth only; absent for OAuth Bearer callers). Forwarded
@@ -251,6 +261,81 @@ export interface SupabaseConfig {
    * capability still answered with a success-shaped `{total, results}` payload.
    */
   nessieEnabled?: boolean;
+}
+
+const ISOLATED_STAGING_ACCESS_HOST = /^ar20-closure-[a-z0-9-]+\.arkova\.ai$/;
+
+export function hasValidWorkerAccessConfig(config: Pick<SupabaseConfig,
+  'workerBaseUrl' | 'workerAccessHost' | 'workerAccessClientId' | 'workerAccessClientSecret'>): boolean {
+  const accessValues = [config.workerAccessHost, config.workerAccessClientId, config.workerAccessClientSecret];
+  const accessCount = accessValues.filter(value => typeof value === 'string' && value.length > 0).length;
+  if (accessCount === 0) return true;
+  if (accessCount !== accessValues.length || !config.workerBaseUrl) return false;
+  try {
+    const base = new URL(config.workerBaseUrl);
+    return base.protocol === 'https:'
+      && !base.username
+      && !base.password
+      && !base.port
+      && base.pathname === '/'
+      && !base.search
+      && !base.hash
+      && config.workerAccessHost === base.hostname
+      && ISOLATED_STAGING_ACCESS_HOST.test(base.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch one path from the configured worker origin. Optional Cloudflare Access
+ * credentials are accepted only as a complete pair bound to one exact,
+ * isolated-staging hostname. Redirects stay manual so neither Access nor
+ * caller credentials can be replayed to a Location target.
+ */
+async function workerFetch(
+  config: SupabaseConfig,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  if (!config.workerBaseUrl) throw new Error('worker_base_url_missing');
+  const base = new URL(config.workerBaseUrl);
+  if (!hasValidWorkerAccessConfig(config)) throw new Error('worker_access_config_invalid');
+  const hasAccess = Boolean(config.workerAccessHost);
+  const target = /^https?:\/\//i.test(path)
+    ? new URL(path)
+    : new URL(`${hasAccess ? base.origin : config.workerBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`);
+  if (target.origin !== base.origin) {
+    throw new Error('worker_origin_invalid');
+  }
+
+  const accessValues = [config.workerAccessHost, config.workerAccessClientId, config.workerAccessClientSecret];
+  const accessCount = accessValues.filter(value => typeof value === 'string' && value.length > 0).length;
+  let accessHeaders: Record<string, string> = {};
+  if (accessCount !== 0) {
+    accessHeaders = {
+      'CF-Access-Client-Id': config.workerAccessClientId!,
+      'CF-Access-Client-Secret': config.workerAccessClientSecret!,
+    };
+  }
+
+  const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(accessHeaders)) headers.set(name, value);
+  const canonicalHeaderName = (name: string): string => ({
+    accept: 'Accept',
+    authorization: 'Authorization',
+    'content-type': 'Content-Type',
+    'x-api-key': 'X-API-Key',
+    'cf-access-client-id': 'CF-Access-Client-Id',
+    'cf-access-client-secret': 'CF-Access-Client-Secret',
+  })[name] ?? name;
+  const requestHeaders: Record<string, string> = {};
+  headers.forEach((value, name) => { requestHeaders[canonicalHeaderName(name)] = value; });
+  return fetch(target.toString(), {
+    ...init,
+    redirect: 'manual',
+    headers: requestHeaders,
+  });
 }
 
 const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
@@ -324,6 +409,169 @@ export interface ManageFoldersInput {
   record_public_ids?: string[];
 }
 
+export interface AgentLifecycleInput {
+  agent_id?: string;
+  name?: string;
+  description?: string;
+  agent_type?: string;
+  allowed_scopes?: string[];
+  status?: 'active' | 'suspended';
+  framework?: string;
+  version?: string;
+  callback_url?: string | null;
+  metadata?: Record<string, unknown>;
+  passport_id?: string;
+  verification_receipt?: Record<string, unknown>;
+}
+
+/** Canonical worker proxy for all agent operations. It never substitutes the
+ * edge service credential and never forwards two caller credentials. */
+// Keep permission-denial recovery useful without reflecting arbitrary response data.
+function scopeErrorDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const isScope = (scope: unknown): scope is string => typeof scope === 'string' && scope.length > 0 && scope.length <= 80 && !/[^a-z0-9:._-]/i.test(scope);
+  const details: Record<string, unknown> = {};
+  if (isScope(source.required)) details.required = source.required;
+  for (const field of ['granted', 'missing', 'permitted']) {
+    const scopes = source[field];
+    // Omit a malformed list as a whole: a partial list misstates authority.
+    if (Array.isArray(scopes) && scopes.length <= 32 && scopes.every(isScope)) details[field] = scopes;
+  }
+  return details;
+}
+
+export async function handleAgentLifecycle(
+  operation: 'register'|'list'|'get'|'update'|'revoke'|'create_key'|'admit_computeid',
+  input: AgentLifecycleInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  if (!config.workerBaseUrl || (!!config.callerApiKey === !!config.callerAuthorization)) {
+    return errorResult(JSON.stringify({ error: 'agent_operation_unavailable', code: 'AUTH_FORWARDING_REQUIRED' }));
+  }
+  if (['register', 'create_key', 'admit_computeid'].includes(operation) && !config.callerApiKey) {
+    return errorResult(JSON.stringify({ error: 'agent_operation_unavailable', code: 'API_KEY_AUTH_REQUIRED' }));
+  }
+  const id = input.agent_id ? encodeURIComponent(input.agent_id) : '';
+  const route = operation === 'register' || operation === 'list' ? '/api/v1/agents'
+    : operation === 'admit_computeid' ? '/api/v1/agents/computeid/admit'
+      : `/api/v1/agents/${id}${operation === 'create_key' ? '/key' : ''}`;
+  const method = operation === 'list' || operation === 'get' ? 'GET'
+    : operation === 'update' ? 'PATCH' : operation === 'revoke' ? 'DELETE' : 'POST';
+  const { agent_id: _agentId, ...payload } = input;
+  const body = ['register','update','admit_computeid'].includes(operation) ? payload : undefined;
+  try {
+    const response = await workerFetch(config, route, {
+      method, redirect: 'manual', signal: AbortSignal.timeout(AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS),
+      headers: { 'Content-Type': 'application/json', ...(config.callerApiKey ? { 'X-API-Key': config.callerApiKey } : { Authorization: config.callerAuthorization! }) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (response.status >= 300 && response.status < 400) return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code: 'UPSTREAM_REDIRECT' }));
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      const raw = await response.text();
+      if (raw.length > 262_144) return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code: 'UPSTREAM_RESPONSE_TOO_LARGE' }));
+      parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    } catch { /* bounded generic error below */ }
+    if (!response.ok) {
+      const nested = parsed?.error;
+      const error = typeof nested === 'object' && nested !== null ? nested as Record<string, unknown> : parsed;
+      const code = typeof error?.code === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.code) ? error.code
+        : typeof error?.error === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.error) ? error.error : 'UPSTREAM_ERROR';
+      const reason = typeof error?.reason === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(error.reason) ? error.reason : undefined;
+      const safeMessageCodes = new Set(['api_key_required','vendor_gated','invalid_request','receipt_invalid','no_permitted_scopes','passport_revoked','passport_already_bound','admission_failed','ambiguous_caller','insufficient_scope','delegation_scope_exceeded','provider_scope_ceiling_exceeded']);
+      const message = safeMessageCodes.has(code) && typeof error?.message === 'string' && error.message.length <= 500 && !/[\r\n\x00-\x1f]/.test(error.message) ? error.message : undefined;
+      const scopeDetails = scopeErrorDetails(error);
+      const agentId = typeof error?.agent_id === 'string' && /^[0-9a-f-]{36}$/i.test(error.agent_id) ? error.agent_id : undefined;
+      return errorResult(JSON.stringify({ error: 'agent_operation_failed', status: response.status, code, ...(message ? { message } : {}), ...(reason ? { reason } : {}), ...scopeDetails, ...(agentId ? { agent_id: agentId } : {}) }));
+    }
+    const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+    const agent = (value: unknown, requireMetadata = true): boolean => {
+    if (!record(value)) return false;
+    // The stored metadata column is nullable; an absent value carries no metadata.
+    if (value.metadata === null) value.metadata = {};
+    return typeof value.id === 'string' && value.id.length > 0
+      && typeof value.name === 'string' && typeof value.agent_type === 'string' && typeof value.status === 'string'
+      && Array.isArray(value.allowed_scopes) && value.allowed_scopes.every(scope => typeof scope === 'string') && (!requireMetadata || record(value.metadata));
+  };
+    const keyFields = (value: Record<string, unknown>): boolean => typeof value.key === 'string' && value.key.length > 0
+      && typeof value.key_id === 'string' && value.key_id.length > 0 && typeof value.key_prefix === 'string' && value.key_prefix.length > 0
+      && Array.isArray(value.scopes) && value.scopes.every(scope => typeof scope === 'string') && typeof value.warning === 'string' && value.warning.length > 0;
+    const binding = (value: unknown): boolean => record(value) && value.issuer === 'computeid'
+      // Compare UUID identity without rewriting the signed receipt sent upstream.
+      && typeof value.passport_id === 'string' && typeof input.passport_id === 'string'
+      && value.passport_id.toLowerCase() === input.passport_id.toLowerCase() && typeof value.bound_at === 'string' && value.bound_at.length > 0
+      && typeof value.receipt_expires_at === 'string' && value.receipt_expires_at.length > 0;
+    const valid = !!parsed && (operation === 'list' ? Array.isArray(parsed.agents) && parsed.agents.every(value => agent(value))
+      : operation === 'revoke' ? parsed.status === 'revoked' && typeof parsed.agent_id === 'string' && parsed.agent_id.length > 0
+        : operation === 'create_key' ? keyFields(parsed) && typeof parsed.agent_id === 'string' && parsed.agent_id.length > 0
+          && typeof parsed.agent_name === 'string' && typeof parsed.created_at === 'string'
+          : operation === 'admit_computeid' ? keyFields(parsed) && agent(parsed.agent, false) && binding(parsed.binding)
+            : agent(parsed));
+    if (!valid) return errorResult(JSON.stringify({ error:'agent_operation_failed', status:response.status, code:'UPSTREAM_INVALID_RESPONSE' }));
+    return textResult(parsed);
+  } catch (error) {
+    // This path has a raw caller credential in the failed fetch options. Do
+    // not log/format the exception: some runtimes embed URL/header material in
+    // network errors. The stable code is sufficient for callers and telemetry.
+    void error;
+    return errorResult(JSON.stringify({ error:'agent_operation_failed', code:'AGENT_TRANSPORT_ERROR' }));
+  }
+}
+
+export interface AnchorListInput {
+  since?: string; until?: string; tag?: string; tag_scope?: 'user'|'organization';
+  limit?: number; cursor?: string;
+}
+
+export async function handleListAnchors(input: AnchorListInput, config: SupabaseConfig): Promise<ToolResult> {
+  if (!config.workerBaseUrl || !config.callerApiKey || config.callerAuthorization) {
+    return errorResult(JSON.stringify({ error: 'anchor_list_unavailable', code: 'API_KEY_REQUIRED' }));
+  }
+  const params = new URLSearchParams({ limit: String(input.limit ?? 50) });
+  for (const key of ['since','until','tag','tag_scope','cursor'] as const) {
+    const value = input[key]; if (value !== undefined) params.set(key, String(value));
+  }
+  try {
+    const response = await workerFetch(config, `/api/v1/anchors?${params}`, {
+      method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS),
+      headers: { 'X-API-Key': config.callerApiKey },
+    });
+    if (response.status >= 300 && response.status < 400) return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_REDIRECT' }));
+    const raw = await response.text();
+    if (raw.length > 262_144) return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_RESPONSE_TOO_LARGE' }));
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_INVALID_RESPONSE' })); }
+    if (!response.ok) {
+      const source = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+      const nested = source.error && typeof source.error === 'object' ? source.error as Record<string, unknown> : source;
+      const code = typeof nested.code === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(nested.code) ? nested.code : 'UPSTREAM_ERROR';
+      return errorResult(JSON.stringify({ error: 'anchor_list_failed', status: response.status, code }));
+    }
+    const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    const anchors = record?.anchors;
+    const valid = (value: unknown): boolean => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const row = value as Record<string, unknown>;
+      const allowed = new Set(['public_id','status','created_at','updated_at','filename','description']);
+      const statuses = new Set(['PENDING','BROADCASTING','SUBMITTED','SECURED','REVOKED','EXPIRED','SUPERSEDED','PENDING_RESOLUTION']);
+      const zoned = (item: unknown): item is string => typeof item === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(item);
+      return Object.keys(row).every(key => allowed.has(key)) && typeof row.public_id === 'string'
+        && typeof row.status === 'string' && statuses.has(row.status) && zoned(row.created_at) && zoned(row.updated_at)
+        && typeof row.filename === 'string'
+        && (row.description === null || row.description === undefined || typeof row.description === 'string');
+    };
+    if (!Array.isArray(anchors) || !anchors.every(valid)
+      || (record?.next_cursor !== null && record?.next_cursor !== undefined && typeof record?.next_cursor !== 'string')
+      || Object.keys(record ?? {}).some(key => key !== 'anchors' && key !== 'next_cursor')) {
+      return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'UPSTREAM_INVALID_RESPONSE' }));
+    }
+    return textResult(record);
+  } catch {
+    return errorResult(JSON.stringify({ error: 'anchor_list_failed', code: 'ANCHOR_LIST_TRANSPORT_ERROR' }));
+  }
+}
+
 export async function handleManageFolders(input: ManageFoldersInput, config: SupabaseConfig): Promise<ToolResult> {
   if (!config.workerBaseUrl || (!config.callerApiKey && !config.callerAuthorization)) {
     return errorResult('Folder management requires a configured worker route and authenticated caller forwarding.');
@@ -364,7 +612,7 @@ export async function handleManageFolders(input: ManageFoldersInput, config: Sup
       : { anchor_ids: input.anchor_ids, folder_id: input.folder_id ?? null };
   }
   try {
-    const response = await fetch(`${config.workerBaseUrl.replace(/\/$/, '')}${path}`, {
+    const response = await workerFetch(config, path, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -812,6 +1060,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: 'arkova_list_anchors',
+    description: 'List private anchored records visible to the caller organization API key. Requires read:records. Private tag filters require tag and tag_scope together; tags and internal identifiers are never returned.',
+    inputSchema: { type: 'object', properties: {
+      since: { type: 'string', description: 'Inclusive RFC3339 timestamp with timezone.' }, until: { type: 'string', description: 'Exclusive RFC3339 timestamp with timezone.' },
+      tag: { type: 'string', description: 'Exact private tag, 1-64 characters.', minLength: 1, maxLength: 64 }, tag_scope: { type: 'string', enum: ['user','organization'], description: 'Private tag scope.' },
+      limit: { type: 'integer', description: 'Page size, 1-100.', minimum: 1, maximum: 100 }, cursor: { type: 'string', description: 'Opaque cursor from the previous response.', maxLength: 2048 },
+    }, required: [] },
+  },
+  { name:'arkova_register_agent', description:'Register a generic agent. Hosted MCP requires API-key authentication with agents:manage; metadata.computeid is provider-managed.', inputSchema:{ type:'object', properties:{ name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Optional description.',maxLength:1000},agent_type:{type:'string',description:'Agent type.',enum:['llm_agent','ats_integration','hr_platform','compliance_tool','custom']},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:'string',description:'HTTPS callback URL.'},metadata:{type:'object',description:'Generic metadata without computeid.'}},required:['name']} },
+  { name:'arkova_get_agent', description:'Get one generic agent and active key summaries.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  { name:'arkova_update_agent', description:'Update or suspend/resume a generic agent. Revocation is terminal.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'},name:{type:'string',description:'Agent name.',minLength:1,maxLength:200},description:{type:'string',description:'Description.',maxLength:1000},allowed_scopes:{type:'array',description:'Allowed scopes.',items:{type:'string'},minItems:1,maxItems:32},status:{type:'string',description:'Status.',enum:['active','suspended']},framework:{type:'string',description:'Framework.',maxLength:100},version:{type:'string',description:'Version.',maxLength:50},callback_url:{type:['string','null'],description:'HTTPS callback URL or null.'}},required:['agent_id']} },
+  { name:'arkova_revoke_agent', description:'Permanently revoke a generic agent and its keys.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  { name:'arkova_create_agent_key', description:'Create a key for an active generic agent. Hosted MCP requires API-key authentication. The returned key is a one-time secret; capture it directly into a secret store.', inputSchema:{type:'object',properties:{agent_id:{type:'string',format:'uuid',description:'Agent UUID.'}},required:['agent_id']} },
+  {
+    name: 'arkova_admit_computeid_agent',
+    description: 'Admit a provider-bound agent using a signed ComputeID verification receipt. Requires an organization API key. The returned key is a one-time secret.',
+    inputSchema: { type: 'object', properties: {
+      passport_id: { type: 'string', format: 'uuid', description: 'ComputeID passport UUID.' }, name: { type: 'string', description: 'Optional agent name.' },
+      description: { type: 'string', description: 'Optional description.' }, allowed_scopes: { type: 'array', description: 'Requested provider-permitted scopes.', items: { type: 'string' }, minItems: 1, maxItems: 32 },
+      verification_receipt: { type: 'object', description: 'Complete signed verification receipt; additional signed fields are preserved.' },
+    }, required: ['passport_id','verification_receipt'] },
+  },
+  {
     name: 'arkova_manage_folders',
     description:
       'List, create, rename, nest, delete, bind connector destinations, or bulk-move records in canonical Arkova folders. Organization API keys remain bounded to their organization.',
@@ -1238,7 +1509,7 @@ async function searchCredentialsWorkerSemantic(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SEARCH_WORKER_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await workerFetch(config, url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -1636,7 +1907,7 @@ async function nessieWorkerQuery(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), NESSIE_WORKER_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await workerFetch(config, url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -1838,9 +2109,8 @@ async function authenticatedWorkerJson(
 ): Promise<{ response: Response; body: Record<string, unknown> | null }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AUTHENTICATED_WORKER_FETCH_TIMEOUT_MS);
-  const base = config.workerBaseUrl!.replace(/\/$/, '');
   try {
-    const response = await fetch(`${base}${path}`, {
+    const response = await workerFetch(config, path, {
       ...init,
       redirect: 'manual',
       headers: { 'X-API-Key': config.callerApiKey!, ...(init.headers ?? {}) },

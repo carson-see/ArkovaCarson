@@ -773,9 +773,20 @@ export function SecureDocumentDialog({
             <BulkUploadWizard
               orgId={secureOrgId}
               initialFiles={bulkFiles}
-              onComplete={() => {
-                handleClose();
+              onComplete={(result) => {
                 onSuccess?.();
+                const hasOutcomeRequiringReview = result.failed > 0
+                  || result.partial
+                  || result.needsCredit > 0
+                  || result.held > 0
+                  || result.instantFailed > 0
+                  || result.instantUnknown > 0
+                  || result.recipientLinkFailed > 0;
+                // Keep the completed wizard visible when the worker reports a
+                // per-row outcome the user must act on. Closing here used to
+                // discard the already-rendered Needs credit / Held / Failed
+                // summary before the user could read it.
+                if (!hasOutcomeRequiringReview) handleClose();
               }}
               onCancel={() => {
                 setBulkFiles([]);

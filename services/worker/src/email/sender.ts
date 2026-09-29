@@ -24,6 +24,8 @@ export interface SendResult {
   success: boolean;
   messageId?: string;
   error?: string;
+  /** Unknown outcomes may have been accepted; callers must not assume rejection. */
+  failureType?: 'rejected' | 'unknown';
 }
 
 /** Options for sending an email */
@@ -85,7 +87,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
         'Email send failed — RESEND_API_KEY not configured in production',
       );
       await logEmailAudit(options, false, undefined, 'RESEND_API_KEY not configured');
-      return { success: false, error: 'Email delivery is not configured' };
+      return { success: false, error: 'Email delivery is not configured', failureType: 'rejected' };
     }
     logger.debug(
       { to: options.to, type: options.emailType },
@@ -120,10 +122,19 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
       // Audit log the failure with dedicated event type
       await logEmailAudit(options, false, undefined, error.message);
 
-      return { success: false, error: error.message };
+      // Only explicit request/auth/quota rejections establish non-acceptance.
+      // Network failures, 5xx and idempotency conflicts can follow acceptance.
+      const statusCode = (error as { statusCode?: number }).statusCode;
+      const rejected = typeof statusCode === 'number'
+        && [400, 401, 403, 404, 405, 422, 429].includes(statusCode);
+      return { success: false, error: error.message, failureType: rejected ? 'rejected' : 'unknown' };
     }
 
     const messageId = data?.id;
+    if (typeof messageId !== 'string' || messageId.trim().length === 0) {
+      await logEmailAudit(options, false, undefined, 'Email acknowledgement missing');
+      return { success: false, error: 'Email acknowledgement missing', failureType: 'unknown' };
+    }
     logger.info(
       { to: options.to, type: options.emailType, messageId },
       'Email sent successfully',
@@ -147,7 +158,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
 
     await logEmailAudit(options, false, undefined, errorMessage);
 
-    return { success: false, error: errorMessage };
+    return { success: false, error: errorMessage, failureType: 'unknown' };
   }
 }
 

@@ -43,9 +43,17 @@ describe('Tool Definitions', () => {
       'arkova_verify_anchor',
       'arkova_anchor_status',
       'arkova_search_anchors',
+      'arkova_list_anchors',
       'arkova_create_attestation',
       'arkova_batch_verify',
       'arkova_verify_signature',
+      'arkova_register_agent',
+      'arkova_list_agents',
+      'arkova_get_agent',
+      'arkova_update_agent',
+      'arkova_revoke_agent',
+      'arkova_create_agent_key',
+      'arkova_admit_computeid_agent',
       'arkova_manage_folders',
     ]);
   });
@@ -281,7 +289,8 @@ describe('Tool Definitions', () => {
       expect(tool.name).toBeTruthy();
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema.type).toBe('object');
-      expect(tool.inputSchema.required.length).toBeGreaterThan(0);
+      if (tool.name === 'arkova_list_agents' || tool.name === 'arkova_list_anchors') expect(tool.inputSchema.required).toEqual([]);
+      else expect(tool.inputSchema.required.length).toBeGreaterThan(0);
     }
   });
 
@@ -387,6 +396,87 @@ describe('Tool Definitions', () => {
   it('pins the synchronous batch limit at 20', () => {
     expect(VERIFY_BATCH_SYNC_LIMIT).toBe(20);
   });
+});
+
+describe('agent lifecycle tools', () => {
+  const agentId='aaaaaaaa-0000-4000-8000-000000000001';
+  const agent={id:agentId,name:'Agent',description:null,agent_type:'custom',status:'active',allowed_scopes:['verify'],framework:null,version:null,callback_url:null,metadata:{}};
+  const key={key:'ak_once',key_id:'key-id',key_prefix:'ak_once',scopes:['verify'],warning:'Store once.'};
+  it.each([
+    ['arkova_register_agent','POST','/api/v1/agents',{name:'Agent'}], ['arkova_list_agents','GET','/api/v1/agents',{}],
+    ['arkova_get_agent','GET',`/api/v1/agents/${agentId}`,{agent_id:agentId}], ['arkova_update_agent','PATCH',`/api/v1/agents/${agentId}`,{agent_id:agentId,status:'suspended'}],
+    ['arkova_revoke_agent','DELETE',`/api/v1/agents/${agentId}`,{agent_id:agentId}], ['arkova_create_agent_key','POST',`/api/v1/agents/${agentId}/key`,{agent_id:agentId}],
+  ])('%s calls the exact route once',async (tool,method,path,args)=>{ const success=tool==='arkova_list_agents'?{agents:[]}:tool==='arkova_revoke_agent'?{status:'revoked',agent_id:agentId}:tool==='arkova_create_agent_key'?{...key,agent_id:agentId,agent_name:'Agent',created_at:'2026-09-26T00:00:00Z'}:agent; mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(success),{status:200})); const result=await handleToolCall(tool,args); expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1); expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining(path),expect.objectContaining({method,redirect:'error'})); });
+  it('lists agents with null metadata without hiding the entire list',async()=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata:null},agent]}));
+    const result=await handleToolCall('arkova_list_agents',{});
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text).agents).toEqual([{...agent,metadata:{}},agent]);
+  });
+  it.each([[], 'invalid', 7])('rejects non-object agent metadata %j',async metadata=>{
+    mockFetch.mockResolvedValueOnce(Response.json({agents:[{...agent,metadata}]}));
+    const result=await handleToolCall('arkova_list_agents',{});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+  });
+  it('preserves the complete signed receipt and accepts the actual 0448 admission projection',async()=>{ const passport='bbbbbbbb-0000-4000-8000-000000000001'; const receipt={passport_id:passport,status:'active',issued_at:'2026-09-26',expires_at:'2026-09-27',key_id:'0123456789abcdef',receipt_signature:'sentinel-signature',receipt_algorithm:'ed25519',receipt_payload:'sentinel-payload',extra_signed:'kept'}; const {metadata:_metadata,...admissionAgent}=agent; mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({...key,agent:admissionAgent,binding:{issuer:'computeid',passport_id:passport,bound_at:'2026-09-26T00:00:00Z',receipt_expires_at:'2026-09-27T00:00:00Z'}}),{status:201})); const result=await handleToolCall('arkova_admit_computeid_agent',{passport_id:passport,verification_receipt:receipt});expect(result.isError).toBeFalsy(); expect(mockFetch).toHaveBeenCalledTimes(1); expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({passport_id:passport,verification_receipt:receipt}); });
+  it('preserves the one-time admission key when the worker canonicalizes an uppercase passport UUID',async()=>{
+    const passportUpper='BBBBBBBB-0000-4000-8000-000000000001';
+    const passportCanonical=passportUpper.toLowerCase();
+    const receipt={passport_id:passportUpper,status:'active',issued_at:'2026-09-26',expires_at:'2026-09-27',key_id:'0123456789abcdef',receipt_signature:'sig',receipt_algorithm:'ed25519',receipt_payload:'{}'};
+    const {metadata:_metadata,...admissionAgent}=agent;
+    mockFetch.mockResolvedValueOnce(Response.json({...key,agent:admissionAgent,binding:{issuer:'computeid',passport_id:passportCanonical,bound_at:'2026-09-26T00:00:00Z',receipt_expires_at:'2026-09-27T00:00:00Z'}},{status:201}));
+
+    const result=await handleToolCall('arkova_admit_computeid_agent',{passport_id:passportUpper,verification_receipt:receipt});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('ak_once');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({passport_id:passportUpper,verification_receipt:receipt});
+  });
+  it('rejects a different valid passport binding without exposing the one-time key',async()=>{
+    const passportUpper='BBBBBBBB-0000-4000-8000-000000000001';
+    const passportCanonical='cccccccc-0000-4000-8000-000000000002';
+    const receipt={passport_id:passportUpper,status:'active',issued_at:'2026-09-26',expires_at:'2026-09-27',key_id:'0123456789abcdef',receipt_signature:'sig',receipt_algorithm:'ed25519',receipt_payload:'{}'};
+    const {metadata:_metadata,...admissionAgent}=agent;
+    mockFetch.mockResolvedValueOnce(Response.json({...key,agent:admissionAgent,binding:{issuer:'computeid',passport_id:passportCanonical,bound_at:'2026-09-26T00:00:00Z',receipt_expires_at:'2026-09-27T00:00:00Z'}},{status:201}));
+
+    const result=await handleToolCall('arkova_admit_computeid_agent',{passport_id:passportUpper,verification_receipt:receipt});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');
+    expect(result.content[0].text).not.toContain('ak_once');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it('forwards callback_url null to clear it',async()=>{mockFetch.mockResolvedValueOnce(new Response(JSON.stringify(agent),{status:200}));await handleToolCall('arkova_update_agent',{agent_id:agentId,callback_url:null});expect(JSON.parse(String(mockFetch.mock.calls[0][1].body))).toEqual({callback_url:null});expect(TOOL_DEFINITIONS.find(t=>t.name==='arkova_update_agent')?.inputSchema.properties.callback_url.type).toEqual(['string','null']);});
+  it('fails closed once when a one-time key response is lost or malformed',async()=>{mockFetch.mockResolvedValueOnce(new Response('{}',{status:201}));const result=await handleToolCall('arkova_create_agent_key',{agent_id:agentId});expect(result.isError).toBe(true);expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');expect(mockFetch).toHaveBeenCalledTimes(1);});
+  it.each([['arkova_create_agent_key',{...key}],['arkova_admit_computeid_agent',{...key,agent,binding:null}],['arkova_admit_computeid_agent',{...key,agent,binding:{issuer:'computeid',passport_id:'wrong',bound_at:'now',receipt_expires_at:'later'}}]])('rejects incomplete %s one-time-key success envelopes',async(tool,response)=>{mockFetch.mockResolvedValueOnce(Response.json(response,{status:201}));const args=tool==='arkova_create_agent_key'?{agent_id:agentId}:{passport_id:agentId,verification_receipt:{passport_id:agentId,status:'active',issued_at:'2026-09-26',expires_at:'2026-09-27',key_id:'0123456789abcdef',receipt_signature:'sig',receipt_algorithm:'ed25519',receipt_payload:'{}'}};const result=await handleToolCall(tool,args);expect(result.isError).toBe(true);expect(result.content[0].text).toContain('UPSTREAM_INVALID_RESPONSE');expect(mockFetch).toHaveBeenCalledTimes(1);});
+  it.each([false, true])('preserves bounded scope recovery details (nested=%s)', async nested => {
+    const fields = { required:'agents:manage', granted:['verify'], missing:['keys:manage'], permitted:['verify'], key:'ak_secret', receipt_payload:'private-receipt' };
+    mockFetch.mockResolvedValueOnce(Response.json(nested ? {error:{code:'insufficient_scope',...fields}} : {error:'insufficient_scope',...fields}, {status:403}));
+    const result = await handleToolCall('arkova_create_agent_key', {agent_id:agentId});
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text.replace(/^Error: /, ''))).toMatchObject({code:'insufficient_scope',required:'agents:manage',granted:['verify'],missing:['keys:manage'],permitted:['verify']});
+    expect(result.content[0].text).not.toContain('ak_secret');
+    expect(result.content[0].text).not.toContain('private-receipt');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    {required:['verify'],missing:['verify',7],granted:'verify',permitted:['verify',{}]},
+    {required:'a'.repeat(81),missing:['verify\n'],granted:Array(33).fill('verify'),permitted:[null]},
+  ])('omits malformed scope recovery fields without partial lists', async fields => {
+    mockFetch.mockResolvedValueOnce(Response.json({error:{code:'insufficient_scope',...fields}}, {status:403}));
+    const result = await handleToolCall('arkova_create_agent_key', {agent_id:agentId});
+    const payload = JSON.parse(result.content[0].text.replace(/^Error: /, ''));
+    expect(payload.code).toBe('insufficient_scope');
+    for (const field of ['required','missing','granted','permitted']) expect(payload).not.toHaveProperty(field);
+  });
+  it('scrubs thrown transport details',async()=>{mockFetch.mockRejectedValueOnce(new Error('https://internal/ak_caller_secret'));const result=await handleToolCall('arkova_list_agents',{});expect(result.isError).toBe(true);expect(result.content[0].text).toContain('AGENT_TRANSPORT_ERROR');expect(result.content[0].text).not.toContain('ak_caller_secret');});
+  it.each([
+    ['arkova_register_agent',{name:'Agent',metadata:{computeid:{}}}], ['arkova_update_agent',{agent_id:agentId}],
+    ['arkova_update_agent',{agent_id:agentId,status:'revoked'}], ['arkova_update_agent',{agent_id:agentId,callback_url:'http://unsafe.test'}],
+    ['arkova_admit_computeid_agent',{passport_id:agentId,verification_receipt:{passport_id:'bbbbbbbb-0000-4000-8000-000000000001'}}],
+  ])('rejects invalid %s input before network',async(tool,args)=>{ expect((await handleToolCall(tool,args)).isError).toBe(true); expect(mockFetch).not.toHaveBeenCalled(); });
 });
 
 // Every handler's non-OK path must disclose a 503 as "capability off, nothing
@@ -540,6 +630,33 @@ describe('handleToolCall', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain('ARK-1');
+  });
+
+  it('lists private anchors with paired tag filters and validates the response', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ anchors: [{ public_id: 'ARK-1', status: 'SECURED', created_at: '2026-09-27T10:00:00Z', updated_at: '2026-09-27T11:00:00Z', filename: 'proof.pdf', description: null }], next_cursor: null }), { status: 200 }));
+    const result = await handleToolCall('arkova_list_anchors', { tag: 'audit', tag_scope: 'organization', limit: '25' });
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('ARK-1');
+    expect(String(mockFetch.mock.calls[0][0])).toContain('/api/v1/anchors?limit=25&tag=audit&tag_scope=organization');
+  });
+
+  it('rejects unpaired private tag filters without a request', async () => {
+    const result = await handleToolCall('arkova_list_anchors', { tag: 'audit' });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([true, [1], '1.5'])('rejects a non-integer limit %j without a request', async (limit) => {
+    const result = await handleToolCall('arkova_list_anchors', { limit });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects private or internal fields in a successful upstream envelope', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ anchors: [{ public_id:'ARK-1',status:'SECURED',created_at:'now',updated_at:'now',filename:'proof.pdf',description:null,metadata:{secret:true} }],next_cursor:null }),{status:200}));
+    const result=await handleToolCall('arkova_list_anchors',{});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('secret');
   });
 
   // F3 — a disabled semantic-search capability must not read as an empty

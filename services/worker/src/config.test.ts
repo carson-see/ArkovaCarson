@@ -238,6 +238,24 @@ async function expectConfigToReject(overrides: Record<string, string | undefined
   });
 }
 
+describe('bulk recipient rollout configuration', () => {
+  it.each([undefined, 'false', 'typo'])('does not enable provisioning for %s', async (value) => {
+    await withEnv({ RECIPIENT_IDENTIFIER_PEPPER: 'synthetic-test-pepper-0123456789', ENABLE_BULK_RECIPIENT_PROVISIONING: value }, async () => {
+      expect((await import('./config.js')).config.enableBulkRecipientProvisioning).toBe(false);
+    });
+  });
+
+  it('requires an explicit true value to enable provisioning', async () => {
+    await withEnv({ ENABLE_BULK_RECIPIENT_PROVISIONING: 'true' }, async () => {
+      expect((await import('./config.js')).config.enableBulkRecipientProvisioning).toBe(true);
+    });
+  });
+
+  it('rejects a pepper with surrounding whitespace without trimming the identity key', async () => {
+    await expectConfigToReject({ RECIPIENT_IDENTIFIER_PEPPER: 'synthetic-test-pepper-0123456789\n' });
+  });
+});
+
 async function withConfig<T>(
   overrides: Record<string, string | undefined>,
   assertions: (mod: typeof import('./config.js')) => Promise<T> | T,

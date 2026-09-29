@@ -51,6 +51,16 @@ import type {
   Folder,
   CreateFolderInput,
   BulkFolderMoveResult,
+  Agent,
+  AgentKeyCreated,
+  AgentKeySummary,
+  AgentRevocation,
+  CreateAgentInput,
+  UpdateAgentInput,
+  ComputeIdAdmissionInput,
+  ComputeIdAdmissionResult,
+  ListAnchorsOptions,
+  ListAnchorsResponse,
 } from './types';
 import { BULK_ANCHOR_CREDENTIAL_TYPES } from './types';
 
@@ -100,6 +110,80 @@ const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'sleep'>> = {
   baseDelayMs: 250,
   maxDelayMs: 5_000,
 };
+
+type WireAgent = Record<string, unknown>;
+const unexpectedAgentResponse = (): never => { throw new ArkovaError('Arkova API returned an unexpected response shape', 502, 'unexpected_response'); };
+const stringArray = (value: unknown): string[] | null => Array.isArray(value) && value.every((v) => typeof v === 'string') ? value : null;
+const recordValue = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const AGENT_TYPES = new Set(['llm_agent', 'ats_integration', 'hr_platform', 'compliance_tool', 'custom']);
+const AGENT_SCOPES = new Set(['read:records', 'read:orgs', 'read:search', 'write:anchors', 'admin:rules', 'verify', 'verify:batch', 'usage:read', 'keys:manage', 'compliance:read', 'compliance:write', 'oracle:read', 'oracle:write', 'anchor:write', 'anchor:read', 'attestations:write', 'attestations:read', 'webhooks:manage', 'agents:manage', 'keys:read', 'orgs:manage']);
+const COMPUTEID_SCOPES = new Set(['verify', 'verify:batch', 'anchor:write', 'write:anchors', 'anchor:read', 'read:records', 'read:search']);
+const invalidAgentInput = (message: string): never => { throw new ArkovaError(message, 400, 'invalid_request'); };
+function validateScopes(scopes: readonly unknown[] | undefined, allowed = AGENT_SCOPES): void {
+  if (scopes !== undefined && (!Array.isArray(scopes) || scopes.length === 0 || scopes.length > 32 || scopes.some((scope) => typeof scope !== 'string' || !allowed.has(scope)))) invalidAgentInput('Invalid agent scope');
+}
+function validateCallback(value: unknown): void {
+  if (value === undefined || value === null) return;
+  try {
+    const parsed = new URL(typeof value === 'string' ? value : '');
+    if (parsed.protocol !== 'https:' || !parsed.hostname) invalidAgentInput('Agent callback URL must use HTTPS');
+  } catch { invalidAgentInput('Agent callback URL must be a valid HTTPS URL'); }
+}
+function validateReceipt(passportId: unknown, receipt: unknown): void {
+  const value = recordValue(receipt);
+  if (typeof passportId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(passportId)
+      || !value || typeof value.passport_id !== 'string' || value.passport_id.toLowerCase() !== passportId.toLowerCase()
+      || typeof value.status !== 'string' || value.status.length < 1 || value.status.length > 32
+      || (value.signature_valid !== undefined && value.signature_valid !== null && typeof value.signature_valid !== 'boolean')
+      || !['issued_at', 'expires_at'].every((key) => typeof value[key] === 'string' && (value[key] as string).length <= 64 && Number.isFinite(Date.parse(value[key] as string)))
+      || typeof value.key_id !== 'string' || !/^[0-9a-f]{16}$/.test(value.key_id)
+      || typeof value.receipt_signature !== 'string' || value.receipt_signature.length < 1 || value.receipt_signature.length > 4096
+      || typeof value.receipt_algorithm !== 'string' || value.receipt_algorithm.length < 1 || value.receipt_algorithm.length > 32
+      || typeof value.receipt_payload !== 'string' || value.receipt_payload.length < 2 || value.receipt_payload.length > 16_384) {
+    invalidAgentInput('Invalid ComputeID admission receipt');
+  }
+}
+
+function mapAgentKeySummary(value: Record<string, unknown>): AgentKeySummary {
+  const scopes = stringArray(value.scopes);
+  if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.key_prefix !== 'string'
+      || !scopes || typeof value.is_active !== 'boolean' || typeof value.created_at !== 'string') unexpectedAgentResponse();
+  return {
+    id: value.id as string, name: value.name as string, keyPrefix: value.key_prefix as string, scopes: scopes!, isActive: value.is_active as boolean,
+    lastUsedAt: typeof value.last_used_at === 'string' ? value.last_used_at : null,
+    createdAt: value.created_at as string, expiresAt: typeof value.expires_at === 'string' ? value.expires_at : null,
+  };
+}
+
+function mapAgent(value: WireAgent): Agent {
+  if (!recordValue(value)) unexpectedAgentResponse();
+  const scopes = stringArray(value.allowed_scopes);
+  const metadata = value.metadata == null ? {} : recordValue(value.metadata);
+  if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.agent_type !== 'string'
+      || !['active', 'suspended', 'revoked'].includes(String(value.status)) || !scopes || !metadata) unexpectedAgentResponse();
+  if (value.api_keys !== undefined && (!Array.isArray(value.api_keys) || value.api_keys.some((v) => !recordValue(v)))) unexpectedAgentResponse();
+  return {
+    id: value.id as string, name: value.name as string, description: typeof value.description === 'string' ? value.description : null,
+    agentType: value.agent_type as string, status: value.status as Agent['status'],
+    allowedScopes: scopes!, framework: typeof value.framework === 'string' ? value.framework : null,
+    version: typeof value.version === 'string' ? value.version : null, callbackUrl: typeof value.callback_url === 'string' ? value.callback_url : null,
+    metadata: metadata!,
+    ...(Array.isArray(value.api_keys) ? { apiKeys: value.api_keys.map((v: unknown) => mapAgentKeySummary(v as Record<string, unknown>)) } : {}),
+  };
+}
+
+function mapAgentKeyCreated(value: Record<string, unknown>): AgentKeyCreated {
+  const scopes = stringArray(value.scopes);
+  if (!recordValue(value) || typeof value.key !== 'string' || value.key.length === 0 || typeof value.key_id !== 'string' || value.key_id.length === 0 || typeof value.key_prefix !== 'string' || value.key_prefix.length === 0
+      || typeof value.agent_id !== 'string' || typeof value.agent_name !== 'string' || !scopes
+      || typeof value.created_at !== 'string' || typeof value.warning !== 'string') unexpectedAgentResponse();
+  return {
+    key: value.key as string, keyId: value.key_id as string, keyPrefix: value.key_prefix as string,
+    agentId: value.agent_id as string, agentName: value.agent_name as string, scopes: scopes!,
+    createdAt: value.created_at as string,
+    warning: value.warning as string,
+  };
+}
 
 export class Arkova {
   private readonly baseUrl: string;
@@ -529,6 +613,38 @@ export class Arkova {
     };
   }
 
+  /** List private anchors in the API key's current organization. Requires `read:records`. */
+  async listAnchors(options: ListAnchorsOptions = {}): Promise<ListAnchorsResponse> {
+    if (Boolean(options.tag) !== Boolean(options.tagScope)) throw new ArkovaError('tag and tagScope must be provided together', 400, 'invalid_request');
+    if (options.tag !== undefined && (options.tag.trim().length < 1 || options.tag.trim().length > 64)) throw new ArkovaError('tag must be 1-64 characters', 400, 'invalid_request');
+    if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new ArkovaError('limit must be an integer from 1 to 100', 400, 'invalid_request');
+    if (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 2048)) throw new ArkovaError('cursor must be 1-2048 characters', 400, 'invalid_request');
+    const zonedDate = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+    if ((options.since && (!zonedDate.test(options.since) || Number.isNaN(new Date(options.since).valueOf())))
+      || (options.until && (!zonedDate.test(options.until) || Number.isNaN(new Date(options.until).valueOf())))
+      || (options.since && options.until && new Date(options.since) >= new Date(options.until))) throw new ArkovaError('since and until must define a valid [since, until) RFC3339 interval', 400, 'invalid_request');
+    const params = new URLSearchParams();
+    if (options.since) params.set('since', options.since);
+    if (options.until) params.set('until', options.until);
+    if (options.tag) params.set('tag', options.tag);
+    if (options.tagScope) params.set('tag_scope', options.tagScope);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.cursor) params.set('cursor', options.cursor);
+    const response = await this.fetch(`/api/v1/anchors${params.size ? `?${params}` : ''}`);
+    const data = await jsonOrThrow<{ anchors?: unknown; next_cursor?: unknown }>(response, 'Anchor list failed');
+    if (!Array.isArray(data.anchors) || !(data.next_cursor === null || typeof data.next_cursor === 'string')) unexpectedAgentResponse();
+    const wireAnchors = data.anchors as unknown[];
+    const nextCursor = data.next_cursor as string | null;
+    const anchors = wireAnchors.map((value) => {
+      const row = recordValue(value) ?? unexpectedAgentResponse();
+      if (typeof row.public_id !== 'string' || !isAnchorLifecycleStatus(row.status)
+        || typeof row.created_at !== 'string' || typeof row.updated_at !== 'string'
+        || typeof row.filename !== 'string' || !(row.description === null || typeof row.description === 'string')) unexpectedAgentResponse();
+      return { publicId: row.public_id as string, status: row.status as AnchorLifecycleStatus, createdAt: row.created_at as string, updatedAt: row.updated_at as string, filename: row.filename as string, description: row.description as string | null };
+    });
+    return { anchors, nextCursor };
+  }
+
   /**
    * Verify a SHA-256 document fingerprint through API v2.
    * Requires a key with `read:records`.
@@ -552,8 +668,10 @@ export class Arkova {
   /**
    * PROOF-05 (SCRUM-2338): fetch the Merkle inclusion proof for a batch-anchored
    * document, including the additive nullable {@link ProofBundle} — the
-   * self-contained, independently-checkable two-layer proof. `proofBundle` is
-   * `null` when the proof is incomplete (e.g. not yet block-confirmed).
+   * structurally complete decoded two-layer proof. `proofBundle` is `null`
+   * when the wire shape is incomplete (e.g. not yet block-confirmed). A
+   * non-null value is not a cryptographic-verification result; use the
+   * independent verifier to check both inclusion layers and payload binding.
    *
    * Anonymous or `verify`-scoped.
    */
@@ -716,6 +834,94 @@ export class Arkova {
    *   });
    *   // Save `secret` immediately — it is shown only once.
    */
+  /** Generic and ComputeID-bound agent lifecycle operations. */
+  readonly agents = {
+    register: async (input: CreateAgentInput): Promise<Agent> => {
+      if (!input || typeof input.name !== 'string' || input.name.trim().length === 0 || input.name.length > 200 || (input.description !== undefined && input.description.length > 1000)
+          || (input.framework !== undefined && input.framework.length > 100) || (input.version !== undefined && input.version.length > 50)
+          || (input.agentType !== undefined && !AGENT_TYPES.has(input.agentType))) invalidAgentInput('Invalid agent registration input');
+      validateScopes(input.allowedScopes); validateCallback(input.callbackUrl);
+      if (input.metadata && Object.prototype.hasOwnProperty.call(input.metadata, 'computeid')) {
+        throw new ArkovaError('metadata.computeid is provider-managed', 400, 'invalid_request');
+      }
+      const body = {
+        name: input.name,
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.agentType !== undefined ? { agent_type: input.agentType } : {}),
+        ...(input.allowedScopes !== undefined ? { allowed_scopes: input.allowedScopes } : {}),
+        ...(input.framework !== undefined ? { framework: input.framework } : {}),
+        ...(input.version !== undefined ? { version: input.version } : {}),
+        ...(input.callbackUrl !== undefined ? { callback_url: input.callbackUrl } : {}),
+        ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+      };
+      const response = await this.fetch('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) });
+      return mapAgent(await jsonOrThrow<WireAgent>(response, 'Agent registration failed'));
+    },
+    list: async (): Promise<Agent[]> => {
+      const response = await this.fetch('/api/v1/agents');
+      const body = await jsonOrThrow<{ agents: WireAgent[] }>(response, 'Agent list failed');
+      if (!recordValue(body) || !Array.isArray(body.agents) || body.agents.some((v) => !recordValue(v))) unexpectedAgentResponse();
+      return body.agents.map(mapAgent);
+    },
+    get: async (agentId: string): Promise<Agent> => {
+      const response = await this.fetch(`/api/v1/agents/${encodeURIComponent(agentId)}`);
+      return mapAgent(await jsonOrThrow<WireAgent>(response, 'Agent lookup failed'));
+    },
+    update: async (agentId: string, input: UpdateAgentInput): Promise<Agent> => {
+      if (Object.keys(input).length === 0) throw new ArkovaError('Agent update requires at least one field', 400, 'invalid_request');
+      if (input.status !== undefined && !['active', 'suspended'].includes(input.status)) invalidAgentInput('Invalid agent status');
+      if ((input.name !== undefined && (input.name.trim().length === 0 || input.name.length > 200)) || (input.description !== undefined && input.description.length > 1000)
+          || (input.framework !== undefined && input.framework.length > 100) || (input.version !== undefined && input.version.length > 50)) invalidAgentInput('Invalid agent update input');
+      validateScopes(input.allowedScopes); validateCallback(input.callbackUrl);
+      const body = {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.allowedScopes !== undefined ? { allowed_scopes: input.allowedScopes } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.framework !== undefined ? { framework: input.framework } : {}),
+        ...(input.version !== undefined ? { version: input.version } : {}),
+        ...(input.callbackUrl !== undefined ? { callback_url: input.callbackUrl } : {}),
+      };
+      const response = await this.fetch(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: 'PATCH', body: JSON.stringify(body) });
+      return mapAgent(await jsonOrThrow<WireAgent>(response, 'Agent update failed'));
+    },
+    revoke: async (agentId: string): Promise<AgentRevocation> => {
+      const response = await this.fetch(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+      const body = await jsonOrThrow<{ status: 'revoked'; agent_id: string }>(response, 'Agent revocation failed');
+      if (!recordValue(body) || body.status !== 'revoked' || typeof body.agent_id !== 'string' || body.agent_id.length === 0) unexpectedAgentResponse();
+      return { status: body.status, agentId: body.agent_id };
+    },
+    createKey: async (agentId: string): Promise<AgentKeyCreated> => {
+      const response = await this.fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/key`, { method: 'POST' });
+      return mapAgentKeyCreated(await jsonOrThrow<Record<string, unknown>>(response, 'Agent key creation failed'));
+    },
+    admitComputeId: async (input: ComputeIdAdmissionInput): Promise<ComputeIdAdmissionResult> => {
+      validateReceipt(input?.passportId, input?.verificationReceipt);
+      validateScopes(input.allowedScopes, COMPUTEID_SCOPES);
+      if ((input.name !== undefined && (input.name.trim().length === 0 || input.name.length > 200)) || (input.description !== undefined && input.description.length > 1000)) invalidAgentInput('Invalid ComputeID admission input');
+      const body = {
+        passport_id: input.passportId,
+        verification_receipt: input.verificationReceipt,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.allowedScopes !== undefined ? { allowed_scopes: input.allowedScopes } : {}),
+      };
+      const response = await this.fetch('/api/v1/agents/computeid/admit', { method: 'POST', body: JSON.stringify(body) });
+      const value = await jsonOrThrow<Record<string, unknown> & { agent: WireAgent; binding: Record<string, unknown> }>(response, 'ComputeID admission failed');
+      if (!recordValue(value)) unexpectedAgentResponse();
+      const binding = recordValue(value.binding);
+      const scopes = stringArray(value.scopes);
+      if (!recordValue(value.agent) || !binding || binding.issuer !== 'computeid' || typeof binding.passport_id !== 'string'
+          || typeof binding.bound_at !== 'string' || typeof binding.receipt_expires_at !== 'string'
+          || typeof value.key !== 'string' || value.key.length === 0
+          || typeof value.key_id !== 'string' || value.key_id.length === 0 || typeof value.key_prefix !== 'string' || value.key_prefix.length === 0
+          || !scopes || typeof value.warning !== 'string') unexpectedAgentResponse();
+      return {
+        agent: mapAgent(value.agent), binding: binding as unknown as ComputeIdAdmissionResult['binding'], key: value.key as string,
+        keyId: value.key_id as string, keyPrefix: value.key_prefix as string, scopes: scopes!, warning: value.warning as string,
+      };
+    },
+  };
   readonly webhooks = {
     /**
      * Register a new webhook endpoint. Returns the signing secret ONCE.
@@ -1016,10 +1222,26 @@ function getHeader(response: Response, name: string): string | null {
  * Parse a fetch Response as JSON; throw a typed ArkovaError with the
  * server's machine-readable `error` code if the status is not 2xx.
  */
+// Keep permission-denial recovery useful without reflecting arbitrary response data.
+function scopeErrorDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const isScope = (scope: unknown): scope is string => typeof scope === 'string' && scope.length > 0 && scope.length <= 80 && !/[^a-z0-9:._-]/i.test(scope);
+  const details: Record<string, unknown> = {};
+  if (isScope(source.required)) details.required = source.required;
+  for (const field of ['granted', 'missing', 'permitted']) {
+    const scopes = source[field];
+    // Omit a malformed list as a whole: a partial list misstates authority.
+    if (Array.isArray(scopes) && scopes.length <= 32 && scopes.every(isScope)) details[field] = scopes;
+  }
+  return details;
+}
+
 async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise<T> {
-  const json = (await response.json().catch(() => ({}))) as {
+  const decoded: unknown = await response.json().catch(() => ({}));
+  const json = (decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {}) as {
     message?: string;
-    error?: string;
+    error?: string | { code?: string; message?: string; [key: string]: unknown };
     type?: string;
     title?: string;
     status?: number;
@@ -1039,12 +1261,23 @@ async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise
     const retryAfter = parseRetryAfter(getHeader(response, 'Retry-After')) ?? undefined;
     // Prefer server `message`, fall back to legacy endpoints that only send `error`,
     // then to a generic label. Code field is carried on the error for programmatic checks.
+    const nestedRaw = typeof json.error === 'object' && json.error !== null ? json.error : undefined;
+    const scopeDetails = scopeErrorDetails(nestedRaw ?? json);
+    const nestedError: Record<string, unknown> | undefined = nestedRaw ? {
+      ...(typeof nestedRaw.code === 'string' ? { code: nestedRaw.code } : {}),
+      ...(typeof nestedRaw.message === 'string' ? { message: nestedRaw.message } : {}),
+      ...(typeof nestedRaw.reason === 'string' ? { reason: nestedRaw.reason } : {}),
+      ...(typeof nestedRaw.agent_id === 'string' ? { agent_id: nestedRaw.agent_id } : {}),
+      ...scopeDetails,
+    } : Object.keys(scopeDetails).length > 0 ? scopeDetails : undefined;
+    const legacyError = typeof json.error === 'string' ? json.error : undefined;
     throw new ArkovaError(
-      problem?.detail ?? json.message ?? json.error ?? `${failureLabel}: HTTP ${response.status}`,
+      problem?.detail ?? (typeof nestedError?.message === 'string' ? nestedError.message : undefined) ?? json.message ?? legacyError ?? `${failureLabel}: HTTP ${response.status}`,
       response.status,
-      json.error ?? (problem ? problem.type.split('/').pop() : undefined),
+      (typeof nestedError?.code === 'string' ? nestedError.code : undefined) ?? legacyError ?? (problem ? problem.type.split('/').pop() : undefined),
       problem,
       retryAfter !== undefined ? Math.ceil(retryAfter / 1000) : undefined,
+      nestedError,
     );
   }
   return json as T;
@@ -1316,12 +1549,21 @@ function mapProofBundle(value: unknown): ProofBundle | null {
   const b = value as Record<string, unknown>;
 
   const merkleProof = mapMerkleProofEntries(b.merkle_proof);
+  const coherentSingleton =
+    merkleProof?.length === 0 &&
+    b.leaf_count === 1 &&
+    b.merkle_index === 0 &&
+    typeof b.fingerprint === 'string' &&
+    typeof b.merkle_root === 'string' &&
+    SIBLING_HASH_HEX_RE.test(b.fingerprint) &&
+    SIBLING_HASH_HEX_RE.test(b.merkle_root) &&
+    b.fingerprint.toLowerCase() === b.merkle_root.toLowerCase();
   // Required members must all be present + correctly typed, else fail closed.
   if (
     typeof b.fingerprint !== 'string' ||
     typeof b.merkle_root !== 'string' ||
     merkleProof === null ||
-    merkleProof.length === 0 ||
+    (merkleProof.length === 0 && !coherentSingleton) ||
     typeof b.merkle_index !== 'number' ||
     typeof b.leaf_count !== 'number' ||
     typeof b.tx_id !== 'string' ||
@@ -1358,9 +1600,7 @@ function mapProofBundle(value: unknown): ProofBundle | null {
   return {
     fingerprint: b.fingerprint,
     merkleRoot: b.merkle_root,
-    // Non-empty asserted above (length === 0 ⇒ null), so this satisfies the
-    // non-empty tuple type on ProofBundle.merkleProof.
-    merkleProof: merkleProof as [MerkleProofEntry, ...MerkleProofEntry[]],
+    merkleProof,
     merkleIndex: b.merkle_index,
     leafCount: b.leaf_count,
     txId: b.tx_id,
@@ -1544,6 +1784,8 @@ export class ArkovaError extends Error {
   readonly problem?: ProblemDetail;
   /** Retry-After value in seconds when the server asks the client to back off */
   readonly retryAfter?: number;
+  /** Safe structured fields from nested endpoint errors. */
+  readonly details?: Readonly<Record<string, unknown>>;
 
   constructor(
     message: string,
@@ -1551,6 +1793,7 @@ export class ArkovaError extends Error {
     code?: string,
     problem?: ProblemDetail,
     retryAfter?: number,
+    details?: Readonly<Record<string, unknown>>,
   ) {
     super(message);
     this.name = 'ArkovaError';
@@ -1558,6 +1801,7 @@ export class ArkovaError extends Error {
     this.code = code;
     this.problem = problem;
     this.retryAfter = retryAfter;
+    this.details = details;
   }
 }
 

@@ -13,7 +13,7 @@
  * effect loses the message under React StrictMode's double mount (see
  * `src/components/integrations/agents.md`, 2026-08-30 item 3).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/layout';
@@ -25,6 +25,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { ROUTES } from '@/lib/routes';
+import { workerFetch } from '@/lib/workerClient';
 import { CONNECTIONS_LABELS, CONNECTORS_LABELS } from '@/lib/copy';
 import { DriveConnectorCard } from '@/components/connectors/DriveConnectorCard';
 import { DocusignConnectorCard } from '@/components/connectors/DocusignConnectorCard';
@@ -53,15 +54,45 @@ import type { ConnectorHealthDisplay } from '@/components/integrations/Connector
 function resolveHealthDisplay(
   loading: boolean,
   entry: ConnectorHealthEntry,
+  onReconnect?: () => void,
+  reconnectLoading = false,
 ): ConnectorHealthDisplay | undefined {
   if (loading) return undefined;
   if (entry.state === 'degraded') {
-    return { kind: 'degraded', reasonText: describeConnectorHealthReason(entry.health_reason) };
+    const formatTimestamp = (value: string | null): string | null => {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    };
+    const details = [
+      { label: CONNECTORS_LABELS.CONNECTOR_HEALTH_LAST_SOURCE_EVENT, value: formatTimestamp(entry.last_event_at) },
+      { label: CONNECTORS_LABELS.CONNECTOR_HEALTH_LAST_CHANNEL_RENEWAL, value: formatTimestamp(entry.last_renewal_at) },
+      { label: CONNECTORS_LABELS.CONNECTOR_HEALTH_CHANNEL_EXPIRES, value: formatTimestamp(entry.next_expires_at) },
+    ].flatMap(({ label, value }) => value ? [{ label, value }] : []);
+    const reconnectReasons = new Set(['vendor_auth_revoked', 'oauth_client_mismatch', 'reconnect_required_scope_change']);
+    return {
+      kind: 'degraded',
+      reasonText: describeConnectorHealthReason(entry.health_reason),
+      details,
+      action: onReconnect && entry.health_reason && reconnectReasons.has(entry.health_reason)
+        ? { label: CONNECTORS_LABELS.CONNECTOR_RECONNECT_BUTTON, onClick: onReconnect, loading: reconnectLoading }
+        : undefined,
+    };
   }
   if (entry.state === 'unknown') {
     return { kind: 'unknown' };
   }
   return { kind: 'connected' };
+}
+
+function isGoogleOAuthAuthorizationUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'accounts.google.com';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -121,10 +152,11 @@ interface DriveConnectorSectionProps {
   orgId: string;
   /** SCRUM-1146 health surface — see `resolveHealthDisplay` above. */
   health?: ConnectorHealthDisplay;
+  onReconnect: () => void;
 }
 
-function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
-  const { connected, refresh: refreshConnected } = useIsConnectorConnected(orgId, 'google_drive');
+function DriveConnectorSection({ orgId, health, onReconnect }: DriveConnectorSectionProps) {
+  const { connected } = useIsConnectorConnected(orgId, 'google_drive');
   const { state, saving, saveError, save } = useConnectorRule(orgId, 'google_drive');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftFolders, setDraftFolders] = useState<SelectedDriveFolder[] | null>(null);
@@ -142,9 +174,11 @@ function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
   const folders = draftFolders ?? persistedFolders;
   const actionValue = draftAction ?? persistedAction;
   const isManaged = state.status === 'managed';
+  const needsAdminRepair = state.status === 'adoptable' && state.rule.created_by_user_id === null;
+  const needsDisabledRuleRecovery = state.status === 'adoptable' && !state.rule.enabled;
   const dirty =
     (draftFolders !== null && JSON.stringify(draftFolders) !== JSON.stringify(persistedFolders)) ||
-    (draftAction !== null && draftAction !== persistedAction);
+    (draftAction !== null && draftAction !== persistedAction) || needsAdminRepair || needsDisabledRuleRecovery;
 
   async function handleSave() {
     const ok = await save({
@@ -196,6 +230,12 @@ function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
             <ConnectorActionChoice value={actionValue} onChange={setDraftAction} name="drive-action" />
 
             {saveError && <p className="text-sm text-destructive">{saveError}</p>}
+            {needsAdminRepair && !saveError && (
+              <p className="text-sm text-destructive">{CONNECTORS_LABELS.CONNECTOR_ADMIN_REPAIR_REQUIRED}</p>
+            )}
+            {needsDisabledRuleRecovery && !needsAdminRepair && !saveError && (
+              <p className="text-sm text-destructive">{CONNECTORS_LABELS.CONNECTOR_DISABLED_RECOVERY_REQUIRED}</p>
+            )}
 
             <Button onClick={() => void handleSave()} disabled={!dirty || saving}>
               {saving ? CONNECTORS_LABELS.CONNECTOR_SAVING : CONNECTORS_LABELS.CONNECTOR_SAVE}
@@ -224,7 +264,7 @@ function DriveConnectorSection({ orgId, health }: DriveConnectorSectionProps) {
         onDone={(selected) => setDraftFolders(selected)}
         onReconnect={() => {
           setPickerOpen(false);
-          void refreshConnected();
+          onReconnect();
         }}
       />
     </div>
@@ -309,6 +349,35 @@ export function ConnectorsPage() {
   const { profile, loading: profileLoading } = useProfile();
   const [searchParams, setSearchParams] = useSearchParams();
   const orgId = profile?.org_id ?? null;
+  const driveReconnectInFlight = useRef(false);
+  const [driveReconnectLoading, setDriveReconnectLoading] = useState(false);
+
+  const reconnectDrive = useCallback(async () => {
+    if (!orgId || driveReconnectInFlight.current) return;
+    driveReconnectInFlight.current = true;
+    setDriveReconnectLoading(true);
+    const reset = () => {
+      driveReconnectInFlight.current = false;
+      setDriveReconnectLoading(false);
+    };
+    try {
+      const response = await workerFetch('/api/v1/integrations/google_drive/oauth/start', {
+        method: 'POST',
+        body: JSON.stringify({ org_id: orgId, return_to: window.location.href }),
+      });
+      const body = await response.json().catch(() => ({})) as { authorizationUrl?: string; url?: string };
+      const authorizationUrl = body.authorizationUrl ?? body.url;
+      if (!response.ok || !isGoogleOAuthAuthorizationUrl(authorizationUrl)) {
+        toast.error(CONNECTORS_LABELS.DRIVE_TOAST_ERROR);
+        reset();
+        return;
+      }
+      window.location.assign(authorizationUrl);
+    } catch {
+      toast.error(CONNECTORS_LABELS.DRIVE_TOAST_ERROR);
+      reset();
+    }
+  }, [orgId]);
 
   // SCRUM-1146 health surface: ONE fetch for every connector on the page,
   // not one per card — see `resolveHealthDisplay` above and this hook's own
@@ -317,6 +386,11 @@ export function ConnectorsPage() {
   const driveHealthDisplay = resolveHealthDisplay(
     connectorHealth.loading,
     connectorHealth.getHealth('google_drive'),
+    // The callback reads its single-flight ref only when the user clicks it;
+    // resolveHealthDisplay stores the callback and never invokes it during render.
+    // eslint-disable-next-line react-hooks/refs
+    reconnectDrive,
+    driveReconnectLoading,
   );
 
   // OAuth return-trip consumption — page-level, StrictMode-safe (see header
@@ -368,7 +442,7 @@ export function ConnectorsPage() {
           <p className="text-sm text-muted-foreground">{CONNECTORS_LABELS.CONNECTORS_EMPTY_ORG}</p>
         ) : (
           <>
-            <DriveConnectorSection orgId={orgId} health={driveHealthDisplay} />
+            <DriveConnectorSection orgId={orgId} health={driveHealthDisplay} onReconnect={reconnectDrive} />
             <DocusignConnectorSection orgId={orgId} />
           </>
         )}

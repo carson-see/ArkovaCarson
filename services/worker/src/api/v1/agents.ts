@@ -17,8 +17,9 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
-import { API_KEY_SCOPES } from '../apiScopes.js';
-import { recordAuditEvent } from '../../utils/auditEvent.js';
+import { API_KEY_SCOPES, scopeSatisfies } from '../apiScopes.js';
+import { PASSPORT_AGENT_SCOPE_ALLOWLIST } from './agentScopePolicy.js';
+import { hintAgentWebhookDrain } from '../../webhooks/agentEvents.js';
 
 // agents table not yet in database.types.ts — use untyped client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,37 +42,77 @@ export function toPublicAgent<T extends Record<string, unknown>>(row: T | null |
   return sanitized;
 }
 
-/** Helper: get caller's org_id or return 403 */
-/**
- * Resolve the caller's org, optionally requiring ORG_ADMIN.
- *
- * `role` was always selected here and never checked, so every caller got
- * member-level authorization. Agent REGISTRATION has been admin-only since
- * migration 0158, but the lifecycle routes were not — meaning any ordinary org
- * member could suspend or revoke an agent.
- *
- * That was survivable only while suspension was decorative. Now that a suspend
- * actually deactivates the agent's API keys, an unprivileged member can disable
- * the organisation's agents, and `DELETE` is terminal and unrecoverable. So the
- * mutating lifecycle routes pass `requireAdmin`. Reads stay member-visible:
- * seeing which agents exist is not a privileged action.
- */
-async function getCallerOrgId(
-  userId: string,
+type AgentLifecycleCaller =
+  | { kind: 'user'; userId: string; orgId: string; role: string; ownerUserId: string }
+  | { kind: 'api_key'; apiKeyId: string; keyPrefix: string; orgId: string; scopes: string[]; ownerUserId: string };
+
+async function resolveCaller(
+  req: Request,
   res: Response,
-  opts: { requireAdmin?: boolean } = {},
-): Promise<string | null> {
-  const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
+  opts: { requireAdmin?: boolean; emptyOnMissingOrg?: boolean; adminError?: string } = {},
+): Promise<AgentLifecycleCaller | null> {
+  if (req.apiKey && req.authUserId) {
+    res.status(409).json({ error: 'ambiguous_caller' });
+    return null;
+  }
+  if (req.apiKey) {
+    if (!scopeSatisfies(req.apiKey.scopes ?? [], 'agents:manage')) {
+      res.status(403).json({ error: 'insufficient_scope', required: 'agents:manage' });
+      return null;
+    }
+    return {
+      kind: 'api_key', apiKeyId: req.apiKey.keyId, keyPrefix: req.apiKey.keyPrefix,
+      orgId: req.apiKey.orgId, scopes: req.apiKey.scopes ?? [], ownerUserId: req.apiKey.userId,
+    };
+  }
+  const userId = req.authUserId;
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return null; }
+  let profile: { org_id: string | null; role: string | null } | null;
+  try {
+    ({ data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single());
+  } catch (error) {
+    logger.error({ error }, 'Agent lifecycle caller lookup failed');
+    res.status(500).json({ error: 'Internal server error' });
+    return null;
+  }
   if (!profile?.org_id) {
-    res.status(403).json({ error: 'Organization membership required' });
+    if (opts.emptyOnMissingOrg) res.status(200).json({ agents: [] });
+    else res.status(403).json({ error: 'Organization membership required' });
     return null;
   }
   if (opts.requireAdmin && profile.role !== 'ORG_ADMIN') {
-    res.status(403).json({ error: 'Only organization admins can change an agent\'s status' });
+    res.status(403).json({ error: opts.adminError ?? "Only organization admins can change an agent's status" });
     return null;
   }
-  return profile.org_id;
+  return { kind: 'user', userId, orgId: profile.org_id, role: profile.role ?? '', ownerUserId: userId };
 }
+
+function missingDelegatedScopes(caller: AgentLifecycleCaller, scopes: string[]): string[] {
+  if (caller.kind === 'user') return [];
+  return scopes.filter((required) => !scopeSatisfies(caller.scopes, required));
+}
+
+function respondToLifecycleRpcError(
+  res: Response,
+  error: { code?: string; message?: string },
+  fallback: string,
+): void {
+  if (error.code === '42501') {
+    res.status(403).json({ error: error.message === 'delegation_scope_exceeded'
+      ? 'delegation_scope_exceeded' : 'forbidden' });
+    return;
+  }
+  if (error.code === '55P03' || error.code === '40P01') {
+    res.set('Retry-After', '5').status(503).json({ error: 'agent_lifecycle_temporarily_unavailable' });
+    return;
+  }
+  res.status(500).json({ error: fallback });
+}
+
+const PUBLIC_AGENT_POLICY_CONFLICTS = new Set([
+  'agent_revocation_is_terminal',
+  'computeid_provider_suspension_active',
+]);
 
 /** Helper: verify agent belongs to caller's org */
 async function verifyAgentOwnership(agentId: string, orgId: string, res: Response): Promise<Record<string, unknown> | null> {
@@ -101,7 +142,7 @@ export const CreateAgentSchema = z.object({
   framework: z.string().max(100).optional(),
   version: z.string().max(50).optional(),
   callback_url: z.string().url().startsWith('https://').optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).refine((value) => !Object.hasOwn(value, 'computeid'), { message: 'metadata.computeid is provider-managed' }).optional(),
 });
 
 export const UpdateAgentSchema = z.object({
@@ -114,11 +155,112 @@ export const UpdateAgentSchema = z.object({
   callback_url: z.string().url().startsWith('https://').nullable().optional(),
 });
 
+type AgentUpdate = z.infer<typeof UpdateAgentSchema>;
+
+function validateAgentUpdate(
+  existing: Record<string, unknown>,
+  update: AgentUpdate,
+  caller: AgentLifecycleCaller,
+  res: Response,
+): boolean {
+  const effectiveDelegatedScopes = update.allowed_scopes ?? (
+    caller.kind === 'api_key' && existing.status === 'suspended' && update.status === 'active'
+      && Array.isArray(existing.allowed_scopes)
+      ? existing.allowed_scopes.filter((scope): scope is string => typeof scope === 'string')
+      : undefined
+  );
+  if (effectiveDelegatedScopes) {
+    const missing = missingDelegatedScopes(caller, effectiveDelegatedScopes);
+    if (missing.length) {
+      res.status(403).json({ error: 'delegation_scope_exceeded', missing });
+      return false;
+    }
+  }
+  const metadata = typeof existing.metadata === 'object' && existing.metadata !== null
+    ? existing.metadata as Record<string, unknown> : {};
+  const computeid = typeof metadata.computeid === 'object' && metadata.computeid !== null
+    ? metadata.computeid as Record<string, unknown> : {};
+  if (update.allowed_scopes && computeid.issuer === 'computeid') {
+    const outsidePassportCeiling = update.allowed_scopes.filter(
+      (scope) => !(PASSPORT_AGENT_SCOPE_ALLOWLIST as readonly string[]).includes(scope),
+    );
+    if (outsidePassportCeiling.length) {
+      res.status(403).json({ error: 'provider_scope_ceiling_exceeded', missing: outsidePassportCeiling });
+      return false;
+    }
+  }
+  if (update.status === 'active' && (computeid.suspended_by === 'computeid' || computeid.provider_suspended === true)) {
+    res.status(409).json({ error: 'Agent is suspended by ComputeID and requires provider reinstatement' });
+    return false;
+  }
+  if (existing.status === 'revoked' && update.status !== undefined) {
+    res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
+    return false;
+  }
+  return true;
+}
+
+async function applyAgentUpdate(
+  agentId: string,
+  orgId: string,
+  caller: AgentLifecycleCaller,
+  existing: Record<string, unknown>,
+  update: AgentUpdate,
+  res: Response,
+): Promise<{ agent: Record<string, unknown>; changed: boolean } | null> {
+  const updates: Record<string, unknown> = { ...update };
+  delete updates.status;
+  if (update.status) {
+    const { data: transition, error } = await dbAny.rpc('apply_admin_agent_status_transition_with_outbox', {
+      p_org_id: orgId, p_agent_id: agentId, p_next_status: update.status, p_updates: updates,
+      p_actor_kind: caller.kind,
+      p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+    });
+    if (error?.code === '23514') {
+      res.status(409).json({ error: PUBLIC_AGENT_POLICY_CONFLICTS.has(error.message)
+        ? error.message : 'agent_transition_conflict' });
+      return null;
+    }
+    if (error) {
+      logger.error({ agentId, errorCode: error.code }, 'Atomic agent status transition failed');
+      respondToLifecycleRpcError(res, error, 'Failed to change agent status');
+      return null;
+    }
+    if (!(transition as { found?: boolean } | null)?.found) {
+      res.status(404).json({ error: 'Agent not found' });
+      return null;
+    }
+    return {
+      agent: (transition as { agent: Record<string, unknown> }).agent,
+      changed: (transition as { changed?: boolean }).changed === true,
+    };
+  }
+  if (Object.keys(updates).length === 0) return { agent: existing, changed: false };
+  const { data: transition, error } = await dbAny.rpc('update_agent_with_outbox', {
+    p_org_id: orgId, p_agent_id: agentId, p_actor_kind: caller.kind,
+    p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+    p_updates: updates,
+  });
+  if (error) {
+    logger.error({ agentId, errorCode: error.code }, 'Atomic agent update failed');
+    respondToLifecycleRpcError(res, error, 'Failed to update agent');
+    return null;
+  }
+  if (!(transition as { found?: boolean } | null)?.found) {
+    res.status(404).json({ error: 'Agent not found or update failed' });
+    return null;
+  }
+  return {
+    agent: (transition as { agent: Record<string, unknown> }).agent,
+    changed: (transition as { changed?: boolean }).changed === true,
+  };
+}
+
 // ─── POST /api/v1/agents — Register a new agent ─────────────────
 
 router.post('/', async (req: Request, res: Response) => {
-  const userId = req.authUserId;
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  const caller = await resolveCaller(req, res, { requireAdmin: true, adminError: 'Only organization admins can register agents' });
+  if (!caller) return;
 
   const parsed = CreateAgentSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -127,41 +269,37 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Look up user's org + verify admin role (migration 0158: admin-only)
-    const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
-    if (!profile?.org_id) {
-      res.status(403).json({ error: 'Organization membership required to register agents' });
-      return;
-    }
-    if (profile.role !== 'ORG_ADMIN') {
-      res.status(403).json({ error: 'Only organization admins can register agents' });
-      return;
-    }
+    const missing = missingDelegatedScopes(caller, parsed.data.allowed_scopes);
+    if (missing.length) { res.status(403).json({ error: 'delegation_scope_exceeded', missing }); return; }
 
-    const { data: agent, error } = await dbAny.from('agents').insert({
-      org_id: profile.org_id,
-      registered_by: userId,
-      ...parsed.data,
-    }).select().single();
+    const { data: registered, error } = await dbAny.rpc('register_agent_with_outbox', {
+      p_org_id: caller.orgId,
+      p_actor_kind: caller.kind,
+      p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+      p_name: parsed.data.name,
+      p_agent_type: parsed.data.agent_type,
+      p_allowed_scopes: parsed.data.allowed_scopes,
+      p_description: parsed.data.description ?? null,
+      p_framework: parsed.data.framework ?? null,
+      p_version: parsed.data.version ?? null,
+      p_callback_url: parsed.data.callback_url ?? null,
+      p_metadata: parsed.data.metadata ?? {},
+    });
+    const agent = (registered as { agent?: Record<string, unknown> } | null)?.agent;
 
     if (error) {
-      logger.error({ error }, 'Failed to create agent');
+      logger.error({ errorCode: error.code }, 'Failed to create agent');
+      respondToLifecycleRpcError(res, error, 'Failed to create agent');
+      return;
+    }
+    if (!agent) {
+      logger.error('Agent registration returned no agent');
       res.status(500).json({ error: 'Failed to create agent' });
       return;
     }
 
-    // Audit event
-    void recordAuditEvent({
-      actor_id: userId,
-      event_type: 'AGENT_REGISTERED',
-      event_category: 'SYSTEM',
-      target_type: 'agent',
-      target_id: agent.id,
-      org_id: profile.org_id,
-      details: `Agent "${parsed.data.name}" registered (type: ${parsed.data.agent_type})`,
-    });
-
     logger.info({ agentId: agent.id, name: parsed.data.name, type: parsed.data.agent_type }, 'Agent registered');
+    hintAgentWebhookDrain();
     res.status(201).json(toPublicAgent(agent));
   } catch (err) {
     logger.error({ error: err }, 'Agent registration failed');
@@ -172,20 +310,14 @@ router.post('/', async (req: Request, res: Response) => {
 // ─── GET /api/v1/agents — List org's agents ──────────────────────
 
 router.get('/', async (req: Request, res: Response) => {
-  const userId = req.authUserId;
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  const caller = await resolveCaller(req, res, { emptyOnMissingOrg: true });
+  if (!caller) return;
 
   try {
-    const { data: profile } = await db.from('profiles').select('org_id').eq('id', userId).single();
-    if (!profile?.org_id) {
-      res.status(200).json({ agents: [] });
-      return;
-    }
-
     const { data: agents, error } = await dbAny
       .from('agents')
       .select('*')
-      .eq('org_id', profile.org_id)
+      .eq('org_id', caller.orgId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -204,14 +336,12 @@ router.get('/', async (req: Request, res: Response) => {
 // ─── GET /api/v1/agents/:agentId — Get agent details ────────────
 
 router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
-  const userId = req.authUserId;
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
-
+  const caller = await resolveCaller(req, res);
+  if (!caller) return;
   const { agentId } = req.params;
 
   try {
-    const orgId = await getCallerOrgId(userId, res);
-    if (!orgId) return;
+    const orgId = caller.orgId;
 
     const agent = await verifyAgentOwnership(agentId, orgId, res);
     if (!agent) return;
@@ -233,67 +363,11 @@ router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response)
   }
 });
 
-/**
- * Marks keys deactivated by an ORG-ADMIN suspension. Distinct from the
- * 'computeid:…' markers migration 0448 writes, so the two resume paths cannot
- * restore each other's keys.
- */
-const ADMIN_SUSPEND_REASON = 'admin:agent.suspended';
-
-/**
- * Flip every key belonging to one agent on or off. Returns the error (or null).
- *
- * Deactivation matches only currently-live keys; reactivation matches only keys
- * THIS path deactivated, via `revocation_reason = ADMIN_SUSPEND_REASON`. That
- * marker is reserved at the input boundary — `UpdateKeySchema` in `keys.ts`
- * refuses a caller-supplied `revocation_reason` using a reserved prefix — so an
- * admin cannot revoke a key for cause under this exact string and have a later
- * agent resume resurrect it. Without that guard the marker is attacker-writable
- * free text and the resume branch becomes an escalation.
- *
- * Both writes are scoped by `org_id` AND `agent_id`, per the DELETE handler's
- * defense-in-depth rule against an `agent_id` collision reaching another tenant.
- */
-async function setAgentKeysActive(
-  agentId: string,
-  orgId: string,
-  active: boolean,
-): Promise<unknown | null> {
-  // Both chains are built inline rather than through a hoisted builder: the
-  // `arkova/missing-org-filter` lint traces the tenant scope syntactically from
-  // the table selector, and a variable hides it. The SCRUM-1277 contract test
-  // also scans this file's SOURCE TEXT for table selectors, so naming the
-  // selector literally in a comment makes it read prose as a query — keep the
-  // literal out of comments here.
-  if (active) {
-    const { error } = await dbAny
-      .from('api_keys')
-      .update({ is_active: true, revoked_at: null, revocation_reason: null })
-      .eq('org_id', orgId)
-      .eq('agent_id', agentId)
-      .eq('is_active', false)
-      .eq('revocation_reason', ADMIN_SUSPEND_REASON);
-    return error ?? null;
-  }
-  const { error } = await dbAny
-    .from('api_keys')
-    .update({
-      is_active: false,
-      revoked_at: new Date().toISOString(),
-      revocation_reason: ADMIN_SUSPEND_REASON,
-    })
-    .eq('org_id', orgId)
-    .eq('agent_id', agentId)
-    .eq('is_active', true);
-  return error ?? null;
-}
-
 // ─── PATCH /api/v1/agents/:agentId — Update agent ───────────────
 
 router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
-  const userId = req.authUserId;
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
-
+  const caller = await resolveCaller(req, res, { requireAdmin: true });
+  if (!caller) return;
   const { agentId } = req.params;
   const parsed = UpdateAgentSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -302,94 +376,15 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
   }
 
   try {
-    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
-    if (!orgId) return;
-
-    // Verify ownership before updating
+    const orgId = caller.orgId;
     const existing = await verifyAgentOwnership(agentId, orgId, res);
     if (!existing) return;
+    if (!validateAgentUpdate(existing, parsed.data, caller, res)) return;
+    const result = await applyAgentUpdate(agentId, orgId, caller, existing, parsed.data, res);
+    if (!result) return;
+    const { agent, changed } = result;
 
-    // Revoked is terminal (partner revocations, DELETE /:agentId). Re-activating
-    // a revoked row would let POST /:agentId/key mint keys for a passport
-    // ComputeID has revoked. Non-status edits (name, description) stay allowed.
-    if (existing.status === 'revoked' && parsed.data.status !== undefined) {
-      res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
-      return;
-    }
-
-    const updates: Record<string, unknown> = { ...parsed.data };
-    if (parsed.data.status === 'suspended') {
-      updates.suspended_at = new Date().toISOString();
-    }
-
-    // SCRUM-5290: a status change is INERT unless the keys move with it. The
-    // auth path reads only `api_keys` (middleware/apiKeyAuth.ts selects
-    // is_active / revoked_at / expires_at and never joins `agents`), so before
-    // this an org admin could suspend an agent and its key kept authenticating.
-    //
-    // ORDER IS THE DESIGN. These are two round-trips, not one transaction, so a
-    // crash between them is reachable. The order is chosen so that the write
-    // which RESTRICTS access always commits first and the intermediate state
-    // fails CLOSED:
-    //   suspend: keys off -> status suspended   (crash => dead keys, stale
-    //            'active' status: the agent cannot act, an admin retries)
-    //   resume:  status active -> keys on       (crash => active status, dead
-    //            keys: the agent still cannot act, an admin retries)
-    // The reverse order for either would leave a suspended agent holding a LIVE
-    // key, which is the exact defect this change exists to remove.
-    //
-    // Full atomicity needs a SECURITY DEFINER function doing both writes under a
-    // row lock, the way migration 0448's `apply_computeid_agent_transition`
-    // does. That is a migration (T3) and is tracked as follow-up; this ordering
-    // makes the residual window safe rather than merely narrower.
-    if (parsed.data.status === 'suspended') {
-      const keyError = await setAgentKeysActive(agentId, orgId, false);
-      if (keyError) {
-        logger.error({ agentId, error: keyError }, 'Agent key deactivation failed; status left unchanged');
-        res.status(500).json({
-          error: 'Could not deactivate the agent API keys — the agent was NOT suspended; retry',
-        });
-        return;
-      }
-    }
-
-    const { data: agent, error } = await dbAny
-      .from('agents')
-      .update(updates)
-      .eq('id', agentId)
-      .eq('org_id', orgId)
-      .select()
-      .single();
-
-    if (error?.code === '23514' && error.message === 'agent_revocation_is_terminal') {
-      res.status(409).json({ error: 'Agent is revoked — revocation is terminal; register a new agent instead' });
-      return;
-    }
-    if (error || !agent) {
-      res.status(404).json({ error: 'Agent not found or update failed' });
-      return;
-    }
-
-    if (parsed.data.status === 'active') {
-      const keyError = await setAgentKeysActive(agentId, orgId, true);
-      if (keyError) {
-        logger.error({ agentId, error: keyError }, 'Agent reactivated but key restoration failed');
-        res.status(500).json({
-          error: 'Agent is active but its API keys could not be restored — retry, or mint a new key',
-        });
-        return;
-      }
-    }
-
-    void recordAuditEvent({
-      actor_id: userId,
-      org_id: orgId,
-      event_type: parsed.data.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_UPDATED',
-      event_category: 'SYSTEM',
-      target_type: 'agent',
-      target_id: agentId,
-      details: JSON.stringify(parsed.data),
-    });
+    if (changed) hintAgentWebhookDrain();
 
     res.json(toPublicAgent(agent));
   } catch (err) {
@@ -401,14 +396,12 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
 // ─── DELETE /api/v1/agents/:agentId — Revoke agent ──────────────
 
 router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
-  const userId = req.authUserId;
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
-
+  const caller = await resolveCaller(req, res, { requireAdmin: true });
+  if (!caller) return;
   const { agentId } = req.params;
 
   try {
-    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
-    if (!orgId) return;
+    const orgId = caller.orgId;
 
     // Verify ownership before revoking
     const existing = await verifyAgentOwnership(agentId, orgId, res);
@@ -417,15 +410,15 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     // One database transaction owns the terminal status, every associated key,
     // and the success audit. Migration 0488 locks the same parent row used by
     // 0448's active-key trigger, closing concurrent mint and stale-resume races.
-    const { data: revokeResult, error } = await dbAny.rpc('revoke_agent_and_keys', {
-      p_org_id: orgId,
-      p_agent_id: agentId,
-      p_actor_id: userId,
-    });
+    const rpcName = caller.kind === 'user' ? 'revoke_agent_and_keys_with_outbox' : 'revoke_agent_and_keys_as_api_key_with_outbox';
+    const rpcArgs = caller.kind === 'user'
+      ? { p_org_id: orgId, p_agent_id: agentId, p_actor_id: caller.userId }
+      : { p_org_id: orgId, p_agent_id: agentId, p_actor_api_key_id: caller.apiKeyId };
+    const { data: revokeResult, error } = await dbAny.rpc(rpcName, rpcArgs);
 
     if (error) {
-      logger.error({ agentId, error }, 'Atomic agent revocation failed');
-      res.status(500).json({ error: 'Failed to revoke agent' });
+      logger.error({ agentId, errorCode: error.code }, 'Atomic agent revocation failed');
+      respondToLifecycleRpcError(res, error, 'Failed to revoke agent');
       return;
     }
     if (!(revokeResult as { found?: boolean } | null)?.found) {
@@ -434,6 +427,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
     }
 
     logger.info({ agentId }, 'Agent revoked');
+    if ((revokeResult as { changed?: boolean }).changed === true) hintAgentWebhookDrain();
     res.json({ status: 'revoked', agent_id: agentId });
   } catch (err) {
     logger.error({ error: err }, 'Agent revocation failed');
@@ -444,18 +438,16 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
 // ─── POST /api/v1/agents/:agentId/key — Generate scoped API key ─
 
 router.post('/:agentId/key', async (req: Request, res: Response) => {
-  const userId = req.authUserId;
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
-
+  const caller = await resolveCaller(req, res, { requireAdmin: true });
+  if (!caller) return;
   const { agentId } = req.params;
-  const hmacSecret = req.hmacSecret;
+  const hmacSecret = (await import('../../config.js')).config.apiKeyHmacSecret;
   if (!hmacSecret) { res.status(500).json({ error: 'HMAC secret not configured' }); return; }
 
   try {
     // Minting a working credential is at least as privileged as suspending
     // or revoking one (both admin-only below) — so this is too.
-    const orgId = await getCallerOrgId(userId, res, { requireAdmin: true });
-    if (!orgId) return;
+    const orgId = caller.orgId;
 
     const { data: agent, error: agentError } = await dbAny
       .from('agents')
@@ -473,34 +465,31 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
       return;
     }
 
+    const missing = missingDelegatedScopes(caller, agent.allowed_scopes);
+    if (missing.length) { res.status(403).json({ error: 'delegation_scope_exceeded', missing }); return; }
+
     // Generate key scoped to agent's allowed scopes
     const { raw, hash, prefix } = generateApiKey(hmacSecret);
 
-    const { data: key, error: insertError } = await dbAny.from('api_keys').insert({
-      org_id: agent.org_id,
-      key_prefix: prefix,
-      key_hash: hash,
-      name: `${agent.name} — auto-generated`,
-      scopes: agent.allowed_scopes,
-      agent_id: agentId,
-      created_by: userId,
-    }).select('id, name, key_prefix, scopes, created_at').single();
+    const { data: mintResult, error: insertError } = await dbAny.rpc('create_agent_key_with_outbox', {
+      p_org_id: orgId, p_agent_id: agentId, p_actor_kind: caller.kind,
+      p_actor_id: caller.kind === 'user' ? caller.userId : caller.apiKeyId,
+      p_key_hash: hash, p_key_prefix: prefix,
+    });
+    const key = (mintResult as { key?: Record<string, unknown> } | null)?.key;
 
-    if (insertError || !key) {
-      logger.error({ error: insertError }, 'Failed to create agent API key');
+    if (insertError) {
+      logger.error({ agentId, errorCode: insertError.code }, 'Failed to create agent API key');
+      respondToLifecycleRpcError(res, insertError, 'Failed to create API key');
+      return;
+    }
+    if (!key) {
+      logger.error('Agent key creation returned no key');
       res.status(500).json({ error: 'Failed to create API key' });
       return;
     }
 
-    void recordAuditEvent({
-      actor_id: userId,
-      event_type: 'AGENT_KEY_CREATED',
-      event_category: 'SYSTEM',
-      target_type: 'api_key',
-      target_id: key.id,
-      org_id: agent.org_id,
-      details: `API key created for agent "${agent.name}" with scopes: ${agent.allowed_scopes.join(', ')}`,
-    });
+    hintAgentWebhookDrain();
 
     // Return raw key ONCE (Constitution 1.4: never stored after creation)
     res.status(201).json({

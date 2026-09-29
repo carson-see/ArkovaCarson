@@ -53,6 +53,8 @@ const router = Router();
 // Keep VALID_WEBHOOK_EVENTS in scope for runtime reference elsewhere if needed.
 void VALID_WEBHOOK_EVENTS;
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // ─── Shared helpers ───────────────────────────────────────────────────────
 
 /** Require API key auth. Returns false and writes a 401 when missing. */
@@ -665,6 +667,55 @@ router.post('/deliveries/:id/replay', async (req, res) => {
   } catch (err) {
     logger.error({ error: err, deliveryId: req.params.id }, 'webhook replay failed');
     errorResponse(res, 500, 'internal_error', 'Failed to replay delivery');
+  }
+});
+
+// Re-arm one terminal agent-outbox materialization failure. The RPC owns the
+// transaction-time authority check, immutable failure snapshot, cap and audit;
+// this route never materializes or delivers inline.
+router.post('/outbox/:id/retry-materialization', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  if (!(await requireOrgAdmin(req, res))) return;
+
+  const body = req.body as { request_id?: unknown } | null;
+  const requestId = body?.request_id;
+  if (!UUID_PATTERN.test(req.params.id) || !body || Object.keys(body).length !== 1
+      || typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) {
+    errorResponse(res, 400, 'invalid_request', 'Valid outbox and request UUIDs are required');
+    return;
+  }
+
+  try {
+    const { data, error } = await db.rpc('retry_failed_agent_webhook_materialization', {
+      p_org_id: req.apiKey.orgId,
+      p_outbox_id: req.params.id,
+      p_actor_api_key_id: req.apiKey.keyId,
+      p_request_id: requestId,
+    });
+    if (error) {
+      if (error.code === 'P0002') {
+        errorResponse(res, 404, 'not_found', 'Recoverable outbox event not found');
+        return;
+      }
+      if (error.code === '42501') {
+        errorResponse(res, 403, 'forbidden', 'Webhook recovery authority required');
+        return;
+      }
+      if (error.code === '23505' || error.code === '55000') {
+        errorResponse(res, 409, 'recovery_conflict', 'Outbox event cannot be recovered');
+        return;
+      }
+      logger.error(
+        { errorCode: typeof error.code === 'string' ? error.code : 'unknown', outboxId: req.params.id },
+        'agent webhook materialization recovery failed',
+      );
+      errorResponse(res, 503, 'recovery_unavailable', 'Failed to recover outbox event');
+      return;
+    }
+    res.status(202).json(data);
+  } catch {
+    logger.error({ errorCode: 'rpc_rejected', outboxId: req.params.id }, 'agent webhook materialization recovery failed');
+    errorResponse(res, 503, 'recovery_unavailable', 'Failed to recover outbox event');
   }
 });
 

@@ -266,6 +266,23 @@ describe('Deploy Worker Secret Manager preflight coverage', () => {
     expect(preflight).not.toContain('versions access');
   });
 
+  it('pins the durable recipient identity key and preflights its Secret Manager metadata', () => {
+    const mappings = new Map(
+      setSecrets!.split(',').map((pair) => {
+        const [envName, secretRef] = pair.split('=');
+        return [envName, secretRef] as const;
+      }),
+    );
+    const recipientPepper = mappings.get('RECIPIENT_IDENTIFIER_PEPPER');
+
+    expect(recipientPepper).toBe('recipient-identifier-pepper:1');
+    expect(preflight).toContain('recipient-identifier-pepper');
+    expect(preflight).toContain('gcloud secrets versions describe 1');
+    expect(preflight).toContain('--secret=recipient-identifier-pepper');
+    expect(preflight).toContain('ENABLED');
+    expect(preflight).toContain('Pinned recipient key version unavailable');
+  });
+
   it('only an unambiguous NOT_FOUND fails the deploy', () => {
     // The deploy SA (github-actions-deploy@arkova1, verified 2026-09-12) holds
     // no Secret Manager role, so `describe` returns PERMISSION_DENIED. A

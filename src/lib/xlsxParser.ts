@@ -13,6 +13,11 @@
 // previous `@ts-ignore` suppression is no longer needed.
 import { readSheet } from 'read-excel-file/browser';
 import type { ParsedCsv, CsvColumn, CsvRow } from './csvParser';
+import { SPREADSHEET_IMPORT_ERRORS } from './copy';
+
+const MAX_SPREADSHEET_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_SPREADSHEET_ROWS = 10_000;
+const LEGACY_XLS_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] as const;
 
 /** Safely coerce a cell value to string (avoids [object Object] for non-primitives). */
 function cellToString(cell: unknown): string {
@@ -49,6 +54,11 @@ export function isExcelFile(file: File): boolean {
 export async function parseExcelFile(file: File): Promise<ParsedCsv> {
   const rawData = await readSheet(file);
 
+  return rowsToParsedCsv(rawData);
+}
+
+function rowsToParsedCsv(rawData: readonly (readonly unknown[])[]): ParsedCsv {
+
   if (rawData.length === 0) {
     return { columns: [], rows: [], totalRows: 0 };
   }
@@ -73,7 +83,15 @@ export async function parseExcelFile(file: File): Promise<ParsedCsv> {
 
     const data: Record<string, string> = {};
     headers.forEach((header, index) => {
-      data[header] = cellToString(rawRow[index]).trim();
+      // defineProperty prevents special headers such as "__proto__" from
+      // mutating the result object's prototype while retaining an ordinary
+      // JSON-serializable record for downstream mapping.
+      Object.defineProperty(data, header, {
+        value: cellToString(rawRow[index]).trim(),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     });
 
     rows.push({
@@ -96,11 +114,54 @@ export async function parseExcelFile(file: File): Promise<ParsedCsv> {
   };
 }
 
+async function parseLegacyXlsFile(file: File, maxRows: number): Promise<ParsedCsv> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (!LEGACY_XLS_MAGIC.every((byte, index) => bytes[index] === byte)) {
+    throw new Error(SPREADSHEET_IMPORT_ERRORS.INVALID_LEGACY_FILE);
+  }
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(bytes, {
+    type: 'array',
+    cellDates: true,
+    dense: true,
+    cellFormula: false,
+    cellHTML: false,
+    // Header + allowed rows + one sentinel row lets us reject overflow
+    // without parsing an attacker-controlled worksheet range in full.
+    sheetRows: maxRows + 2,
+  });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) return rowsToParsedCsv([]);
+  const sheet = workbook.Sheets[firstSheetName];
+  const declaredRange = sheet['!fullref'] ?? sheet['!ref'];
+  if (declaredRange && XLSX.utils.decode_range(declaredRange).e.r + 1 > maxRows + 1) {
+    throw new Error(SPREADSHEET_IMPORT_ERRORS.TOO_MANY_ROWS(maxRows));
+  }
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: true,
+    defval: null,
+  });
+  if (rows.length > maxRows + 1) {
+    throw new Error(SPREADSHEET_IMPORT_ERRORS.TOO_MANY_ROWS(maxRows));
+  }
+  return rowsToParsedCsv(rows);
+}
+
 /**
  * Parse a file that could be either CSV or Excel.
  * Delegates to the appropriate parser based on file type.
  */
-export async function parseSpreadsheetFile(file: File): Promise<ParsedCsv> {
+export async function parseSpreadsheetFile(
+  file: File,
+  maxRows = DEFAULT_MAX_SPREADSHEET_ROWS,
+): Promise<ParsedCsv> {
+  if (file.size > MAX_SPREADSHEET_BYTES) {
+    throw new Error(SPREADSHEET_IMPORT_ERRORS.FILE_TOO_LARGE);
+  }
+  if (file.name.toLowerCase().endsWith('.xls')) {
+    return parseLegacyXlsFile(file, maxRows);
+  }
   if (isExcelFile(file)) {
     return parseExcelFile(file);
   }

@@ -34,6 +34,7 @@ import {
   loadAdversarialFixtures,
   loadProof08,
   resolveManifestEntry,
+  offlineNode,
   FIXTURES_DIR,
 } from './helpers.js';
 import type { VerifierFixture } from '../src/types.js';
@@ -144,7 +145,7 @@ describe('no-Arkova-network: every VALID fixture verifies under full transport l
     }
   });
 
-  it('a non-allowlisted base URL at the transport level degrades to NOT VERIFIED — never a fallback', async () => {
+  it('a blocked transport is INDETERMINATE — never a false cryptographic failure or fallback', async () => {
     lockdown.install();
     for (const base of ['https://blockstream.info/api', 'https://something.supabase.co', 'https://api.arkova.io']) {
       const result = await confirmInclusion(
@@ -152,13 +153,87 @@ describe('no-Arkova-network: every VALID fixture verifies under full transport l
         { fetch: createEsploraFetch(base) },
       );
       expect(result.confirmed).toBe(false);
-      expect(result.status).toBe('tx_not_found');
+      expect(result.status).toBe('node_unavailable');
     }
     // The lockdown actually intercepted the attempts (proof the stub is live)…
     expect(lockdown.blocked).toContain('api.arkova.io');
     expect(lockdown.blocked).toContain('something.supabase.co');
     // …and nothing was served from anywhere else.
     expect(lockdown.served).toEqual([]);
+  });
+
+  it('the CLI reports transport outage as INDETERMINATE with exit 3', async () => {
+    const fixture = loadSyntheticFixtures().find((f) => f.name === 'odd-leaf-pass')!;
+    lockdown.install();
+    const dir = mkdtempSync(join(tmpdir(), 'arkova-unavailable-'));
+    const path = join(dir, 'p.json');
+    writeFileSync(path, JSON.stringify(fixture.packet));
+    let output = '';
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      output += String(chunk);
+      return true;
+    });
+    try {
+      const code = await main([path, '--rpc', 'https://blockstream.info/api']);
+      expect(code).toBe(3);
+      expect(output).toContain('VERDICT: INDETERMINATE');
+      expect(output).toContain('[UNAVAILABLE]');
+      expect(output).not.toContain('VERDICT: NOT VERIFIED');
+      expect(output).not.toContain('DISAGREES');
+      output = '';
+      expect(await main([path, '--rpc', 'https://blockstream.info/api', '--json'])).toBe(3);
+      expect(JSON.parse(output)).toMatchObject({
+        ok: false,
+        verdict: 'INDETERMINATE',
+        reasonCode: null,
+        availabilityCode: 'NETWORK_UNAVAILABLE',
+      });
+    } finally {
+      out.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { stage: 'height', matches: (path: string) => path.startsWith('/block-height/') },
+    { stage: 'header', matches: (path: string) => path.endsWith('/header') },
+    { stage: 'proof', matches: (path: string) => path.endsWith('/merkle-proof') },
+  ])('preserves already-proven checks when the $stage request is unavailable', async ({ matches }) => {
+    const fixture = loadSyntheticFixtures().find((f) => f.name === 'odd-leaf-pass')!;
+    const node = offlineNode(fixture);
+    for (const unavailable of [
+      async (): Promise<never> => { throw new Error('offline'); },
+      async () => ({ ok: false, status: 503 }),
+    ]) {
+      const report = await verifyProof(fixture.packet, {
+        chain: {
+          label: node.label,
+          fetch: async (path) => matches(path) ? unavailable() : node.fetch(path),
+        },
+      });
+      expect(report).toMatchObject({
+        ok: false,
+        verdict: 'INDETERMINATE',
+        reasonCode: null,
+        availabilityCode: 'NETWORK_UNAVAILABLE',
+      });
+      expect(report.steps.find((step) => step.id === 'op_return')?.status).toBe('pass');
+      expect(report.steps.find((step) => step.id === 'block_confirm')?.status).toBe('unavailable');
+    }
+  });
+
+  it('reports an HTTP 503 on the initial receipt lookup as machine-readable INDETERMINATE', async () => {
+    const fixture = loadSyntheticFixtures().find((f) => f.name === 'odd-leaf-pass')!;
+    const report = await verifyProof(fixture.packet, {
+      chain: { label: 'unavailable-node', fetch: async () => ({ ok: false, status: 503 }) },
+    });
+    expect(report).toMatchObject({
+      ok: false,
+      verdict: 'INDETERMINATE',
+      reasonCode: null,
+      availabilityCode: 'NETWORK_UNAVAILABLE',
+    });
+    expect(report.steps.find((step) => step.id === 'op_return')?.status).toBe('unavailable');
   });
 });
 

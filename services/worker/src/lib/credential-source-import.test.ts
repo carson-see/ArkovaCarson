@@ -11,15 +11,44 @@ import {
 import { poisonAt, isWellFormedUtf16 } from '../tests/utf16-poison.js';
 
 const FIXED_NOW = new Date('2026-05-05T18:45:00.000Z');
-// SCRUM-2484: the recipient identifier hash is now a keyed HMAC; a pepper is
-// required for it to be produced at all.
-const TEST_RECIPIENT_PEPPER = 'test-recipient-pepper-0123456789';
-
 function response(body: string, init?: ResponseInit): Response {
   return new Response(body, init);
 }
 
 describe('credential-source-import', () => {
+  it('keeps the complete preview and evidence package independent of the recipient pepper', async () => {
+    const body = JSON.stringify({
+      name: 'Cloud Architecture Fundamentals',
+      issuer: { name: 'Example Cloud' },
+      recipientName: 'Ada Recipient',
+      recipientEmail: 'ada@example.com',
+      issuedOn: '2026-04-15',
+      id: 'badge-123',
+    });
+    const build = (recipientPepper: string) => {
+      const deps = {
+      fetchFn: vi.fn().mockResolvedValue(response(body, { headers: { 'content-type': 'application/json' } })),
+      urlGuard: vi.fn().mockResolvedValue(false),
+      now: () => FIXED_NOW,
+      // A legacy caller-provided property must have no effect on any response
+      // or package commitment after the untrusted preview path stops consuming it.
+      recipientPepper,
+      };
+      return buildCredentialSourceImportPreview({
+        source_url: 'https://credentials.example.com/badge-123',
+        credential_type: 'BADGE',
+      }, deps);
+    };
+
+    const pepperA = await build('recipient-pepper-a-0123456789');
+    const pepperB = await build('recipient-pepper-b-0123456789');
+
+    expect(pepperA).toEqual(pepperB);
+    expect(pepperA.preview.credential_recipient_hash).toBeNull();
+    expect(pepperA.evidencePackage.credential).not.toHaveProperty('recipientIdentifierHash');
+    expect(pepperA.preview.public_metadata).not.toHaveProperty('recipient_identifier_hash');
+  });
+
   it('builds public-safe captured-url evidence from HTML metadata', async () => {
     const fetchFn = vi.fn().mockResolvedValue(response(`
       <html>
@@ -42,7 +71,7 @@ describe('credential-source-import', () => {
     const result = await buildCredentialSourceImportPreview({
       source_url: 'https://www.credly.example/badges/badge-123?token=secret&utm_source=ad&locale=en',
       credential_type: 'BADGE',
-    }, { fetchFn, urlGuard, now: () => FIXED_NOW, recipientPepper: TEST_RECIPIENT_PEPPER });
+    }, { fetchFn, urlGuard, now: () => FIXED_NOW });
 
     expect(fetchFn).toHaveBeenCalledWith(
       'https://www.credly.example/badges/badge-123?locale=en',
@@ -61,16 +90,15 @@ describe('credential-source-import', () => {
       verification_level: 'captured_url',
       extraction_method: 'json_ld',
     });
-    expect(result.preview.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.preview.credential_recipient_hash).toBeNull();
     expect(result.preview.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.preview.anchor_fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(result.preview.anchor_fingerprint).not.toBe(result.preview.evidence_package_hash);
     expect(result.preview.public_metadata).not.toHaveProperty('token');
     expect(result.preview.public_metadata).not.toHaveProperty('recipient_display_name');
     expect(result.preview.public_metadata).not.toHaveProperty('credential_recipient_display');
-    // SCRUM-2484: the recipient identifier hash is returned in the PREVIEW (for
-    // the authenticated importer) but must NOT appear in public_metadata (which
-    // is spread into stored anchors.metadata → get_public_anchor → anon callers).
+    // Caller-controlled sources never derive a stable recipient hash. The
+    // display name remains available for authenticated confirmation only.
     expect(result.preview.public_metadata).not.toHaveProperty('recipient_identifier_hash');
   });
 
@@ -106,12 +134,11 @@ describe('credential-source-import', () => {
       }), { headers: { 'content-type': 'application/json' } })),
       urlGuard: vi.fn().mockResolvedValue(false),
       now: () => FIXED_NOW,
-      recipientPepper: TEST_RECIPIENT_PEPPER,
     });
 
     expect(result.preview.credential_issuer).toBe('Structured Issuer');
     expect(result.preview.credential_recipient_display).toBe('Source Recipient');
-    expect(result.preview.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.preview.credential_recipient_hash).toBeNull();
   });
 
   // SCRUM-2913 (Lane 2) — 0362's get_public_anchor allow-list widening exists

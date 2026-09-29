@@ -66,7 +66,7 @@ export function recomputeReasonCode(reason: string | undefined): ReasonCode {
 }
 
 /** Map an independent-node confirmation status to a frozen code. */
-export function chainReasonCode(status: Exclude<ConfirmInclusionStatus, 'confirmed'>): ReasonCode {
+export function chainReasonCode(status: Exclude<ConfirmInclusionStatus, 'confirmed' | 'node_unavailable'>): ReasonCode {
   switch (status) {
     case 'bad_request':
       return 'MALFORMED_BUNDLE';

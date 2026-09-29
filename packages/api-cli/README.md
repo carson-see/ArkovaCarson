@@ -6,7 +6,7 @@
 After the package is published, install it with Node.js 20.14 or newer:
 
 ```sh
-npm install --global arkova-api-cli@0.1.0
+npm install --global arkova-api-cli@0.3.0
 arkova --help
 ```
 
@@ -43,3 +43,7 @@ commands — all backed by the canonical API routes documented in
 `packages/api-cli/agents.md` (UAT-12 status parity, UAT-24 folder parity).
 Confirm capability flags for your account in the live Arkova API documentation
 before automating a specific action.
+
+## Agent lifecycle
+
+Use `arkova agent register|list|get|update|revoke`, `arkova agent key create`, and `arkova agent computeid admit --request-json <local-file>`. Configure an organization API key with `agents:manage`; ComputeID admission is API-key-only and does not widen scopes. Output is JSON. Store one-time key output immediately. The restricted key returned by admission is not automatically an agent-management key. The CLI remains a private repository package whose manifest depends on the sibling SDK through `file:../sdk`.

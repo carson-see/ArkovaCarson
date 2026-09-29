@@ -150,6 +150,10 @@ export const AVAILABLE_EVENTS = [
   { id: 'suborg.credits_reclaimed', label: 'Affiliate Credits Reclaimed' },
   { id: 'suborg.suspended', label: 'Affiliated Organization Suspended' },
   { id: 'suborg.offboarded', label: 'Affiliated Organization Offboarded' },
+  { id: 'agent.registered', label: 'Agent Registered' },
+  { id: 'agent.updated', label: 'Agent Updated' },
+  { id: 'agent.revoked', label: 'Agent Revoked' },
+  { id: 'agent.key_created', label: 'Agent Key Created' },
 ];
 
 /**
