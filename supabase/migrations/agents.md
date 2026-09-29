@@ -1993,6 +1993,7 @@ after it — see the `(PR #3088)` block immediately below.
 | # | File | Ticket | Applied? | Summary |
 |---|---|---|---|---|
 | `0487` | `0487_docusign_content_addressed_external_revision_backfill.sql` | (no Jira ticket cited by this task) | RESERVED — file-only, **NOT applied to prod, staging, or any rig.** | Compensating data-only migration. Backfills `connector_artifact.external_revision = fingerprint_sha256 WHERE source = 'docusign' AND external_revision IS NULL`, paired with the same-PR code fix (both DocuSign `enqueue_connector_artifact` call sites — `services/worker/src/jobs/docusign-envelope-completed.ts` and `services/worker/src/api/v1/webhooks/docusign.ts` — now write `p_external_revision` = the fingerprint instead of `null`). Investigation basis: prod `connector_artifact` had `external_revision` populated on 8/8 `google_drive` rows and 0/27 `docusign` rows, degenerating the mig-0343 dedupe key `(org_id, source, external_ref, COALESCE(external_revision,''))` from per-version to per-envelope for the whole source. DocuSign Connect's envelope-completed payload (`DocusignEnvelopeCompleted`, `integrations/connectors/schemas.ts`) has no native revision token (no `documentIdGuid`/`statusChangedDateTime`/ETag) and a completed envelope has no DocuSign-native "new version" concept — an amendment is a new envelope — so `fingerprint_sha256` is content-addressed identity, the only per-version handle this vendor gives us; precedent is Drive's own synthetic-revision fallback (`DRIVE_REVISION_KINDS`, `drive-artifact-producer.ts`) for the same "source has no native revision" shape. Backfill is mandatory, not optional: without it, a genuine post-fix event for one of the 27 pre-existing envelopes would compute a dedupe key that no longer matches its own existing row (`COALESCE(NULL,'')` = `''` ≠ the new fingerprint value), producing a spurious duplicate for an artifact that should have deduped. Safe by construction: `fingerprint_sha256` is `NOT NULL` with a 64-lowercase-hex `CHECK` on every existing row (mig 0343), so the backfill invents nothing and cannot violate the unique index — every `docusign` row already has at most one row per `(org_id, source, external_ref)` pre-migration (enforced by the index while `external_revision` was uniformly `NULL`), and this statement changes only the 4th key component's value, not `org_id`/`external_ref`, so post-backfill distinctness follows from pre-backfill distinctness. Idempotent (`WHERE external_revision IS NULL`). Real `-- ROLLBACK:` in the file header (unlike most data-only migrations in this table, the pre-migration state — uniformly `NULL` — is exactly recoverable, so rollback restores it precisely rather than being a "no rollback, restore from backup" note). Tier T3 (`supabase/migrations/` + the connector-artifact dedupe key anchor materialization keys off). No schema change: no `database.types.ts` delta, no `NOTIFY pgrst`. Number derived 2026-09-25 after `git fetch origin`: `origin/main`'s numeric head is `0482`; the highest number this file's own most recent entry (the `0482` row above) records is its explicitly-stated reservation of `0483` for an unpushed sibling-worktree session (`0483_scrum4939_credit_rpc_followups.sql`, not visible via remote-branch or `agents.md` scan) with the instruction "next author claims `0487`" — followed here. A filesystem check of every other worktree under `.claude/worktrees/` at derivation time found no `048[3-9]`/`049x`-prefixed file checked out anywhere, so that `0483` reservation could not be independently re-confirmed against a live file, only against its own prior entry's text; `0487` is claimed by this entry alone. **Next author claims `0488` — re-derive, do not trust this line, and check sibling worktrees as well as remote branches.** NOT applied to any environment — ordering per CLAUDE.md §0 rule 10 / `.claude/hooks/check-prod-migration-apply.sh` requires this prefix to land on `origin/main` (or be added to `scripts/ci/snapshots/ledger-numeric-exemptions.json`) before any `apply_migration` against a prod-linked ref is permitted. |
+| `0490` | `0490_wrap_auth_uid_profile_media_helpers.sql` | SCRUM-1278 follow-up to #3033 / 0481 (PR #3150) | **no — file only, NOT applied to prod, staging, or any rig.** Operator applies per §0 rule 10 (exemption + apply in one motion). | Compensating migration for `0481`. `CREATE OR REPLACE` of the two SECURITY DEFINER storage-policy helpers `can_read_profile_media(text)` / `can_write_profile_media(text)` with the five bare `auth.uid()` calls (2 + 3) wrapped as `(SELECT auth.uid())`. The three `storage.objects` policies are untouched — their predicates only call the helpers (verified on prod `pg_policies` 2026-09-27), so no `DROP/CREATE POLICY` and no AccessExclusiveLock on `storage.objects`. Grants restated (`REVOKE ... FROM PUBLIC, anon, authenticated` + the 0481 `GRANT`s) because `CREATE OR REPLACE` re-triggers default privileges. `SET LOCAL lock_timeout = '5s'`, `SET search_path = public`, `NOTIFY pgrst, 'reload schema'`. Rollback = the verbatim 0481 bodies, carried as `--` comment lines at the end of the file (a `/* */` block reads as a second definition to `secdef-function-grants`). Rehearsed on an isolated local stack replayed to 0490: rollback bodies installed → `tests/rls/profile-media-auth-uid-wrap.test.ts` catalog pin red, 18 behaviour cases green (grant/deny identical for owner / other-org member / anon) → 0490 reapplied → 19/19 green. Number derived 2026-09-27: `origin/main` head `0487`; `0488`/`0489` claimed by open PRs #3116/#3121/#3122/#3123 (`codex/agent-*-20260926` branches); `docs/staging/rig-reservations.json` reserves nothing above `0415`. **Next author claims `0491` — re-derive, do not trust this line.** |
 
 Test coverage lands in the same PR, not this migration (data-only, no
 schema to exercise): `services/worker/src/jobs/docusign-envelope-completed.test.ts`
@@ -2068,6 +2069,33 @@ session CAN legitimately edit `0487`'s `-- ROLLBACK:` comment in place
 (e.g. a fresh worktree/session where the hook's on-disk check does not
 apply, or an explicit operator override) before this PR merges, do so and
 delete this addendum — the corrected text is spelled out above verbatim.**
+
+## Recent migrations (PR #3150) — 2026-09-27 — 0490 wraps 0481's five bare auth.uid() calls (SCRUM-1278 follow-up to #3033)
+
+`0481` (UAT-14, PR #3033) merged under `rls-auth-uid-bare-intentional` with
+five bare `auth.uid()` calls and was already live on prod (applied 2026-09-20),
+so its text is frozen and the lint carries a permanent `SKIPPED_FILES` entry
+for it. The calls are **not** in the three `storage.objects` policies; they are
+inside the two SECURITY DEFINER helpers those policies call
+(`can_read_profile_media`: 2, `can_write_profile_media`: 3). `0490` therefore
+`CREATE OR REPLACE`s the helpers with `(SELECT auth.uid())` and leaves the
+policies alone — a policy DROP would have taken an AccessExclusiveLock on
+`storage.objects` to change nothing.
+
+Proof in the same PR:
+- `scripts/ci/check-rls-auth-uid-wrap.test.ts` pins that `0481` still scans to
+  exactly five bare hits (lines 42/52/64/67/71) and that `0490` scans to zero
+  while carrying five wrapped occurrences and NOT being exempted.
+- `tests/rls/profile-media-auth-uid-wrap.test.ts` reads the catalog (2:2 / 3:3
+  total:wrapped) and drives the real storage-api → RLS → helper path for
+  owner, other-org member and anon across INSERT / SELECT / DELETE on both the
+  `users/` and `organizations/` shapes, plus published-path positive controls.
+
+Applied nowhere. The operator applies to prod per CLAUDE.md §0 rule 10 — add
+`0490` to `exemptPrefixes` in `scripts/ci/snapshots/ledger-numeric-exemptions.json`
+in the same motion as the MCP `apply_migration`, reconcile the ledger row to
+`0490`, confirm `list_migrations` — or lets Mergify land the file first and
+applies afterwards.
 This block is titled `(PR #3080)` and placed last because 3080 is the highest PR number
 in this file (CLAUDE.md §6). A later author claiming a higher PR number orders after it.
 

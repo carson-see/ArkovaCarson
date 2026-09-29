@@ -352,7 +352,7 @@ router.use('/verify', requireScope('verify'), (req: Request, res: Response, next
     return;
   }
   // All other requests go through x402 payment gate
-  verifyPaymentGate(req, res, next);
+  void verifyPaymentGate(req, res, next);
 }, verifyRouter);
 // Job status polling — API key required
 router.use('/jobs', requireScope('verify:batch'), jobsRouter);
@@ -719,7 +719,7 @@ function requireSignatureAuth(req: Request, res: Response, next: NextFunction): 
     next();
     return;
   }
-  requireAuth(req, res, next);
+  void requireAuth(req, res, next);
 }
 router.use('/', adesSignatureGate(), requireSignatureAuth, signaturesRouter);
 function isComplianceSignaturesPath(reqPath: string): boolean {
@@ -730,7 +730,7 @@ function requireComplianceAuth(req: Request, res: Response, next: NextFunction):
     next();
     return;
   }
-  requireAuth(req, res, next);
+  void requireAuth(req, res, next);
 }
 function complianceAiRateLimiter(req: Request, res: Response, next: NextFunction): void {
   if (!isComplianceSignaturesPath(req.path)) {

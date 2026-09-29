@@ -195,8 +195,10 @@ export const SKIPPED_FILES = new Set([
   // 2026-09-26 under `rls-auth-uid-bare-intentional`; this scanner reads the
   // whole tree rather than the PR diff, so without this entry every later PR
   // and merge-queue train reds on a file none of them touched. The initplan
-  // wrap lands as a compensating migration (DROP/CREATE POLICY with
-  // `(SELECT auth.uid())`), tracked as a follow-up to #3033.
+  // wrap landed as the compensating migration 0490 (CREATE OR REPLACE of the
+  // two policy helpers with `(SELECT auth.uid())` — the bare calls were in
+  // the helper bodies, not in the CREATE POLICY statements). This entry stays
+  // because the scanner reads immutable file text, not the live catalog.
   'supabase/migrations/0481_uat14_profile_brand_media.sql',
 ]);
 
