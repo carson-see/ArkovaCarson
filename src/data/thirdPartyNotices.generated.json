@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T15:33:02.252Z",
+  "generatedAt": "2026-09-29T16:30:12.558Z",
   "generalDependencies": [
     {
       "name": "@babel/runtime",
@@ -550,7 +550,7 @@
     },
     {
       "name": "@stripe/stripe-js",
-      "version": "9.16.0",
+      "version": "9.17.0",
       "license": "MIT",
       "repository": "https://github.com/stripe/stripe-js",
       "copyright": "Copyright (c) 2017 Stripe",
@@ -558,7 +558,7 @@
     },
     {
       "name": "@supabase/auth-js",
-      "version": "2.116.0",
+      "version": "2.117.2",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -566,7 +566,7 @@
     },
     {
       "name": "@supabase/functions-js",
-      "version": "2.116.0",
+      "version": "2.117.2",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -582,7 +582,7 @@
     },
     {
       "name": "@supabase/postgrest-js",
-      "version": "2.116.0",
+      "version": "2.117.2",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -590,7 +590,7 @@
     },
     {
       "name": "@supabase/realtime-js",
-      "version": "2.116.0",
+      "version": "2.117.2",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -598,7 +598,7 @@
     },
     {
       "name": "@supabase/storage-js",
-      "version": "2.116.0",
+      "version": "2.117.2",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -606,7 +606,7 @@
     },
     {
       "name": "@supabase/supabase-js",
-      "version": "2.116.0",
+      "version": "2.117.2",
       "license": "MIT",
       "repository": "https://github.com/supabase/supabase-js",
       "copyright": "Copyright (c) 2020 Supabase",
@@ -614,7 +614,7 @@
     },
     {
       "name": "@tanstack/query-core",
-      "version": "5.103.1",
+      "version": "5.103.2",
       "license": "MIT",
       "repository": "https://github.com/TanStack/query",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -622,7 +622,7 @@
     },
     {
       "name": "@tanstack/react-query",
-      "version": "5.103.1",
+      "version": "5.103.2",
       "license": "MIT",
       "repository": "https://github.com/TanStack/query",
       "copyright": "Copyright (c) 2021-present Tanner Linsley",
@@ -1148,7 +1148,7 @@
     },
     {
       "name": "lucide-react",
-      "version": "1.47.0",
+      "version": "1.48.0",
       "license": "ISC",
       "repository": "https://github.com/lucide-icons/lucide",
       "copyright": "Copyright (c) 2026 Lucide Icons and Contributors*",
