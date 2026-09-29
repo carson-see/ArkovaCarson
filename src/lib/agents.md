@@ -1,5 +1,49 @@
 # agents.md — lib
 
+## 2026-09-29 — `recordDisplay.ts` (new): shared record-readability helpers
+
+New module, the single source of truth every record card/list/detail surface uses to avoid
+rendering a connector-internal id as a title, a raw MIME string as a type, "0 B" for an unknown
+size, or a `mtime:`-prefixed token as if it were a formatted date (founder-reported, then a
+coordinator-added dashboard/list follow-up, both 2026-09-29). Consumed by
+`src/components/anchor/AssetDetailView.tsx`, `src/components/records/RecordsList.tsx`,
+`src/components/organization/OrgRegistryTable.tsx`, `src/pages/MyRecordsPage.tsx`, and
+`src/components/verification/PublicVerification.tsx` (JSON-LD `name` field) — SonarCloud
+duplication budget is why this is ONE module rather than a title-derivation function
+reinvented per call site.
+
+- `looksLikeConnectorInternalId(filename, connectorSource?)` — true only for a
+  `provider:opaque-token` shape with no whitespace/period; when `connectorSource` is supplied
+  the prefix must match it exactly. Deliberately narrow (a real filename with a colon, e.g.
+  `"Chapter: Intro.pdf"`, must NOT trip this).
+- `deriveDisplayTitle(filename, metadata)` — non-connector filenames pass through UNCHANGED (no
+  regression on the common case). A connector-internal filename resolves to the last path
+  segment of `metadata._drive_folder_path` (which, per the Drive connector pipeline, ends in the
+  file's real name) or, if unavailable, `RECORD_DETAIL_LABELS.UNTITLED_DOCUMENT_TITLE`
+  ("Secured document") — NEVER the raw id.
+- `deriveDisplayType(fileMime, metadata?)` — maps a MIME type (or, when `fileMime` is absent,
+  `metadata.content_type`/`metadata.export_mime_type`) to `DOCUMENT_TYPE_LABELS`
+  (Spreadsheet/Document/Presentation/PDF/Image/Text file); returns `null` — never a guess — for
+  anything unrecognized so the caller can fall back to the raw string.
+- `formatDisplayFileSize(bytes)` — returns `null` (caller omits the size) for `0`/`null`/
+  `undefined`, since "0 B" states something false about a size that was simply never recorded.
+- `stripSourceModifiedTimePrefix` / `formatSourceModifiedTime(raw)` — strips a leading
+  `mtime:`/`evt:` token and, only when the remainder parses as an ISO-8601 timestamp, formats it
+  via `toLocaleString()`. A token that does NOT parse as a time is returned stripped but
+  UNFORMATTED — §1.5: never present an invented date.
+- `CONNECTOR_INTERNAL_METADATA_KEYS` — the ten raw connector identifiers (file id, mime type,
+  revision id, content type, external ref, rule event id, integration id, connector source,
+  export mime type, connector artifact id) that must never render on a record CARD/list row —
+  only inside a detail page's collapsed "Technical details" disclosure. Single shared list so a
+  new connector field cannot leak through a second, independently-maintained denylist.
+- `deriveConnectorSourceLabel(connectorSource)` — `'google_drive'` → "Google Drive",
+  `'docusign'` → "DocuSign" (via the new `CONNECTOR_SOURCE_LABELS` in `copy.ts`), else `null`.
+
+`copy.ts` also gained `DOCUMENT_TYPE_LABELS`, `CONNECTOR_SOURCE_LABELS`, and additions to
+`RECORD_DETAIL_LABELS` / `VERSION_HISTORY_LABELS` / `PUBLIC_VERIFICATION_LABELS` for the version
+banner, "what changed" panel, and dashboard version chips — see those consuming folders'
+agents.md entries. Tests: `recordDisplay.test.ts` (27 cases, TDD red-first).
+
 ## 2026-09-21 — `copy.ts`: `DRIVE_CONNECT_PROMPT` replaces the "least-privilege" claim (SCRUM-5287/SCRUM-2903/SCRUM-2330 privacy-claims accuracy pass)
 
 `CONNECTIONS_LABELS.DRIVE_CONNECT_PROMPT` replaces an inline JSX string in `DriveConnectorCard.tsx`

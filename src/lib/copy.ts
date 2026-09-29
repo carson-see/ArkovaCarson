@@ -100,6 +100,33 @@ export function formatCredentialType(raw: string | null | undefined): string {
   return raw.replaceAll('_', ' ').replaceAll(/\b\w/g, c => c.toUpperCase());
 }
 
+// =============================================================================
+// DOCUMENT TYPE (readable file-type labels, founder report 2026-09-29)
+// =============================================================================
+// A record's subtitle used to show the raw MIME string ("application/pdf",
+// "application/vnd.google-apps.spreadsheet") verbatim. `src/lib/recordDisplay.ts`
+// maps a MIME type to one of these plain-language labels; unrecognised MIME
+// types fall back to the raw string rather than a guess.
+export const DOCUMENT_TYPE_LABELS = {
+  PDF: 'PDF',
+  SPREADSHEET: 'Spreadsheet',
+  DOCUMENT: 'Document',
+  PRESENTATION: 'Presentation',
+  IMAGE: 'Image',
+  TEXT: 'Text file',
+} as const;
+
+/**
+ * Plain-language label for a `metadata.connector_source` marker, used
+ * anywhere a record card/list row names where a connector-sourced record
+ * came from (dashboard cards, record detail). Neither name is §1.3-banned —
+ * these are the connectors' own proper names.
+ */
+export const CONNECTOR_SOURCE_LABELS = {
+  google_drive: 'Google Drive',
+  docusign: 'DocuSign',
+} as const;
+
 // Hoisted to module scope so it isn't rebuilt on every render call (this
 // helper is invoked from the credential renderer on every list row).
 const SUBTYPE_ACRONYMS: Readonly<Record<string, string>> = Object.freeze({
@@ -1067,6 +1094,13 @@ export const PUBLIC_VERIFICATION_LABELS = {
   COPY_RECEIPT_ARIA: 'Copy network receipt',
   REPORT_ISSUE: 'Report an Issue',
   REPORT_ISSUE_SUBJECT: 'Issue with record',
+  // Readability pass (founder-reported, 2026-09-29): a superseded record must
+  // say plainly that it remains valid evidence (supersede, never revoke — see
+  // memory/project_drive_supersede_not_revoke.md), and link back to the
+  // earlier version when the API provided one.
+  SUPERSEDED_REMAINS_VALID:
+    'This version remains valid evidence of the document as it existed when it was secured.',
+  VIEW_PREVIOUS_VERSION: 'View the previous version',
 } as const;
 
 // =============================================================================
@@ -3238,6 +3272,17 @@ export const RECORD_DETAIL_LABELS = {
   TOAST_RENAMED: 'Document renamed',
   ERR_RENAME: 'Could not rename the document. Please try again.',
   ERR_RENAME_FORBIDDEN: 'You don’t have permission to rename this record.',
+  // Readability pass (founder-reported, 2026-09-29): a connector-sourced
+  // filename like `google_drive:1IxoL...` is an internal id, never a name a
+  // human chose — never render it as the title. Used only when no human name
+  // can be derived (e.g. no folder path on the record's metadata).
+  UNTITLED_DOCUMENT_TITLE: 'Secured document',
+  // Single collapsed disclosure holding every raw identifier Arkova recorded
+  // for this document (file id, revision id, connector ids, etc.) — replaces
+  // the always-visible "Metadata" dump, which also used to render a second
+  // time inside the credential card (CredentialRenderer's untemplated
+  // fallback). See AssetDetailView.tsx's TechnicalDetailsSection.
+  TECHNICAL_DETAILS_TOGGLE: 'Technical details',
 } as const;
 
 export const ONBOARDING_VALUE_PROP_LABELS = {
@@ -3332,6 +3377,31 @@ export const VERSION_HISTORY_LABELS = {
   UPDATED_VERSION: 'Updated Version',
   NO_HISTORY: 'This is the original version of this record.',
   VIEW_VERSION: 'View Version',
+  // Readability pass (founder-reported, 2026-09-29): a prominent, plain-language
+  // banner naming which version this is and whether it is current, plus an
+  // honest "what changed" statement. {version}/{total}/{date} are replaced by
+  // the caller — same `.replace('{token}', value)` convention already used by
+  // ANCHORING_STATUS_LABELS.PENDING_SINCE.
+  VERSION_OF_TOTAL: 'Version {version} of {total}',
+  CURRENT_SUFFIX: '(current)',
+  NEWER_VERSION_NOTICE: 'A newer version of this document was secured on {date}.',
+  VIEW_CURRENT_VERSION: 'View the current version',
+  REPLACES_PREVIOUS: 'Replaces version {version}.',
+  VIEW_PREVIOUS_VERSION: 'View the previous version',
+  // Product decision: superseding a record never revokes it (see
+  // memory/project_drive_supersede_not_revoke.md) — an older version stays
+  // valid evidence of the document as it existed at the time it was secured.
+  REMAINS_VALID_EVIDENCE:
+    'This version remains valid evidence of the document as it existed when it was secured. Replacing it with a newer version does not revoke it.',
+  WHAT_CHANGED_TITLE: 'What changed',
+  // Honesty gate (§1.5): Arkova stores fingerprints, not file content, so it
+  // cannot show — and must not imply — a content diff between versions.
+  WHAT_CHANGED_NO_DIFF:
+    'Arkova records document fingerprints, not file content, so it cannot show what changed inside the document.',
+  FINGERPRINT_DIFFERS_FROM_VERSION: 'The document fingerprint for this version differs from version {version}.',
+  // Dashboard/list card chip (2026-09-29 follow-up): a compact version marker
+  // for a card row, distinct from the detail page's fuller banner copy.
+  REPLACED_BY_NEWER: 'Replaced by newer version',
 } as const;
 
 // =============================================================================
