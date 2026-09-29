@@ -188,6 +188,37 @@ function getRecipientDisplay(anchor: Anchor): string | null {
 }
 
 /**
+ * Version/superseded chips shown next to the status badge on both the
+ * mobile card and the desktop table row (2026-09-29 dashboard follow-up).
+ * Extracted into one component — SonarCloud fails the new-code quality gate
+ * above 3% duplicated lines, and this exact block (compute + two Badges) was
+ * repeated verbatim in both row renderers below (PR #3190 review). A
+ * superseded record is marked, never hidden — supersede is never revoke.
+ */
+interface VersionStatusChipsProps {
+  versionNumber: number | null;
+  isSuperseded: boolean;
+}
+
+function VersionStatusChips({ versionNumber, isSuperseded }: Readonly<VersionStatusChipsProps>) {
+  const showVersionChip = (versionNumber ?? 1) > 1;
+  return (
+    <>
+      {showVersionChip && (
+        <Badge variant="outline" className="text-xs font-mono" data-testid="record-version-chip">
+          {VERSION_HISTORY_LABELS.VERSION_PREFIX} {versionNumber}
+        </Badge>
+      )}
+      {isSuperseded && (
+        <Badge variant="outline" className="text-xs" data-testid="record-superseded-chip">
+          {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
+        </Badge>
+      )}
+    </>
+  );
+}
+
+/**
  * SCRUM-1999 — explicit error / permission-denied banner for the registry.
  * Rendered in place of the rows (and in place of the empty state) when a fetch
  * fails. `kind === 'load'` is retryable; `'permission'` is not.
@@ -553,8 +584,6 @@ export function OrgRegistryTable({
             // Readability pass (founder-reported, 2026-09-29, dashboard
             // follow-up): never title a row with a raw connector-internal id.
             const displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata as Record<string, unknown> | null);
-            const showVersionChip = ((anchor.version_number as number | null) ?? 1) > 1;
-            const isSuperseded = anchor.status === 'SUPERSEDED';
             return (
               <div
                 key={anchor.id}
@@ -574,16 +603,10 @@ export function OrgRegistryTable({
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {status.label}
                       </Badge>
-                      {showVersionChip && (
-                        <Badge variant="outline" className="text-xs font-mono" data-testid="record-version-chip">
-                          {VERSION_HISTORY_LABELS.VERSION_PREFIX} {anchor.version_number}
-                        </Badge>
-                      )}
-                      {isSuperseded && (
-                        <Badge variant="outline" className="text-xs" data-testid="record-superseded-chip">
-                          {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
-                        </Badge>
-                      )}
+                      <VersionStatusChips
+                        versionNumber={anchor.version_number as number | null}
+                        isSuperseded={anchor.status === 'SUPERSEDED'}
+                      />
                       {anchor.credential_type && (
                         <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                           <GraduationCap className="h-3 w-3" />
@@ -711,8 +734,6 @@ export function OrgRegistryTable({
                 const status = statusConfig[anchor.status];
                 const StatusIcon = status.icon;
                 const displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata as Record<string, unknown> | null);
-                const showVersionChip = ((anchor.version_number as number | null) ?? 1) > 1;
-                const isSuperseded = anchor.status === 'SUPERSEDED';
 
                 return (
                   <TableRow
@@ -747,16 +768,10 @@ export function OrgRegistryTable({
                           <StatusIcon className="mr-1 h-3 w-3" />
                           {status.label}
                         </Badge>
-                        {showVersionChip && (
-                          <Badge variant="outline" className="text-xs font-mono" data-testid="record-version-chip">
-                            {VERSION_HISTORY_LABELS.VERSION_PREFIX} {anchor.version_number}
-                          </Badge>
-                        )}
-                        {isSuperseded && (
-                          <Badge variant="outline" className="text-xs" data-testid="record-superseded-chip">
-                            {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
-                          </Badge>
-                        )}
+                        <VersionStatusChips
+                          versionNumber={anchor.version_number as number | null}
+                          isSuperseded={anchor.status === 'SUPERSEDED'}
+                        />
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">

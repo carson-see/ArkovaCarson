@@ -1,5 +1,16 @@
 # agents.md — components/organization
-_Last updated: 2026-09-29_
+_Last updated: 2026-09-29 (PR #3190 review — version chips deduplicated)_
+
+## 2026-09-29 (PR #3190 review) — `VersionStatusChips` extracted (SonarCloud duplication)
+
+The `record-version-chip`/`record-superseded-chip` Badge pair described in the entry below was
+repeated verbatim in BOTH the mobile card and desktop table row renderers — SonarCloud fails the
+quality gate above 3% duplicated lines on new code, and this was flagged in review. Extracted to
+one module-level `VersionStatusChips({ versionNumber, isSuperseded })` component (defined next to
+`getRecipientDisplay`), used by both row renderers; the two local `showVersionChip`/`isSuperseded`
+consts moved inside it. No behavior change — same two `data-testid`s, same gating logic. Existing
+`OrgRegistryTable.connector-readability.test.tsx` (2 cases) and `OrgRegistryTable.test.tsx`
+(12 cases) pass unchanged, since both query by testid/text rather than by JSX structure.
 
 ## 2026-09-29 — `OrgRegistryTable.tsx` connector-record readability (coordinator scope addition, dashboard follow-up)
 
