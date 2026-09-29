@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import path from 'node:path';
+import { waitForProfileAvatar } from '../scripts/uat14/profile-avatar-readiness';
 
 /**
  * Screenshots land in Playwright's own output directory by default, so a local
@@ -109,6 +110,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   });
   await openEditor(page, 'settings');
   await expect(page.getByText('Profile images')).toBeVisible();
+  await waitForProfileAvatar(page);
   await page.locator('#profile-avatar').setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: onePixelPng });
   await expect.poll(() => uploads.length).toBe(1);
   expect(uploads[0]).toMatchObject({ type: 'image/png' });
@@ -153,4 +155,28 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 375, height: 812 
   await expect(page.getByAltText('Current organization banner')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
   await page.screenshot({ path: shot(`organization-editor-${viewport.width}.png`), fullPage: true });
+});
+
+for (const scenario of [
+  { route: '/login?token=private', markup: '<main>Sign in</main>', category: 'auth_redirect', path: 'login' },
+  { route: '/settings?token=private', markup: '<label for="code">Verification code</label><input id="code">', category: 'mfa_gate', path: 'settings' },
+  { route: '/settings?token=private', markup: '<main>Settings loading</main>', category: 'avatar_unavailable', path: 'settings' },
+] as const) test(`readiness identifies ${scenario.category} without private URL data`, async ({ page }) => {
+  await page.route('**/__uat14/readiness', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Readiness probe</title>' }));
+  await page.goto('/__uat14/readiness');
+  await page.evaluate(route => history.replaceState({}, '', route), scenario.route);
+  await page.setContent(scenario.markup);
+  const result = waitForProfileAvatar(page, { timeoutMs: 25 });
+  await expect(result).rejects.toMatchObject({
+    diagnostic: { category: scenario.category, path: scenario.path },
+  });
+  await expect(result).rejects.not.toThrow(/private/);
+});
+
+test('readiness accepts a visible avatar input in the local browser', async ({ page }) => {
+  await page.route('**/__uat14/readiness', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Readiness probe</title>' }));
+  await page.goto('/__uat14/readiness');
+  await page.evaluate(() => history.replaceState({}, '', '/settings'));
+  await page.setContent('<input id="profile-avatar" type="file">');
+  await expect(waitForProfileAvatar(page, { timeoutMs: 100 })).resolves.toBeUndefined();
 });
