@@ -29,7 +29,7 @@
 -- 1. `materialize_connector_artifact_anchor` (0462, same 7-arg signature, a
 --    body-only CREATE OR REPLACE) accepts `credential_type` `OTHER` — an
 --    EXISTING enum value, not a new one — alongside `CONTRACT_POSTSIGNING`,
---    and a new required `file_size` payload field. This IS required: reading
+--    and a new optional `file_size` payload field. This IS required: reading
 --    the CURRENT (live) 0462 body directly, the validation block hard-checks
 --    `p_anchor_payload->>'credential_type' IS DISTINCT FROM
 --    'CONTRACT_POSTSIGNING'` (raises on anything else) and the INSERT
@@ -193,9 +193,12 @@ BEGIN
   -- OTHER (both existing enum values — no new value added), matching
   -- connector-artifact-drain.ts's defaultMaterializeAnchor, which selects
   -- OTHER for source='google_drive' and keeps CONTRACT_POSTSIGNING for every
-  -- other connector. file_size is a new REQUIRED payload key (jsonb null or
-  -- number only) so `anchors.file_size` is finally populated from
-  -- connector_artifact.byte_length instead of staying NULL forever.
+  -- other connector. file_size is a new OPTIONAL payload key (jsonb null or
+  -- number when present). OPTIONAL is load-bearing for the rollout: this
+  -- migration is applied BEFORE the worker that sends file_size deploys, and
+  -- the worker live at that moment sends the 0462 payload shape without it.
+  -- A required key would fail every connector materialization, Drive and
+  -- DocuSign, from apply until deploy. An absent key stores NULL.
   IF p_anchor_payload->>'fingerprint' IS DISTINCT FROM v_artifact.fingerprint_sha256
      OR p_anchor_payload->>'status' IS DISTINCT FROM 'PENDING'
      OR p_anchor_payload->>'org_id' IS DISTINCT FROM p_org_id::text
@@ -205,8 +208,8 @@ BEGIN
      OR p_anchor_payload->>'fingerprint_source' IS DISTINCT FROM v_fingerprint_source
      OR jsonb_typeof(p_anchor_payload->'filename') IS DISTINCT FROM 'string'
      OR length(p_anchor_payload->>'filename') NOT BETWEEN 1 AND 255
-     OR NOT (p_anchor_payload ? 'file_size')
-     OR jsonb_typeof(p_anchor_payload->'file_size') NOT IN ('null','number')
+     OR (p_anchor_payload ? 'file_size'
+         AND jsonb_typeof(p_anchor_payload->'file_size') NOT IN ('null','number'))
      OR EXISTS (
        SELECT 1 FROM jsonb_object_keys(p_anchor_payload) AS k(key)
         WHERE k.key NOT IN ('fingerprint','status','org_id','user_id','filename',

@@ -75,7 +75,15 @@ describe('0500 drive connector folder filing and metadata repair (shrunk, BUG-20
       expect(functionBody()).toMatch(/\(p_anchor_payload->>'credential_type'\)::credential_type/);
     });
 
-    it('requires and type-checks file_size, adds it to the INSERT, and extends the strict key allow-list', () => {
+    it('does NOT require file_size: the worker deployed at apply time sends the 0462 payload without it', () => {
+      const flat = functionBody().replace(/\s+/g, ' ');
+      expect(flat).not.toContain("OR NOT (p_anchor_payload ? 'file_size')");
+      expect(flat).toContain(
+        "OR (p_anchor_payload ? 'file_size' AND jsonb_typeof(p_anchor_payload->'file_size') NOT IN ('null','number'))",
+      );
+    });
+
+    it('type-checks file_size when present, adds it to the INSERT, and extends the strict key allow-list', () => {
       const body = functionBody();
       expect(body).toMatch(/jsonb_typeof\(p_anchor_payload->'file_size'\) NOT IN \('null','number'\)/);
       expect(body).toMatch(/\(p_anchor_payload->>'file_size'\)::bigint/);
