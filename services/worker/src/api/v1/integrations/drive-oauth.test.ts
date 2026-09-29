@@ -43,6 +43,33 @@ vi.mock('../../../api/_org-auth.js', () => ({
   isCallerOrgAdminResult: vi.fn(async () => ({ value: true, error: false })),
 }));
 
+// DRIVE-BACKFILL (founder directive 2026-09-29), trigger point 2: a
+// successful (re)connect kicks off the initial-sync trigger for every
+// already-existing connector-managed Drive rule's folders. Fire-and-forget
+// and non-throwing by contract (proven in drive-initial-sync-trigger.test.ts)
+// — here we only prove the WIRING: called on a successful callback, with the
+// right org id, and never blocking the redirect.
+const driveInitialSyncTriggerMock = vi.hoisted(() => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vi.hoisted runs before the real module's types are in scope.
+  triggerDriveInitialSyncForFolders: vi.fn(async (): Promise<any[]> => []),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loadConnectorDriveFoldersForOrg: vi.fn(async (): Promise<any[]> => []),
+  makeDriveInitialSyncTriggerDbDeps: vi.fn(() => ({})),
+}));
+vi.mock('../../../integrations/connectors/drive-initial-sync-trigger.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../integrations/connectors/drive-initial-sync-trigger.js')>();
+  return {
+    ...actual,
+    triggerDriveInitialSyncForFolders: driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders,
+    loadConnectorDriveFoldersForOrg: driveInitialSyncTriggerMock.loadConnectorDriveFoldersForOrg,
+    makeDriveInitialSyncTriggerDbDeps: driveInitialSyncTriggerMock.makeDriveInitialSyncTriggerDbDeps,
+  };
+});
+vi.mock('../../../utils/jobQueue.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../utils/jobQueue.js')>();
+  return { ...actual, submitJob: vi.fn(async () => 'job-stub') };
+});
+
 import { getCallerOrgIdResult, isCallerOrgAdminResult } from '../../../api/_org-auth.js';
 import { createDriveOAuthRouter } from './drive-oauth.js';
 
@@ -474,6 +501,112 @@ describe('Drive OAuth router', () => {
       event_type: 'oauth_connected',
       status: 'success',
     });
+  });
+
+  // DRIVE-BACKFILL (founder directive 2026-09-29), trigger point 2: a
+  // successful (re)connect callback fires the initial-sync trigger for the
+  // org's already-existing connector-managed Drive rules — fire-and-forget,
+  // so the redirect still fires even though the trigger never resolves here.
+  it('a successful callback triggers initial sync for the org\'s existing connector-managed Drive rules, without blocking the redirect', async () => {
+    driveInitialSyncTriggerMock.loadConnectorDriveFoldersForOrg.mockResolvedValueOnce([
+      { ruleId: 'rule-1', folders: [{ folderId: 'drv-1', folderName: 'Invoices' }] },
+    ]);
+    // Never resolves — if the callback awaited this, the request would hang
+    // and the test would time out instead of completing.
+    driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders.mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null });
+        if (table === 'integration_events') return mockQuery({ data: null, error: null });
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-secret',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-secret',
+          scope: 'https://www.googleapis.com/auth/drive.readonly email',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
+        return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
+      }
+      if (url.includes('/changes/startPageToken')) {
+        return new Response(JSON.stringify({ startPageToken: 'page-token' }), { status: 200 });
+      }
+      if (url.includes('/changes/watch')) {
+        return new Response(JSON.stringify({
+          resourceId: 'drive-resource-1',
+          expiration: String(new Date('2026-04-30T12:00:00.000Z').getTime()),
+        }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDriveOAuthRouter({
+      db,
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'google-client',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'google-secret',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+    }));
+
+    const start = await request(app)
+      .post('/api/v1/integrations/google_drive/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+
+    const callback = await request(app)
+      .get('/api/v1/integrations/google_drive/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'google-code', state });
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('drive=connected');
+    expect(driveInitialSyncTriggerMock.loadConnectorDriveFoldersForOrg).toHaveBeenCalledWith(
+      expect.anything(),
+      TEST_ORG_ID,
+    );
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).toHaveBeenCalledWith(
+      expect.anything(),
+      { orgId: TEST_ORG_ID, ruleId: 'rule-1', folders: [{ folderId: 'drv-1', folderName: 'Invoices' }] },
+    );
+  });
+
+  it('a DENIED callback (invalid state) never triggers initial sync', async () => {
+    const app = createApp(makeRouteDb());
+    const res = await request(app)
+      .get('/api/v1/integrations/google_drive/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'x', state: 'garbage' });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('drive_error=invalid_state');
+    expect(driveInitialSyncTriggerMock.loadConnectorDriveFoldersForOrg).not.toHaveBeenCalled();
   });
 
   // SCRUM-5287 (P1 security, fix-round item 5): the shared OAuth client can

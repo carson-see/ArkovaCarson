@@ -2224,3 +2224,26 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
   `src/tests/migrations/0500-drive-folder-filing-and-metadata-repair.test.ts`
   (rewritten to match the shrunk migration — asserts the removed functions
   are NOT touched, and pins the four backfill statements in order).
+- `0501_drive_initial_sync_state.sql` (DRIVE-BACKFILL, founder directive
+  2026-09-29; **local only, not applied to any hosted database**) — new
+  `drive_initial_sync_state` table, one row per `(org_id, folder_id)`,
+  tracking whether the backfill that enumerates a watched Drive folder's
+  pre-existing files has run/is running/failed (`status`, `page_token`,
+  `files_seen_count`, `files_enqueued_count`, `last_error`). Not
+  `drive_watch_state` (0351) — that is a different, currently-uncalled
+  push-channel bootstrap/renewal system with channel-lifecycle vocabulary
+  (see `services/worker/src/integrations/connectors/agents.md`'s "two
+  parallel watch systems" note); repurposing it would conflate two systems
+  that file already warns against conflating. RLS ENABLED + FORCE, canonical
+  restrictive `mfa_verified_authenticated` deny-all policy (same identity as
+  0499), `REVOKE ALL ... FROM PUBLIC, anon, authenticated; GRANT ALL ...
+  TO service_role` — this is worker-internal observability/resumability
+  state, no browser surface reads it. `0500` is reserved by a sibling
+  change outside this PR; this file claims `0501` as the next free prefix in
+  this branch. See `services/worker/src/integrations/connectors/agents.md`'s
+  2026-09-29 entry and `services/worker/src/jobs/agents.md`'s matching entry
+  for the full feature. Tier T3 per the standard "new table + RLS" rule;
+  never applied — database types were NOT regenerated (no linked Supabase
+  session in this work), so worker code reads/writes this table through an
+  untyped `(db as any)`-shaped adapter, same precedent as 0343's
+  `connector_artifact` before its own types landed.

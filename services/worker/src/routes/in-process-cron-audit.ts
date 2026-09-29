@@ -328,6 +328,18 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
       'Wrapped in withRunLease(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE) precisely so this in-process '
       + 'backup and the Cloud Scheduler HTTP trigger can both exist; the loser returns skipped.',
   },
+  {
+    jobName: 'drive-initial-sync',
+    entrypointModule: 'jobs/drive-initial-sync-runner.ts',
+    guard: 'run-lease',
+    doubleFireImpact: 'none',
+    rationale:
+      'Drains through claim_next_job (atomic per-row claim, same as drive-file-changed) AND each '
+      + 'claimed job additionally runs under withRunLease(driveInitialSyncRunLeaseSpec(orgId)) — a '
+      + 'per-org TTL lease. A lease miss throws drive_initial_sync_locked, which job_queue records '
+      + 'as a retryable failure rather than doing the work twice; the concurrent copy for the same '
+      + 'org never runs its body at all.',
+  },
 ];
 
 /** Jobs where nothing prevents a second concurrent copy. The audit's finding. */
