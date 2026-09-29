@@ -2,14 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import yaml from 'js-yaml';
+import { load } from 'js-yaml';
 import { describe, expect, it } from 'vitest';
 
 interface Workflow {
   jobs: { admission: { steps: Array<{ name?: string; run?: string }> } };
 }
 
-const workflow = yaml.load(readFileSync('.github/workflows/ci.yml', 'utf8')) as Workflow;
+const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as Workflow;
 const decisionStep = workflow.jobs.admission.steps.find((step) =>
   step.name === 'Admit protected, ready, and speculative runs');
 if (!decisionStep?.run) throw new Error('admission decision shell not found');
