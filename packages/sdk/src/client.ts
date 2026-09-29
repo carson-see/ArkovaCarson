@@ -1498,12 +1498,21 @@ function mapProofBundle(value: unknown): ProofBundle | null {
   const b = value as Record<string, unknown>;
 
   const merkleProof = mapMerkleProofEntries(b.merkle_proof);
+  const coherentSingleton =
+    merkleProof?.length === 0 &&
+    b.leaf_count === 1 &&
+    b.merkle_index === 0 &&
+    typeof b.fingerprint === 'string' &&
+    typeof b.merkle_root === 'string' &&
+    SIBLING_HASH_HEX_RE.test(b.fingerprint) &&
+    SIBLING_HASH_HEX_RE.test(b.merkle_root) &&
+    b.fingerprint.toLowerCase() === b.merkle_root.toLowerCase();
   // Required members must all be present + correctly typed, else fail closed.
   if (
     typeof b.fingerprint !== 'string' ||
     typeof b.merkle_root !== 'string' ||
     merkleProof === null ||
-    merkleProof.length === 0 ||
+    (merkleProof.length === 0 && !coherentSingleton) ||
     typeof b.merkle_index !== 'number' ||
     typeof b.leaf_count !== 'number' ||
     typeof b.tx_id !== 'string' ||
@@ -1540,9 +1549,7 @@ function mapProofBundle(value: unknown): ProofBundle | null {
   return {
     fingerprint: b.fingerprint,
     merkleRoot: b.merkle_root,
-    // Non-empty asserted above (length === 0 ⇒ null), so this satisfies the
-    // non-empty tuple type on ProofBundle.merkleProof.
-    merkleProof: merkleProof as [MerkleProofEntry, ...MerkleProofEntry[]],
+    merkleProof,
     merkleIndex: b.merkle_index,
     leafCount: b.leaf_count,
     txId: b.tx_id,

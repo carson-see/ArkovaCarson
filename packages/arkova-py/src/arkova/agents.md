@@ -129,3 +129,11 @@ Sync and async clients expose `get_anchor_submission_status(public_id)` returnin
 `skipped_recipient_failed`, and `AnchorImportResponse.recipient_link_failed`
 defaults to 0 so a response from an older worker still validates. Keep the
 Literal in sync with the worker's OpenAPI enum.
+
+## 2026-09-26 — singleton proof-bundle parity repair
+
+`ProofBundle` accepts an empty application-tree branch only for a coherent
+single-leaf tree (`leaf_count=1`, `merkle_index=0`, root equals fingerprint).
+All other empty branches still fail closed to `proof_bundle=None`. The repair
+was first packaged as 2.5.1 and is folded into the unreleased 2.6.0 combined
+candidate; publishing is not authorized here.
