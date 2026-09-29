@@ -25,6 +25,7 @@ import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
 import { DoesNotAssertDisclaimer } from '@/components/verification/DoesNotAssertDisclaimer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
+import { usePublicAnchorParent } from '@/hooks/usePublicAnchorParent';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import {
   Card,
@@ -116,17 +117,6 @@ interface PublicAnchorData {
    * Surfaced by the `get_public_anchor` RPC. extraction_confidence is never
    * rendered (CleMetadataSection redacts it). */
   cle_metadata?: Record<string, unknown> | null;
-  /**
-   * Readability pass (founder-reported, 2026-09-29): the verification API
-   * already returns these two (§1.8 additive-nullable — no schema change).
-   * `version_number` is 1 for an original record; `parent_public_id` is the
-   * public id of the version this one replaced, when there is one. Used only
-   * to state honestly that a superseded record remains valid evidence and to
-   * link back to the version it replaced — never to imply a forward link to
-   * a newer version, which this frozen response does not carry.
-   */
-  version_number?: number | null;
-  parent_public_id?: string | null;
   error?: string;
 }
 
@@ -181,6 +171,17 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     { public: true }
   );
 
+  // PR #3190 review finding 2: get_public_anchor does not emit
+  // parent_public_id/version_number (confirmed against production).
+  // usePublicAnchorParent calls the worker's separate, genuinely public
+  // GET /api/v1/verify/:publicId endpoint for the one field this page needs
+  // (see that hook's header for the full trail — no schema/RPC change).
+  // Must be called unconditionally (hooks rule) — gated via its own
+  // `enabled` param on the narrow SUPERSEDED case, computed safely off the
+  // nullable `data` state before the loading/error early returns below.
+  const isSupersededForParentLookup = normalizePublicVerificationStatus(data?.status ?? '') === 'SUPERSEDED';
+  const { parentPublicId } = usePublicAnchorParent(data?.public_id, isSupersededForParentLookup);
+
   useEffect(() => {
     async function fetchVerification() {
       setLoading(true);
@@ -195,13 +196,18 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         if (rpcError) {
           setError(rpcError.message);
-          logVerificationEvent({ publicId, method: 'web', result: 'error' });
+          // Fire-and-forget analytics: logVerificationEvent's own try/catch
+          // (src/lib/logVerificationEvent.ts) swallows every failure and never
+          // rejects. The user-facing failure is already handled above via
+          // setError — this call only records the event for the audit trail.
+          void logVerificationEvent({ publicId, method: 'web', result: 'error' });
           return;
         }
 
         if (result.error) {
           setError(result.error);
-          logVerificationEvent({ publicId, method: 'web', result: 'not_found' });
+          // Fire-and-forget — see comment above.
+          void logVerificationEvent({ publicId, method: 'web', result: 'not_found' });
           return;
         }
 
@@ -214,21 +220,32 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         // PENDING anchors are 'verified' (record exists, just not yet secured)
         const logResult = status === 'REVOKED' ? 'revoked'
           : 'verified';
-        logVerificationEvent({
+        // Fire-and-forget — see comment above.
+        void logVerificationEvent({
           publicId,
           method: 'web',
           result: logResult,
         });
       } catch (err) {
+        // A rejected RPC call (network failure, thrown client error) must
+        // never leave the page silently loading or showing stale/"verified"
+        // data — this is the public verification surface, so a swallowed
+        // failure reading as success is the one failure mode that must never
+        // happen. setError below is what actually protects that; the log
+        // call after it is fire-and-forget analytics only.
         setError(err instanceof Error ? err.message : 'Verification failed');
-        logVerificationEvent({ publicId, method: 'web', result: 'error' });
+        void logVerificationEvent({ publicId, method: 'web', result: 'error' });
       } finally {
         setLoading(false);
       }
     }
 
     if (publicId) {
-      fetchVerification();
+      // fetchVerification's own try/catch/finally above guarantees it never
+      // rejects — every failure path (thrown error, rejected RPC) already
+      // calls setError and setLoading(false) before returning. Nothing here
+      // could act on a rejection this promise cannot produce.
+      void fetchVerification();
     }
   }, [publicId]);
 
@@ -432,19 +449,22 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               {ANCHORING_STATUS_LABELS.PENDING_SINCE.replace('{time}', pendingSince)}
             </p>
           )}
-          {/* Readability pass (founder-reported, 2026-09-29): a superseded
-              record must say plainly it remains valid evidence (supersede,
-              never revoke) and, when the API provided one, link back to the
-              version it replaced. No new field is requested from the frozen
-              API — version_number/parent_public_id are additive-nullable
-              fields it already returns (§1.8). */}
+          {/* Readability pass (founder-reported, 2026-09-29; corrected PR #3190
+              review finding 2): a superseded record must say plainly it
+              remains valid evidence (supersede, never revoke). `get_public_anchor`
+              (the RPC this page's primary fetch uses) does NOT return
+              parent_public_id — confirmed against production — so the link
+              below is sourced from `usePublicAnchorParent`, a SEPARATE call
+              to the worker's already-public GET /api/v1/verify/:publicId
+              endpoint (API-RICH-01), not from `data`. No schema/RPC change
+              made or requested. */}
           {isSuperseded && (
             <div className="mt-3 max-w-sm text-xs text-muted-foreground" data-testid="public-superseded-version-note">
               <p>{PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID}</p>
-              {data.parent_public_id && (
+              {parentPublicId && (
                 <p className="mt-1">
                   <a
-                    href={verifyPath(data.parent_public_id)}
+                    href={verifyPath(parentPublicId)}
                     className="text-primary hover:underline"
                     data-testid="public-previous-version-link"
                   >

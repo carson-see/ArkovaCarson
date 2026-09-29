@@ -1,5 +1,66 @@
 # agents.md — verification
-_Last updated: 2026-09-29 (record-detail readability pass, public verification page)_
+_Last updated: 2026-09-29 (PR #3190 review — version-link data source corrected)_
+
+## 2026-09-29 SonarCloud typescript:S9383 (PR #3190 review) — `PublicVerification.tsx` fetch effect
+
+Five unhandled-promise findings on the `get_public_anchor` fetch effect, all resolved by deciding
+each call site rather than blanket-prefixing `void`:
+- Four `logVerificationEvent(...)` calls (rpcError / result.error / success / catch branches) are
+  marked `void` — that helper's own try/catch (`src/lib/logVerificationEvent.ts`) already swallows
+  every failure and never rejects; these are genuinely fire-and-forget analytics, and the
+  user-facing failure path is already handled by the `setError(...)` call immediately before each
+  one.
+- The outer `fetchVerification()` call is marked `void` — its own try/catch/finally already
+  guarantees it never rejects: every failure path (thrown error, rejected RPC) calls `setError`
+  and `setLoading(false)` before returning, so there is no rejection for a caller to act on.
+- **Nothing here was changed to silently swallow a real failure** — a rejected RPC call must never
+  leave the public verification page stuck loading or reading as verified; that property was
+  already correct (the `catch` block sets `error`), and is now pinned by a new test asserting a
+  REJECTED (not merely error-shaped) `get_public_anchor` call renders the error state, never a
+  stuck loading spinner or a false "Document Verified." Tests: 2 new cases in
+  `PublicVerification.test.tsx`.
+
+## 2026-09-29 CORRECTION (PR #3190 review finding 2) — `get_public_anchor` does NOT return parent_public_id/version_number; fixed via a second endpoint
+
+The entry immediately below claimed "the verification API already returns" `version_number`/
+`parent_public_id` on `data` (the `get_public_anchor` RPC response) and typed them directly on
+`PublicAnchorData`. **Verified false against production**: `get_public_anchor` emits neither
+field. `get_anchor_lineage` does, but it is SECURITY DEFINER with EXECUTE granted to neither
+`anon` nor `authenticated` — the browser cannot call it, and the entry's own test suite had
+passed only because it fabricated the fields directly onto the mocked RPC response instead of
+exercising a real response shape.
+
+The actual, real source (no SQL/RPC/schema change): `GET /api/v1/verify/:publicId`
+(`services/worker/src/api/v1/verify.ts`) is a genuinely public, anonymous-GET-allowed endpoint
+(Constitution 1.10) that ALREADY surfaces `parent_public_id` as an additive-nullable field
+(API-RICH-01, `services/worker/src/api/v1/docs.ts` OpenAPI schema) — the same router family
+`VerifierProofDownload`'s `useProofAvailability` already calls from this exact page, for its
+sibling `/proof` sub-path. New hook `src/hooks/usePublicAnchorParent.ts` calls the BASE route
+instead, for just `parent_public_id`, gated on `enabled: status === 'SUPERSEDED'` (the only case
+that renders the link) so it does not fire on every page view. `PublicAnchorData` no longer
+declares `version_number`/`parent_public_id` — they were never populated by the RPC it types.
+
+**Known, documented side effect (not introduced by this hook, inherent to the endpoint):**
+`GET /api/v1/verify/:publicId`'s handler writes a `VERIFICATION_QUERIED` audit-log row on every
+call (IP-hash + user-agent), and — only when `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` is on — may
+dispatch a `credential.verified` webhook to the anchor's org. Calling it from this hook means a
+SUPERSEDED record's public page view now also produces that audit row, which it did not before
+(the RPC path has no such logging). The `enabled` gate above bounds this to SUPERSEDED views
+only. This is a real, deliberate trade-off flagged here rather than silently accepted — if the
+extra audit volume or webhook exposure is unwanted, the fix is to either drop the "view previous
+version" link entirely or have the worker-side handler skip the audit/webhook path for a request
+carrying a marker identifying it as an internal supplementary lookup (a genuine backend change,
+out of scope for this frontend-only fix).
+
+There is still deliberately NO forward link to a newer version: this endpoint only carries the
+BACKWARD parent pointer for whichever anchor is queried — a superseded ROOT record (no parent)
+gets nothing from it either, which is honestly reflected by the link simply not rendering.
+Building a forward pointer would need a real backend change (a dedicated lineage endpoint, or
+widening this response) and is out of scope here.
+
+Tests: `usePublicAnchorParent.test.ts` (new, 8 cases, real documented response shape — not
+invented). `PublicVerification.record-readability.test.tsx` rewritten to mock `global.fetch`
+with that same real shape instead of fabricating fields on the RPC mock (7 cases).
 
 ## 2026-09-29 — `PublicVerification.tsx` version honesty + JSON-LD title (readability pass follow-up)
 
