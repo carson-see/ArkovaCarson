@@ -1,5 +1,22 @@
 # agents.md — components/anchor
 
+## 2026-09-29 (PR #3190 review finding 1) — rename input no longer seeds a DERIVED title
+
+`AssetDetailView.tsx`'s rename pencil used to seed its input with `displayTitle` (the DERIVED
+name — folder-path segment or generic fallback) regardless of whether the STORED `anchors.filename`
+was itself human. Saving an un-edited rename would then silently persist that derived GUESS as
+the permanent filename — for a Drive record with no folder path, that could mean writing "Google
+Drive document" (or the older bare "Secured document" fallback) into the database as if a person
+had typed it. Fixed: `filenameIsHuman = !looksLikeConnectorInternalId(anchor.filename, ...)`
+gates the seed — human stored filename seeds the input normally; a connector-internal stored
+filename seeds the input EMPTY, with `displayTitle` shown only as a `placeholder`. Saving cannot
+silently fire on the untouched empty input: both the Enter handler and the checkmark button
+already require `filenameInput.trim()` to be non-empty (pre-existing guard, unchanged). See
+`src/lib/agents.md`'s matching finding-1 correction entry for `deriveDisplayTitle`'s new
+precedence (this is the companion UI-side fix). Tests:
+`AssetDetailView.record-readability.test.tsx` gained a `describe('1b. Rename input seeding ...')`
+block (3 cases).
+
 ## 2026-09-29 — `AssetDetailView.tsx` record-detail readability pass (founder-reported)
 
 Founder, looking at the Record Details page for a Google Drive record: title was the raw

@@ -1,5 +1,43 @@
 # agents.md — lib
 
+## 2026-09-29 CORRECTION (PR #3190 review) — `deriveDisplayTitle` precedence, and the folder-path claim below was wrong about WHY
+
+The entry immediately below states the last segment of `_drive_folder_path` "ends in the file's
+real name... per the Drive connector pipeline" — that reasoning was never verified against
+production and is corrected here. What is actually true, checked against PRODUCTION data (not
+the `services/worker/src/jobs/drive-file-changed.test.ts` fixture, `'/Legal/Contracts'`, which is
+**folder-only** and does not end in a file name — it does not represent the general case): all 12
+distinct Drive files in prod carry a `_drive_folder_path` whose LAST segment IS the real file
+name (e.g. `.../CyberGlobal x Arkova Team Folder/Copy of CyberGlobal Product
+Descriptions.docx`), while `_drive_folder_id` is the id of the PARENT folder (`"2 Financial
+Records"` for a sibling example). So deriving from the last path segment is correct for today's
+data, but the contract between "folder path" and "file name" is not formally guaranteed anywhere
+— it is an observed property of the current connector pipeline, not a documented invariant.
+
+Because that contract is ambiguous, and a sibling worker change (branch
+`fix/drive-records-filed-and-named`, not yet merged) will start writing the real file name
+directly into `anchors.filename` and a plain `filename` key in `metadata`, `deriveDisplayTitle`
+is now precedence-based rather than a single derivation, so it keeps working once that change
+lands without a second fix here:
+
+1. `anchors.filename` when it is not a connector-internal id (unchanged — the common case).
+2. `metadata.filename`, then `.file_name`, then `.name`, when a non-empty string (NEW —
+   forward-compatible with the sibling worker change).
+3. Last segment of `_drive_folder_path` (unchanged, still correct for today's data per the
+   production check above).
+4. A controlled generic fallback — `"{Source} document"` (`CONNECTOR_DOCUMENT_FALLBACK` in
+   `copy.ts`, e.g. "Google Drive document") when the connector is recognized, else
+   `UNTITLED_DOCUMENT_TITLE` ("Secured document") — NEVER the raw id. This REPLACES the bare
+   `UNTITLED_DOCUMENT_TITLE` fallback the entry below describes for a recognized connector with
+   no folder path; `UNTITLED_DOCUMENT_TITLE` is now the fallback of last resort only.
+
+`AssetDetailView.tsx`'s rename input is also now seeded with the STORED `anchors.filename` ONLY
+when `!looksLikeConnectorInternalId(...)` is true; otherwise it starts EMPTY with the derived
+title as a `placeholder`, so saving an un-edited rename can never silently persist a derived
+guess (the Save/Enter path already requires a non-empty, trimmed value). Tests:
+`recordDisplay.test.ts` gained a dedicated precedence-step describe block (one `describe` per
+letter above); `AssetDetailView.record-readability.test.tsx` gained the rename-seeding coverage.
+
 ## 2026-09-29 — `recordDisplay.ts` (new): shared record-readability helpers
 
 New module, the single source of truth every record card/list/detail surface uses to avoid

@@ -3277,6 +3277,11 @@ export const RECORD_DETAIL_LABELS = {
   // human chose — never render it as the title. Used only when no human name
   // can be derived (e.g. no folder path on the record's metadata).
   UNTITLED_DOCUMENT_TITLE: 'Secured document',
+  // PR #3190 review finding 1: a connector-specific generic fallback, used
+  // when the connector source is recognized (Google Drive/DocuSign) but no
+  // human name is available from anywhere (metadata name fields, folder
+  // path). `{source}` is replaced with CONNECTOR_SOURCE_LABELS' value.
+  CONNECTOR_DOCUMENT_FALLBACK: '{source} document',
   // Single collapsed disclosure holding every raw identifier Arkova recorded
   // for this document (file id, revision id, connector ids, etc.) — replaces
   // the always-visible "Metadata" dump, which also used to render a second

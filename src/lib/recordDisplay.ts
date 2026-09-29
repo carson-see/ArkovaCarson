@@ -53,15 +53,32 @@ function lastPathSegment(path: string): string | null {
   return segments.length > 0 ? segments[segments.length - 1] : null;
 }
 
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
 /**
  * Derive a human-readable title for a record.
  *
  * Non-connector filenames pass through completely unchanged — this function
- * must never regress the common case. Only a filename that
- * `looksLikeConnectorInternalId` is ever replaced, and only with either the
- * last segment of the Drive folder path (which, per the connector pipeline,
- * ends in the file's real name) or — when no path is available — a generic
- * label. The raw id is never returned.
+ * must never regress the common case. For a filename that
+ * `looksLikeConnectorInternalId`, precedence is:
+ *
+ *   (b) `metadata.filename`, then `.file_name`, then `.name` — a non-empty
+ *       string, forward-compatible with a sibling worker change (branch
+ *       fix/drive-records-filed-and-named) that will start writing the real
+ *       file name into these keys directly, rather than only into the folder
+ *       path's last segment.
+ *   (c) the last segment of `metadata._drive_folder_path`. Verified against
+ *       PRODUCTION data (not just the worker test fixture, which is
+ *       folder-only and does not represent the general case — see
+ *       src/lib/agents.md): every one of the 12 distinct Drive files in prod
+ *       has a path whose last segment IS the real file name (e.g. ".../Copy
+ *       of CyberGlobal Product Descriptions.docx"), so this is correct for
+ *       today's data even before (b) exists.
+ *   (d) a controlled generic fallback ("{Source} document" when the
+ *       connector is recognized, else a bare generic label) — NEVER the raw
+ *       id.
  */
 export function deriveDisplayTitle(
   filename: string,
@@ -70,10 +87,20 @@ export function deriveDisplayTitle(
   const connectorSource = typeof metadata?.connector_source === 'string' ? metadata.connector_source : undefined;
   if (!looksLikeConnectorInternalId(filename, connectorSource)) return filename;
 
+  const metadataName = nonEmptyString(metadata?.filename)
+    ?? nonEmptyString(metadata?.file_name)
+    ?? nonEmptyString(metadata?.name);
+  if (metadataName) return metadataName;
+
   const folderPath = metadata?._drive_folder_path;
   if (typeof folderPath === 'string') {
     const segment = lastPathSegment(folderPath);
     if (segment) return segment;
+  }
+
+  const sourceLabel = deriveConnectorSourceLabel(connectorSource);
+  if (sourceLabel) {
+    return RECORD_DETAIL_LABELS.CONNECTOR_DOCUMENT_FALLBACK.replace('{source}', sourceLabel);
   }
   return RECORD_DETAIL_LABELS.UNTITLED_DOCUMENT_TITLE;
 }

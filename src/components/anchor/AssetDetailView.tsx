@@ -48,6 +48,7 @@ import {
   deriveDisplayType,
   formatDisplayFileSize,
   formatSourceModifiedTime,
+  looksLikeConnectorInternalId,
 } from '@/lib/recordDisplay';
 
 /** Inline copy button for values */
@@ -954,17 +955,30 @@ function TechnicalDetailsSection({ entries, provider, docusignEnv }: Readonly<Te
 export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRename = false, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
   // Readability pass (founder-reported, 2026-09-29): a connector-sourced
   // filename (`google_drive:1IxoL...`) is an internal id, never shown as the
-  // title. `displayTitle` is what renders AND what the rename pencil seeds
-  // its input with — editing should start from the readable name a person
-  // would actually want to change, not the raw id underneath it.
+  // title. `displayTitle` is what renders.
   const displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata);
+  // PR #3190 review finding 1: the rename input must be seeded with the
+  // STORED filename only when it is itself human — seeding it with a
+  // DERIVED title (e.g. from the folder path, which the record's real name
+  // might not actually be, or a generic "Google Drive document" fallback)
+  // and then saving without editing would silently persist that guess as
+  // the permanent filename. When the stored value is a connector-internal
+  // id, the input starts EMPTY (with the derived name shown only as a
+  // placeholder) so an un-edited save cannot fire at all — the Continue/
+  // checkmark button and the Enter handler both already require
+  // `filenameInput.trim()` to be non-empty.
+  const filenameIsHuman = !looksLikeConnectorInternalId(
+    anchor.filename,
+    typeof anchor.metadata?.connector_source === 'string' ? anchor.metadata.connector_source : undefined,
+  );
+  const renameSeedValue = filenameIsHuman ? anchor.filename : '';
 
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [editingFilename, setEditingFilename] = useState(false);
-  const [filenameInput, setFilenameInput] = useState(displayTitle);
+  const [filenameInput, setFilenameInput] = useState(renameSeedValue);
   const [renameSaving, setRenameSaving] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
 
@@ -1168,6 +1182,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                   <input
                     type="text"
                     value={filenameInput}
+                    placeholder={filenameIsHuman ? undefined : displayTitle}
                     onChange={(e) => setFilenameInput(e.target.value)}
                     onKeyDown={async (e) => {
                       if (e.key === 'Enter' && filenameInput.trim() && onRenameFile) {
@@ -1179,7 +1194,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                           setEditingFilename(false);
                         }
                       } else if (e.key === 'Escape') {
-                        setFilenameInput(displayTitle);
+                        setFilenameInput(renameSeedValue);
                         setEditingFilename(false);
                       }
                     }}
@@ -1211,7 +1226,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 shrink-0"
-                    onClick={() => { setFilenameInput(displayTitle); setEditingFilename(false); }}
+                    onClick={() => { setFilenameInput(renameSeedValue); setEditingFilename(false); }}
                     disabled={renameSaving}
                   >
                     <XCircle className="h-4 w-4" />
@@ -1224,7 +1239,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                      onClick={() => { setFilenameInput(displayTitle); setEditingFilename(true); }}
+                      onClick={() => { setFilenameInput(renameSeedValue); setEditingFilename(true); }}
                       aria-label="Edit document name"
                     >
                       <Pencil className="h-3.5 w-3.5" />

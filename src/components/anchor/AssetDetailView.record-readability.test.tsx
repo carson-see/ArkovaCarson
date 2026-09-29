@@ -17,7 +17,7 @@
  * helpers) and `src/hooks/useAnchorVersions.test.ts` (the version-chain hook).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AssetDetailView } from './AssetDetailView';
@@ -287,7 +287,61 @@ describe('AssetDetailView — record readability pass', () => {
     });
   });
 
-  describe('5. Non-connector records are unaffected', () => {
+  describe('1b. Rename input seeding (PR #3190 review finding 1)', () => {
+  it('seeds the rename input with the STORED filename when it is human, not the derived title', async () => {
+    const user = userEvent.setup();
+    render(
+      <AssetDetailView
+        anchor={{ ...BASE_ANCHOR, filename: 'Q3-Contract-Signed.pdf' }}
+        onRenameFile={async () => {}}
+        canRename
+      />,
+    );
+    await user.click(screen.getByLabelText('Edit document name'));
+    expect(screen.getByDisplayValue('Q3-Contract-Signed.pdf')).toBeInTheDocument();
+  });
+
+  it('seeds the rename input EMPTY (not the derived title) when the stored filename is a connector id, showing the derived name only as a placeholder', async () => {
+    const user = userEvent.setup();
+    render(
+      <AssetDetailView
+        anchor={{
+          ...BASE_ANCHOR,
+          filename: DRIVE_INTERNAL_FILENAME,
+          metadata: { connector_source: 'google_drive', _drive_folder_path: '/Legal/Q3 Vendor Agreement.gsheet' },
+        }}
+        onRenameFile={async () => {}}
+        canRename
+      />,
+    );
+    await user.click(screen.getByLabelText('Edit document name'));
+    const input = screen.getByPlaceholderText('Q3 Vendor Agreement.gsheet') as HTMLInputElement;
+    expect(input.value).toBe('');
+  });
+
+  it('cannot silently persist the derived guess — saving with the seeded-empty input is impossible (Save stays disabled)', async () => {
+    const onRenameFile = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AssetDetailView
+        anchor={{
+          ...BASE_ANCHOR,
+          filename: DRIVE_INTERNAL_FILENAME,
+          metadata: { connector_source: 'google_drive', _drive_folder_path: '/Legal/Q3 Vendor Agreement.gsheet' },
+        }}
+        onRenameFile={onRenameFile}
+        canRename
+      />,
+    );
+    await user.click(screen.getByLabelText('Edit document name'));
+    const input = screen.getByPlaceholderText('Q3 Vendor Agreement.gsheet');
+    // Pressing Enter on the untouched (empty) input must not save anything.
+    await user.type(input, '{Enter}');
+    expect(onRenameFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('5. Non-connector records are unaffected', () => {
     it('renders the ordinary filename unchanged for a plain uploaded document', () => {
       render(<AssetDetailView anchor={BASE_ANCHOR} />);
       expect(screen.getByText('test-document.pdf')).toBeInTheDocument();

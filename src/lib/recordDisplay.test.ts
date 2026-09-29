@@ -48,34 +48,105 @@ describe('looksLikeConnectorInternalId', () => {
   });
 });
 
+// Review finding (PR #3190, production-data check): the drive-file-changed.test.ts
+// worker fixture ('/Legal/Contracts') is FOLDER-ONLY — it does not end in a
+// filename. All 12 distinct Drive files in prod carry a path whose LAST
+// segment IS the real file name (e.g. ".../CyberGlobal Product
+// Descriptions.docx"), so deriving from the last path segment is correct for
+// today's data — but the contract is ambiguous, and a sibling worker change
+// (branch fix/drive-records-filed-and-named, not yet merged) will start
+// writing the real name into `anchors.filename` and a plain `filename` key
+// in metadata. `deriveDisplayTitle` is written to precedence rather than a
+// single derivation so it keeps working once that lands, without a second
+// change here:
+//   (a) `anchors.filename` when it is not a connector-internal id (unchanged)
+//   (b) metadata.filename, then .file_name, then .name, when non-empty
+//   (c) last segment of `_drive_folder_path`
+//   (d) a controlled generic fallback ("{Source} document" / "Secured
+//       document") — never the raw id
 describe('deriveDisplayTitle', () => {
   const DRIVE_ID_FILENAME = 'google_drive:1IxoLk_vWeuU-BB-2Qkmvs8QmV1qi_GKnGxZF8YheIu8';
 
-  it('derives the human name from the last segment of the Drive folder path', () => {
-    const metadata = {
-      connector_source: 'google_drive',
-      _drive_folder_path: '/Shared/Contracts/Q3 Vendor Agreement.gsheet',
-    };
-    expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Q3 Vendor Agreement.gsheet');
+  describe('(a) stored filename is human', () => {
+    it('leaves an ordinary human filename unchanged (non-connector records must not regress)', () => {
+      expect(deriveDisplayTitle('Q3-Contract-Signed.pdf', null)).toBe('Q3-Contract-Signed.pdf');
+    });
+
+    it('leaves an ordinary human filename unchanged even with unrelated metadata present', () => {
+      expect(deriveDisplayTitle('offer-letter.docx', { pipeline_source: 'sos' })).toBe('offer-letter.docx');
+    });
+
+    it('wins even when metadata also carries a filename field (stored value takes precedence)', () => {
+      expect(deriveDisplayTitle('offer-letter.docx', { filename: 'Something Else.docx' })).toBe('offer-letter.docx');
+    });
   });
 
-  it('falls back to a generic label — never the raw id — when no folder path is present', () => {
-    const metadata = { connector_source: 'google_drive' };
-    expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe(RECORD_DETAIL_LABELS.UNTITLED_DOCUMENT_TITLE);
-    expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).not.toContain('google_drive:');
+  describe('(b) metadata filename/file_name/name (forward-compat with the sibling worker change)', () => {
+    it('uses metadata.filename when the stored filename is a connector id', () => {
+      const metadata = { connector_source: 'google_drive', filename: 'Q3 Vendor Agreement.gsheet' };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Q3 Vendor Agreement.gsheet');
+    });
+
+    it('falls back to metadata.file_name when metadata.filename is absent', () => {
+      const metadata = { connector_source: 'google_drive', file_name: 'Q3 Vendor Agreement.gsheet' };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Q3 Vendor Agreement.gsheet');
+    });
+
+    it('falls back to metadata.name when filename/file_name are both absent', () => {
+      const metadata = { connector_source: 'google_drive', name: 'Q3 Vendor Agreement.gsheet' };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Q3 Vendor Agreement.gsheet');
+    });
+
+    it('ignores a blank/whitespace-only metadata.filename and falls through to the next step', () => {
+      const metadata = {
+        connector_source: 'google_drive',
+        filename: '   ',
+        _drive_folder_path: '/Legal/Contracts/Q3 Vendor Agreement.gsheet',
+      };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Q3 Vendor Agreement.gsheet');
+    });
+
+    it('ignores a non-string metadata.filename', () => {
+      const metadata = { connector_source: 'google_drive', filename: 123, name: 'Real Name.pdf' };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Real Name.pdf');
+    });
   });
 
-  it('falls back to the generic label when the folder path is empty/root', () => {
-    const metadata = { connector_source: 'google_drive', _drive_folder_path: '/' };
-    expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe(RECORD_DETAIL_LABELS.UNTITLED_DOCUMENT_TITLE);
+  describe('(c) last segment of the Drive folder path', () => {
+    it('derives the human name from the last segment of the Drive folder path', () => {
+      const metadata = {
+        connector_source: 'google_drive',
+        _drive_folder_path: '/Shared/Contracts/Q3 Vendor Agreement.gsheet',
+      };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Q3 Vendor Agreement.gsheet');
+    });
+
+    it('matches real production shapes (deeply nested path ending in the file name)', () => {
+      const metadata = {
+        connector_source: 'google_drive',
+        _drive_folder_path:
+          '/My Drive/Arkova Team/Sales/CyberGlobal/CyberGlobal x Arkova Team Folder/Copy of CyberGlobal Product Descriptions.docx',
+      };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Copy of CyberGlobal Product Descriptions.docx');
+    });
   });
 
-  it('leaves an ordinary human filename unchanged (non-connector records must not regress)', () => {
-    expect(deriveDisplayTitle('Q3-Contract-Signed.pdf', null)).toBe('Q3-Contract-Signed.pdf');
-  });
+  describe('(d) generic fallback — never the raw id', () => {
+    it('falls back to a connector-specific generic label when no name field or folder path is present', () => {
+      const metadata = { connector_source: 'google_drive' };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Google Drive document');
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).not.toContain('google_drive:');
+    });
 
-  it('leaves an ordinary human filename unchanged even with unrelated metadata present', () => {
-    expect(deriveDisplayTitle('offer-letter.docx', { pipeline_source: 'sos' })).toBe('offer-letter.docx');
+    it('falls back to a connector-specific generic label when the folder path is empty/root', () => {
+      const metadata = { connector_source: 'google_drive', _drive_folder_path: '/' };
+      expect(deriveDisplayTitle(DRIVE_ID_FILENAME, metadata)).toBe('Google Drive document');
+    });
+
+    it('falls back to the bare generic label when the connector source is unrecognized', () => {
+      const metadata = { connector_source: 'sharepoint' };
+      expect(deriveDisplayTitle('sharepoint:abc123', metadata)).toBe(RECORD_DETAIL_LABELS.UNTITLED_DOCUMENT_TITLE);
+    });
   });
 
   it('never returns the raw internal id, for any connector-prefixed filename', () => {
