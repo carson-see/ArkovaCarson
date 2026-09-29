@@ -3,6 +3,16 @@
   "_history": [
     {
       "date": "2026-09-29",
+      "author": "tech-lead session (Claude Fable 5.1), founder directive 2026-09-29: secure every existing file when a Drive folder is connected",
+      "note": "ADDED 0500 and 0501 immediately ahead of applying them to prod vzwyaatejekddvltxyye via MCP apply_migration, per CLAUDE.md section 0 rule 10, under the founder directive of 2026-09-29 (secure every file in a Drive folder the moment it is connected; records must be readable). No staging soak is claimed for either. 0500 (0500_drive_connector_folder_filing_and_metadata_repair, branch fix/drive-records-filed-and-named, sha256 prefix 83ce54d35a7c, 21314 bytes): body-only CREATE OR REPLACE of materialize_connector_artifact_anchor, whose live body was read and matches 0462 exactly (md5 of prosrc 2b990b9a15e3ed74635a3c59a11fe258); the change accepts credential_type OTHER and an OPTIONAL file_size key, so the worker live at apply time keeps working. Four data backfills limited to Google Drive artifacts, rehearsed on prod in a rolled-back transaction: 13 filenames, 13 file sizes, 0 folder links, 0 category changes (every Drive anchor is already past PENDING). The category backfill was rewritten before apply to join through connector_artifact.anchor_id after EXPLAIN showed the original predicate as a sequential scan of anchors. 0501 (0501_drive_initial_sync_state, branch feat/drive-secure-existing-files-on-connect, sha256 prefix 4041877c3247, 6201 bytes): new table public.drive_initial_sync_state only, RLS enabled and forced, restrictive deny-all policy for anon and authenticated, service_role grants, two indexes, updated_at trigger. No existing table is altered; the foreign keys are bounded by lock_timeout 5s. REMOVE each prefix when its owning PR lands the .sql on main."
+    },
+    {
+      "date": "2026-09-29",
+      "author": "tech-lead session (Claude Fable 5.1)",
+      "note": "REMOVED 0489, 0491, 0492, 0493, 0494, 0495, 0496, 0497, 0498, 0499 (PR #3152 lineage; #3121 also carried 0489 and was closed as superseded by #3152) and 0490 (PR #3150): all eleven .sql files are confirmed present on origin/main via `git ls-tree origin/main supabase/migrations/`, so per this file's own invariant each entry is now stale (present in both the prod ledger and main). ALSO REMOVED 0481 (0481_uat14_profile_brand_media.sql): its .sql is likewise on main, and unlike 0443 there is no duplicate or non-numeric prod ledger row sitting behind it - per the founder-supplied prod ledger read for this session, the only non-numeric row in schema_migrations besides the reconciled baseline is version 20260912143110, named 0443_backfill_anchor_proof_block_height. Because auditLedgerRows() skips an exempt prefix before it reaches the ledger-nonnumeric-version and ledger-duplicate-name checks (see the 2026-09-25 correction entry below, where removing 0443 unmasked exactly that failure mode), removing an exemption is only safe when no such row is hiding behind it. 0481 has none, so removing it only clears the ledger-stale-exemption hygiene warning and unmasks nothing real. KEPT 0443 for that reason: the duplicate non-numeric row above is still live, and the operator DELETE that would let it go stays a separate section 1.11A-gated operation. This session ran no Supabase queries itself (out of scope for a T0 doc/snapshot change) - the 0443-duplicate fact is carried forward from the 2026-09-25 entry and confirmed unchanged in the founder's brief for this session."
+    },
+    {
+      "date": "2026-09-29",
       "author": "tech-lead session (Claude Fable 5.1), founder directive 2026-09-29: apply all migrations and merge the open release PRs without soaking",
       "note": "ADDED 0489 and 0491-0499 (PR #3152, release candidate; 0489 is also carried by #3121) and 0490 (PR #3150, wraps 0481's five bare auth.uid() calls) immediately ahead of applying them to prod vzwyaatejekddvltxyye via MCP apply_migration, per CLAUDE.md section 0 rule 10 (apply and exemption in the same motion; the drift gate on those PR heads demands the numeric rows before merge). Exact bytes, sha256 prefixes: 0489 eeadf2aa665a, 0490 d6d5af6609ed, 0491 eace27654ac4, 0492 94ed065824e5, 0493 cb16d011e4e4, 0494 11e3db7802e3, 0495 73c7e3760f3c, 0496 fbd1a57f4c3d, 0497 d744d8811aac, 0498 65eb92841a3e, 0499 8ac91b4d9dd1. Prod precondition read 2026-09-29T16:3xZ: public.agents has 0 rows, api_keys has 9 rows of which 0 carry an agent_id, agent_webhook_outbox and agent_webhook_materialization_recoveries do not exist, so the agent/key trigger changes have no live rows to reject. No staging soak is claimed for any of these. Each ledger row is reconciled to its numeric version in-session and list_migrations re-read. REMOVE 0489 and 0491-0499 when #3152 lands the .sql files on main; REMOVE 0490 when #3150 does."
     },
@@ -315,17 +325,7 @@
   ],
   "exemptPrefixes": [
     "0443",
-    "0481",
-    "0489",
-    "0490",
-    "0491",
-    "0492",
-    "0493",
-    "0494",
-    "0495",
-    "0496",
-    "0497",
-    "0498",
-    "0499"
+    "0500",
+    "0501"
   ]
 }

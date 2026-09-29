@@ -45,6 +45,32 @@
 
 **Documentation:** the PM session owns existing Jira/Confluence entries; this session owns the [single Google roadmap](https://docs.google.com/document/d/1IrpVfTPehIwIUbAntlsCQjsBq7hEqhN-RFow-8A_9Ac/edit). Sprint1–3 and release10370 stay open/unreleased. Detailed sanitized receipts are under the operator checkpoint directory; secret files and raw customer material are not publication artifacts.
 
+### 2026-09-29T20:30Z — tech-lead session (Claude Fable 5.1): release PRs merged without soak; prod ledger at 0501; deploy blocked once and fixed
+
+**Founder directive 2026-09-29 (Carson): resolve conflicts, apply all migrations, merge the open PRs without soaking.** `SOAK_GATE_DISABLED` is `true`; the code window closes 2026-10-03T00:00:00Z. This supersedes the 2026-09-27 merge freeze recorded in the addendum block below.
+
+**Merged to main today:** #3116, #3153, #3157, #3158, #3164, #3155, #3150, #3159, #3152 (at `4b24c10af`), #3163, #3173, #3176 (at `beed966c8`). #3121 closed as superseded by #3152. #3154 is untouched (rollback fallback, do-not-merge). #3156 is still open, holding back typescript 7, `@sentry/react` 11 and `@eslint/js` 10; Sentry 11 removes `sendDefaultPii` and needs its own reviewed PR.
+
+**Stacked-merge trap repeated:** #3104, #3122, #3123 and #3151 were merged into stack-parent branches, not main. Their content reached main only through #3152.
+
+**Prod database `vzwyaatejekddvltxyye`:** migrations 0488 through 0499 applied 2026-09-29 to prod via Supabase MCP `apply_migration`, each byte-identical to its source file (md5 of the ledger row's `statements[1]` equals md5 of the file). Ledger rows reconciled to numeric, 195 numeric rows, head 0499. Verification artifact: Supabase MCP `execute_sql` reads taken in-session against `supabase_migrations.schema_migrations` (numeric head + row count), recorded on Jira AR20-3.
+
+**Defect 1:** 0488 was on main with its worker already live (`3fb5e2db2`) but not applied to prod for about 20 minutes. During that window an administrator agent DELETE would have returned 500. Prod had 0 agents at the time, so no customer impact.
+
+**Defect 2:** Deploy Worker run 36617786374 failed Pre-deploy Typecheck on `4b24c10af`: `services/worker/src/api/v1/agents.openapi.test.ts` imports `js-yaml`, which `services/worker` never declared as its own dependency. PR CI resolves it from the root install; the deploy installs `services/worker` alone, so the import was invisible until deploy time. Fixed by #3176. Lesson: reproduce deploy typecheck with a worker-only install and the root `node_modules` moved out of the way first.
+
+**Mechanics learned this session:**
+- `git merge` run inside a dirty checkout triggers git's internal stash/reset/apply recovery and can re-materialize files the worktree had deleted. Always use `git -C <worktree>` instead of `cd`-ing around.
+- zsh MULTIOS means `cmd 2>&1 >/dev/null | head` still pipes stdout, so a secret-printing command must be assigned to a variable and never piped. The Supabase management token `supabase_access` was exposed in a session transcript this way this session and must be rotated.
+- `.claude/hooks/check-prod-migration-apply.sh` reads the exemptions file from the local checkout, not from `origin/main`.
+- `check-evidence-identity.ts` treats any `Tier: T1-T3` line, including a list item, as a soak-tier declaration, so a soak waiver body must not contain one.
+
+Prod worker verified 2026-09-29T23:20Z: `https://api.arkova.ai/health` returns `git_sha 475bfc998`, status healthy, database/anchoring/kms ok. Deploy Worker runs 36626096483 (`beed966c8`, the #3176 hotfix), 36637681172 (`7af5dfca3`, #3184) and 36638359352 (`475bfc998`, #3182) all completed success: https://github.com/carson-see/ArkovaCarson/actions/runs/36638359352 . #3184 makes verify-ein complete verification when the domain was proven first, and never demote. #3182 is the worker dependency majors, with typescript 7, @sentry 11 and pino 10 held back.
+
+**Drive migrations 0500 and 0501** applied 2026-09-29T23:24Z to prod ahead of their PRs, under the founder directive to secure every file in a Drive folder the moment it is connected. Both byte-identical to source (md5 of the ledger row's `statements[1]`: 0500 `79f73688feac119d0c50707437f9fcd6`, 0501 `383e76f3eadb9c2141fd758a98ef0f51`), rows reconciled to numeric, 197 numeric rows, head 0501. Verification artifact: Supabase MCP `execute_sql` reads taken in-session against `supabase_migrations.schema_migrations`, `pg_proc` and `pg_class`. Read back after apply: `materialize_connector_artifact_anchor` carries the 0500 body; `drive_initial_sync_state` has RLS enabled and forced with no anon or authenticated privilege; the 13 existing Drive records show a real file name and a size. Their type stays CONTRACT_POSTSIGNING because every one is already past PENDING and 0500 does not retype a secured record. One name is truncated because the Drive file name itself contains a slash. No soak is claimed. The worker code that uses both migrations is NOT deployed yet, so nothing a customer does has changed beyond the 13 names and sizes.
+
+**Owed:** rotate `supabase_access`; merge and deploy the Drive worker change (file records into the mirrored folder on retry, real names, secure existing files on connect), then re-save the Drive rule so the three connected folders backfill, and confirm the rows in `drive_initial_sync_state`; PR #3190 (record page rebuild) needs visual UAT at 1280 and 375 before its `do-not-merge` label comes off; reachability audit of the 22-29 September merges is on AR20-3; npm publish of `arkova` and `arkova-mcp-server` 3.3.0 (registry still shows 3.1.0); PyPI `arkova` 2.6.0 (registry still shows 2.4.1); clear `SOAK_GATE_DISABLED` after the release closes; bug-log entries for both defects above in Confluence.
+
 ### 2026-09-27T14:20Z — close-out addendum: MERGE FREEZE for the release soak; Jira/Confluence current; prod parity re-verified
 
 **Founder directive 2026-09-27 (Carson): nothing merges until the pre-release simultaneous soak; handle only this session's PRs.** State as of this block:
@@ -3222,4 +3248,4 @@ _Last refreshed: 2026-09-27 by tech-lead session (Claude Fable 5.1) — claims v
 _Last refreshed: 2026-09-27 by tech-lead session (Claude Fable 5.1) — claims verified against gcloud/MCP/CI output._
 _Last refreshed: 2026-09-27 by tech-lead session (Claude Fable 5.1) — claims verified against gcloud/MCP/CI output._
 _Last refreshed: 2026-09-27 by tech-lead session (Claude Fable 5.1) — claims verified against gcloud/MCP/CI output._
-_Last refreshed: 2026-09-27 by tech-lead session (Claude Fable 5.1) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-09-29 by tech-lead session (Claude Fable 5.1) — claims verified against gcloud/MCP/CI output._
