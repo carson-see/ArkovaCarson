@@ -150,6 +150,22 @@ ComputeID-driven `passport.suspended`/`passport.reinstated` transitions, not thi
 admin PATCH path, so `suspendedHasNoKey` is asserted here by unit tests and
 ordering, NOT proven. Extending the machine with an admin actor would let TLC
 explore the two-write interleaving directly.
+
+## 2026-09-26 — generic DELETE revocation is one locked transaction (0488 candidate)
+
+`DELETE /:agentId` must call `revoke_agent_and_keys`; do not restore separate
+agent/key writes or a fire-and-forget success audit. The RPC locks the tenant's
+agent row `FOR UPDATE`, then commits terminal status, key deactivation, permanent
+replacement of `admin:agent.suspended`, and the audit row together. Migration
+0448's active-key trigger locks that same parent `FOR SHARE`: a concurrent mint
+or resume either commits first and is swept, or waits and is rejected after
+revocation. The native harness
+`scripts/test-agent-revoke-concurrency-native.sh` forces both mint and resume
+lock orders, plus audit rollback, tenant, ACL, marker, and idempotency cases in
+an isolated local PostgreSQL cluster. It loads the exact baseline bodies for
+the mutated tables and the exact 0448 trigger definitions; it is targeted
+database evidence, not a complete Supabase migration-lineage replay.
+
 ## 2026-08-30 R3 — `/verify/:publicId/proof` reports a tri-state `verdict` beside `verified`
 
 - `verify-proof.ts` emits additive `verdict` (`valid` | `invalid` | `unverifiable`) + `verdict_note` on the 200 body. **`verified` is byte-unchanged and NOT deprecated** — §1.8 additive only. Vocabulary, note text and the mapping live in ONE place: `services/worker/src/constants/proofVerdict.ts` (read its `agents.md` entry before touching any of this).

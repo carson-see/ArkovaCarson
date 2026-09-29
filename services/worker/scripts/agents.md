@@ -238,6 +238,20 @@ loop, and S7744 ("the empty object is useless") in `fetchJson`'s header spread �
 - Tests must mock LLM and Stripe calls — no real API calls in test runs.
 - Budget guardrails (`--limit N`, `--dry-run`) are mandatory on scripts that spend provider budget.
 
+## 2026-09-26 — SCRUM-5300 atomic agent-revoke native harness
+
+`test-agent-revoke-concurrency-native.sh` starts and stops its own loopback
+PostgreSQL cluster. It extracts the exact `agents`, `api_keys`, and
+`audit_events` enum/table bodies from the squashed baseline and the exact
+agent-key authority and terminal-status trigger definitions from migration
+0448, then applies candidate migration 0488. Advisory gates plus bounded
+`pg_stat_activity` lock checks force both mint/revoke and resume/revoke orders;
+the harness also covers transaction rollback, service-only ACLs, tenant and
+actor authority, marker conversion, unrelated inactive-key reason preservation,
+and idempotency. It accepts no database URL and cannot target a hosted or shared
+database. This is focused PostgreSQL evidence, not a complete Supabase lineage,
+RLS, PostgREST, or generated-type replay.
+
 
 ## 2026-09-05 — PR #2565 owned PostgreSQL regression harness
 

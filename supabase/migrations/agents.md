@@ -2096,3 +2096,11 @@ Applied nowhere. The operator applies to prod per CLAUDE.md §0 rule 10 — add
 in the same motion as the MCP `apply_migration`, reconcile the ledger row to
 `0490`, confirm `list_migrations` — or lets Mergify land the file first and
 applies afterwards.
+This block is titled `(PR #3080)` and placed last because 3080 is the highest PR number
+in this file (CLAUDE.md §6). A later author claiming a higher PR number orders after it.
+
+## 2026-09-26 — 0488 atomic generic agent revocation (draft candidate)
+
+| Prefix | File | Ticket | Applied? | Notes |
+|---|---|---|---|---|
+| `0488` | `0488_atomic_admin_agent_revoke.sql` | SCRUM-5300 (parent SCRUM-4492) | **NO — local candidate only** | Service-only RPC validates a same-org `ORG_ADMIN` actor, locks the tenant-owned agent row, and atomically commits terminal status, active/admin-suspended key revocation, permanent marker conversion, and success audit. It composes with 0448's parent-row key-authority and terminal-status triggers to close concurrent mint and stale-resume interleavings. Clean retries add no duplicate audit. Native isolated PostgreSQL coverage loads exact relevant baseline table bodies plus exact 0448 triggers and forces both lock orders, rollback, tenant/actor isolation, ACL, marker rewrite, unrelated inactive-reason preservation, and idempotency; this is targeted evidence, not a full Supabase lineage replay. Deploy migration before worker; roll back worker before dropping the RPC. Prefix was derived from main's `0486` plus open PR #3088's reserved `0487`; no existing migration or exemption was changed. Tier T3; never applied to a hosted database. |

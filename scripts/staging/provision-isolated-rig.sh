@@ -86,7 +86,7 @@ if [[ -n "${STAGING_PINNED_IMAGE:-}" ]]; then
 else
   PINNED_IMAGE="<required-in-apply:--image-or-STAGING_PINNED_IMAGE@sha256>"
 fi
-RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-270018525501-compute@developer.gserviceaccount.com}"
+RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-<derived-after-name-validation>}"
 
 # Profile selects the env/secret overlay for the worker deploy.
 #   mock   — safe default; USE_MOCKS=true, anchoring off, no Scheduler.
@@ -120,7 +120,7 @@ PRIVATE_NODE_VPC_CONNECTOR="fullsoak-btc-rpc"
 STRIPE_SECRET_KEY_SECRET="${STAGING_STRIPE_SECRET_KEY_SECRET:-stripe-secret-key-staging}"
 STRIPE_WEBHOOK_SECRET_SECRET="${STAGING_STRIPE_WEBHOOK_SECRET_SECRET:-stripe-webhook-secret-staging}"
 API_KEY_HMAC_SECRET_SECRET="${STAGING_API_KEY_HMAC_SECRET_SECRET:-api-key-hmac-secret-staging}"
-CRON_SECRET_SECRET="${STAGING_CRON_SECRET_SECRET:-cron-secret}"
+CRON_SECRET_SECRET="${STAGING_CRON_SECRET_SECRET:-<derived-after-name-validation>}"
 GEMINI_API_KEY_SECRET="${STAGING_GEMINI_API_KEY_SECRET:-gemini-api-key-staging}"
 
 # Non-secret env values for the real profiles (safe to inline — model names,
@@ -131,7 +131,7 @@ BITCOIN_UTXO_PROVIDER_VALUE="${STAGING_BITCOIN_UTXO_PROVIDER:-getblock}"
 GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-apply:projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>>}"
 GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-true}"
 FRONTEND_URL_VALUE="${STAGING_FRONTEND_URL:-https://app.arkova.ai}"
-CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
+CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-<derived-after-name-validation>}"
 
 # Serverless VPC Access. Empty (the default) deploys with no connector, exactly
 # as before. Set both when the rig's RPC/UTXO endpoint lives on a private range
@@ -264,6 +264,29 @@ esac
 
 PROJECT_NAME="arkova-soak-${NAME}"
 CLOUD_RUN_SERVICE="arkova-worker-${NAME}-staging"
+RIG_IDENTITY_HASH="$(printf '%s' "$NAME" | shasum -a 256 | awk '{print substr($1,1,12)}')"
+EXPECTED_RUNTIME_SA="ark-rig-${RIG_IDENTITY_HASH}-run@${GCP_PROJECT}.iam.gserviceaccount.com"
+EXPECTED_OIDC_SA="ark-rig-${RIG_IDENTITY_HASH}-oidc@${GCP_PROJECT}.iam.gserviceaccount.com"
+RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-$EXPECTED_RUNTIME_SA}"
+CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$EXPECTED_OIDC_SA}"
+CRON_SECRET_SECRET="${STAGING_CRON_SECRET_SECRET:-cron-secret-${NAME}-staging}"
+if [[ "$RUNTIME_SA" != "$EXPECTED_RUNTIME_SA" || "$CRON_OIDC_SA" != "$EXPECTED_OIDC_SA" || "$RUNTIME_SA" == "$CRON_OIDC_SA" ]]; then
+  echo "ERROR: runtime and OIDC identities must be the distinct deterministic rig accounts." >&2
+  exit 2
+fi
+if [[ "$CRON_SECRET_SECRET" != "cron-secret-${NAME}-staging" ]]; then
+  echo "ERROR: cron secret must be the exact derived per-rig resource." >&2
+  exit 2
+fi
+# Dependency overrides are a closed reviewed set; arbitrary, production, sibling,
+# and shared rig resource names are rejected before any mutation.
+[[ "$STRIPE_SECRET_KEY_SECRET" == "stripe-secret-key-staging" ]] || { echo "ERROR: unapproved Stripe key secret name." >&2; exit 2; }
+[[ "$STRIPE_WEBHOOK_SECRET_SECRET" == "stripe-webhook-secret-staging" ]] || { echo "ERROR: unapproved Stripe webhook secret name." >&2; exit 2; }
+[[ "$API_KEY_HMAC_SECRET_SECRET" == "api-key-hmac-secret-staging" ]] || { echo "ERROR: unapproved API HMAC secret name." >&2; exit 2; }
+[[ "$GEMINI_API_KEY_SECRET" == "gemini-api-key-staging" ]] || { echo "ERROR: unapproved Gemini secret name." >&2; exit 2; }
+if [[ "$GETBLOCK_RPC_URL_SECRET" != "bitcoin-rpc-url-staging" || "$GETBLOCK_RPC_AUTH_SECRET" != "bitcoin-rpc-auth-staging" || "$TREASURY_WIF_SECRET" != "bitcoin-treasury-wif-staging" ]]; then
+  [[ "$GETBLOCK_RPC_URL_SECRET" == "$PRIVATE_NODE_RPC_URL_NAME" && "$GETBLOCK_RPC_AUTH_SECRET" == "$PRIVATE_NODE_RPC_AUTH_NAME" && "$TREASURY_WIF_SECRET" == "$PRIVATE_NODE_TREASURY_WIF_NAME" ]]     || { echo "ERROR: chain dependency names must be the reviewed staging trio or private signet trio." >&2; exit 2; }
+fi
 
 case "$SUPABASE_PG_MAJOR" in
   17) ;;
@@ -656,6 +679,7 @@ BASE_ENV_VARS=(
   "NODE_ENV=production"
   "ENABLE_AI_FRAUD=false"
   "ENABLE_AI_REPORTS=false"
+  "ENABLE_BULK_RECIPIENT_PROVISIONING=false"
   # Mirrors the prod deploy (deploy-worker.yml --set-env-vars). The worker's
   # code default is 4500ms and prod runs 15000; --set-env-vars is authoritative
   # here, so without this line a rig soaks /api/v1/ai/extract at a budget prod
@@ -683,6 +707,7 @@ BASE_SECRETS=(
   "API_KEY_HMAC_SECRET=${API_KEY_HMAC_SECRET_SECRET}:latest"
   "CRON_SECRET=${CRON_SECRET_SECRET}:latest"
   "IP_HASH_PEPPER=ip-hash-pepper-${NAME}-staging:latest"
+  "RECIPIENT_IDENTIFIER_PEPPER=recipient-identifier-pepper-${NAME}-staging:1"
 )
 
 ENV_VARS=("${BASE_ENV_VARS[@]}")
@@ -784,6 +809,8 @@ fi
 SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
 SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
 IP_HASH_PEPPER_SECRET_NAME="ip-hash-pepper-${NAME}-staging"
+RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME="recipient-identifier-pepper-${NAME}-staging"
+RIG_SECRET_NAMES=("$SUPABASE_URL_SECRET_NAME" "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$IP_HASH_PEPPER_SECRET_NAME" "$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME" "$CRON_SECRET_SECRET")
 STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
 PROVISION_STATE_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-provision-${NAME}.json"
 ADMISSION_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
@@ -791,8 +818,13 @@ ADMISSION_TEMP_PATH="${ADMISSION_ARTIFACT_PATH}.tmp.$$"
 ADMISSION_ARTIFACT_PERSISTED=0
 ADMISSION_FINALIZED=0
 CREATED_PROJECT_REF=""
+NEW_PROJECT_REF=""
 CREATED_CLOUD_RUN_SERVICE=0
 CREATED_SUPABASE_SECRETS=0
+CREATED_RIG_SECRET_RESOURCES=0
+CREATED_RIG_SECRET_NAMES=()
+RUNTIME_SA_UNIQUE_ID=""
+OIDC_SA_UNIQUE_ID=""
 PREFLIGHT_JSON=""
 PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}.json"
 PREFLIGHT_VERIFIED_AT="<captured-after-clean_mirror>"
@@ -1003,9 +1035,53 @@ wait_for_supabase_project_active() {
   echo "ERROR: Supabase project '$project_ref' never reported ACTIVE_HEALTHY after ${PROJECT_READY_MAX_ATTEMPTS} polls" >&2
   echo "       (last observed: '${observed_status:-<unreadable>}'). Refusing to link a project that is still" >&2
   echo "       coming up — the link would store the legacy IPv6 direct-db config and the push would fail." >&2
-  echo "       The project EXISTS and is billable: resume with the same rig name once it is healthy, or run" >&2
+  echo "       The project EXISTS and is billable: inspect the recorded state; this one-shot provisioner cannot resume. Run" >&2
   echo "       scripts/staging/teardown-isolated-rig.sh against the recorded ref." >&2
   exit 1
+}
+
+validate_rig_service_accounts() {
+  local sa payload
+  for sa in "$RUNTIME_SA" "$CRON_OIDC_SA"; do
+    payload="$(gcloud iam service-accounts describe "$sa" --project="$GCP_PROJECT" --format=json)"
+    jq -e --arg email "$sa" '.email == $email and (.disabled // false) == false and (.uniqueId | type == "string" and length > 0)' <<<"$payload" >/dev/null \
+      || { echo "ERROR: required dedicated service account is missing, disabled, or mismatched: $sa" >&2; exit 1; }
+    if [[ "$sa" == "$RUNTIME_SA" ]]; then RUNTIME_SA_UNIQUE_ID="$(jq -r '.uniqueId' <<<"$payload")"; else OIDC_SA_UNIQUE_ID="$(jq -r '.uniqueId' <<<"$payload")"; fi
+    # Read the full policy: avoid a flattened/filter projection silently losing grants.
+    # Retain condition metadata. Only these unconditional telemetry grants are tolerated;
+    # resource-scoped secret/invoker grants are established below.
+    payload="$(gcloud projects get-iam-policy "$GCP_PROJECT" \
+      --format=json)"
+    jq -e --arg member "serviceAccount:${sa}" 'type == "object" and (.bindings | type == "array") and all(.bindings[]; type == "object" and (.role | type == "string") and (.members | type == "array") and all(.members[]; type == "string")) and all(.bindings[] | select(.members | index($member) != null); (.role | IN("roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/cloudtrace.agent", "roles/errorreporting.writer")) and ((.condition // null) == null))' <<<"$payload" >/dev/null \
+      || { echo "ERROR: dedicated rig service account has an unknown, sensitive, conditional, or malformed project grant: $sa" >&2; exit 1; }
+  done
+}
+
+verify_dependency_secret_access() {
+  local secret_name="$1" payload
+  payload="$(gcloud secrets get-iam-policy "$secret_name" --project="$GCP_PROJECT" --format=json)"
+  jq -e --arg member "serviceAccount:${RUNTIME_SA}" 'any(.bindings[]?; .role == "roles/secretmanager.secretAccessor" and ((.condition // null) == null) and (.members | index($member) != null))' <<<"$payload" >/dev/null \
+    || { echo "ERROR: runtime identity lacks exact secret-level access to dependency '$secret_name'." >&2; exit 1; }
+}
+
+grant_and_verify_rig_secret_access() {
+  local secret_name="$1" allowed=0 candidate payload
+  for candidate in "${RIG_SECRET_NAMES[@]}"; do [[ "$secret_name" == "$candidate" ]] && allowed=1; done
+  [[ $allowed -eq 1 ]] || { echo "ERROR: refusing IAM mutation outside the exact rig secret ledger: $secret_name" >&2; exit 1; }
+  gcloud secrets add-iam-policy-binding "$secret_name" --project="$GCP_PROJECT" \
+    --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor --condition=None >/dev/null
+  payload="$(gcloud secrets get-iam-policy "$secret_name" --project="$GCP_PROJECT" --format=json)"
+  jq -e --arg member "serviceAccount:${RUNTIME_SA}" 'any(.bindings[]?; .role == "roles/secretmanager.secretAccessor" and ((.condition // null) == null) and (.members | index($member) != null))' <<<"$payload" >/dev/null \
+    || { echo "ERROR: exact rig-secret IAM readback failed: $secret_name" >&2; exit 1; }
+}
+
+grant_and_verify_service_invoker() {
+  gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" \
+    --member="serviceAccount:${CRON_OIDC_SA}" --role=roles/run.invoker --condition=None >/dev/null
+  local payload
+  payload="$(gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" --format=json)"
+  jq -e --arg member "serviceAccount:${CRON_OIDC_SA}" 'any(.bindings[]?; .role == "roles/run.invoker" and ((.condition // null) == null) and (.members | index($member) != null))' <<<"$payload" >/dev/null \
+    || { echo "ERROR: exact Cloud Run invoker IAM readback failed." >&2; exit 1; }
 }
 
 require_gcloud_secret() {
@@ -1013,11 +1089,12 @@ require_gcloud_secret() {
   local remediation="${2:-}"
   if ! gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
     echo "ERROR: required Secret Manager secret '$secret_name' is missing in project '$GCP_PROJECT'." >&2
-    if [[ -n "$remediation" ]]; then
-      printf '%s\n' "$remediation" >&2
-    fi
+    if [[ -n "$remediation" ]]; then printf '%s\n' "$remediation" >&2; fi
     exit 1
   fi
+  local latest_state
+  latest_state="$(gcloud secrets versions describe latest --secret="$secret_name" --project="$GCP_PROJECT" --format='value(state)')"
+  [[ "$latest_state" == "ENABLED" ]] || { echo "ERROR: required dependency secret '$secret_name' has no ENABLED latest version." >&2; exit 1; }
 }
 
 # The chain profile's default secret names are the shared-staging ones and do
@@ -1038,13 +1115,13 @@ CHAIN_SECRET_REMEDIATION="       The chain profile's default names are the share
        and declare STAGING_BITCOIN_NETWORK=signet — they are signet credentials, not mainnet ones."
 
 if [[ $APPLY -eq 1 ]]; then
+  validate_rig_service_accounts
   # Fail closed before creating infra if any pre-existing Secret Manager
   # dependency is absent. The NEW project's Supabase URL/service-role secrets
   # are created after Step 1, once the project ref and API keys exist.
   require_gcloud_secret "$STRIPE_SECRET_KEY_SECRET"
   require_gcloud_secret "$STRIPE_WEBHOOK_SECRET_SECRET"
   require_gcloud_secret "$API_KEY_HMAC_SECRET_SECRET"
-  require_gcloud_secret "$CRON_SECRET_SECRET"
   case "$PROFILE" in
     chain)
       require_gcloud_secret "$GETBLOCK_RPC_URL_SECRET" "$CHAIN_SECRET_REMEDIATION"
@@ -1055,6 +1132,10 @@ if [[ $APPLY -eq 1 ]]; then
       require_gcloud_secret "$GEMINI_API_KEY_SECRET"
       ;;
   esac
+  DEPENDENCY_SECRETS=("$STRIPE_SECRET_KEY_SECRET" "$STRIPE_WEBHOOK_SECRET_SECRET" "$API_KEY_HMAC_SECRET_SECRET")
+  [[ "$PROFILE" == chain ]] && DEPENDENCY_SECRETS+=("$GETBLOCK_RPC_URL_SECRET" "$GETBLOCK_RPC_AUTH_SECRET" "$TREASURY_WIF_SECRET")
+  [[ "$PROFILE" == gemini ]] && DEPENDENCY_SECRETS+=("$GEMINI_API_KEY_SECRET")
+  for dependency_secret in "${DEPENDENCY_SECRETS[@]}"; do verify_dependency_secret_access "$dependency_secret"; done
 fi
 
 write_provision_state() {
@@ -1074,10 +1155,16 @@ write_provision_state() {
     --arg gcp_project "$GCP_PROJECT" \
     --arg supabase_org_id "$SUPABASE_ORG" \
     --arg supabase_project_name "$PROJECT_NAME" \
-    --arg supabase_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}" \
+    --arg supabase_project_ref "${CREATED_PROJECT_REF:-${NEW_PROJECT_REF:-}}" \
     --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
     --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
     --arg ip_hash_pepper_secret "$IP_HASH_PEPPER_SECRET_NAME" \
+    --arg recipient_identifier_pepper_secret "$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME" \
+    --arg cron_secret "$CRON_SECRET_SECRET" \
+    --arg runtime_sa "$RUNTIME_SA" \
+    --arg runtime_sa_unique_id "$RUNTIME_SA_UNIQUE_ID" \
+    --arg oidc_sa "$CRON_OIDC_SA" \
+    --arg oidc_sa_unique_id "$OIDC_SA_UNIQUE_ID" \
     --arg image "$PINNED_IMAGE" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
     --arg source_head_image_ref "$SOURCE_HEAD_IMAGE_REF" \
@@ -1113,7 +1200,13 @@ write_provision_state() {
       secrets: {
         supabase_url: $supabase_url_secret,
         supabase_service_role_key: $supabase_service_role_secret,
-        ip_hash_pepper: $ip_hash_pepper_secret
+        ip_hash_pepper: $ip_hash_pepper_secret,
+        recipient_identifier_pepper: $recipient_identifier_pepper_secret,
+        cron: $cron_secret
+      },
+      identities: {
+        runtime: {email: $runtime_sa, unique_id: $runtime_sa_unique_id},
+        oidc: {email: $oidc_sa, unique_id: $oidc_sa_unique_id}
       },
       image: $image,
       declared_source_head: $declared_source_head,
@@ -1137,7 +1230,7 @@ write_provision_state() {
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
       state_path: $state_path,
-      cleanup_hint: "If status is blocked_after_project_create, either resume with the same rig name/ref and verify these secrets, or run scripts/staging/teardown-isolated-rig.sh against the recorded service/ref."
+      cleanup_hint: "If status is blocked_after_resource_create, inspect the recorded state. Pre-project failures best-effort delete exact resources created by this invocation; after project creation, run scripts/staging/teardown-isolated-rig.sh against the recorded service/ref."
     }' >"$PROVISION_STATE_PATH" || return 1
   echo "# provision state: $PROVISION_STATE_PATH"
 }
@@ -1222,8 +1315,16 @@ on_apply_exit() {
   fi
 
   blocked_reason="original_rc=${rc}; scheduler_pause=${pause_result}; admission_artifact=${artifact_result}"
-  if [[ $APPLY -eq 1 && -n "${CREATED_PROJECT_REF:-}" ]]; then
-    write_provision_state "blocked_after_project_create" "$blocked_reason"
+  if [[ $APPLY -eq 1 && -z "${CREATED_PROJECT_REF:-}" && ${#CREATED_RIG_SECRET_NAMES[@]} -gt 0 ]]; then
+    for created_secret in "${CREATED_RIG_SECRET_NAMES[@]}"; do
+      if ! gcloud secrets delete "$created_secret" --project="$GCP_PROJECT" --quiet >/dev/null 2>&1; then
+        echo "ERROR: pre-project cleanup could not delete exact rig secret '$created_secret'." >&2
+        blocked_reason="${blocked_reason}; pre_project_secret_cleanup=incomplete"
+      fi
+    done
+  fi
+  if [[ $APPLY -eq 1 && ( -n "${CREATED_PROJECT_REF:-}" || $CREATED_RIG_SECRET_RESOURCES -eq 1 ) ]]; then
+    write_provision_state "blocked_after_resource_create" "$blocked_reason"
     state_rc=$?
     if [[ $state_rc -ne 0 ]]; then
       echo "ERROR: failure containment could not persist blocked provision state (cleanup_rc=$state_rc)." >&2
@@ -1290,34 +1391,22 @@ generate_ip_hash_pepper() {
   LC_ALL=C od -An -N32 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'
 }
 
-create_ip_hash_pepper_secret() {
-  # CREATE-ONCE, never rotate. Adding a new version on a resumed provision would
-  # silently orphan every audit-log IP hash the rig had already written, so an
-  # existing secret is kept and only proven readable.
-  if gcloud secrets describe "$IP_HASH_PEPPER_SECRET_NAME" --project="$GCP_PROJECT" >/dev/null 2>&1; then
-    echo "# per-rig IP_HASH_PEPPER secret already exists — keeping its current version (never rotated)"
-    gcloud secrets versions access latest \
-      --secret="$IP_HASH_PEPPER_SECRET_NAME" \
-      --project="$GCP_PROJECT" >/dev/null
-    return 0
-  fi
-
-  local pepper_value
-  pepper_value="$(generate_ip_hash_pepper || true)"
-  # The generator runs in a subshell, so its own failure cannot abort the script:
-  # validate here, where the exit is authoritative.
-  if [[ ! "$pepper_value" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "ERROR: could not generate a 256-bit IP_HASH_PEPPER for '$IP_HASH_PEPPER_SECRET_NAME'." >&2
-    echo "       No Cloud Run deploy was attempted; install openssl or provide /dev/urandom, then resume." >&2
+ensure_stable_random_secret_resource() {
+  local secret_name="$1" purpose="$2" version="${3:-latest}" value
+  if gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+    if gcloud secrets versions access "$version" --secret="$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+      echo "# per-rig ${purpose} secret already has a usable version — keeping it (never rotated)"
+      return 0
+    fi
+    echo "ERROR: per-rig ${purpose} secret exists without a usable $version version; refusing rotation." >&2
     exit 1
   fi
-  printf '%s' "$pepper_value" | gcloud secrets create "$IP_HASH_PEPPER_SECRET_NAME" \
-    --project="$GCP_PROJECT" \
-    --replication-policy=automatic \
-    --data-file=-
-  gcloud secrets versions access latest \
-    --secret="$IP_HASH_PEPPER_SECRET_NAME" \
-    --project="$GCP_PROJECT" >/dev/null
+  value="$(generate_ip_hash_pepper || true)"
+  [[ "$value" =~ ^[0-9a-f]{64}$ ]] || { echo "ERROR: could not generate a stable per-rig ${purpose} value." >&2; exit 1; }
+  printf '%s' "$value" | gcloud secrets create "$secret_name" --project="$GCP_PROJECT" \
+    --replication-policy=automatic --data-file=-
+  CREATED_RIG_SECRET_RESOURCES=1
+  CREATED_RIG_SECRET_NAMES+=("$secret_name")
 }
 
 extract_service_role_key() {
@@ -1347,17 +1436,13 @@ create_supabase_runtime_secrets() {
 
   if [[ -z "$service_role_key" ]]; then
     echo "ERROR: could not resolve service-role key for Supabase project '$project_ref'." >&2
-    echo "       No Cloud Run deploy was attempted; create/verify the key, then resume." >&2
+    echo "       No Cloud Run deploy was attempted; create/verify the key, then start a fresh named rig after cleanup." >&2
     exit 1
   fi
 
   echo "# creating/verifying per-rig Secret Manager secrets before Cloud Run deploy"
-  print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
-  print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
-  print_cmd gcloud secrets create "$IP_HASH_PEPPER_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   ensure_secret_with_value "$SUPABASE_URL_SECRET_NAME" "$supabase_url"
   ensure_secret_with_value "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$service_role_key"
-  create_ip_hash_pepper_secret
   CREATED_SUPABASE_SECRETS=1
   write_provision_state "supabase_secrets_recorded" ""
 }
@@ -1779,6 +1864,34 @@ if [[ $APPLY -ne 1 ]]; then
   echo
 fi
 
+# Establish only the five rig-owned secret resources and exact resource IAM before
+# the paid Supabase mutation. No project-level IAM is changed.
+for rig_secret in "${RIG_SECRET_NAMES[@]}"; do
+  if [[ $APPLY -eq 1 ]]; then
+    case "$rig_secret" in
+      "$IP_HASH_PEPPER_SECRET_NAME") ensure_stable_random_secret_resource "$rig_secret" "IP_HASH_PEPPER" ;;
+      "$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME") ensure_stable_random_secret_resource "$rig_secret" "recipient identity" 1 ;;
+      "$CRON_SECRET_SECRET") ensure_stable_random_secret_resource "$rig_secret" "cron authentication" ;;
+      *)
+        if ! gcloud secrets describe "$rig_secret" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+          gcloud secrets create "$rig_secret" --project="$GCP_PROJECT" --replication-policy=automatic >/dev/null
+          CREATED_RIG_SECRET_RESOURCES=1
+          CREATED_RIG_SECRET_NAMES+=("$rig_secret")
+        fi
+        ;;
+    esac
+    grant_and_verify_rig_secret_access "$rig_secret"
+  else
+    case "$rig_secret" in
+      "$IP_HASH_PEPPER_SECRET_NAME"|"$RECIPIENT_IDENTIFIER_PEPPER_SECRET_NAME"|"$CRON_SECRET_SECRET")
+        print_cmd gcloud secrets create "$rig_secret" --project="$GCP_PROJECT" --replication-policy=automatic --data-file='<redacted:generated-32-bytes>'
+        ;;
+      *) print_cmd gcloud secrets create "$rig_secret" --project="$GCP_PROJECT" --replication-policy=automatic ;;
+    esac
+    print_cmd gcloud secrets add-iam-policy-binding "$rig_secret" --project="$GCP_PROJECT" --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor --condition=None
+  fi
+done
+
 # ---------------------------------------------------------------------------
 # Step 1 — create the standalone Supabase project.
 #
@@ -1916,12 +2029,9 @@ if [[ $APPLY -eq 1 ]]; then
   create_supabase_runtime_secrets "$NEW_PROJECT_REF"
 else
   print_cmd npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
-  print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
-  print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
-  print_cmd gcloud secrets create "$IP_HASH_PEPPER_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   echo "#   apply mode derives https://<captured-ref>.supabase.co, fetches the service-role key,"
-  echo "#   writes both per-rig Supabase secrets, generates a 256-bit IP_HASH_PEPPER (create-once,"
-  echo "#   never rotated — a new version would orphan every audit-log IP hash the rig wrote),"
+  echo "#   writes the two pre-created per-rig Supabase secret resources; cron/IP were atomically"
+  echo "#   created with their first random values before paid work and are never rotated,"
   echo "#   verifies latest versions are readable, and records the secret names in"
   echo "#   $PROVISION_STATE_PATH before Cloud Run deploy."
 fi
@@ -1981,6 +2091,11 @@ if [[ $APPLY -eq 1 ]]; then
   write_provision_state "cloud_run_provenance_verified" ""
 fi
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
+  if [[ $APPLY -eq 1 ]]; then
+    grant_and_verify_service_invoker
+  else
+    print_cmd gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" --member="serviceAccount:${CRON_OIDC_SA}" --role=roles/run.invoker --condition=None
+  fi
   echo "#   NOTE (profile=$PROFILE): the real-config secrets referenced above must already"
   echo "#         exist in Secret Manager (project $GCP_PROJECT) and hold the intended"
   echo "#         test-tier credentials — the operator verifies this before --apply."
