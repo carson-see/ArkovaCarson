@@ -75,6 +75,14 @@
 --   regardless of anchor status; the credential_type backfill deliberately
 --   does not, per the reasoning above.
 --
+-- KNOWN LIMIT OF THE FILENAME BACKFILL: a Drive file name may itself contain
+-- "/", and `_drive_folder_path` does not escape it, so the last path segment
+-- is only the tail of such a name. Rehearsed on prod in a rolled-back
+-- transaction 2026-09-29: 13 rows renamed, 1 of them truncated this way (a
+-- meeting-notes document whose name contains a date written with slashes).
+-- Still strictly better than "google_drive:<fileId>". New records take the
+-- name from the Drive API in the worker and are not affected.
+--
 -- ROLLBACK:
 --   Restore materialize_connector_artifact_anchor to its 0462 body (same
 --   signature — CREATE OR REPLACE with the text from 0462, which hardcodes
@@ -359,14 +367,22 @@ BEGIN
   -- above WOULD technically satisfy that trigger's own bypass on a SECURED
   -- row too, but this migration deliberately adds the `a.status = 'PENDING'`
   -- guard anyway rather than relying on that to force a retroactive category
-  -- change on an already-secured, chain-committed record. No join needed:
-  -- `connector_source` already lives directly on anchors.metadata (written
-  -- by defaultMaterializeAnchor). Any of the 13 anchors that are NOT PENDING
-  -- keep CONTRACT_POSTSIGNING here — see this migration's agents.md entry
-  -- for the read-only query an operator can run to see how many, if any.
+  -- change on an already-secured, chain-committed record. Any of the 13
+  -- anchors that are NOT PENDING keep CONTRACT_POSTSIGNING here — see this
+  -- migration's agents.md entry for the read-only query an operator can run
+  -- to see how many, if any.
+  --
+  -- Driven from connector_artifact.anchor_id like the three backfills above,
+  -- NOT from anchors.metadata->>'connector_source'. That predicate has no
+  -- index: EXPLAIN on prod (2026-09-29) planned it as a sequential scan of
+  -- the whole anchors table (~4.1M rows, cost 1.8M), inside the same
+  -- transaction that holds the function replacement. The join reads the
+  -- handful of Drive artifacts and reaches anchors by primary key.
   UPDATE public.anchors a
   SET credential_type = 'OTHER'
-  WHERE a.metadata->>'connector_source' = 'google_drive'
+  FROM public.connector_artifact ca
+  WHERE ca.anchor_id = a.id
+    AND ca.source = 'google_drive'
     AND a.credential_type = 'CONTRACT_POSTSIGNING'
     AND a.status = 'PENDING';
 END;

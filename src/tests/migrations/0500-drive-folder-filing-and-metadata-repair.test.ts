@@ -142,7 +142,12 @@ describe('0500 drive connector folder filing and metadata repair (shrunk, BUG-20
       const section = migration.slice(start);
       expect(section).toMatch(/UPDATE public\.anchors a/);
       expect(section).toMatch(/SET credential_type = 'OTHER'/);
-      expect(section).toMatch(/a\.metadata->>'connector_source' = 'google_drive'/);
+      // Index-driven through connector_artifact, never a scan of anchors by an
+      // unindexed metadata key (prod EXPLAIN planned that as a full seq scan).
+      expect(section).toMatch(/FROM public\.connector_artifact ca/);
+      expect(section).toMatch(/ca\.anchor_id = a\.id/);
+      expect(section).toMatch(/ca\.source = 'google_drive'/);
+      expect(section).not.toMatch(/WHERE a\.metadata->>'connector_source'/);
       expect(section).toMatch(/a\.credential_type = 'CONTRACT_POSTSIGNING'/);
       expect(section).toMatch(/a\.status = 'PENDING'/);
     });
