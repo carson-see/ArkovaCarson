@@ -48,6 +48,9 @@ import {
   handleAgentGetAnchor,
   handleAgentGetOrganization,
   handleManageFolders,
+  handleAgentLifecycle,
+  handleListAnchors,
+  hasValidWorkerAccessConfig,
   type SupabaseConfig,
   type ToolResult,
   type ImportRowsInput,
@@ -194,6 +197,19 @@ export interface RequestTelemetryContext {
  *  this wrapper runs. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyArgs = Record<string, any>;
+const LIFECYCLE_TOOL_NAMES = new Set(['arkova_register_agent','arkova_list_agents','arkova_get_agent','arkova_update_agent','arkova_revoke_agent','arkova_create_agent_key','arkova_admit_computeid_agent']);
+export function projectMcpAuditArgs(toolName: string, args: AnyArgs): Record<string, unknown> {
+  if (toolName === 'arkova_list_anchors') {
+    return {
+      ...(typeof args?.tag_scope === 'string' ? { tag_scope: args.tag_scope } : {}),
+      ...(typeof args?.limit === 'number' ? { limit: args.limit } : {}),
+    };
+  }
+  if (!LIFECYCLE_TOOL_NAMES.has(toolName)) return args;
+  const uuid = (value: unknown): string | undefined => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : undefined;
+  if (toolName === 'arkova_admit_computeid_agent') return uuid(args?.passport_id) ? { passport_id: args.passport_id } : {};
+  return uuid(args?.agent_id) ? { agent_id: args.agent_id } : {};
+}
 export function withTelemetry(
   toolName: string,
   handler: (args: AnyArgs) => Promise<ToolResult>,
@@ -201,7 +217,8 @@ export function withTelemetry(
 ): (args: AnyArgs) => Promise<ToolResult> {
   return async (args: AnyArgs): Promise<ToolResult> => {
     const started = Date.now();
-    const argsJson = JSON.stringify(args ?? {});
+    const auditArgs = projectMcpAuditArgs(toolName, args);
+    const argsJson = JSON.stringify(auditArgs ?? {});
     let outcome: McpAuditEntry['outcome'] = 'success';
 
     const logOnce = (): void => {
@@ -290,6 +307,10 @@ export function withTelemetry(
       // Full detail goes to Logpush via `safeErrorText`; the caller gets the
       // same scrubbed envelope every other tool-error path returns.
       outcome = 'tool_error';
+      if (LIFECYCLE_TOOL_NAMES.has(toolName)) {
+        void err;
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ code:'AGENT_TOOL_ERROR' }) }], isError: true };
+      }
       return {
         content: [{ type: 'text' as const, text: safeErrorText(err, toolName) }],
         isError: true,
@@ -371,7 +392,7 @@ export async function buildOracleBatchEnvelope(
  * `telemetry` carries the per-request context needed by SEC-01 rate limiting
  * + SEC-06 audit logging. Every tool handler is wrapped by `withTelemetry`.
  */
-function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContext): McpServer {
+export function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContext): McpServer {
   const server = new McpServer({
     name: SERVER_NAME,
     version: SERVER_VERSION,
@@ -640,43 +661,27 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     ),
   );
 
-  tool(
-    'arkova_list_agents',
-    TOOL_DESC['arkova_list_agents'],
-    {},
-    withTelemetry(
-      'arkova_list_agents',
-      async () => {
-        // MCP security fix 2026-04-20: prior implementation queried
-        // /rest/v1/agents?status=eq.active with the service-role key and no
-        // org filter — cross-org data leak. Replaced with SECURITY DEFINER
-        // RPC get_agents_for_user(p_user_id) (migration 0221) that joins
-        // through org_members and returns only the caller's org's agents.
-        try {
-          const resp = await fetch(
-            `${config.supabaseUrl}/rest/v1/rpc/get_agents_for_user`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                apikey: config.supabaseKey,
-                Authorization: `Bearer ${config.supabaseKey}`,
-              },
-              body: JSON.stringify({ p_user_id: config.userId }),
-            },
-          );
-          if (!resp.ok) {
-            return { content: [{ type: 'text' as const, text: safeErrorText(new Error(`HTTP ${resp.status}`), 'arkova_list_agents') }], isError: true };
-          }
-          const agents = await resp.json();
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: Array.isArray(agents) ? agents : [] }, null, 2) }] };
-        } catch (error) {
-          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'arkova_list_agents') }], isError: true };
-        }
-      },
-      telemetry,
-    ),
-  );
+  const scope = z.string();
+  const registerShape = { name:z.string().trim().min(1).max(200), description:z.string().max(1000).optional(), agent_type:z.enum(['llm_agent','ats_integration','hr_platform','compliance_tool','custom']).optional(), allowed_scopes:z.array(scope).min(1).max(32).optional(), framework:z.string().max(100).optional(), version:z.string().max(50).optional(), callback_url:z.string().url().optional(), metadata:z.record(z.string(),z.unknown()).optional() };
+  const idShape = { agent_id:z.string().uuid() };
+  const updateShape = { ...idShape, name:z.string().trim().min(1).max(200).optional(), description:z.string().max(1000).optional(), allowed_scopes:z.array(scope).min(1).max(32).optional(), status:z.enum(['active','suspended']).optional(), framework:z.string().max(100).optional(), version:z.string().max(50).optional(), callback_url:z.string().url().nullable().optional() };
+  const admissionShape = { passport_id:z.string().uuid(), verification_receipt:z.record(z.string(),z.unknown()), name:z.string().trim().min(1).max(200).optional(), description:z.string().max(1000).optional(), allowed_scopes:z.array(scope).min(1).max(32).optional() };
+  const agentTools: Array<[string,Record<string,unknown>,'register'|'list'|'get'|'update'|'revoke'|'create_key'|'admit_computeid']> = [
+    ['arkova_register_agent',registerShape,'register'], ['arkova_list_agents',{},'list'], ['arkova_get_agent',idShape,'get'],
+    ['arkova_update_agent',updateShape,'update'], ['arkova_revoke_agent',idShape,'revoke'], ['arkova_create_agent_key',idShape,'create_key'],
+    ['arkova_admit_computeid_agent',admissionShape,'admit_computeid'],
+  ];
+  for (const [name, shape, operation] of agentTools) tool(name, TOOL_DESC[name], shape,
+    withTelemetry(name, async (args) => handleAgentLifecycle(operation, args, config), telemetry));
+
+  tool('arkova_list_anchors', TOOL_DESC.arkova_list_anchors, {
+    since:z.string().datetime({offset:true}).optional(), until:z.string().datetime({offset:true}).optional(),
+    tag:z.string().min(1).max(64).optional(), tag_scope:z.enum(['user','organization']).optional(),
+    limit:z.number().int().min(1).max(100).default(50), cursor:z.string().min(1).max(2048).optional(),
+  }, withTelemetry('arkova_list_anchors', async (args) => {
+    if ((args.tag === undefined) !== (args.tag_scope === undefined)) return { content:[{type:'text' as const,text:JSON.stringify({error:'INVALID_ARGS',message:'tag and tag_scope must be provided together'})}],isError:true };
+    return handleListAnchors(args, config);
+  }, telemetry));
 
   tool(
     'arkova_manage_folders',
@@ -880,24 +885,27 @@ export function isMcpAnchorDocumentAllowed(auth: Pick<AuthResult, 'scopes'>, env
     && auth.scopes.some(scope => MCP_ANCHOR_WRITE_SCOPES.has(scope));
 }
 
-async function validateAuth(
+export async function validateAuth(
   request: Request,
   env: Env,
 ): Promise<AuthResult | null> {
   const apiKey = request.headers.get('x-api-key');
   const authHeader = request.headers.get('authorization');
+  const apiKeyPresented = apiKey !== null;
 
-  if (apiKey && authHeader?.startsWith('Bearer ')) {
-    const [apiKeyResult, bearerResult] = await Promise.allSettled([
-      validateApiKey(apiKey, env),
-      validateBearer(authHeader.slice(7), env),
-    ]);
-    if (apiKeyResult.status === 'fulfilled' && apiKeyResult.value) return apiKeyResult.value;
-    if (bearerResult.status === 'fulfilled' && bearerResult.value) return bearerResult.value;
+  if (apiKeyPresented && authHeader !== null) {
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    // c231 treats the exact same ak_ principal presented twice as one key.
+    // Every other dual-header shape is ambiguous, including malformed or
+    // invalid extras: never authenticate whichever credential happens to pass.
+    if (bearer && bearer === apiKey && apiKey.startsWith('ak_')) return validateApiKey(apiKey, env);
     return null;
   }
 
-  if (apiKey) return validateApiKey(apiKey, env);
+  if (apiKeyPresented) {
+    if (!apiKey.trim()) return null;
+    return validateApiKey(apiKey, env);
+  }
   if (authHeader?.startsWith('Bearer ')) return validateBearer(authHeader.slice(7), env);
   return null;
 }
@@ -1145,11 +1153,20 @@ export async function handleMcpRequest(
     // Gemini-space search forwarding the caller's key (preserves org-scoping
     // + per-caller rate limits). Otherwise it degrades to the text fallback.
     workerBaseUrl: env.WORKER_BASE_URL,
+    workerAccessHost: env.WORKER_ACCESS_HOST,
+    workerAccessClientId: env.WORKER_ACCESS_CLIENT_ID,
+    workerAccessClientSecret: env.WORKER_ACCESS_CLIENT_SECRET,
     callerApiKey: auth.callerApiKey ?? undefined,
     callerAuthorization: auth.callerAuthorization ?? undefined,
     // BUG-008/027: fail closed — only the exact string "true" enables Nessie.
     nessieEnabled: env.ENABLE_NESSIE_QUERY === 'true',
   };
+  if (!hasValidWorkerAccessConfig(config)) {
+    return new Response(JSON.stringify({ error: 'Service unavailable', code: 'WORKER_ACCESS_CONFIG_INVALID' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': corsOrigin, Vary: 'Origin' },
+    });
+  }
 
   const clientIp = earlyClientIp;
 

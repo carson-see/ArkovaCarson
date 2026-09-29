@@ -334,6 +334,54 @@ paths:
         "503":
           description: ENABLE_VERIFICATION_API is off (worker-wide gate)
 
+  /anchors:
+    get:
+      operationId: listAnchors
+      summary: List private organization anchors
+      description: Lists anchors for the organization bound to the current API key. Since is inclusive and until is exclusive. Tags and fingerprints are never returned.
+      tags: [Anchoring]
+      x-arkova-required-scopes: ["read:records"]
+      security:
+        - apiKey: []
+      parameters:
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { name: tag, in: query, schema: { type: string, minLength: 1, maxLength: 64 } }
+        - name: tag_scope
+          in: query
+          description: Required with tag; tag is required with tag_scope.
+          schema: { type: string, enum: [user, organization] }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+      responses:
+        "200":
+          description: A page of private organization anchors
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [anchors, next_cursor]
+                properties:
+                  anchors:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [public_id, status, created_at, updated_at, filename, description]
+                      properties:
+                        public_id: { type: string }
+                        status: { type: string }
+                        created_at: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
+                        filename: { type: string }
+                        description: { type: string, nullable: true }
+                  next_cursor: { type: string, nullable: true }
+        "400": { description: Invalid filter or cursor }
+        "401": { description: API key required }
+        "403": { description: Current key scope or organization access denied }
+        "503": { description: Anchor list temporarily unavailable }
+
   /anchor:
     post:
       operationId: anchorDocument
@@ -561,6 +609,169 @@ paths:
       responses:
         "201":
           description: API key created (raw key returned only once)
+
+  /agents:
+    get:
+      operationId: listAgents
+      summary: List agents in the caller organization
+      tags: [Agents]
+      description: JWT members may read. API keys require agents:manage.
+      x-arkova-required-scopes: [agents:manage]
+      security:
+        - bearerAuth: []
+        - apiKey: []
+        - apiKeyBearer: []
+      responses:
+        "200":
+          description: Tenant-scoped agent list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentList" }
+        "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+    post:
+      operationId: registerAgent
+      summary: Register an agent
+      tags: [Agents]
+      description: JWT callers must be ORG_ADMIN. API keys require agents:manage and may delegate only scopes they hold.
+      x-arkova-required-scopes: [agents:manage]
+      security:
+        - bearerAuth: []
+        - apiKey: []
+        - apiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentCreate" }
+      responses:
+        "201":
+          description: Agent registered
+          content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } }
+        "400": { $ref: "#/components/responses/AgentBadRequest" }
+        "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } }
+  /agents/{agentId}:
+    parameters:
+      - { name: agentId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAgent
+      summary: Get an agent and active-key metadata
+      description: JWT members may read. API keys require agents:manage.
+      tags: [Agents]
+      x-arkova-required-scopes: [agents:manage]
+      security: [{ bearerAuth: [] }, { apiKey: [] }, { apiKeyBearer: [] }]
+      responses:
+        "200":
+          description: Tenant-scoped agent with active key metadata
+          content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } }
+        "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+    patch:
+      operationId: updateAgent
+      summary: Update, suspend, or resume an agent
+      tags: [Agents]
+      description: JWT callers must be organization admins. API keys require agents:manage. Status and accompanying fields commit atomically; machine callers cannot delegate beyond their own scopes and provider-bound agents retain their provider scope ceiling.
+      x-arkova-required-scopes: [agents:manage]
+      security: [{ bearerAuth: [] }, { apiKey: [] }, { apiKeyBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentUpdate" }
+      responses:
+        "200":
+          description: Agent updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } }
+        "400": { $ref: "#/components/responses/AgentBadRequest" }
+        "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { description: Terminal revocation or provider-owned suspension blocks the transition }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { type: object, required: [error], properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } } } } }
+    delete:
+      operationId: revokeAgent
+      summary: Terminally revoke an agent and its keys
+      tags: [Agents]
+      description: JWT callers must be organization admins. API keys require an active, unexpired, same-organization agents:manage credential.
+      x-arkova-required-scopes: [agents:manage]
+      security: [{ bearerAuth: [] }, { apiKey: [] }, { apiKeyBearer: [] }]
+      responses:
+        "200":
+          description: Agent revoked atomically
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRevocationResult" }
+        "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { $ref: "#/components/responses/AmbiguousCaller" }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { type: object, required: [error], properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } } } } }
+  /agents/{agentId}/key:
+    post:
+      operationId: mintAgentKey
+      summary: Mint an agent API key
+      tags: [Agents]
+      description: JWT callers must be organization admins. API keys require agents:manage and must satisfy every scope allowed to the target agent. Returns the raw key once; mutations are not automatically retried.
+      x-arkova-required-scopes: [agents:manage]
+      security: [{ bearerAuth: [] }, { apiKey: [] }, { apiKeyBearer: [] }]
+      parameters:
+        - { name: agentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201":
+          description: Raw agent key returned once
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentKeyCreated" } } }
+        "401": { description: "Missing, malformed, invalid, revoked, or expired credential" }
+        "403": { $ref: "#/components/responses/AgentForbidden" }
+        "404": { description: Agent not found in caller tenant }
+        "409": { description: Agent is suspended or terminally revoked }
+        "503":
+          description: Lifecycle mutation temporarily unavailable; wait for the indicated delay before a manual retry
+          headers:
+            Retry-After: { description: Delay in seconds before a manual retry, schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { type: object, required: [error], properties: { error: { type: string, enum: [agent_lifecycle_temporarily_unavailable] } } } } }
+
+  /agents/computeid/admit:
+    post:
+      operationId: admitComputeIdAgent
+      summary: Admit a ComputeID passport agent
+      tags: [Agents]
+      description: Requires an organization API key with agents:manage. The signed receipt is passed through and verified offline. Requested passport scopes remain subject to the provider allowlist and caller delegation ceiling. Returns the raw key once.
+      security: [{ apiKey: [] }, { apiKeyBearer: [] }]
+      x-arkova-required-scopes: [agents:manage]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionRequest" } } }
+      responses:
+        "201": { description: Passport bound and raw key returned once, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionResult" } } } }
+        "400": { description: Invalid request or no permitted scopes, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionError" } } } }
+        "401": { description: Organization API key or valid signed receipt required, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionError" } } } }
+        "403": { description: Caller delegation ceiling denied, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionError" } } } }
+        "409": { description: Passport revoked or already bound, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionError" } } } }
+        "500": { description: Admission unavailable or failed, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionError" } } } }
+        "503": { description: ComputeID integration disabled, content: { application/json: { schema: { $ref: "#/components/schemas/ComputeIdAdmissionError" } } } }
 
   /integrations/google_drive/folders:
     get:
@@ -1758,6 +1969,10 @@ components:
       in: header
       name: X-API-Key
       description: HMAC-SHA256 hashed API key
+    apiKeyBearer:
+      type: http
+      scheme: bearer
+      description: Organization API key as Authorization Bearer; this is not a Supabase JWT
     bearerAuth:
       type: http
       scheme: bearer
@@ -1769,7 +1984,181 @@ components:
       name: X-Payment
       description: Base64-encoded x402 payment proof
 
+  responses:
+    AgentBadRequest:
+      description: Invalid lifecycle request
+      content: { application/json: { schema: { $ref: "#/components/schemas/AgentError" } } }
+    AgentForbidden:
+      description: JWT role, agents:manage, tenant, caller-delegation, or provider scope ceiling denied
+      content: { application/json: { schema: { $ref: "#/components/schemas/AgentError" } } }
+    AmbiguousCaller:
+      description: More than one credential was presented
+      content: { application/json: { schema: { $ref: "#/components/schemas/AgentError" } } }
+
   schemas:
+    AgentCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 1000 }
+        agent_type: { type: string, enum: [llm_agent, ats_integration, hr_platform, compliance_tool, custom], default: custom }
+        allowed_scopes: { type: array, minItems: 1, default: [verify], items: { type: string, enum: [read:records, read:orgs, read:search, write:anchors, admin:rules, verify, "verify:batch", usage:read, keys:manage, compliance:read, compliance:write, oracle:read, oracle:write, anchor:write, anchor:read, attestations:write, attestations:read, webhooks:manage, agents:manage, keys:read, orgs:manage] } }
+        framework: { type: string, maxLength: 100 }
+        version: { type: string, maxLength: 50 }
+        callback_url: { type: string, format: uri, pattern: "^https://" }
+        metadata:
+          type: object
+          description: Arbitrary metadata except the provider-managed computeid namespace.
+          additionalProperties: true
+    AgentUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 1000 }
+        allowed_scopes: { type: array, minItems: 1, items: { type: string, enum: [read:records, read:orgs, read:search, write:anchors, admin:rules, verify, "verify:batch", usage:read, keys:manage, compliance:read, compliance:write, oracle:read, oracle:write, anchor:write, anchor:read, attestations:write, attestations:read, webhooks:manage, agents:manage, keys:read, orgs:manage] } }
+        status: { type: string, enum: [active, suspended] }
+        framework: { type: string, maxLength: 100 }
+        version: { type: string, maxLength: 50 }
+        callback_url: { type: string, format: uri, nullable: true, pattern: "^https://" }
+    AgentKeySummary:
+      type: object
+      required: [id, name, key_prefix, scopes, is_active, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        key_prefix: { type: string }
+        scopes: { type: array, items: { type: string } }
+        is_active: { type: boolean }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, nullable: true }
+    Agent:
+      type: object
+      required: [id, name, agent_type, status, allowed_scopes]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        agent_type: { type: string }
+        status: { type: string, enum: [active, suspended, revoked] }
+        allowed_scopes: { type: array, items: { type: string } }
+        framework: { type: string, nullable: true }
+        version: { type: string, nullable: true }
+        callback_url: { type: string, format: uri, nullable: true }
+        metadata: { type: object, nullable: true, additionalProperties: true }
+        api_keys:
+          type: array
+          items: { $ref: "#/components/schemas/AgentKeySummary" }
+    AgentList:
+      type: object
+      required: [agents]
+      properties:
+        agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+    AgentRevocationResult:
+      type: object
+      required: [status, agent_id]
+      properties:
+        status: { type: string, enum: [revoked] }
+        agent_id: { type: string, format: uuid }
+    AgentKeyCreated:
+      type: object
+      required: [key, key_id, key_prefix, agent_id, agent_name, scopes, created_at, warning]
+      properties:
+        key: { type: string, description: Returned once and never persisted raw. }
+        key_id: { type: string, format: uuid }
+        key_prefix: { type: string }
+        agent_id: { type: string, format: uuid }
+        agent_name: { type: string }
+        scopes: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        warning: { type: string }
+    AgentError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          oneOf:
+            - { type: string }
+            - type: object
+              required: [code]
+              properties:
+                code: { type: string }
+                message: { type: string }
+                details: {}
+                reason: { type: string }
+                permitted: { type: array, items: { type: string } }
+                agent_id: { type: string, format: uuid }
+        message: { type: string }
+        detail: { type: string }
+        details: {}
+        required: { type: string }
+        granted: { type: array, items: { type: string } }
+        missing: { type: array, items: { type: string } }
+        permitted: { type: array, items: { type: string } }
+    ComputeIdAdmissionError: { $ref: "#/components/schemas/AgentError" }
+    ComputeIdVerificationReceipt:
+      type: object
+      required: [passport_id, status, issued_at, expires_at, key_id, receipt_signature, receipt_algorithm, receipt_payload]
+      additionalProperties: true
+      properties:
+        passport_id: { type: string, format: uuid }
+        status: { type: string, minLength: 1, maxLength: 32 }
+        signature_valid: { type: boolean, nullable: true }
+        issued_at: { type: string, format: date-time, maxLength: 64 }
+        expires_at: { type: string, format: date-time, maxLength: 64 }
+        key_id: { type: string, pattern: "^[0-9a-f]{16}$" }
+        receipt_signature: { type: string, minLength: 1, maxLength: 4096 }
+        receipt_algorithm: { type: string, minLength: 1, maxLength: 32 }
+        receipt_payload: { type: string, minLength: 2, maxLength: 16384 }
+    ComputeIdAdmissionRequest:
+      type: object
+      required: [passport_id, verification_receipt]
+      properties:
+        passport_id: { type: string, format: uuid }
+        verification_receipt: { $ref: "#/components/schemas/ComputeIdVerificationReceipt" }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 1000 }
+        allowed_scopes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          description: Known API scopes are accepted; scopes outside the passport allowlist are dropped, while an explicitly requested passport scope above the caller ceiling is denied.
+          items:
+            type: string
+            enum: [read:records, read:orgs, read:search, write:anchors, admin:rules, verify, "verify:batch", usage:read, keys:manage, compliance:read, compliance:write, oracle:read, oracle:write, anchor:write, anchor:read, attestations:write, attestations:read, webhooks:manage, agents:manage, keys:read, orgs:manage]
+    ComputeIdAdmissionAgent:
+      type: object
+      required: [id, name, status, agent_type, allowed_scopes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [active] }
+        agent_type: { type: string, enum: [llm_agent] }
+        allowed_scopes: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+    ComputeIdBinding:
+      type: object
+      required: [issuer, passport_id, bound_at, receipt_expires_at]
+      properties:
+        issuer: { type: string, enum: [computeid] }
+        passport_id: { type: string, format: uuid }
+        bound_at: { type: string, format: date-time }
+        receipt_issued_at: { type: string, format: date-time }
+        receipt_expires_at: { type: string, format: date-time }
+    ComputeIdAdmissionResult:
+      type: object
+      required: [agent, binding, key, key_id, key_prefix, scopes, warning]
+      properties:
+        agent: { $ref: "#/components/schemas/ComputeIdAdmissionAgent" }
+        binding: { $ref: "#/components/schemas/ComputeIdBinding" }
+        key: { type: string, description: Returned once and never persisted raw. }
+        key_id: { type: string, format: uuid }
+        key_prefix: { type: string }
+        scopes: { type: array, items: { type: string } }
+        warning: { type: string }
+
     Folder:
       type: object
       required: [id, public_id, name, owner_scope, created_at, updated_at]

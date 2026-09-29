@@ -2,6 +2,9 @@
 
 `arkova` — typed Python SDK for the Arkova Verification APIs. Published to PyPI as `arkova`.
 
+## 2026-09-26 — agent lifecycle parity
+Sync and async clients expose all six generic lifecycle operations and ComputeID admission. Mutations use `retryable=False`; sensitive response parse errors must suppress chained Pydantic input so raw keys and signed receipts cannot reach tracebacks.
+
 ## Structure
 - **`src/arkova/`** — package source.
 - **`pyproject.toml`** — hatchling build backend. Holds the version that becomes the PyPI release.

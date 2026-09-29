@@ -99,6 +99,17 @@ describe('apiKeyAuthV2', () => {
     expect(res.body.type).toContain('/api-key-revoked');
   });
 
+  it('rejects a key with revoked_at even when a stale row remains active', async () => {
+    mockKeyLookup({
+      id: 'key-1', org_id: 'org-1', created_by: 'user-1', scopes: ['read:search'],
+      rate_limit_tier: 'paid', key_prefix: 'ak_test_', is_active: true,
+      revoked_at: '2026-09-27T00:00:00Z', expires_at: null,
+    });
+    const res = await request(buildApp()).get('/protected').set('Authorization', 'Bearer ak_test_revoked');
+    expect(res.status).toBe(401);
+    expect(res.body.type).toContain('/api-key-revoked');
+  });
+
   it('authenticates valid keys and updates last_used_at without blocking', async () => {
     const raw = 'ak_test_123';
     const expectedHash = hashApiKey(raw, SECRET);

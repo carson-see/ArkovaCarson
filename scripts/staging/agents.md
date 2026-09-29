@@ -30,6 +30,24 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | `provision-isolated-rig.test.ts` | Vitest structural + dry-run behavioral contract tests for the profile overlay plumbing (SCRUM-2673): default-mock safety, chain/gemini env-var + secret deltas, all-profiles boot-critical secrets, Cloud Scheduler `/jobs/*` wiring for non-mock profiles, no-inline-credential invariants, and the `CONFIRM_REAL_CONFIG` apply gate. No infra created — every invocation omits `--apply`. **Stub-stdin contract (2026-07-26):** the apply-mode PATH-stub `gcloud` must drain stdin on any `--data-file=-` invocation (real gcloud semantics) — a non-draining stub races `ensure_secret_with_value`'s `printf \| gcloud` hand-off and flakes SIGPIPE/rc=141 under `pipefail` on loaded CI runners. A regression test pipes a >64 KiB secret through the real path so a non-draining stub fails deterministically, not intermittently. **Load-determinism contract (2026-08-17):** the synchronous child deadline (`PROVISION_CHILD_TIMEOUT_MS` = 120s) is a HANG detector, not a healthy-run bound — the previous 15s deadline was reachable by CPU contention alone (full root suite + concurrent typecheck/lint:copy SIGKILLed children mid-run: rc=124, admission/preflight artifacts never written, 18 green-in-isolation tests red). Do not add per-test timeouts smaller than the file-level `vi.setConfig` budget (they silently override it), and do not assert tight wall-clock bounds on child spawn/kill cycles. |
 | `provision-isolated-rig.test.sh` | Dry-run-only shell contract test for the isolated-rig admission JSON. Runs no Supabase/gcloud side-effect commands. |
 
+### Isolated-rig Supabase executable and Storage bootstrap
+
+`STAGING_SUPABASE_CLI_BIN` may name one absolute executable file when the
+repository-pinned `npx supabase` cannot use the operator's existing authenticated
+profile. The default remains `npx supabase` (`npx --no-install supabase` for the
+schema push). Relative paths, directories, missing files, and non-executable files
+fail before infrastructure mutation; never pass a command string or shell wrapper
+arguments in this variable.
+
+Path C intentionally keeps historical migration 0108 outside the active migration
+ledger, but fresh isolated rigs still need its production-equivalent `org-logos`
+bucket and four policies for UAT-14. The provisioner classifies that configuration
+after active schema replay and before worker deployment. It accepts exact-complete,
+applies [`docs/migrations-archive/0108_org_logos_storage_bucket.sql`](../../docs/migrations-archive/0108_org_logos_storage_bucket.sql)
+only when all five objects are absent, then requires the exact postcondition. Partial
+or conflicting state aborts. This is a separately recorded bootstrap and must never
+create a fabricated 0108 row in `supabase_migrations.schema_migrations`.
+
 ## Required env
 
 - `STAGING_SUPABASE_URL` — `https://ujtlwnoqfhtitcmsnrpq.supabase.co`. Pull from `gcloud secrets versions access latest --secret=supabase-url-staging --project=arkova1`.
@@ -455,3 +473,10 @@ preserve the earlier sections and their individual byte pins when updating them.
 ## 2026-09-05 — SCRUM-4035 guarded hosted mailbox runner
 
 `uat03_mailbox_driver.py` is stdlib-only and defaults to a no-network dry run. It restricts execution to the exact PR2655 preview, named UAT03 standalone project, or the released reorg-3836 project paired with its exact existing worker URL. Manifest/evidence JSON paths stay within this checkout’s ignored `artifacts/uat03-mailbox` directory; traversal/symlink escapes and overwriting existing evidence are rejected. It checks committed driver/health head and readable installed hook, then exercises actual Auth/worker/Data API/mailbox timing and concurrency. IMAP credentials and mailbox proof stay in memory; artifacts contain only labels/status/booleans and created fixture IDs. It never provisions or activates anything, and its output cannot claim a complete hosted release. `uat03_mailbox_driver_test.py` tests target/recipient/proof/evidence guards without network; `uat03-mailbox-driver.test.ts` runs those checks in the existing Vitest suite.
+
+- **The Step 2 `psql` fallback never builds a password-bearing URI.** Generated
+  Supabase database passwords use base64 characters such as `/` and `+`, and
+  operator-supplied values may contain other URI delimiters. The fallback passes
+  host, port, user and database as separate `psql` arguments and supplies the
+  password only through child-scoped `PGPASSWORD` with `PGSSLMODE=require`.
+  Never print the environment or move the password back into argv/log output.

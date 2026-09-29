@@ -1171,3 +1171,12 @@ concurrent process had already moved off ACTIVE between the SELECT and the UPDAT
 silently clobbered back to EXPIRED, and a failed or partially-matched chunk was still counted as
 fully expired. Fixed by adding `.eq('status', 'ACTIVE')` to the UPDATE's own WHERE clause and
 `.select('id')` to count only the rows it actually touched. See `jobs/agents.md`.
+
+## 2026-09-27 — revoke native workflow contract
+
+`ci-workflow-contract.test.ts` requires exactly one `agent-revoke-native` step
+in the existing Tests job. The step must depend on successful Supabase key
+extraction and reset, pass the masked local admin URL, call the bounded
+full-schema driver, and appear in the aggregate outcome gate. This prevents a
+future edit from silently replacing the concurrency proof with the unrelated
+single-session outbox SQL check.

@@ -7,10 +7,16 @@
 #   2. Substitute their ids for the REPLACE_ME_* placeholders below (sed into a
 #      scratch copy; never commit real rig ids).
 #   3. npx wrangler deploy --config <scratch copy> --name arkova-edge-<rig> \
-#        --var WORKER_BASE_URL:https://arkova-worker-<rig>-staging-….run.app
+#        --var WORKER_BASE_URL:https://ar20-closure-<rig>-worker.arkova.ai \
+#        --var WORKER_ACCESS_HOST:ar20-closure-<rig>-worker.arkova.ai
 #   4. wrangler secret put SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / CRON_SECRET /
-#      ALLOWED_ORIGINS / BASE_RPC_URL / MCP_IP_HASH_PEPPER / MCP_SIGNING_KEY
+#      ALLOWED_ORIGINS / BASE_RPC_URL / MCP_IP_HASH_PEPPER / MCP_SIGNING_KEY /
+#      WORKER_ACCESS_CLIENT_ID / WORKER_ACCESS_CLIENT_SECRET
 #      --name arkova-edge-<rig>  (from the RIG's Supabase project, never prod).
+#
+# The worker origin above is a per-rig Cloudflare Tunnel hostname protected by
+# a per-rig Access service token. The Cloud Run URL remains private and is not
+# used as WORKER_BASE_URL. Partial Access configuration fails closed.
 #
 # NEVER deploy a rig with the routed `wrangler.toml`: it binds
 # `edge.arkova.ai/*` and would hijack production traffic. This file carries

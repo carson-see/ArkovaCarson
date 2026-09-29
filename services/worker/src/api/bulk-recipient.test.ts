@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   createUser: vi.fn(),
   authUser: { app_metadata: {}, email_confirmed_at: null } as Record<string, unknown>,
   pepper: 'test-pepper-0123456789' as string | undefined,
+  provisioningEnabled: true,
   deleteUser: vi.fn(async () => ({ error: null })),
   profileInserts: [] as Array<Record<string, unknown>>,
   profileUpdates: [] as Array<Record<string, unknown>>,
@@ -21,7 +22,7 @@ const state = vi.hoisted(() => ({
   recoveryResult: { data: null, error: { message: 'not configured' } } as { data: unknown; error: unknown },
 }));
 
-vi.mock('../config.js', () => ({ get config() { return { recipientIdentifierPepper: state.pepper }; } }));
+vi.mock('../config.js', () => ({ get config() { return { recipientIdentifierPepper: state.pepper, enableBulkRecipientProvisioning: state.provisioningEnabled }; } }));
 vi.mock('../utils/logger.js', () => ({ logger: { error: vi.fn(), warn: vi.fn() } }));
 vi.mock('../lib/urls.js', () => ({ buildActivateUrl: (token: string) => `https://example.test/activate/${token}` }));
 vi.mock('../email/index.js', () => ({
@@ -105,6 +106,7 @@ describe('bulk recipient profile/link semantics', () => {
     state.createUser.mockClear();
     state.authUser = { app_metadata: {}, email_confirmed_at: null };
     state.pepper = 'test-pepper-0123456789';
+    state.provisioningEnabled = true;
     state.deleteUser.mockClear();
     state.profileInserts = [];
     state.profileUpdates = [];
@@ -212,6 +214,19 @@ describe('bulk recipient profile/link semantics', () => {
     expect(state.profileUpdates).toHaveLength(0);
   });
 
+  it('keeps provisioning disabled even when the recipient pepper is configured', async () => {
+    state.provisioningEnabled = false;
+    await expect(linkBulkRecipient({
+      anchorPublicId: 'ARK-1', actorUserId: 'actor-1', orgId: 'org-1',
+      email: 'recipient@example.com', deliverActivationEmail: true,
+    })).rejects.toThrow('recipient_provisioning_disabled');
+    expect(state.createUser).not.toHaveBeenCalled();
+    expect(state.profileInserts).toEqual([]);
+    expect(state.recipientInserts).toEqual([]);
+    expect(state.sendEmail).not.toHaveBeenCalled();
+    expect(state.anchorFilters).toEqual([]);
+  });
+
   it('fails before auth provisioning when the recipient pepper is unavailable', async () => {
     state.pepper = undefined;
     await expect(linkBulkRecipient({
@@ -270,7 +285,7 @@ describe('bulk recipient profile/link semantics', () => {
       profileId: 'profile-1', activationToken: 'd'.repeat(64), email: 'recipient@example.com',
       actorUserId: 'actor-1', orgId: null,
     };
-    state.sendEmail.mockResolvedValueOnce({ success: false });
+    state.sendEmail.mockResolvedValueOnce({ success: false, failureType: 'rejected' });
     await expect(deliverBulkActivationOnce(input)).rejects.toThrow('recipient_activation_email_failed');
     expect(state.activationUpdates[0]).toMatchObject({
       status: 'failed', failure_code: 'provider_rejected',

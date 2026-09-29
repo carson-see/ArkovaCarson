@@ -392,3 +392,22 @@ unknown keys dropped. `reason` survives only when it already matches the bounded
 machine-code regex. The raw body is issuer-/user-influenced, and MCP output is
 model context — free text must not flow straight in. The npm stdio server has
 the identical function.
+
+- **2026-09-26 — generic agent client parity:** hosted MCP registers six generic worker-backed management operations plus API-key-only ComputeID admission. API-key management calls require `agents:manage`; a restricted admitted-agent key is not automatically a management key. Bearer callers retain the server's read/admin-write rules. `arkova_list_agents` no longer calls the legacy service-role RPC, so API-key callers intentionally receive the canonical `agents:manage` enforcement. All lifecycle calls require exactly one verified forwarded credential; ComputeID admission preserves the complete `verification_receipt`. `withTelemetry` audits only validated agent/passport UUIDs for these tools and never the receipt, metadata, names, caller credential, or returned one-time key.
+- **2026-09-27 — private anchor listing:** `arkova_list_anchors` proxies only `GET /api/v1/anchors` with one caller API key and `read:records`; JWT fallback is rejected. Time/cursor filters and paired `tag`/`tag_scope` are forwarded, while the strict response projection rejects tags, fingerprints, metadata, recipient data, and internal IDs.
+- **Release ordering:** deploy the matching edge implementation only after the c231 + 0488/0489 server prerequisites (and the existing ComputeID admission gate) are present. Publish the public server card/discovery update only after that edge deployment. This work does not authorize or perform deployment or publication.
+
+## ComputeID admission UUID identity
+
+Admission response binding compares passport UUIDs case-insensitively, because the worker canonicalizes them to lowercase. Preserve the original request and signed verification receipt; never rewrite signed content to fix a response check. A different UUID still fails closed without exposing the one-time key. Both MCP implementations have positive and mismatched-binding regressions; mutations still make one request only.
+
+Agent metadata parity: the stored agent metadata column permits null. Normalize explicit null to an empty object on generic agent reads so one older row cannot make list/get fail. Generic reads still reject arrays, strings and numbers. ComputeID admission retains its existing minimal projection validation, where metadata is not required; this repair does not add a post-commit rejection for optional admission metadata or rewrite the signed receipt. Regression coverage exercises the real client/tool entrypoint; normalization does not relax permission checks or retry mutations.
+
+## Agent permission-denial recovery
+
+Both flat and nested worker errors retain bounded `required`, `granted`,
+`missing` and `permitted` scope fields. Each token is 1–80 ASCII scope
+characters; lists are at most 32 entries and are omitted whole when malformed,
+so a filtered list cannot misstate authority. Unknown keys and signed receipt
+fields are never copied. This is diagnostic information, not permission to
+retry a mutation or change the caller credential automatically.

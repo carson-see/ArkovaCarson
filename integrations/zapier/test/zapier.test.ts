@@ -261,6 +261,10 @@ describe('Constants', () => {
       'suborg.credits_reclaimed',
       'suborg.suspended',
       'suborg.offboarded',
+      'agent.registered',
+      'agent.updated',
+      'agent.revoked',
+      'agent.key_created',
     ]);
   });
 

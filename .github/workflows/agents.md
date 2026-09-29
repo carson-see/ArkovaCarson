@@ -869,6 +869,27 @@ deterministic and clears both rules with no suppression. Same fix already applie
 `staging-evidence.yml` and `migration-drift.yml` — this closes the last `npx tsx` call site in a
 workflow that runs on every PR.
 
+## 2026-09-27 — agent webhook outbox native SQL is a required Tests step
+
+The existing `Tests` job runs `services/worker/scripts/test-agent-webhook-outbox-native.sql`
+against the throwaway Supabase database only after `supabase db reset` succeeds. The step uses
+the already-masked local bootstrap-admin URL, is bounded to 180 seconds, withholds fixture output,
+and participates in the job's aggregate outcome gate. It does not start another database, access a
+hosted environment, or run the standalone reduced-schema revoke concurrency harness.
+
+## 2026-09-27 — agent revoke concurrency uses the reset full schema
+
+The same `Tests` job runs
+`services/worker/scripts/test-agent-revoke-concurrency-full-schema.sh` after a
+successful local Supabase reset. It reuses the masked bootstrap-admin URL and
+already-running database; it starts no cluster and applies no migration. The
+driver observes both mint/revoke and resume/revoke lock orders through the
+current route-facing RPC wrappers, plus audit rollback and clean retry. Output
+is withheld on failure and the result participates in the aggregate gate.
+Append-only audit rows and the three identity rows their foreign keys require
+remain only in the disposable CI database; agent, key, and outbox fixtures are
+always removed.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
@@ -954,6 +975,29 @@ It checks EXISTENCE only — never a value, never a version payload, nothing pri
 
 Also added dark: `ENABLE_COMPUTEID_INTEGRATION=false` in `--set-env-vars`. It was already false by `config.ts` default; stating it makes the activation flip one reviewable line instead of an invisible default, and it fails SAFE if the code default ever changes.
 
+## 2026-09-27 — UAT-23 recipient identity pepper binding
+
+`deploy-worker.yml` binds `RECIPIENT_IDENTIFIER_PEPPER` to the existing Secret
+Manager version `recipient-identifier-pepper:1` and includes that secret id in
+the metadata-only preflight. Version 1 is deliberately pinned: this is a
+durable identity key, so silent rotation through `:latest` would make newly
+computed recipient identifiers stop matching existing ones. Rotation requires
+an explicit versioned identifier migration.
+
+This worker binding does not complete public-verification readiness.
+`get_public_anchor` separately depends on the database setting
+`app.recipient_pepper`, but this rollout must not write that GUC, copy the
+worker key into it, compare the two values, or assert that their outputs match.
+The worker key protects private `anchor_recipients` associations; the anonymous
+public projection is a separate cryptographic domain and remains fail-closed
+until its key storage, purpose separation, versioning/backfill, output and
+possession semantics receive their own reviewed migration and acceptance. The
+binding must ship with the credential-source import privacy prerequisite:
+caller-controlled previews derive no external recipient HMAC and retain
+`credential_recipient_hash` only as an always-null compatibility field. Bulk
+recipient provisioning remains independently default-off behind
+`ENABLE_BULK_RECIPIENT_PROVISIONING=false` until its authorized rollout.
+
 ## 2026-09-13 — `deploy-worker.yml`: `CLOUDFLARE_ORIGIN_GUARD_MODE=off` added; `CLOUDFLARE_ORIGIN_SECRET` deliberately NOT added yet (SCRUM-3888)
 
 Same "state the dark default explicitly" move as `ENABLE_COMPUTEID_INTEGRATION=false` above:
@@ -993,3 +1037,11 @@ collecting a result without iterating it silently drops that suite from the gate
 ## 2026-09-19 — stop rerunning migration drift on PR-body edits
 
 `migration-drift.yml` no longer subscribes to `pull_request.edited`. The workflow reads the checked-out migration tree and live production state; it never reads PR-body evidence. A body edit leaves the head SHA and its existing required-check result unchanged, while `staging-evidence.yml` remains subscribed to `edited` because that workflow does consume the body. This removes repeated WIF, Secret Manager, Supabase API, dependency-install, and ledger-audit jobs without dropping a source, base, or evidence validation. The old Mergify status-edit isolation remains necessary only in `staging-evidence.yml`.
+
+## 2026-09-27 — pinned recipient identity metadata preflight
+
+Worker deploy binds `recipient-identifier-pepper:1` and checks that exact version is ENABLED using metadata only. Missing or disabled versions fail before build; metadata permission failures retain the existing warning/Cloud Run backstop policy. No secret payload is fetched. The separate default-off bulk recipient flag controls activation.
+
+## 2026-09-28 — SheetJS lockfile source
+
+The root lockfile integrity gate permits only the reviewed official SheetJS 0.20.3 archive URL alongside npm. Keep HTTPS and the committed integrity hash enforced; do not allow the entire CDN hostname or exempt the package from integrity verification. A different version or URL requires provenance and hash review. Worker lockfile policy is unchanged.

@@ -54,7 +54,6 @@ interface CredentialSourcePreview {
   credential_title: string;
   credential_issuer: string | null;
   credential_recipient_display: string | null;
-  credential_recipient_hash: string | null;
   credential_issued_at: string | null;
   credential_expires_at: string | null;
   verification_level: string;
@@ -296,10 +295,6 @@ export function CredentialSourceImportDialog({
                 <dd>{formatProvider(preview.source_provider)}</dd>
                 <dt className="text-muted-foreground">{LABELS.RECIPIENT_FIELD}</dt>
                 <dd>{preview.credential_recipient_display ?? LABELS.NOT_DETECTED}</dd>
-                <dt className="text-muted-foreground">{LABELS.RECIPIENT_PROOF_FIELD}</dt>
-                <dd className="font-mono text-xs">
-                  {preview.credential_recipient_hash ? compactHash(preview.credential_recipient_hash) : LABELS.NOT_DETECTED}
-                </dd>
                 <dt className="text-muted-foreground">{LABELS.ISSUED_FIELD}</dt>
                 <dd>{preview.credential_issued_at ?? LABELS.NOT_DETECTED}</dd>
                 <dt className="text-muted-foreground">{LABELS.EXPIRES_FIELD}</dt>

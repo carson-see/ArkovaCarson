@@ -25,13 +25,15 @@
  * (verdict-from-status is the exact anti-pattern this sidesteps).
  */
 
+import { createHash } from 'node:crypto';
 import { confirmInclusion, type ConfirmInclusionResult } from 'arkova-verifier';
 import { verifyMerkleInclusion } from './vendor/merkle-verify.js';
 import { verifyBundleSignature, type SignatureResult } from './lib/signature.js';
 import { chainReasonCode, recomputeReasonCode, type ReasonCode } from './lib/reason-codes.js';
 import type { IndependentNode, ProofPacket, PublishedKeys, SignedProofBundle } from './types.js';
 
-export type StepStatus = 'pass' | 'fail' | 'skipped';
+export type StepStatus = 'pass' | 'fail' | 'unavailable' | 'skipped';
+export type VerifyVerdict = 'VERIFIED' | 'NOT_VERIFIED' | 'INDETERMINATE';
 
 /** The one proof schema version this verifier understands (PROOF-08 stamp). */
 export const SUPPORTED_PROOF_SCHEMA_VERSION = 1;
@@ -44,11 +46,13 @@ export interface VerifyStep {
   detail: string;
   /** Frozen machine reason code — present ONLY on failing steps (S3-B). */
   code?: ReasonCode;
+  availabilityCode?: 'NETWORK_UNAVAILABLE';
 }
 
 export interface VerifyReport {
-  /** Overall verdict: true only when every REQUIRED step passed. */
+  /** True only when every required step passed; false for negative and indeterminate runs. */
   ok: boolean;
+  verdict: VerifyVerdict;
   fingerprint: string;
   merkleRoot: string;
   /** Network receipt id (tx_id), or null. */
@@ -80,23 +84,7 @@ export interface VerifyReport {
   signature: SignatureResult;
   /** The server's own claim, surfaced for comparison — NOT used for the verdict. */
   serverClaimedVerified: boolean | null;
-  /**
-   * B3 (migration 0427): the layer-2 BITCOIN-tree inclusion evidence the PACKET
-   * carries, surfaced so an auditor can see it exists at all. `null` when the
-   * packet carries no usable pair.
-   *
-   * §1.5, precisely:
-   *   MEASURED     — that the packet contains a structurally coherent branch +
-   *                  index pair (every sibling 64-hex; `0 <= index < 2^length`;
-   *                  each level's sibling side matching that level's index bit).
-   *   ASSERTED     — nothing beyond that.
-   *   NOT ASSERTED — that the branch folds to any real block's merkleroot.
-   *                  This verifier does NOT fold it. Folding it here would only
-   *                  establish that the packet agrees with a header the packet
-   *                  itself supplies; the transaction-inclusion VERDICT comes
-   *                  from `confirmInclusion` against an INDEPENDENT node, which
-   *                  is strictly stronger evidence.
-   */
+  /** Self-contained transaction inclusion, graded against the supplied header. */
   packetTxInclusion: { branchLength: number; blockIndex: number } | null;
   /**
    * Frozen machine reason for a NOT-VERIFIED verdict (S3-B enum,
@@ -105,6 +93,7 @@ export interface VerifyReport {
    * signature check failed. Null when VERIFIED.
    */
   reasonCode: ReasonCode | null;
+  availabilityCode: 'NETWORK_UNAVAILABLE' | null;
 }
 
 export interface VerifyOptions {
@@ -156,6 +145,7 @@ export async function verifyProof(
   const steps: VerifyStep[] = [schemaStep];
 
   let chainPhase: ChainPhaseResult;
+  let packetTxInclusion: VerifyReport['packetTxInclusion'] = null;
   if (schemaStep.status !== 'pass') {
     // An unknown schema means every cryptographic interpretation below would be
     // a guess — skip them explicitly rather than pretending to check.
@@ -164,6 +154,9 @@ export async function verifyProof(
   } else {
     // ── Step 1: recompute the Merkle root (the canonical, shared routine) ──
     steps.push(buildRecomputeStep(packet));
+    const packetInclusion = buildPacketTxInclusionStep(packet);
+    if (packetInclusion.step) steps.push(packetInclusion.step);
+    packetTxInclusion = packetInclusion.evidence;
     // ── Steps 2, 3 & 3b: independent on-chain confirmation + §1.5 honesty ──
     chainPhase = await runChainPhase(packet, opts.chain);
     steps.push(...chainPhase.steps);
@@ -176,12 +169,17 @@ export async function verifyProof(
   // signature or an unresolvable signer identity (S3-B).
   const signature = verifyBundleSignature(opts.signedBundle, opts.publicKeyPem, opts.publishedKeys);
 
-  // Required steps are everything not 'skipped'. ok = no failures among them
-  // AND no failure of an explicitly-requested signature check.
-  const ok = steps.every((s) => s.status !== 'fail') && signature.status !== 'failed';
+  // Required steps are everything not 'skipped'. A definitive failure produces
+  // NOT_VERIFIED; unavailable evidence produces INDETERMINATE unless a separate
+  // required check has already failed definitively.
+  const hasFailure = steps.some((s) => s.status === 'fail') || signature.status === 'failed';
+  const hasUnavailable = steps.some((s) => s.status === 'unavailable');
+  const verdict: VerifyVerdict = hasFailure ? 'NOT_VERIFIED' : hasUnavailable ? 'INDETERMINATE' : 'VERIFIED';
+  const ok = verdict === 'VERIFIED';
 
   return {
     ok,
+    verdict,
     fingerprint: packet.fingerprint,
     merkleRoot: packet.merkle_root,
     receiptId: packet.tx_id,
@@ -193,51 +191,142 @@ export async function verifyProof(
     steps,
     signature,
     serverClaimedVerified: typeof packet.verified === 'boolean' ? packet.verified : null,
-    packetTxInclusion: readPacketTxInclusion(packet),
-    reasonCode: ok ? null : selectReasonCode(steps, signature),
+    packetTxInclusion,
+    reasonCode: hasFailure ? selectReasonCode(steps, signature) : null,
+    availabilityCode: !hasFailure && hasUnavailable ? 'NETWORK_UNAVAILABLE' : null,
   };
 }
 
 /** A 32-byte hash in display hex — the only shape a bitcoin-tree sibling takes. */
 const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
+const HEADER_HEX_RE = /^[0-9a-fA-F]{160}$/;
+
+type PacketInclusionContainer = Pick<
+  ProofPacket,
+  'block_hash' | 'block_header' | 'tx_inclusion_branch' | 'tx_block_index'
+>;
+
+function doubleSha256(value: Uint8Array): Buffer {
+  return createHash('sha256').update(createHash('sha256').update(value).digest()).digest();
+}
+
+function reverseDisplayHash(value: string): Buffer {
+  return Buffer.from(value, 'hex').reverse();
+}
+
+function selectedPacketInclusion(packet: ProofPacket): PacketInclusionContainer | null {
+  // A partial top-level claim must never borrow its missing half from nested
+  // API evidence and accidentally become complete.
+  const topLevelOwnsEvidence = packet.tx_inclusion_branch !== undefined
+    || packet.tx_block_index !== undefined;
+  const selected = topLevelOwnsEvidence ? packet : packet.proof_bundle;
+  if (!selected) return null;
+  const claimsEvidence = selected.tx_inclusion_branch != null
+    || selected.tx_block_index != null;
+  return claimsEvidence ? selected : null;
+}
+
+function failedPacketInclusion(
+  detail: string,
+  code: 'MALFORMED_BUNDLE' | 'HEADER_INVALID' | 'BLOCK_HASH_MISMATCH' | 'ROOT_NOT_IN_HEADER',
+) {
+  return {
+    step: {
+      id: 'packet_tx_inclusion',
+      label: 'Confirm the network receipt is included in the supplied block header',
+      status: 'fail' as const,
+      detail,
+      code,
+    },
+    evidence: null,
+  };
+}
 
 /**
- * B3: read the packet's layer-2 BITCOIN-tree inclusion evidence as ONE fact.
- *
- * The branch and the index are a single claim about where the receipt sits in
- * its block, and either half alone is unusable. Coherence is checked with the
- * SAME rules the API applies on read — both halves present, every sibling
- * exactly 64 hex characters, `0 <= index < 2^length`, and each level's sibling
- * side matching that level's bit of the index — so the CLI and the server
- * cannot disagree about whether one record's branch is well-formed.
- *
- * Deliberately NOT graded: this feeds {@link VerifyReport.packetTxInclusion}
- * for the auditor's information and never the verdict. An EMPTY branch with
- * index 0 is COMPLETE evidence (a single-transaction block has no siblings).
+ * Grade the packet's transaction→header evidence as one indivisible fact.
+ * Display hashes are reversed to Bitcoin's internal byte order before each
+ * double-SHA256 fold. The final internal digest is compared directly with
+ * header bytes [36,68), which are stored in internal order.
  */
-function readPacketTxInclusion(
+function buildPacketTxInclusionStep(
   packet: ProofPacket,
-): { branchLength: number; blockIndex: number } | null {
-  // API envelopes nest evidence; exported flat packets keep it at top level.
-  // Select one whole pair. A partial explicit flat pair must not borrow a
-  // counterpart from a nested object and turn missing evidence into a claim.
-  const evidence = packet.tx_inclusion_branch !== undefined || packet.tx_block_index !== undefined
-    ? packet : packet.proof_bundle;
-  const branch = evidence?.tx_inclusion_branch;
-  const index = evidence?.tx_block_index;
-  if (!Array.isArray(branch)) return null;
-  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null;
-  if (branch.length > 31) return null;
-  if (index >= 1 << branch.length) return null;
+): { step?: VerifyStep; evidence: { branchLength: number; blockIndex: number } | null } {
+  const selected = selectedPacketInclusion(packet);
+  if (!selected) return { evidence: null };
+  const topHeader = packet.block_header;
+  const nestedHeader = packet.proof_bundle?.block_header;
+  if (topHeader != null && nestedHeader != null) {
+    if (typeof topHeader !== 'string' || typeof nestedHeader !== 'string') {
+      return failedPacketInclusion('Top-level and nested block headers must be strings.', 'MALFORMED_BUNDLE');
+    }
+    if (topHeader.toLowerCase() !== nestedHeader.toLowerCase()) {
+      return failedPacketInclusion('Top-level and nested block headers contradict each other.', 'MALFORMED_BUNDLE');
+    }
+  }
+  const topHash = packet.block_hash;
+  const nestedHash = packet.proof_bundle?.block_hash;
+  if (topHash != null && nestedHash != null) {
+    if (typeof topHash !== 'string' || typeof nestedHash !== 'string') {
+      return failedPacketInclusion('Top-level and nested block hashes must be strings.', 'MALFORMED_BUNDLE');
+    }
+    if (topHash.toLowerCase() !== nestedHash.toLowerCase()) {
+      return failedPacketInclusion('Top-level and nested block hashes contradict each other.', 'MALFORMED_BUNDLE');
+    }
+  }
+  const branch = selected.tx_inclusion_branch;
+  const index = selected.tx_block_index;
+  const header = selected.block_header;
+  if (!Array.isArray(branch) || typeof index !== 'number' || !Number.isInteger(index) || header == null) {
+    return failedPacketInclusion('Claimed transaction inclusion evidence is incomplete.', 'MALFORMED_BUNDLE');
+  }
+  if (!SIBLING_HASH_HEX_RE.test(packet.tx_id ?? '')) {
+    return failedPacketInclusion('The network receipt id is not a 32-byte display hash.', 'MALFORMED_BUNDLE');
+  }
+  if (!HEADER_HEX_RE.test(header)) {
+    return failedPacketInclusion('The supplied block header is not exactly 80 bytes of hex.', 'HEADER_INVALID');
+  }
+  if (index < 0 || branch.length > 31 || index >= 2 ** branch.length) {
+    return failedPacketInclusion('The transaction index is outside the supplied branch.', 'MALFORMED_BUNDLE');
+  }
   for (let level = 0; level < branch.length; level++) {
     const entry = branch[level];
     if (entry == null || typeof entry.hash !== 'string' || !SIBLING_HASH_HEX_RE.test(entry.hash)) {
-      return null;
+      return failedPacketInclusion('The transaction branch contains an invalid sibling hash.', 'MALFORMED_BUNDLE');
     }
-    const expected = ((index >> level) & 1) === 0 ? 'right' : 'left';
-    if (entry.position !== expected) return null;
+    const expected = Math.floor(index / 2 ** level) % 2 === 0 ? 'right' : 'left';
+    if (entry.position !== expected) {
+      return failedPacketInclusion('The transaction branch direction contradicts its index.', 'MALFORMED_BUNDLE');
+    }
   }
-  return { branchLength: branch.length, blockIndex: index };
+  const headerBytes = Buffer.from(header, 'hex');
+  if (selected.block_hash != null) {
+    if (!SIBLING_HASH_HEX_RE.test(selected.block_hash)) {
+      return failedPacketInclusion('The claimed block hash is malformed.', 'MALFORMED_BUNDLE');
+    }
+    const computedHeaderHash = Buffer.from(doubleSha256(headerBytes)).reverse().toString('hex');
+    if (computedHeaderHash.toLowerCase() !== selected.block_hash.toLowerCase()) {
+      return failedPacketInclusion('The supplied header does not match the claimed block hash.', 'BLOCK_HASH_MISMATCH');
+    }
+  }
+  let node = reverseDisplayHash(packet.tx_id!);
+  for (const entry of branch) {
+    const sibling = reverseDisplayHash(entry.hash);
+    node = doubleSha256(entry.position === 'right'
+      ? Buffer.concat([node, sibling])
+      : Buffer.concat([sibling, node]));
+  }
+  if (!node.equals(headerBytes.subarray(36, 68))) {
+    return failedPacketInclusion('The transaction branch does not fold to the supplied block header.', 'ROOT_NOT_IN_HEADER');
+  }
+  return {
+    step: {
+      id: 'packet_tx_inclusion',
+      label: 'Confirm the network receipt is included in the supplied block header',
+      status: 'pass',
+      detail: 'The transaction branch folds to the Merkle root in the supplied block header. Chain membership remains a separate independent-node check.',
+    },
+    evidence: { branchLength: branch.length, blockIndex: index },
+  };
 }
 
 /** Build the step-0 schema gate: only version 1 (or absent = legacy) is understood. */
@@ -336,9 +425,11 @@ async function runChainPhase(
     result.measuredObservedTime,
     chain.label,
     result.headerMeasured,
+    result.unavailable,
   );
+  const blockStep = bindSuppliedHeaderToIndependentBlock(packet, result);
   return {
-    steps: [result.opReturnStep, result.blockStep, tsStep.step],
+    steps: [result.opReturnStep, blockStep, tsStep.step],
     independentNode: chain.label,
     blockHeight: result.blockHeight ?? packet.block_height,
     networkObservedTime: result.measuredObservedTime,
@@ -397,7 +488,20 @@ function buildTimestampStep(
   measured: string | null,
   label: string,
   headerMeasured: boolean,
+  unavailable = false,
 ): { step: VerifyStep; agrees: boolean | null } {
+  if (unavailable && (!headerMeasured || measured == null)) {
+    return {
+      step: {
+        id: 'timestamp_honesty',
+        label: TIMESTAMP_LABEL,
+        status: 'unavailable',
+        detail: `Network Observed Time could not be measured because the independent node (${label}) was unavailable.`,
+        availabilityCode: 'NETWORK_UNAVAILABLE',
+      },
+      agrees: null,
+    };
+  }
   // No independent header → cannot back any claim. If the on-chain step reached
   // a header we always have `measured`; absence means an earlier on-chain failure.
   if (!headerMeasured || measured == null) {
@@ -480,6 +584,8 @@ interface OnChainResult {
   opReturnStep: VerifyStep;
   blockStep: VerifyStep;
   blockHeight: number | null;
+  /** Display-endian hash independently bound to the validated header. */
+  blockHash: string | null;
   /**
    * The Network Observed Time MEASURED from the 80-byte header the independent
    * node served (`ConfirmInclusionResult.observedTime`), or null if no header was
@@ -488,6 +594,7 @@ interface OnChainResult {
   measuredObservedTime: string | null;
   /** True iff confirmInclusion actually read + validated an independent header. */
   headerMeasured: boolean;
+  unavailable: boolean;
 }
 
 /**
@@ -511,21 +618,37 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     );
   } catch (err) {
     const detail = `Could not confirm the receipt against the independent node (${chain.label}): ${errMsg(err)}`;
-    // Defensive: confirmInclusion never throws by contract; a thrown transport
-    // bug means the receipt could not be fetched — the honest bucket is
-    // TX_NOT_FOUND (nothing on the independent node corroborates the packet).
+    // Defensive: a thrown dependency bug means the check is unavailable, not failed.
     return {
-      opReturnStep: { id: 'op_return', label: OP_RETURN_LABEL, status: 'fail', detail, code: 'TX_NOT_FOUND' },
+      opReturnStep: { id: 'op_return', label: OP_RETURN_LABEL, status: 'unavailable', detail, availabilityCode: 'NETWORK_UNAVAILABLE' },
       blockStep: {
         id: 'block_confirm',
         label: BLOCK_LABEL,
-        status: 'fail',
+        status: 'unavailable',
         detail: 'Not checked because the independent confirmation could not run.',
-        code: 'TX_NOT_FOUND',
+        availabilityCode: 'NETWORK_UNAVAILABLE',
       },
       blockHeight: null,
+      blockHash: null,
       measuredObservedTime: null,
       headerMeasured: false,
+      unavailable: true,
+    };
+  }
+
+  if (result.status === 'node_unavailable') {
+    const detail = `Independent verification is temporarily unavailable via ${chain.label}: ${result.reason ?? 'independent node unavailable'}`;
+    const opReturnProven = result.extractedMerkleRoot === packet.merkle_root.toLowerCase();
+    return {
+      opReturnStep: opReturnProven
+        ? { id: 'op_return', label: OP_RETURN_LABEL, status: 'pass', detail: `The receipt fetched from ${chain.label} commits exactly the published root in its embedded data.` }
+        : { id: 'op_return', label: OP_RETURN_LABEL, status: 'unavailable', detail, availabilityCode: 'NETWORK_UNAVAILABLE' },
+      blockStep: { id: 'block_confirm', label: BLOCK_LABEL, status: 'unavailable', detail, availabilityCode: 'NETWORK_UNAVAILABLE' },
+      blockHeight: result.blockHeight ?? null,
+      blockHash: result.blockHash ?? null,
+      measuredObservedTime: result.observedTime,
+      headerMeasured: result.observedTime != null,
+      unavailable: true,
     };
   }
 
@@ -537,7 +660,7 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
 
   // The frozen machine code for whatever failed on-chain (undefined when clean).
   const failureCode =
-    result.confirmed ? undefined : chainReasonCode(result.status as Exclude<ConfirmInclusionResult['status'], 'confirmed'>);
+    result.confirmed ? undefined : chainReasonCode(result.status as Exclude<ConfirmInclusionResult['status'], 'confirmed' | 'node_unavailable'>);
 
   // Step 2 (OP_RETURN payload) passes once we reach a payload-clean status: the
   // tx exists, carries a canonical Arkova OP_RETURN, and it commits the expected
@@ -568,9 +691,47 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     opReturnStep,
     blockStep,
     blockHeight,
+    blockHash: result.blockHash ?? null,
     measuredObservedTime,
     headerMeasured,
+    unavailable: false,
   };
+}
+
+function suppliedPacketHeader(packet: ProofPacket): string | null {
+  const claimed = selectedPacketInclusion(packet);
+  if (claimed) return claimed.block_header ?? null;
+  if (packet.block_header !== undefined) return packet.block_header;
+  return packet.proof_bundle?.block_header ?? null;
+}
+
+/** Bind a supplied packet header to the independently validated block hash. */
+function bindSuppliedHeaderToIndependentBlock(
+  packet: ProofPacket,
+  result: OnChainResult,
+): VerifyStep {
+  const header = suppliedPacketHeader(packet);
+  if (header == null || !result.headerMeasured || result.blockHash == null) return result.blockStep;
+  if (!HEADER_HEX_RE.test(header)) {
+    return {
+      id: 'block_confirm',
+      label: BLOCK_LABEL,
+      status: 'fail',
+      detail: 'The packet-supplied block header is malformed and cannot be bound to the independently confirmed block.',
+      code: 'HEADER_INVALID',
+    };
+  }
+  const derived = Buffer.from(doubleSha256(Buffer.from(header, 'hex'))).reverse().toString('hex');
+  if (derived.toLowerCase() !== result.blockHash.toLowerCase()) {
+    return {
+      id: 'block_confirm',
+      label: BLOCK_LABEL,
+      status: 'fail',
+      detail: 'The packet-supplied block header identifies a different block than the independent node confirmed.',
+      code: 'BLOCK_HASH_MISMATCH',
+    };
+  }
+  return result.blockStep;
 }
 
 /**

@@ -20,6 +20,7 @@ import { EXPIRING_SOON_WINDOW_DAYS, MAX_EXPIRES_IN_DAYS } from './keyExpiryStatu
 // order is stated and the array is frozen.
 import { CONNECTOR_FETCH_SOURCE_MARKERS_SORTED } from '../../constants/connectorFingerprint.js';
 import { ANCHOR_CREDENTIAL_TYPES } from '../../lib/credential-evidence.js';
+import { agentOpenApiPaths, agentOpenApiResponses, agentOpenApiSchemas } from './agents.openapi.js';
 
 const router = Router();
 
@@ -381,6 +382,7 @@ export const openApiSpec: Record<string, any> = {
   ],
   security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
   paths: {
+    ...agentOpenApiPaths,
     '/verify/{publicId}': {
       get: {
         summary: 'Verify a credential',
@@ -1134,6 +1136,36 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     // ── Phase 1.5 Paid API Endpoints ──────────────────────────────────
+    '/anchors': {
+      get: {
+        summary: 'List private organization anchors',
+        description: 'Lists anchors for the organization bound to the current API key. Results use a stable created-at cursor, apply an inclusive since and exclusive until interval, and may be filtered by a private user or organization tag. Tags and fingerprints are never returned.',
+        operationId: 'listAnchors',
+        tags: ['Anchoring'],
+        'x-arkova-required-scopes': ['read:records'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [
+          { name: 'since', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'until', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'tag', in: 'query', schema: { type: 'string', minLength: 1, maxLength: 64 } },
+          { name: 'tag_scope', in: 'query', schema: { type: 'string', enum: ['user', 'organization'] }, description: 'Required when tag is present; tag is required when this is present.' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } },
+          { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 2048 } },
+        ],
+        responses: {
+          '200': { description: 'A page of private organization anchors', content: { 'application/json': { schema: { type: 'object', required: ['anchors', 'next_cursor'], additionalProperties: false, properties: {
+            anchors: { type: 'array', items: { type: 'object', required: ['public_id', 'status', 'created_at', 'updated_at', 'filename', 'description'], additionalProperties: false, properties: {
+              public_id: { type: 'string' }, status: { type: 'string' }, created_at: { type: 'string', format: 'date-time' }, updated_at: { type: 'string', format: 'date-time' }, filename: { type: 'string' }, description: { type: 'string', nullable: true },
+            } } },
+            next_cursor: { type: 'string', nullable: true },
+          } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
     '/anchor': {
       post: {
         summary: 'Submit credential for anchoring',
@@ -2386,6 +2418,33 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/webhooks/outbox/{id}/retry-materialization': {
+      post: {
+        summary: 'Recover terminal agent-webhook materialization',
+        description: 'ORG_ADMIN operator recovery for one agent webhook outbox event that exhausted materialization. Repair the endpoint or configuration cause first. The request UUID makes an identical retry idempotent; one different recovery request is rejected. This operation only re-arms durable work and never sends inline.',
+        operationId: 'retryAgentWebhookMaterialization',
+        tags: ['Webhooks'],
+        'x-arkova-required-scopes': ['webhooks:manage'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Terminal agent webhook outbox ID' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: {
+            type: 'object', additionalProperties: false, required: ['request_id'],
+            properties: { request_id: { type: 'string', format: 'uuid', description: 'Caller-retained idempotency UUID for this one recovery' } },
+          } } },
+        },
+        responses: {
+          '202': { description: 'Outbox event re-armed or the same recovery request acknowledged', content: { 'application/json': { schema: { type: 'object', required: ['outbox_id', 'recovery_id', 'state', 'rearmed', 'idempotent'], properties: { outbox_id: { type: 'string', format: 'uuid' }, recovery_id: { type: 'string', format: 'uuid' }, state: { type: 'string' }, rearmed: { type: 'boolean' }, idempotent: { type: 'boolean' } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'The API key lacks `webhooks:manage` (`insufficient_scope`), its actor is not a current ORG_ADMIN, or transaction-time authority was lost.', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '404': { description: 'Outbox event not found in the caller organization', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '409': { description: 'Wrong state or the one recovery was already consumed by a different request UUID', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '503': { description: 'Recovery transaction unavailable', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
     '/webhooks/dlq': {
       get: {
         summary: 'List dead-lettered webhook deliveries',
@@ -2666,6 +2725,7 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     schemas: {
+      ...agentOpenApiSchemas,
       Folder: {
         type: 'object', required: ['id', 'public_id', 'name', 'owner_scope', 'created_at', 'updated_at'],
         properties: {
@@ -3435,6 +3495,7 @@ export const openApiSpec: Record<string, any> = {
       },
     },
     responses: {
+      ...agentOpenApiResponses,
       BadRequest: {
         description: 'Invalid request',
         content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } },
@@ -3488,6 +3549,7 @@ export const openApiSpec: Record<string, any> = {
     { name: 'Attestations', description: 'Attestation claims (create, verify, revoke)' },
     { name: 'Compliance', description: 'Regulatory lookups, CLE verification, compliance checks' },
     { name: 'Webhooks', description: 'Webhook management, testing, and delivery logs' },
+    { name: 'Agents', description: 'Tenant-scoped agent lifecycle and ComputeID passport admission' },
     { name: 'Folders', description: 'Nested personal and organization record folders' },
     { name: 'Organizations', description: 'Sub-organization management over an organization API key (orgs:manage)' },
     { name: 'Jobs', description: 'Async batch job polling' },

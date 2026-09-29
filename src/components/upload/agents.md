@@ -43,6 +43,7 @@ Bulk upload and AI extraction components for CSV/Excel document anchoring workfl
 
 ## Do / Don't Rules
 - DO: Assemble row text client-side from spreadsheet data — no raw documents flow to server
+- DO: Pass the uploader's configured row limit into `parseSpreadsheetFile`; legacy `.xls` parsing is bounded before row conversion.
 - DO: Gate AI extraction behind `ENABLE_AI_EXTRACTION` flag
 - DO (`MixedBatchUploadWizard.tsx`): only ever send `{fingerprint, filename, document_type}` to the worker — never a `File`/`Blob`/`ArrayBuffer` (§1.6)
 - DO NOT: add non-spreadsheet file handling to `BulkUploadWizard.tsx` — that's `MixedBatchUploadWizard.tsx`'s job, keeps the two flows disjoint and low-conflict

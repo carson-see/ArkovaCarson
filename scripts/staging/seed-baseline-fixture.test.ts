@@ -125,14 +125,16 @@ describe('seed-baseline-fixture.sql — §1.11A data-only + idempotent', () => {
 describe('provision-isolated-rig.sh — fixture wiring', () => {
   it('runs the baseline fixture seed via the CLI direct-DB path', () => {
     expect(provisioner).toMatch(
-      /supabase\s+db\s+query\s+--linked\s+--file\s+scripts\/staging\/seed-baseline-fixture\.sql/,
+      /run_cmd\s+"\$\{SUPABASE_CMD\[@\]\}"\s+db\s+query\s+--linked\s+--file\s+scripts\/staging\/seed-baseline-fixture\.sql/,
     );
   });
 
   it('seeds AFTER the worker deploy and BEFORE the clean_mirror preflight', () => {
     // Key off the EXECUTED commands (run_cmd / gcloud run deploy / tsx preflight),
     // not header-comment mentions of the filename.
-    const seedIdx = provisioner.search(/run_cmd\s+npx\s+supabase\s+db\s+query\s+--linked\s+--file/);
+    const seedIdx = provisioner.search(
+      /run_cmd\s+"\$\{SUPABASE_CMD\[@\]\}"\s+db\s+query\s+--linked\s+--file\s+scripts\/staging\/seed-baseline-fixture\.sql/,
+    );
     const deployIdx = provisioner.search(/run_cmd\s+gcloud\s+run\s+deploy/);
     const preflightIdx = provisioner.search(/run_cmd\s+npx\s+tsx\s+scripts\/ci\/staging-honesty-preflight\.ts/);
     expect(seedIdx).toBeGreaterThan(-1);

@@ -71,3 +71,6 @@ shared constant instead of redeclaring it — see `integrations/shared/src/agent
 `scripts/ci/check-run-app-host-literal.ts`, now fails CI on any new raw-host
 literal outside its explicit, reasoned allowlist — see that file's own
 agents.md note.
+## 2026-09-26 — registry mirror only
+
+`VALID_EVENTS` mirrors all worker-subscribable webhook names, including the four agent lifecycle events. This enables subscription validation but does not add a new Zapier trigger. Keep it in canonical order for `check-webhook-event-registration-drift.ts`.

@@ -68,7 +68,7 @@ const TEAM1_ADMISSION_PROVENANCE_RULE =
 // .test.ts's prefix/per-section hashes and ordered heading list. Any edit here
 // must recompute BOTH, exactly the way each test computes them.
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '2a041de608047226e6277cdbc830f48cc0fffe2ec331a5b1ef78e2eb0d84c9b0';
+  '44fc0c1f9c62c45e1952ae1e0614149b1de9fd66b853839ee560c0779d50acf4';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a
@@ -353,7 +353,7 @@ describe('provision-isolated-rig.sh — admission JSON contract', () => {
     expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_AUTH_SECRET"/);
     expect(script).toMatch(/require_gcloud_secret "\$TREASURY_WIF_SECRET"/);
     expect(script).toMatch(/ensure_secret_with_value "\$SUPABASE_URL_SECRET_NAME"/);
-    expect(script).toMatch(/supabase projects api-keys/);
+    expect(script).toMatch(/SUPABASE_CMD\[@\].*projects api-keys/);
     expect(script).toMatch(/strict environment_type=clean_mirror schema/);
     expect(script).toMatch(/STAGING_CHANGED_BEHAVIOR/);
     expect(script).toMatch(/DRIVER_PATH/);
@@ -447,8 +447,10 @@ const STUB_IMAGE_REF =
 interface ApplyRunResult extends SyncRunResult {
   gcloudCalls: string[];
   npxCalls: string[];
+  supabaseOverrideCalls: string[];
   callOrder: string[];
   gitCalls: string[];
+  psqlCalls: string[];
   artifactDir: string;
   admissionArtifactPath: string;
   schedulerStates: Record<string, string>;
@@ -469,6 +471,10 @@ interface ApplyRunOptions {
   linkFailures?: number;
   /** Consecutive `supabase db push` invocations that fail before one succeeds. */
   dbPushFailures?: number;
+  /** Make db push hit the deterministic CREATE INDEX CONCURRENTLY pipeline error. */
+  dbPushPipelineError?: boolean;
+  /** Exact fixture password expected only through PGPASSWORD by the psql stub. */
+  dbPassword?: string;
   /** Secret names whose `gcloud secrets describe` must report absent. */
   missingSecrets?: string[];
   deployedImageRef?: string;
@@ -503,6 +509,9 @@ interface ApplyRunOptions {
   existingSecretVersions?: string;
   failLatestAccessFor?: string[];
   failSecretCreateFor?: string[];
+  useSupabaseOverride?: boolean;
+  orgLogosBootstrapStates?: Array<'absent' | 'complete' | 'unexpected'>;
+  orgLogosBootstrapRawOutput?: string;
 }
 
 const stubDirs: string[] = [];
@@ -517,8 +526,10 @@ function applyRunStubbed(
   stubDirs.push(stubDir);
   const logFile = join(stubDir, 'gcloud-calls.log');
   const npxLogFile = join(stubDir, 'npx-calls.log');
+  const supabaseOverrideLogFile = join(stubDir, 'supabase-override-calls.log');
   const orderLogFile = join(stubDir, 'call-order.log');
   const gitLogFile = join(stubDir, 'git-calls.log');
+  const psqlLogFile = join(stubDir, 'psql-calls.log');
   const schedulerStateDir = join(stubDir, 'scheduler-state');
   const artifactDir = join(stubDir, 'artifacts');
   const admissionArtifactPath = join(artifactDir, `isolated-rig-admission-${name}.json`);
@@ -529,6 +540,7 @@ function applyRunStubbed(
   const projectPollCountFile = join(stubDir, 'project-poll-count');
   const linkCountFile = join(stubDir, 'link-count');
   const dbPushCountFile = join(stubDir, 'db-push-count');
+  const orgLogosCheckCountFile = join(stubDir, 'org-logos-check-count');
   const projectStatusSequence = options.projectStatusSequence ?? ['ACTIVE_HEALTHY'];
   const missingSecrets = options.missingSecrets ?? [];
   const finalSchedulerJobSuffix = profile === 'gemini'
@@ -542,8 +554,10 @@ function applyRunStubbed(
   const oidcSa = `ark-rig-${rigIdentityHash}-oidc@${identityProject}.iam.gserviceaccount.com`;
   writeFileSync(logFile, '');
   writeFileSync(npxLogFile, '');
+  writeFileSync(supabaseOverrideLogFile, '');
   writeFileSync(orderLogFile, '');
   writeFileSync(gitLogFile, '');
+  writeFileSync(psqlLogFile, '');
   if (options.blockAdmissionArtifactPath) {
     mkdirSync(admissionArtifactPath, { recursive: true });
   }
@@ -795,6 +809,10 @@ if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "list" ]]; then
     '${options.projectRef ?? 'abcdefghijklmnopqrst'}' "\${poll_statuses[$status_index]}"
   exit 0
 fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "api-keys" ]]; then
+  printf '[{"name":"service_role","api_key":"stub-service-role-key-not-real"}]\n'
+  exit 0
+fi
 if [[ "$1" == "supabase" && "$2" == "link" ]]; then
   link_count=0
   if [[ -f '${linkCountFile}' ]]; then link_count="$(cat '${linkCountFile}')"; fi
@@ -811,10 +829,31 @@ if [[ "$1" == "supabase" && "$2" == "db" && "$3" == "push" ]]; then
   if [[ -f '${dbPushCountFile}' ]]; then push_count="$(cat '${dbPushCountFile}')"; fi
   push_count=$((push_count + 1))
   printf '%s' "$push_count" > '${dbPushCountFile}'
+  if [[ '${options.dbPushPipelineError ? 'true' : 'false'}' == 'true' ]]; then
+    echo 'ERROR: CREATE INDEX CONCURRENTLY cannot be executed within a pipeline (SQLSTATE 25001)' >&2
+    exit 1
+  fi
   if (( push_count <= ${options.dbPushFailures ?? 0} )); then
     echo 'failed SASL auth: Tenant or user not found' >&2
     exit 1
   fi
+  exit 0
+fi
+if [[ "$1" == "supabase" && "$2" == "db" && "$3" == "query" && "$*" == *'verify-org-logos-bootstrap.sql'* ]]; then
+  ${options.orgLogosBootstrapRawOutput !== undefined
+    ? `cat <<'ORG_LOGOS_RAW_OUTPUT'
+${options.orgLogosBootstrapRawOutput}
+ORG_LOGOS_RAW_OUTPUT
+  exit 0`
+    : ''}
+  states=(${(options.orgLogosBootstrapStates ?? ['absent', 'complete']).map((state) => `'${state}'`).join(' ')})
+  check_count=0
+  if [[ -f '${orgLogosCheckCountFile}' ]]; then check_count="$(cat '${orgLogosCheckCountFile}')"; fi
+  check_count=$((check_count + 1))
+  printf '%s' "$check_count" > '${orgLogosCheckCountFile}'
+  state_index=$((check_count - 1))
+  if (( state_index >= \${#states[@]} )); then state_index=$(( \${#states[@]} - 1 )); fi
+  printf 'org_logos_bootstrap_state\nORG_LOGOS_BOOTSTRAP_STATE=%s\n' "\${states[$state_index]}"
   exit 0
 fi
 if [[ "$1" == "supabase" ]]; then
@@ -832,6 +871,39 @@ exit 64
   );
   chmodSync(join(stubDir, 'npx'), 0o755);
 
+  writeFileSync(
+    join(stubDir, 'psql'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+expected_password='${(options.dbPassword ?? 'stub-db-password-not-real').replaceAll("'", "'\\''")}'
+[[ "\${PGPASSWORD-}" == "$expected_password" ]] || { echo 'unexpected PGPASSWORD' >&2; exit 65; }
+[[ "\${PGSSLMODE-}" == 'require' ]] || { echo 'unexpected PGSSLMODE' >&2; exit 66; }
+printf 'psql %s\n' "$*" >> '${psqlLogFile}'
+printf 'psql %s\n' "$*" >> '${orderLogFile}'
+if [[ "$*" == *'select 1 from supabase_migrations.schema_migrations'* ]]; then
+  printf '1\n'
+  exit 0
+fi
+if [[ "$*" == *"select 1"* ]]; then
+  printf '1\n'
+  exit 0
+fi
+exit 0
+`,
+  );
+  chmodSync(join(stubDir, 'psql'), 0o755);
+
+  const supabaseOverride = join(stubDir, 'supabase-override');
+  writeFileSync(
+    supabaseOverride,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${supabaseOverrideLogFile}'
+exec '${join(stubDir, 'npx')}' supabase "$@"
+`,
+  );
+  chmodSync(supabaseOverride, 0o755);
+
   const env: Record<string, string> = {
     PATH: `${stubDir}:${process.env.PATH ?? ''}`,
     CONFIRM_PROVISION: name,
@@ -845,7 +917,7 @@ exit 64
     // admission). The Step-4 stub run must satisfy them to reach Step 4 and
     // run to completion; none of these touch real infra (project create / link /
     // push / api-keys all resolve through the npx stub above).
-    STAGING_NEW_SUPABASE_DB_PASSWORD: 'stub-db-password-not-real',
+    STAGING_NEW_SUPABASE_DB_PASSWORD: options.dbPassword ?? 'stub-db-password-not-real',
     STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-key-not-real',
     STAGING_CHANGED_BEHAVIOR:
       'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
@@ -868,6 +940,7 @@ exit 64
   if (profile === 'gemini') {
     env.STAGING_GEMINI_TUNED_MODEL = tunedModel;
   }
+  if (options.useSupabaseOverride) env.STAGING_SUPABASE_CLI_BIN = supabaseOverride;
   Object.assign(env, options.env ?? {});
 
   let out = '';
@@ -899,10 +972,16 @@ exit 64
   const npxCalls = readFileSync(npxLogFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
+  const supabaseOverrideCalls = readFileSync(supabaseOverrideLogFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
   const callOrder = readFileSync(orderLogFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
   const gitCalls = readFileSync(gitLogFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
+  const psqlCalls = readFileSync(psqlLogFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
   const schedulerStates = existsSync(schedulerStateDir)
@@ -925,8 +1004,10 @@ exit 64
     errorCode,
     gcloudCalls,
     npxCalls,
+    supabaseOverrideCalls,
     callOrder,
     gitCalls,
+    psqlCalls,
     artifactDir,
     admissionArtifactPath,
     schedulerStates,
@@ -1040,6 +1121,112 @@ describe('teardown-isolated-rig.sh — exact rig-secret cleanup', () => {
 });
 
 describe('provision-isolated-rig.sh — dedicated resource identity boundary', () => {
+  it('applies archived 0108 only from all-absent state and verifies exact completion before deploy', () => {
+    const result = applyRunStubbed('org-logos-bootstrap', 'mock', { allowDirtySource: true });
+    expect(result.code, result.out).toBe(0);
+    const checks = result.npxCalls.filter((entry) => entry.includes('verify-org-logos-bootstrap.sql'));
+    const apply = result.npxCalls.filter((entry) => entry.includes('0108_org_logos_storage_bucket.sql'));
+    expect(checks).toHaveLength(2);
+    expect(apply).toHaveLength(1);
+    const postcheckIndex = Math.max(
+      ...result.callOrder.map((entry, index) =>
+        entry.includes('verify-org-logos-bootstrap.sql') ? index : -1,
+      ),
+    );
+    const deployIndex = result.callOrder.findIndex((entry) => entry.startsWith('gcloud run deploy '));
+    expect(postcheckIndex).toBeGreaterThanOrEqual(0);
+    expect(deployIndex).toBeGreaterThan(postcheckIndex);
+  });
+
+  it('accepts an already exact org-logos bootstrap without replaying archived SQL', () => {
+    const result = applyRunStubbed('org-logos-complete', 'mock', {
+      allowDirtySource: true,
+      orgLogosBootstrapStates: ['complete'],
+    });
+    expect(result.code, result.out).toBe(0);
+    expect(result.npxCalls.filter((entry) => entry.includes('verify-org-logos-bootstrap.sql'))).toHaveLength(1);
+    expect(result.npxCalls.some((entry) => entry.includes('0108_org_logos_storage_bucket.sql'))).toBe(false);
+  });
+
+  it('rejects partial or conflicting org-logos state before deployment', () => {
+    const result = applyRunStubbed('org-logos-unexpected', 'mock', {
+      allowDirtySource: true,
+      orgLogosBootstrapStates: ['unexpected'],
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/partial or conflicting/);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('run deploy '))).toBe(false);
+    expect(result.npxCalls.some((entry) => entry.includes('0108_org_logos_storage_bucket.sql'))).toBe(false);
+  });
+
+  it('rejects a failed org-logos postcondition before deployment', () => {
+    const result = applyRunStubbed('org-logo-post-fail', 'mock', {
+      allowDirtySource: true,
+      orgLogosBootstrapStates: ['absent', 'unexpected'],
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/postcondition failed/);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('run deploy '))).toBe(false);
+    expect(result.npxCalls.filter((entry) => entry.includes('0108_org_logos_storage_bucket.sql'))).toHaveLength(1);
+  });
+
+  it.each([
+    ['missing', 'org_logos_bootstrap_state\n'],
+    ['duplicate', 'ORG_LOGOS_BOOTSTRAP_STATE=complete\nORG_LOGOS_BOOTSTRAP_STATE=complete'],
+    ['unknown', 'ORG_LOGOS_BOOTSTRAP_STATE=wrong'],
+    ['substring', 'prefix ORG_LOGOS_BOOTSTRAP_STATE=complete suffix'],
+  ])('rejects %s org-logos verifier output before deployment', (_label, rawOutput) => {
+    const result = applyRunStubbed(`org-logos-output-${_label}`, 'mock', {
+      allowDirtySource: true,
+      orgLogosBootstrapRawOutput: rawOutput,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/exactly one recognized state row/);
+    expect(result.gcloudCalls.some((entry) => entry.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('preserves the repository-pinned npx Supabase CLI by default', () => {
+    const result = applyRunStubbed('supabase-default-cli', 'mock', { allowDirtySource: true });
+    expect(result.code, result.out).toBe(0);
+    expect(result.callOrder.some((entry) => entry.startsWith('npx supabase projects create '))).toBe(true);
+    expect(result.out).toContain('npx supabase projects list --output json');
+    expect(readFileSync(SCRIPT, 'utf8')).toMatch(/SUPABASE_PUSH_CMD=\(npx --no-install supabase\)/);
+  });
+
+  it('uses one validated absolute Supabase CLI override for every operation', () => {
+    const result = applyRunStubbed('supabase-cli-override', 'mock', {
+      allowDirtySource: true,
+      useSupabaseOverride: true,
+      env: { STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: '' },
+    });
+    expect(result.code, result.out).toBe(0);
+    expect(result.supabaseOverrideCalls.some((entry) => entry.startsWith('projects create '))).toBe(true);
+    expect(result.supabaseOverrideCalls.some((entry) => entry.startsWith('projects list '))).toBe(true);
+    expect(result.supabaseOverrideCalls.some((entry) => entry.startsWith('projects api-keys '))).toBe(true);
+    expect(result.supabaseOverrideCalls.some((entry) => entry.startsWith('link '))).toBe(true);
+    expect(result.supabaseOverrideCalls.some((entry) => entry.startsWith('db push '))).toBe(true);
+    expect(result.supabaseOverrideCalls.some((entry) => entry.startsWith('db query '))).toBe(true);
+    const script = readFileSync(SCRIPT, 'utf8');
+    expect(script).toMatch(/SUPABASE_CMD\[@\].*projects api-keys/);
+    expect(result.out).not.toContain('npx supabase projects list --output json');
+  });
+
+  it.each([
+    ['relative', 'supabase'],
+    ['missing', '/definitely/missing/supabase'],
+    ['directory', '/tmp'],
+    ['non-executable file', '/etc/hosts'],
+  ])('rejects a %s Supabase CLI override before paid mutation', (_label, override) => {
+    const result = applyRunStubbed(`supabase-cli-${_label}`, 'mock', {
+      allowDirtySource: true,
+      env: { STAGING_SUPABASE_CLI_BIN: override },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/STAGING_SUPABASE_CLI_BIN must be an absolute executable path/);
+    expect(result.npxCalls.some((entry) => entry.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls).toHaveLength(0);
+  });
+
   it('uses exact identities and resource grants before the paid project mutation', () => {
     const name = 'resource-boundary';
     const result = applyRunStubbed(name, 'mock', { allowDirtySource: true });
@@ -1348,7 +1535,7 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
         .slice(0, schedulerCreates.length),
     );
     const seedIndex = result.callOrder.findIndex((entry) =>
-      entry.startsWith('npx supabase db query --linked --file '),
+      entry.includes('supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql'),
     );
     const preflightIndex = result.callOrder.findIndex((entry) =>
       entry.startsWith('npx tsx scripts/ci/staging-honesty-preflight.ts '),
@@ -2511,6 +2698,24 @@ describe('provision-isolated-rig.sh — link waits for ACTIVE_HEALTHY (finding 4
     const result = applyRunStubbed('push-retry', 'mock', { dbPushFailures: 1 });
     expect(result.code, result.out).toBe(0);
     expect(result.npxCalls.filter((call) => call.startsWith('supabase db push '))).toHaveLength(2);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
+  });
+
+  it('passes a reserved-character database password to the psql fallback only through the environment', () => {
+    const password = 'b64/plus+at@colon:hash#percent%query?safe';
+    const result = applyRunStubbed('push-pipeline-password', 'mock', {
+      dbPushPipelineError: true,
+      dbPassword: password,
+    });
+
+    expect(result.code, result.out).toBe(0);
+    expect(result.psqlCalls.length).toBeGreaterThan(1);
+    expect(result.psqlCalls.every((call) => call.includes('--host=aws-0-us-east-2.pooler.supabase.com'))).toBe(true);
+    expect(result.psqlCalls.every((call) => call.includes('--username=postgres.abcdefghijklmnopqrst'))).toBe(true);
+    expect(result.psqlCalls.every((call) => call.includes('--dbname=postgres'))).toBe(true);
+    expect(result.psqlCalls.join('\n')).not.toContain(password);
+    expect(result.out).not.toContain(password);
+    expect(result.psqlCalls.some((call) => call.includes('postgresql://'))).toBe(false);
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
   });
 

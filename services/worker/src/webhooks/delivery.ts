@@ -5,9 +5,11 @@
  */
 
 import crypto from 'node:crypto';
+import { config } from '../config.js';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
+import { readTextBounded } from '../utils/body-read-timeout.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
@@ -99,10 +101,12 @@ export function __resetWebhookFlagCacheForTest(): void {
   outboundWebhookFlagCache = null;
 }
 
-async function isOutboundWebhooksEnabled(): Promise<boolean> {
+type OutboundWebhookFlagDecision = 'enabled' | 'disabled' | 'unavailable';
+
+async function getOutboundWebhookFlagDecision(): Promise<OutboundWebhookFlagDecision> {
   const now = Date.now();
   if (outboundWebhookFlagCache && outboundWebhookFlagCache.expiresAt > now) {
-    return outboundWebhookFlagCache.value;
+    return outboundWebhookFlagCache.value ? 'enabled' : 'disabled';
   }
   const { data: flag, error: flagError } = await db.rpc('get_flag', {
     p_flag_key: 'ENABLE_OUTBOUND_WEBHOOKS',
@@ -112,11 +116,22 @@ async function isOutboundWebhooksEnabled(): Promise<boolean> {
       { error: flagError, flagId: 'ENABLE_OUTBOUND_WEBHOOKS' },
       'Failed to read outbound webhook feature flag',
     );
-    return false; // fail closed — do not cache the failure
+    return 'unavailable'; // fail closed — do not cache the failure
   }
-  const value = Boolean(flag);
+  if (typeof flag !== 'boolean') {
+    logger.error(
+      { flagId: 'ENABLE_OUTBOUND_WEBHOOKS', valueType: typeof flag },
+      'Outbound webhook feature flag returned a non-boolean value',
+    );
+    return 'unavailable';
+  }
+  const value = flag;
   outboundWebhookFlagCache = { value, expiresAt: now + FLAG_CACHE_TTL_MS };
-  return value;
+  return value ? 'enabled' : 'disabled';
+}
+
+async function isOutboundWebhooksEnabled(): Promise<boolean> {
+  return (await getOutboundWebhookFlagDecision()) === 'enabled';
 }
 
 /**
@@ -782,6 +797,10 @@ export function deriveResourceKey(
     const family = eventType.split('.')[0] || 'event';
     return `${family}:${pid}`;
   }
+  const agentId = data.agent_id;
+  if (eventType.startsWith('agent.') && typeof agentId === 'string' && agentId.length > 0) {
+    return `agent:${agentId}`;
+  }
   return null;
 }
 
@@ -1413,7 +1432,212 @@ export async function replayDelivery(
 /**
  * Process pending retries
  */
+interface ClaimedAgentDelivery {
+  delivery_id: string;
+  lease_token: string;
+  endpoint_id: string;
+  endpoint_url: string;
+  endpoint_secret: string;
+  event_type: string;
+  wire_event_id: string;
+  resource_key: string;
+  sequence: number;
+  payload_text: string;
+  attempt_number: number;
+}
+
+function isJsonRecord(value: Json): value is { [key: string]: Json | undefined } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isClaimedAgentDelivery(value: Json): value is Json & ClaimedAgentDelivery {
+  if (!isJsonRecord(value)) return false;
+  return typeof value.delivery_id === 'string'
+    && typeof value.lease_token === 'string'
+    && typeof value.endpoint_id === 'string'
+    && typeof value.endpoint_url === 'string'
+    && typeof value.endpoint_secret === 'string'
+    && typeof value.event_type === 'string'
+    && typeof value.wire_event_id === 'string'
+    && typeof value.resource_key === 'string'
+    && typeof value.sequence === 'number'
+    && typeof value.payload_text === 'string'
+    && typeof value.attempt_number === 'number';
+}
+
+function isCancelledAgentDelivery(value: Json): boolean {
+  return isJsonRecord(value)
+    && Object.keys(value).length === 1
+    && typeof value.cancelled_delivery_id === 'string';
+}
+
+function terminalMaterializationFailure(value: Json): { outboxId?: string } | undefined {
+  if (!isJsonRecord(value) || value.state !== 'materialization_failed') return undefined;
+  const outboxId = typeof value.outbox_id === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.outbox_id)
+    ? value.outbox_id : undefined;
+  return outboxId ? { outboxId } : {};
+}
+
+async function completeClaimedAgentDelivery(
+  claim: ClaimedAgentDelivery,
+  outcome: 'success' | 'retry' | 'terminal',
+  responseStatus?: number,
+  responseBody?: string,
+  errorMessage?: string,
+): Promise<boolean> {
+  const { data, error } = await db.rpc('complete_agent_webhook_delivery', {
+    p_delivery_id: claim.delivery_id,
+    p_lease_token: claim.lease_token,
+    p_outcome: outcome,
+    p_response_status: responseStatus,
+    p_response_body: responseBody,
+    p_error_message: errorMessage,
+  });
+  if (error || data !== true) {
+    logger.error(
+      { deliveryId: claim.delivery_id, error: error ?? 'stale_or_expired_lease' },
+      'Agent webhook claimed-state update failed; lease expiry will recover it',
+    );
+    return false;
+  }
+  return true;
+}
+
+async function deliverClaimedAgentWebhook(claim: ClaimedAgentDelivery): Promise<boolean> {
+  try {
+    const parsed = JSON.parse(claim.payload_text) as Partial<WebhookPayload>;
+    const allowedKeys = new Set(['event_type', 'event_id', 'timestamp', 'data', 'resource_key', 'sequence']);
+    if (
+      !parsed || typeof parsed !== 'object' || parsed.event_type !== claim.event_type
+      || Object.keys(parsed).some((key) => !allowedKeys.has(key))
+      || parsed.event_id !== claim.wire_event_id || typeof parsed.timestamp !== 'string'
+      || !parsed.data || typeof parsed.data !== 'object'
+      || parsed.resource_key !== claim.resource_key || parsed.sequence !== claim.sequence
+    ) throw new Error('invalid stored envelope');
+    const validation = validateWebhookPayload(parsed.event_type, parsed.data);
+    if (!validation.ok || validation.bypassed) throw new Error('stored payload is not strictly registered');
+  } catch {
+    return completeClaimedAgentDelivery(
+      claim, 'terminal', undefined, undefined, 'payload_refused_before_signing',
+    );
+  }
+  if (isCircuitOpen(claim.endpoint_id)) {
+    return completeClaimedAgentDelivery(claim, 'retry', undefined, undefined, 'circuit_open');
+  }
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signPayload(`${timestamp}.${claim.payload_text}`, claim.endpoint_secret);
+  try {
+    const response = await webhookFetch(claim.endpoint_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Arkova-Signature': signature,
+        'X-Arkova-Timestamp': timestamp,
+        'X-Arkova-Event': claim.event_type,
+      },
+      body: claim.payload_text,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    // The pinned adapter buffers the production response before returning.
+    // Still bound this consumer independently so an alternate/test adapter
+    // cannot strand the owned delivery lease on a stalled body. Never include
+    // the endpoint URL, which may contain credentials, in the timeout error.
+    const body = await readTextBounded(response, 'agent webhook response', 10_000);
+    if (response.ok) {
+      recordSuccess(claim.endpoint_id);
+      return completeClaimedAgentDelivery(claim, 'success', response.status, body);
+    }
+    recordFailure(claim.endpoint_id);
+    return completeClaimedAgentDelivery(
+      claim,
+      claim.attempt_number + 1 < MAX_RETRIES ? 'retry' : 'terminal',
+      response.status,
+      body,
+      `HTTP ${response.status}`,
+    );
+  } catch (error) {
+    const egress = formatEgressFailure(error);
+    recordFailure(claim.endpoint_id);
+    return completeClaimedAgentDelivery(
+      claim,
+      egress.permanent || claim.attempt_number + 1 >= MAX_RETRIES ? 'terminal' : 'retry',
+      undefined,
+      undefined,
+      egress.message,
+    );
+  }
+}
+
+/** Materialize and drain a small number of owned rows just-in-time. */
+export async function processAgentWebhookOutbox(): Promise<number> {
+  const flag = await getOutboundWebhookFlagDecision();
+  if (flag === 'unavailable') {
+    const { error } = await db.rpc('cleanup_terminal_agent_webhook_outbox', { p_limit: 500 });
+    if (error) throw new Error('agent webhook retention cleanup failed');
+    return 0;
+  }
+  for (let i = 0; i < 10; i += 1) {
+    const { data, error } = await db.rpc('materialize_next_agent_webhook_event', {
+      p_flag_state: flag,
+      p_include_parent_fanout: config.enableSubOrgWebhookFanout,
+    });
+    if (error) throw new Error('agent webhook materialization failed');
+    if (data === null) break;
+    const terminalFailure = terminalMaterializationFailure(data);
+    if (terminalFailure) {
+      logger.error(
+        terminalFailure,
+        'Agent webhook event reached terminal materialization failure',
+      );
+      Sentry.captureException(
+        new Error('agent webhook event reached terminal materialization failure'),
+        {
+          tags: { component: 'agent-webhook-outbox', operation: 'materialize' },
+          ...(terminalFailure.outboxId ? { extra: terminalFailure } : {}),
+        },
+      );
+    }
+  }
+  let completed = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const token = crypto.randomUUID();
+    const { data, error } = await db.rpc('claim_next_agent_webhook_delivery', {
+      p_lease_token: token,
+    });
+    if (error) throw new Error('agent webhook claim failed');
+    if (data === null) break;
+    if (isCancelledAgentDelivery(data)) continue;
+    if (!isClaimedAgentDelivery(data)) {
+      const deliveryId = typeof data === 'object' && data !== null && !Array.isArray(data)
+        && typeof (data as Record<string, unknown>).delivery_id === 'string'
+        ? (data as Record<string, unknown>).delivery_id : undefined;
+      logger.error({ ...(deliveryId ? { deliveryId } : {}) }, 'Agent webhook claim returned an invalid shape');
+      Sentry.captureException(new Error('agent webhook claim returned an invalid shape'), {
+        tags: { component: 'agent-webhook-outbox', operation: 'claim' },
+        ...(deliveryId ? { extra: { deliveryId } } : {}),
+      });
+      continue;
+    }
+    if (await deliverClaimedAgentWebhook(data)) completed += 1;
+  }
+  const { error: cleanupError } = await db.rpc('cleanup_terminal_agent_webhook_outbox', {
+    p_limit: 500,
+  });
+  if (cleanupError) throw new Error('agent webhook retention cleanup failed');
+  return completed;
+}
+
 export async function processWebhookRetries(): Promise<number> {
+  let ownedProcessed = 0;
+  let ownedError: unknown;
+  try {
+    ownedProcessed = await processAgentWebhookOutbox();
+  } catch (error) {
+    ownedError = error;
+    logger.error({ error }, 'Agent webhook outbox processing failed');
+  }
   // Get logs that need retry.
   //
   // REVIEW-FIX (defect #2): the limit(50) is applied to a backlog, so the
@@ -1436,17 +1660,22 @@ export async function processWebhookRetries(): Promise<number> {
     .from('webhook_delivery_logs')
     .select('*, webhook_endpoints(*)')
     .eq('status', 'retrying')
+    // AR20-13 compatibility floor: outbox-owned rows are claimed by the
+    // lease-aware agent drainer. The legacy sweep must never race that owner.
+    .is('agent_event_outbox_id', null)
     .lte('next_retry_at', new Date().toISOString())
     .order('payload->sequence', { ascending: true, nullsFirst: true })
     .limit(50);
 
   if (error) {
     logger.error({ error }, 'Failed to fetch retry logs');
-    return 0;
+    if (ownedError) throw ownedError;
+    return ownedProcessed;
   }
 
   if (!logs || logs.length === 0) {
-    return 0;
+    if (ownedError) throw ownedError;
+    return ownedProcessed;
   }
 
   // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering guard ─────
@@ -1590,5 +1819,6 @@ export async function processWebhookRetries(): Promise<number> {
   );
 
   // Count of resource head-rows handled this sweep (delivered or refused).
-  return headRows.length;
+  if (ownedError) throw ownedError;
+  return ownedProcessed + headRows.length;
 }

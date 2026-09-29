@@ -33,7 +33,7 @@ interface McpToolDefinition {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: string; description: string; enum?: string[] }>;
+    properties: Record<string, { type: string | string[]; description: string; enum?: string[]; format?: string; maxLength?: number; items?: { type: string }; properties?: Record<string, unknown>; additionalProperties?: boolean }>;
     required: string[];
   };
 }
@@ -226,6 +226,22 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: 'arkova_list_anchors',
+    description: 'List private anchored records visible to the configured organization API key. Requires read:records. Private tag filters require both tag and tag_scope; tags are never returned.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        since: { type: 'string', description: 'Inclusive RFC3339 timestamp with timezone' },
+        until: { type: 'string', description: 'Exclusive RFC3339 timestamp with timezone' },
+        tag: { type: 'string', description: 'Exact private tag (1-64 characters)' },
+        tag_scope: { type: 'string', enum: ['user', 'organization'], description: 'Private tag ownership scope' },
+        limit: { type: 'integer', description: 'Page size from 1 to 100 (default 50)' },
+        cursor: { type: 'string', description: 'Opaque cursor returned by the previous page', maxLength: 2048 },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'arkova_create_attestation',
     description: 'Create a third-party attestation that a record or entity has been verified. Any authenticated API key may create one — this does not require organization admin privileges.',
     inputSchema: {
@@ -289,6 +305,16 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: 'arkova_register_agent', description: 'Register a generic agent through the Arkova API. Requires agents:manage.',
+    inputSchema: { type: 'object', properties: { name:{type:'string',description:'Agent name'}, description:{type:'string',description:'Optional description'}, agent_type:{type:'string',description:'Agent type',enum:['llm_agent','ats_integration','hr_platform','compliance_tool','custom']}, allowed_scopes:{type:'array',description:'Allowed scopes',items:{type:'string'}}, framework:{type:'string',description:'Framework'}, version:{type:'string',description:'Version'}, callback_url:{type:'string',description:'HTTPS callback URL'}, metadata:{type:'object',description:'Generic metadata without computeid',additionalProperties:true} }, required:['name'] },
+  },
+  { name:'arkova_list_agents', description:'List generic agents in the API key organization.', inputSchema:{type:'object',properties:{},required:[]} },
+  { name:'arkova_get_agent', description:'Get one generic agent and active key summaries.', inputSchema:{type:'object',properties:{agent_id:{type:'string',description:'Agent UUID',format:'uuid'}},required:['agent_id']} },
+  { name:'arkova_update_agent', description:'Update or suspend/resume a generic agent. Revocation is terminal.', inputSchema:{type:'object',properties:{agent_id:{type:'string',description:'Agent UUID',format:'uuid'},name:{type:'string',description:'Agent name'},description:{type:'string',description:'Description'},allowed_scopes:{type:'array',description:'Allowed scopes',items:{type:'string'}},status:{type:'string',description:'Status',enum:['active','suspended']},framework:{type:'string',description:'Framework'},version:{type:'string',description:'Version'},callback_url:{type:['string','null'],description:'HTTPS callback URL or null'}},required:['agent_id']} },
+  { name:'arkova_revoke_agent', description:'Permanently revoke a generic agent and its keys.', inputSchema:{type:'object',properties:{agent_id:{type:'string',description:'Agent UUID',format:'uuid'}},required:['agent_id']} },
+  { name:'arkova_create_agent_key', description:'Create a key for an active generic agent. The returned key is a one-time secret; capture stdout directly into a secret store.', inputSchema:{type:'object',properties:{agent_id:{type:'string',description:'Agent UUID',format:'uuid'}},required:['agent_id']} },
+  { name:'arkova_admit_computeid_agent', description:'Admit a provider-bound agent using a complete signed ComputeID verification receipt. API-key-only. The returned key is a one-time secret.', inputSchema:{type:'object',properties:{passport_id:{type:'string',description:'Passport UUID',format:'uuid'},verification_receipt:{type:'object',description:'Complete signed verification receipt',additionalProperties:true},name:{type:'string',description:'Optional name'},description:{type:'string',description:'Optional description'},allowed_scopes:{type:'array',description:'Provider-permitted scopes',items:{type:'string'}}},required:['passport_id','verification_receipt']} },
+  {
     name: 'arkova_manage_folders',
     description: 'List, create, rename, nest, delete, bind connector destinations, or bulk-move records in canonical Arkova folders. Organization API keys remain bounded to their organization.',
     inputSchema: {
@@ -317,35 +343,96 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
 
 export async function handleToolCall(
   name: string,
-  args: Record<string, string>,
+  args: Record<string, unknown>,
 ): Promise<McpToolResult> {
   try {
+    const stringArgs = args as Record<string, string>;
     switch (name) {
       case 'arkova_submit_anchor':
-        return await handleSubmitAnchor(args);
+        return await handleSubmitAnchor(stringArgs);
       case 'arkova_get_submission_status':
-        return await handleSubmissionStatus(args.public_id);
+        return await handleSubmissionStatus(stringArgs.public_id);
       case 'arkova_import_rows':
-        return await handleImportRows(args);
+        return await handleImportRows(stringArgs);
       case 'arkova_verify_anchor':
-        return await handleVerifyCredential(args.public_id);
+        return await handleVerifyCredential(stringArgs.public_id);
       case 'arkova_anchor_status':
-        return await handleGetCredentialStatus(args.public_id);
+        return await handleGetCredentialStatus(stringArgs.public_id);
       case 'arkova_search_anchors':
-        return await handleSearchCredentials(args.query, parseLimit(args.limit));
+        return await handleSearchCredentials(stringArgs.query, parseLimit(stringArgs.limit));
+      case 'arkova_list_anchors':
+        return await handleListAnchors(args);
       case 'arkova_create_attestation':
-        return await handleCreateAttestation(args);
+        return await handleCreateAttestation(stringArgs);
       case 'arkova_batch_verify':
-        return await handleBatchVerify(args.public_ids);
+        return await handleBatchVerify(stringArgs.public_ids);
       case 'arkova_verify_signature':
-        return await handleVerifySignature(args.signature_id);
+        return await handleVerifySignature(stringArgs.signature_id);
       case 'arkova_manage_folders':
-        return await handleManageFolders(args);
+        return await handleManageFolders(stringArgs);
+      case 'arkova_register_agent': case 'arkova_list_agents': case 'arkova_get_agent':
+      case 'arkova_update_agent': case 'arkova_revoke_agent': case 'arkova_create_agent_key':
+      case 'arkova_admit_computeid_agent':
+        return await handleAgentOperation(name, args);
       default:
         return errorResult(`Unknown tool: ${name}`);
     }
   } catch (err) {
     return errorResult(err instanceof Error ? err.message : 'Unknown error');
+  }
+}
+
+function validRfc3339(value: unknown): value is string {
+  return typeof value === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+async function handleListAnchors(args: Record<string, unknown>): Promise<McpToolResult> {
+  const { since, until, tag, tag_scope: tagScope, cursor } = args;
+  const rawLimit = args.limit;
+  const limit = rawLimit === undefined ? 50
+    : typeof rawLimit === 'number' ? rawLimit
+      : typeof rawLimit === 'string' && /^\d{1,3}$/.test(rawLimit) ? Number(rawLimit) : Number.NaN;
+  if ((since !== undefined && !validRfc3339(since)) || (until !== undefined && !validRfc3339(until))
+      || !Number.isInteger(limit) || limit < 1 || limit > 100
+      || (tag === undefined) !== (tagScope === undefined)
+      || (tag !== undefined && (typeof tag !== 'string' || tag.length < 1 || tag.length > 64))
+      || (tagScope !== undefined && tagScope !== 'user' && tagScope !== 'organization')
+      || (cursor !== undefined && (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 2048))) {
+    return errorResult('Invalid private anchor list filters');
+  }
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (since) params.set('since', since as string);
+  if (until) params.set('until', until as string);
+  if (tag) { params.set('tag', tag as string); params.set('tag_scope', tagScope as string); }
+  if (cursor) params.set('cursor', cursor as string);
+  try {
+    const response = await arkovaFetch(`/api/v1/anchors?${params.toString()}`);
+    const raw = await response.text();
+    if (raw.length > 262_144) return errorResult('Anchor list response was too large');
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return errorResult('Anchor list returned an invalid response'); }
+    if (!response.ok) return errorResult(`Anchor list failed with HTTP ${response.status}`);
+    const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+    const anchors = record?.anchors;
+    const validItem = (item: unknown): boolean => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const row = item as Record<string, unknown>;
+      const allowed = new Set(['public_id','status','created_at','updated_at','filename','description']);
+      const statuses = new Set(['PENDING','BROADCASTING','SUBMITTED','SECURED','REVOKED','EXPIRED','SUPERSEDED','PENDING_RESOLUTION']);
+      return Object.keys(row).every(key => allowed.has(key))
+        && typeof row.public_id === 'string' && typeof row.status === 'string' && statuses.has(row.status)
+        && validRfc3339(row.created_at) && validRfc3339(row.updated_at)
+        && typeof row.filename === 'string'
+        && (row.description === null || row.description === undefined || typeof row.description === 'string');
+    };
+    if (!record || !Array.isArray(anchors) || !anchors.every(validItem)
+        || (record?.next_cursor !== null && record?.next_cursor !== undefined && typeof record?.next_cursor !== 'string')) {
+      return errorResult('Anchor list returned an invalid response');
+    }
+    if (Object.keys(record).some(key => key !== 'anchors' && key !== 'next_cursor')) return errorResult('Anchor list returned an invalid response');
+    return textResult(JSON.stringify(record));
+  } catch {
+    return errorResult('Anchor list request failed');
   }
 }
 
@@ -358,6 +445,95 @@ async function handleSubmissionStatus(publicId: string): Promise<McpToolResult> 
     return errorResult(`Submission status unavailable: ${code}`);
   }
   return textResult(JSON.stringify(body ?? {}));
+}
+
+const AGENT_SCOPES = new Set(['read:records','read:orgs','read:search','write:anchors','admin:rules','verify','verify:batch','usage:read','keys:manage','compliance:read','compliance:write','oracle:read','oracle:write','anchor:write','anchor:read','attestations:write','attestations:read','webhooks:manage','agents:manage','keys:read','orgs:manage']);
+const COMPUTEID_SCOPES = new Set(['verify','verify:batch','anchor:write','write:anchors','anchor:read','read:records','read:search']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// Keep permission-denial recovery useful without reflecting arbitrary response data.
+function scopeErrorDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const isScope = (scope: unknown): scope is string => typeof scope === 'string' && scope.length > 0 && scope.length <= 80 && !/[^a-z0-9:._-]/i.test(scope);
+  const details: Record<string, unknown> = {};
+  if (isScope(source.required)) details.required = source.required;
+  for (const field of ['granted', 'missing', 'permitted']) {
+    const scopes = source[field];
+    // Omit a malformed list as a whole: a partial list misstates authority.
+    if (Array.isArray(scopes) && scopes.length <= 32 && scopes.every(isScope)) details[field] = scopes;
+  }
+  return details;
+}
+
+async function handleAgentOperation(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+  const allowedKeys: Record<string, Set<string>> = {
+    arkova_register_agent:new Set(['name','description','agent_type','allowed_scopes','framework','version','callback_url','metadata']), arkova_list_agents:new Set(),
+    arkova_get_agent:new Set(['agent_id']), arkova_update_agent:new Set(['agent_id','name','description','allowed_scopes','status','framework','version','callback_url']),
+    arkova_revoke_agent:new Set(['agent_id']), arkova_create_agent_key:new Set(['agent_id']),
+    arkova_admit_computeid_agent:new Set(['passport_id','verification_receipt','name','description','allowed_scopes']),
+  };
+  if (Object.keys(args).some((key) => !allowedKeys[name]?.has(key))) return errorResult('Unsupported agent operation field');
+  const id = args.agent_id;
+  if (['arkova_get_agent','arkova_update_agent','arkova_revoke_agent','arkova_create_agent_key'].includes(name) && (typeof id !== 'string' || !UUID_RE.test(id))) return errorResult('agent_id must be a UUID');
+  if (name === 'arkova_register_agent' && (typeof args.name !== 'string' || args.name.trim().length < 1 || args.name.length > 200)) return errorResult('name must be 1-200 characters');
+  if (name === 'arkova_update_agent' && Object.keys(args).length === 1) return errorResult('at least one update field is required');
+  if (args.name !== undefined && (typeof args.name !== 'string' || args.name.trim().length < 1 || args.name.length > 200)) return errorResult('name must be 1-200 characters');
+  if (args.description !== undefined && (typeof args.description !== 'string' || args.description.length > 1000)) return errorResult('description must be at most 1000 characters');
+  if (args.framework !== undefined && (typeof args.framework !== 'string' || args.framework.length > 100)) return errorResult('framework must be at most 100 characters');
+  if (args.version !== undefined && (typeof args.version !== 'string' || args.version.length > 50)) return errorResult('version must be at most 50 characters');
+  if (args.agent_type !== undefined && !['llm_agent','ats_integration','hr_platform','compliance_tool','custom'].includes(String(args.agent_type))) return errorResult('agent_type is unsupported');
+  if (args.status !== undefined && !['active','suspended'].includes(String(args.status))) return errorResult('status must be active or suspended');
+  if (args.metadata && (typeof args.metadata !== 'object' || Array.isArray(args.metadata) || Object.prototype.hasOwnProperty.call(args.metadata, 'computeid'))) return errorResult('metadata.computeid is provider-managed');
+  if (args.callback_url !== undefined && args.callback_url !== null) { try { if (new URL(String(args.callback_url)).protocol !== 'https:') throw new Error(); } catch { return errorResult('callback_url must use HTTPS'); } }
+  if (args.allowed_scopes !== undefined && (!Array.isArray(args.allowed_scopes) || args.allowed_scopes.length < 1 || args.allowed_scopes.some((scope) => typeof scope !== 'string' || !(name === 'arkova_admit_computeid_agent' ? COMPUTEID_SCOPES : AGENT_SCOPES).has(scope)))) return errorResult('allowed_scopes contains an unsupported scope');
+  if (name === 'arkova_admit_computeid_agent') {
+    if (typeof args.passport_id !== 'string' || !UUID_RE.test(args.passport_id) || !args.verification_receipt || typeof args.verification_receipt !== 'object' || Array.isArray(args.verification_receipt)) return errorResult('passport_id and verification_receipt are required');
+    const receipt = args.verification_receipt as Record<string, unknown>;
+    if (receipt.passport_id !== args.passport_id) return errorResult('passport IDs must match');
+    if (typeof receipt.status !== 'string' || receipt.status.length < 1 || receipt.status.length > 32
+      || typeof receipt.issued_at !== 'string' || !Number.isFinite(Date.parse(receipt.issued_at))
+      || typeof receipt.expires_at !== 'string' || !Number.isFinite(Date.parse(receipt.expires_at))
+      || typeof receipt.key_id !== 'string' || !/^[a-f0-9]{16}$/.test(receipt.key_id)
+      || typeof receipt.receipt_signature !== 'string' || receipt.receipt_signature.length < 1 || receipt.receipt_signature.length > 4096
+      || typeof receipt.receipt_algorithm !== 'string' || receipt.receipt_algorithm.length < 1 || receipt.receipt_algorithm.length > 32
+      || typeof receipt.receipt_payload !== 'string' || receipt.receipt_payload.length < 2 || receipt.receipt_payload.length > 16384) return errorResult('verification_receipt is invalid');
+  }
+  const route = name === 'arkova_register_agent' || name === 'arkova_list_agents' ? '/api/v1/agents'
+    : name === 'arkova_admit_computeid_agent' ? '/api/v1/agents/computeid/admit'
+      : `/api/v1/agents/${encodeURIComponent(String(id))}${name === 'arkova_create_agent_key' ? '/key' : ''}`;
+  const method = name === 'arkova_list_agents' || name === 'arkova_get_agent' ? 'GET' : name === 'arkova_update_agent' ? 'PATCH' : name === 'arkova_revoke_agent' ? 'DELETE' : 'POST';
+  const { agent_id: _id, ...payload } = args;
+  const hasBody = ['arkova_register_agent','arkova_update_agent','arkova_admit_computeid_agent'].includes(name);
+  try {
+  const res = await arkovaFetch(route, { method, ...(hasBody ? { body: JSON.stringify(payload) } : {}) });
+  const raw = await res.text();
+  if (raw.length > 262_144) return errorResult('Agent API response too large');
+  let body: Record<string, unknown> | null = null; try { body = raw ? JSON.parse(raw) as Record<string, unknown> : {}; } catch { /* generic below */ }
+  if (!res.ok) {
+    const nested = body?.error && typeof body.error === 'object' ? body.error as Record<string, unknown> : body;
+    const code = typeof nested?.code === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(nested.code) ? nested.code : typeof nested?.error === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(nested.error) ? nested.error : `HTTP_${res.status}`;
+    const reason = typeof nested?.reason === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(nested.reason) ? nested.reason : undefined;
+    const safeMessageCodes=new Set(['api_key_required','vendor_gated','invalid_request','receipt_invalid','no_permitted_scopes','passport_revoked','passport_already_bound','admission_failed','ambiguous_caller','insufficient_scope','delegation_scope_exceeded','provider_scope_ceiling_exceeded']);
+    const message=safeMessageCodes.has(code)&&typeof nested?.message==='string'&&nested.message.length<=500&&!/[\r\n\x00-\x1f]/.test(nested.message)?nested.message:undefined;
+    const scopeDetails = scopeErrorDetails(nested);
+    const agentId=typeof nested?.agent_id==='string'&&UUID_RE.test(nested.agent_id)?nested.agent_id:undefined;
+    return errorResult(JSON.stringify({ status:res.status, code, ...(message?{message}:{}), ...(reason?{reason}:{}), ...scopeDetails, ...(agentId?{agent_id:agentId}:{}) }));
+  }
+  const record=(value:unknown):value is Record<string,unknown>=>typeof value==='object'&&value!==null&&!Array.isArray(value);
+  const agent=(value:unknown,requireMetadata=true):boolean=> {
+    if (!record(value)) return false;
+    // The stored metadata column is nullable; an absent value carries no metadata.
+    if (value.metadata === null) value.metadata = {};
+    return typeof value.id==='string'&&value.id.length>0&&typeof value.name==='string'&&typeof value.agent_type==='string'&&typeof value.status==='string'&&Array.isArray(value.allowed_scopes)&&value.allowed_scopes.every(scope=>typeof scope==='string')&&(!requireMetadata||record(value.metadata));
+  };
+  const keyFields=(value:Record<string,unknown>):boolean=>typeof value.key==='string'&&value.key.length>0&&typeof value.key_id==='string'&&value.key_id.length>0&&typeof value.key_prefix==='string'&&value.key_prefix.length>0&&Array.isArray(value.scopes)&&value.scopes.every(scope=>typeof scope==='string')&&typeof value.warning==='string'&&value.warning.length>0;
+  // UUID spelling is case-insensitive; preserve signed request bytes while accepting the worker's canonical binding.
+  const binding=(value:unknown):boolean=>record(value)&&value.issuer==='computeid'&&typeof value.passport_id==='string'&&typeof args.passport_id==='string'&&value.passport_id.toLowerCase()===args.passport_id.toLowerCase()&&typeof value.bound_at==='string'&&value.bound_at.length>0&&typeof value.receipt_expires_at==='string'&&value.receipt_expires_at.length>0;
+  const valid=!!body&&(name==='arkova_list_agents'?Array.isArray(body.agents)&&body.agents.every(value=>agent(value)):name==='arkova_revoke_agent'?body.status==='revoked'&&typeof body.agent_id==='string'&&body.agent_id.length>0:name==='arkova_create_agent_key'?keyFields(body)&&typeof body.agent_id==='string'&&body.agent_id.length>0&&typeof body.agent_name==='string'&&typeof body.created_at==='string':name==='arkova_admit_computeid_agent'?keyFields(body)&&agent(body.agent,false)&&binding(body.binding):agent(body));
+  if(!valid)return errorResult(JSON.stringify({status:res.status,code:'UPSTREAM_INVALID_RESPONSE'}));
+  return textResult(JSON.stringify(body, null, 2));
+  } catch { return errorResult(JSON.stringify({ code:'AGENT_TRANSPORT_ERROR' })); }
 }
 
 async function handleImportRows(args: Record<string, string>): Promise<McpToolResult> {

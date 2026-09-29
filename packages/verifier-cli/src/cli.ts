@@ -11,7 +11,8 @@
  *   3. confirm the receipt is in a real block via a header from that node
  *   4. optionally verify the issuer signature against a published key
  *
- * Exit code 0 = VERIFIED, 1 = NOT VERIFIED, 2 = usage / input error.
+ * Exit code 0 = VERIFIED, 1 = NOT VERIFIED, 2 = usage / input error,
+ * 3 = INDETERMINATE because the independent node was unavailable.
  */
 
 import { readFileSync, realpathSync } from 'node:fs';
@@ -197,7 +198,7 @@ export async function main(argv: string[]): Promise<number> {
 
   const rendered = args.json ? JSON.stringify(report, null, 2) : renderReport(report);
   process.stdout.write(`${rendered}\n`);
-  return report.ok ? 0 : 1;
+  return report.verdict === 'VERIFIED' ? 0 : report.verdict === 'INDETERMINATE' ? 3 : 1;
 }
 
 /**

@@ -94,6 +94,22 @@ RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-<derived-after-name-validation>}"
 #   gemini — real tuned model + prompt; chain stays mocked, Scheduler-driven.
 PROFILE="${STAGING_RIG_PROFILE:-mock}"
 
+# Supabase CLI executable selection. The default remains the repository-pinned
+# `npx supabase` path. Operators whose existing authenticated profile is only
+# compatible with an installed CLI may provide one absolute executable path;
+# a command string is deliberately rejected so no eval/word-splitting boundary
+# is introduced into this paid-resource provisioner.
+SUPABASE_CLI_BIN="${STAGING_SUPABASE_CLI_BIN:-}"
+if [[ -n "$SUPABASE_CLI_BIN" ]]; then
+  [[ "$SUPABASE_CLI_BIN" == /* && -f "$SUPABASE_CLI_BIN" && -x "$SUPABASE_CLI_BIN" ]] \
+    || { echo "ERROR: STAGING_SUPABASE_CLI_BIN must be an absolute executable path." >&2; exit 2; }
+  SUPABASE_CMD=("$SUPABASE_CLI_BIN")
+  SUPABASE_PUSH_CMD=("$SUPABASE_CLI_BIN")
+else
+  SUPABASE_CMD=(npx supabase)
+  SUPABASE_PUSH_CMD=(npx --no-install supabase)
+fi
+
 # Secret Manager secret NAMES (not values — values never touch this script).
 # Overridable so the chain/gemini profiles can point at the operator-provisioned
 # real-config secrets. Defaults are the shared staging real-config secrets; the
@@ -818,6 +834,7 @@ ADMISSION_TEMP_PATH="${ADMISSION_ARTIFACT_PATH}.tmp.$$"
 ADMISSION_ARTIFACT_PERSISTED=0
 ADMISSION_FINALIZED=0
 CREATED_PROJECT_REF=""
+ORG_LOGOS_BOOTSTRAP_RESULT="not_checked"
 NEW_PROJECT_REF=""
 CREATED_CLOUD_RUN_SERVICE=0
 CREATED_SUPABASE_SECRETS=0
@@ -1005,7 +1022,7 @@ run_cmd_with_retry() {
 
 supabase_project_status() {
   local project_ref="$1"
-  npx supabase projects list --output json 2>/dev/null | jq -r --arg ref "$project_ref" '
+  "${SUPABASE_CMD[@]}" projects list --output json 2>/dev/null | jq -r --arg ref "$project_ref" '
     if type == "array" then
       (.[] | select(((.id // .ref // "") | tostring) == $ref) | ((.status // "") | tostring))
     else empty end
@@ -1182,6 +1199,7 @@ write_provision_state() {
     --arg preflight_artifact "$PREFLIGHT_ARTIFACT_PATH" \
     --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
     --arg clean_mirror_attestation_id "$CLEAN_MIRROR_ATTESTATION_ID" \
+    --arg org_logos_bootstrap_result "$ORG_LOGOS_BOOTSTRAP_RESULT" \
     --arg state_path "$PROVISION_STATE_PATH" \
     --argjson created_cloud_run_service "$CREATED_CLOUD_RUN_SERVICE" \
     --argjson created_supabase_secrets "$CREATED_SUPABASE_SECRETS" \
@@ -1226,6 +1244,11 @@ write_provision_state() {
         artifact: $preflight_artifact,
         verified_at: $preflight_verified_at,
         attestation_id: $clean_mirror_attestation_id
+      },
+      org_logos_bootstrap: {
+        source: "docs/migrations-archive/0108_org_logos_storage_bucket.sql",
+        ledger_write: false,
+        result: $org_logos_bootstrap_result
       },
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
@@ -1430,7 +1453,7 @@ create_supabase_runtime_secrets() {
   if [[ -n "${STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
     service_role_key="$STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY"
   else
-    api_keys_json="$(npx supabase projects api-keys --project-ref "$project_ref" --output json)"
+    api_keys_json="$("${SUPABASE_CMD[@]}" projects api-keys --project-ref "$project_ref" --output json)"
     service_role_key="$(extract_service_role_key "$api_keys_json")"
   fi
 
@@ -1905,7 +1928,7 @@ echo "#   MCP-equivalent: get_cost -> confirm_cost -> create_project"
 echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPABASE_ORG"
 # Define the create command once (no triple copy-paste, no drift). The apply
 # path appends --output json so the new ref can be captured + re-validated.
-CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
+CREATE_CMD=("${SUPABASE_CMD[@]}" projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
 NEW_PROJECT_REF='<captured-from-step-1>'
 print_cmd "${CREATE_CMD[@]}" --db-password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>'
 if [[ $APPLY -eq 1 ]]; then
@@ -1962,13 +1985,13 @@ echo
 # The fallback applies only migrations absent from the remote history table and
 # records each one, so the resulting ledger matches what db push would produce.
 replay_schema() {
-  print_cmd npx supabase db push --linked
+  print_cmd "${SUPABASE_PUSH_CMD[@]}" db push --linked
   [[ $APPLY -eq 1 ]] || return 0
   local attempt=1 out rc pipeline_error=0
   while (( attempt <= LINK_MAX_ATTEMPTS )); do
-    echo "executing (attempt ${attempt}/${LINK_MAX_ATTEMPTS}): npx supabase db push --linked" >&2
+    echo "executing (attempt ${attempt}/${LINK_MAX_ATTEMPTS}): ${SUPABASE_PUSH_CMD[*]} db push --linked" >&2
     set +e
-    out="$(npx --no-install supabase db push --linked 2>&1)"; rc=$?
+    out="$("${SUPABASE_PUSH_CMD[@]}" db push --linked 2>&1)"; rc=$?
     set -e
     printf '%s\n' "$out"
     if (( rc == 0 )); then
@@ -1987,20 +2010,34 @@ replay_schema() {
   echo "# falling back to psql schema replay (CONCURRENTLY-safe)." >&2
   command -v psql >/dev/null 2>&1 || { echo "ERROR: psql not on PATH; cannot replay schema." >&2; exit 1; }
   : "${STAGING_NEW_SUPABASE_DB_PASSWORD:?required for the psql schema-replay fallback}"
-  local uri applied=0 v exists f
+  local applied=0 v exists f
   # Session-mode pooler (5432): the direct db.<ref> host is frequently IPv6-only
   # and unroutable, which is the same LegacyDbConfigIpv6Error class handled above.
-  uri="postgresql://postgres.${NEW_PROJECT_REF}:${STAGING_NEW_SUPABASE_DB_PASSWORD}@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require"
-  psql "$uri" -At -c 'select 1' >/dev/null 2>&1 || { echo "ERROR: psql fallback could not connect to ${NEW_PROJECT_REF}." >&2; exit 1; }
+  local -a psql_connection=(
+    --host=aws-0-us-east-2.pooler.supabase.com
+    --port=5432
+    --username="postgres.${NEW_PROJECT_REF}"
+    --dbname=postgres
+  )
+  # Keep the generated password out of both a URI parser and process argv. Its
+  # base64 alphabet can contain URI delimiters (`/`, `+`), and operators may
+  # provide values containing other reserved characters. libpq reads these two
+  # settings from the child-only environment without percent-encoding.
+  PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+    psql "${psql_connection[@]}" -At -c 'select 1' >/dev/null 2>&1 \
+    || { echo "ERROR: psql fallback could not connect to ${NEW_PROJECT_REF}." >&2; exit 1; }
   for f in supabase/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
     v="$(basename "$f" | cut -d_ -f1)"
-    exists="$(psql "$uri" -At -c "select 1 from supabase_migrations.schema_migrations where version='${v}' limit 1;" 2>/dev/null || true)"
+    exists="$(PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+      psql "${psql_connection[@]}" -At -c "select 1 from supabase_migrations.schema_migrations where version='${v}' limit 1;" 2>/dev/null || true)"
     [[ "$exists" == "1" ]] && continue
     echo "  applying ${v} $(basename "$f")" >&2
-    if ! psql "$uri" -v ON_ERROR_STOP=1 -q -f "$f"; then
+    if ! PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+      psql "${psql_connection[@]}" -v ON_ERROR_STOP=1 -q -f "$f"; then
       echo "ERROR: psql schema replay failed at ${v}." >&2; exit 1
     fi
-    psql "$uri" -q -c "insert into supabase_migrations.schema_migrations(version,name) values ('${v}','$(basename "$f")') on conflict do nothing;" >/dev/null
+    PGPASSWORD="$STAGING_NEW_SUPABASE_DB_PASSWORD" PGSSLMODE=require \
+      psql "${psql_connection[@]}" -q -c "insert into supabase_migrations.schema_migrations(version,name) values ('${v}','$(basename "$f")') on conflict do nothing;" >/dev/null
     applied=$((applied + 1))
   done
   echo "# psql schema replay applied ${applied} migration(s); pipeline_error=${pipeline_error}." >&2
@@ -2008,9 +2045,9 @@ replay_schema() {
 
 echo "# Step 2/6 — wait for ACTIVE_HEALTHY, then link to the captured ref + replay repo schema"
 echo "#   (CLI parser, lettered-suffix safe)"
-print_cmd npx supabase projects list --output json
+print_cmd "${SUPABASE_CMD[@]}" projects list --output json
 if [[ $APPLY -eq 1 ]]; then
-  echo "executing: npx supabase projects list --output json (poll until ACTIVE_HEALTHY)" >&2
+  echo "executing: ${SUPABASE_CMD[*]} projects list --output json (poll until ACTIVE_HEALTHY)" >&2
   wait_for_supabase_project_active "$NEW_PROJECT_REF"
 else
   echo "#   -> (apply mode polls this until the new ref reports ACTIVE_HEALTHY, up to"
@@ -2018,17 +2055,64 @@ else
   echo "#       legacy IPv6 direct-db config and the push dies on LegacyDbConfigIpv6Error.)"
 fi
 run_cmd_with_retry "supabase link" "$LINK_MAX_ATTEMPTS" "$LINK_RETRY_SECONDS" \
-  npx supabase link --project-ref "$NEW_PROJECT_REF"
-echo "#   bootstrap extensions + enum pre-adds (see STAGING_RIG.md) via MCP execute_sql / Mgmt API"
+  "${SUPABASE_CMD[@]}" link --project-ref "$NEW_PROJECT_REF"
 echo "#   db push --linked now targets the just-linked $NEW_PROJECT_REF (validated above)."
 replay_schema
+echo
+
+# Path C archived the historical migration chain. The org-logos Storage bucket
+# remains an active UAT-14 dependency, so a brand-new isolated project needs
+# archived 0108 as an explicitly recorded out-of-ledger bootstrap. Never invent
+# a historical migration-ledger row. Accept only all-absent or exact-complete;
+# partial/conflicting state fails before worker deployment.
+verify_org_logos_bootstrap() {
+  local out state state_count
+  out="$("${SUPABASE_CMD[@]}" db query --linked \
+    --file scripts/staging/verify-org-logos-bootstrap.sql --output csv --agent=no 2>&1)" \
+    || { printf '%s\n' "$out" >&2; echo "ERROR: org-logos bootstrap verification failed." >&2; return 1; }
+  state="$(printf '%s\n' "$out" | grep -Ex 'ORG_LOGOS_BOOTSTRAP_STATE=(absent|complete|unexpected)' || true)"
+  state_count="$(printf '%s\n' "$state" | grep -Ec '^ORG_LOGOS_BOOTSTRAP_STATE=(absent|complete|unexpected)$' || true)"
+  [[ "$state_count" == 1 ]] \
+    || { echo "ERROR: org-logos bootstrap verification must return exactly one recognized state row." >&2; return 1; }
+  printf '%s\n' "$state"
+}
+
+echo "# Step 2a/6 — verify/reconstruct archived 0108 org-logos Storage configuration"
+if [[ $APPLY -eq 1 ]]; then
+  ORG_LOGOS_BOOTSTRAP_STATE="$(verify_org_logos_bootstrap)"
+  case "$ORG_LOGOS_BOOTSTRAP_STATE" in
+    ORG_LOGOS_BOOTSTRAP_STATE=complete)
+      ORG_LOGOS_BOOTSTRAP_RESULT="already_exact"
+      echo "# org-logos bootstrap already exact; no mutation." >&2
+      ;;
+    ORG_LOGOS_BOOTSTRAP_STATE=absent)
+      "${SUPABASE_CMD[@]}" db query --linked \
+        --file docs/migrations-archive/0108_org_logos_storage_bucket.sql \
+        --output csv --agent=no >/dev/null
+      [[ "$(verify_org_logos_bootstrap)" == 'ORG_LOGOS_BOOTSTRAP_STATE=complete' ]] \
+        || { echo "ERROR: org-logos bootstrap postcondition failed." >&2; exit 1; }
+      ORG_LOGOS_BOOTSTRAP_RESULT="applied_archived_0108_exact"
+      echo "# org-logos bootstrap applied out-of-ledger from archived 0108 and verified exact." >&2
+      ;;
+    *)
+      echo "ERROR: org-logos bootstrap is partial or conflicting; refusing to alter it." >&2
+      exit 1
+      ;;
+  esac
+  write_provision_state "schema_replayed_org_logos_verified" ""
+else
+  print_cmd "${SUPABASE_CMD[@]}" db query --linked \
+    --file scripts/staging/verify-org-logos-bootstrap.sql --output csv --agent=no
+  echo "#   -> if all five objects are absent, apply archived 0108 out-of-ledger, then require exact postcondition"
+  echo "#   -> exact-complete is accepted without mutation; partial/conflicting state aborts"
+fi
 echo
 
 echo "# Step 2b/6 — create/record per-rig Supabase Secret Manager secrets"
 if [[ $APPLY -eq 1 ]]; then
   create_supabase_runtime_secrets "$NEW_PROJECT_REF"
 else
-  print_cmd npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
+  print_cmd "${SUPABASE_CMD[@]}" projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
   echo "#   apply mode derives https://<captured-ref>.supabase.co, fetches the service-role key,"
   echo "#   writes the two pre-created per-rig Supabase secret resources; cron/IP were atomically"
   echo "#   created with their first random values before paid work and are never rotated,"
@@ -2194,7 +2278,7 @@ echo
 # (error 1010) blocks for automated clients) — the CLI reaches the DB directly.
 # ---------------------------------------------------------------------------
 echo "# Step 5/6 — seed baseline fixture (>=1 SUBMITTED anchor; data-only, §1.11A)"
-run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
+run_cmd "${SUPABASE_CMD[@]}" db query --linked --file scripts/staging/seed-baseline-fixture.sql
 
 # ---------------------------------------------------------------------------
 # Step 6 — clean_mirror preflight against the NEW project.

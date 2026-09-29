@@ -64,6 +64,7 @@
  * display names already resolved by the Drive folder picker endpoint.
  */
 import { createHash } from 'node:crypto';
+import { parseDriveFolderBindings } from './drive-folder-bindings.js';
 import { GOOGLE_DRIVE_VENDOR } from '../../constants/connectors.js';
 
 export interface DriveFolderToMirror {
@@ -100,34 +101,25 @@ export interface DriveFolderMirrorDeps {
 
 const FOLDER_NAME_MAX = 88;
 const UNIQUE_VIOLATION = '23505';
+export const DRIVE_FOLDER_MIRROR_FAILED_EVENT = 'drive_folder_mirror_failed';
+export const DRIVE_FOLDER_MIRROR_RECOVERED_EVENT = 'drive_folder_mirror_recovered';
 
 /**
  * Extracts `{folder_id, folder_name}` pairs from a rule's `trigger_config`,
  * tolerant of the picker's current shape and defensive against a malformed
  * or absent `drive_folders` array (e.g. any non-Drive `trigger_config`,
  * which returns `[]` — those rules are entirely unaffected by this module).
- * De-dupes by folder id, keeping the first occurrence.
+ * De-dupes by folder id. Array selections are authoritative because they carry
+ * the user-visible folder name; the legacy singular binding is appended only
+ * when it is genuinely a `drive_folder` and not already selected.
  */
 export function extractDriveFoldersToMirror(
   triggerConfig: Record<string, unknown> | null | undefined,
 ): DriveFolderToMirror[] {
-  const raw = triggerConfig && typeof triggerConfig === 'object' ? (triggerConfig as Record<string, unknown>).drive_folders : undefined;
-  if (!Array.isArray(raw)) return [];
-
-  const seen = new Set<string>();
-  const out: DriveFolderToMirror[] = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const folderId = (entry as Record<string, unknown>).folder_id;
-    if (typeof folderId !== 'string' || folderId.length === 0 || seen.has(folderId)) continue;
-    seen.add(folderId);
-    const folderNameRaw = (entry as Record<string, unknown>).folder_name;
-    out.push({
-      folderId,
-      folderName: typeof folderNameRaw === 'string' && folderNameRaw.trim().length > 0 ? folderNameRaw : null,
-    });
-  }
-  return out;
+  return parseDriveFolderBindings(triggerConfig).map(({ folderId, folderName }) => ({
+    folderId,
+    folderName: folderName ?? null,
+  }));
 }
 
 const CONNECTOR_TAG_RE = /^connector-([a-z0-9_]+)$/;
@@ -207,16 +199,27 @@ async function refreshConnectionIfStale(
   currentConnectionId: string | null,
   connectionId: string,
   logger: DriveFolderMirrorDeps['logger'],
-): Promise<void> {
-  if (currentConnectionId === connectionId) return;
-  const { error } = await db
+): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  if (currentConnectionId === connectionId) return { ok: true };
+  const { error, count } = await db
     .from('folders')
-    .update({ connector_connection_id: connectionId })
+    .update({ connector_connection_id: connectionId }, { count: 'exact' })
     .eq('id', folderId)
     .eq('org_id', orgId);
-  if (error) {
-    logger?.warn?.({ error, orgId, folderId }, 'drive-folder-mirror: connection refresh failed');
+  if (error || count !== 1) {
+    const failure = error ?? new Error(`connection refresh affected ${String(count)} rows`);
+    logger?.warn?.({ error: failure, orgId, folderId }, 'drive-folder-mirror: connection refresh failed');
+    return { ok: false, error: failure };
   }
+  return { ok: true };
+}
+
+function mirrorErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
 }
 
 /** Finds or creates the ORG-scoped Arkova mirror folder for ONE connected Drive
@@ -225,7 +228,7 @@ async function refreshConnectionIfStale(
  * re-selecting the winner's row rather than erroring. */
 async function upsertOne(
   db: DriveFolderMirrorDb,
-  args: { orgId: string; actorUserId: string; connectionId: string; folder: DriveFolderToMirror },
+  args: { orgId: string; actorUserId: string | null; connectionId: string; folder: DriveFolderToMirror },
   logger: DriveFolderMirrorDeps['logger'],
 ): Promise<MirrorConnectedDriveFolderResult> {
   const { orgId, actorUserId, connectionId, folder } = args;
@@ -236,7 +239,17 @@ async function upsertOne(
     return { folderId: '', driveFolderId: folder.folderId, outcome: 'error', error: String(selectError) };
   }
   if (existing?.id) {
-    await refreshConnectionIfStale(db, orgId, existing.id, existing.connector_connection_id, connectionId, logger);
+    const refresh = await refreshConnectionIfStale(
+      db, orgId, existing.id, existing.connector_connection_id, connectionId, logger,
+    );
+    if (!refresh.ok) {
+      return {
+        folderId: existing.id,
+        driveFolderId: folder.folderId,
+        outcome: 'error',
+        error: mirrorErrorText(refresh.error),
+      };
+    }
     return { folderId: existing.id, driveFolderId: folder.folderId, outcome: 'existing' };
   }
 
@@ -260,6 +273,12 @@ async function upsertOne(
     if (code === UNIQUE_VIOLATION) {
       const { data: winner, error: reselectError } = await findExistingMirror(db, orgId, folder.folderId);
       if (!reselectError && winner?.id) {
+        const refresh = await refreshConnectionIfStale(
+          db, orgId, winner.id, winner.connector_connection_id, connectionId, logger,
+        );
+        if (!refresh.ok) {
+          return { folderId: winner.id, driveFolderId: folder.folderId, outcome: 'error', error: mirrorErrorText(refresh.error) };
+        }
         return { folderId: winner.id, driveFolderId: folder.folderId, outcome: 'existing' };
       }
     }
@@ -283,7 +302,7 @@ async function upsertOne(
  */
 export async function mirrorConnectedDriveFolders(
   deps: DriveFolderMirrorDeps,
-  args: { orgId: string; actorUserId: string; folders: DriveFolderToMirror[] },
+  args: { orgId: string; actorUserId: string | null; ruleId?: string; folders: DriveFolderToMirror[] },
 ): Promise<MirrorConnectedDriveFolderResult[]> {
   const { orgId, actorUserId, folders } = args;
   if (folders.length === 0) return [];
@@ -295,7 +314,11 @@ export async function mirrorConnectedDriveFolders(
     // 'error' (not 'skipped_no_connection') lets a caller distinguish "try
     // again" from "nothing to do until the org connects Drive".
     deps.logger?.error?.({ error: lookup.error, orgId }, 'drive-folder-mirror: active-connection lookup failed (retryable)');
-    return folders.map((f) => ({ folderId: '', driveFolderId: f.folderId, outcome: 'error' as const, error: String(lookup.error) }));
+    const results = folders.map((f) => ({ folderId: '', driveFolderId: f.folderId, outcome: 'error' as const, error: String(lookup.error) }));
+    // Preserve the original lookup failure as the returned result even when
+    // the best-effort durable health marker is itself unavailable.
+    if (args.ruleId) await recordDriveFolderMirrorState(deps, args.orgId, args.ruleId, results);
+    return results;
   }
   if (lookup.kind === 'none') {
     deps.logger?.warn?.({ orgId }, 'drive-folder-mirror: no active Drive connection — skipping mirror');
@@ -333,5 +356,41 @@ export async function mirrorConnectedDriveFolders(
       results.push({ folderId: '', driveFolderId: folder.folderId, outcome: 'error', error: String(error) });
     }
   }
+  if (args.ruleId && !(await recordDriveFolderMirrorState(deps, args.orgId, args.ruleId, results))) {
+    results.push({ folderId: '', driveFolderId: '', outcome: 'error', error: 'mirror_health_state_write_failed' });
+  }
   return results;
+}
+
+export async function recordDriveFolderMirrorState(
+  deps: DriveFolderMirrorDeps,
+  orgId: string,
+  ruleId: string,
+  results: MirrorConnectedDriveFolderResult[],
+): Promise<boolean> {
+  const failed = results.some(({ outcome }) => outcome === 'error');
+  const completed = results.length > 0 && results.every(({ outcome }) => outcome === 'created' || outcome === 'existing');
+  if (!failed && !completed) return true;
+  const eventType = failed ? DRIVE_FOLDER_MIRROR_FAILED_EVENT : DRIVE_FOLDER_MIRROR_RECOVERED_EVENT;
+  try {
+    const latest = await deps.db.from('audit_events')
+      .select('event_type').eq('org_id', orgId).eq('target_type', 'organization_rules').eq('target_id', ruleId)
+      .in('event_type', [DRIVE_FOLDER_MIRROR_FAILED_EVENT, DRIVE_FOLDER_MIRROR_RECOVERED_EVENT])
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (latest.error) throw latest.error;
+    if ((latest.data as { event_type?: unknown } | null)?.event_type === eventType) return true;
+    const inserted = await deps.db.from('audit_events').insert({
+      event_type: eventType,
+      event_category: 'WEBHOOK',
+      org_id: orgId,
+      target_type: 'organization_rules',
+      target_id: ruleId,
+      details: { reason: failed ? 'folder_mirror_failed' : 'folder_mirror_recovered' },
+    });
+    if (inserted.error) throw inserted.error;
+    return true;
+  } catch (error) {
+    deps.logger?.error?.({ error, orgId, ruleId, eventType }, 'drive-folder-mirror: durable health-state write failed');
+    return false;
+  }
 }

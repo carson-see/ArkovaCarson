@@ -49,3 +49,12 @@ c3b00d31cf73a804c877fe4de532d250f49c4e3d:services/worker/src/integrations/comput
 # repo authenticates with it. Scoped to the exact commit/path/rule/line per
 # SEC-015.
 8100b6015ef51a2e5103eefd20d4361f63da4d7c:services/worker/src/integrations/connectors/drive-subscription-renewal.test.ts:generic-api-key:535
+
+# Round 3 private-tag browser acceptance uses deterministic loopback-only
+# Playwright auth fixtures. Current source carries line-local gitleaks:allow
+# annotations; these exact fingerprints are additionally required because the
+# PR range scan evaluates the already-published introducing commit, before the
+# annotations existed. Nothing in either fixture authenticates to a hosted
+# service. Keep this exception scoped to commit/path/rule/line.
+1f134fca2a28baec91619d7e3c60d950f6348adf:e2e/round3-private-tag-search.config.ts:generic-api-key:11
+1f134fca2a28baec91619d7e3c60d950f6348adf:e2e/round3-private-tag-search.spec.ts:generic-api-key:20

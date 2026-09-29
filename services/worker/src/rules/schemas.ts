@@ -113,6 +113,13 @@ export const TriggerConfigWorkspaceFileModified = z.object({
     .optional(),
   semantic_match: TriggerConfigEsignCompleted.shape.semantic_match,
 }).superRefine((cfg, ctx) => {
+  if (cfg.folder_id && cfg.type !== 'drive_folder') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['type'],
+      message: 'type must be drive_folder when folder_id is provided',
+    });
+  }
   if (cfg.type === 'drive_folder' && !cfg.folder_id) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -129,9 +136,9 @@ export const TriggerConfigWorkspaceFileModified = z.object({
   // array's `.max()` leaves the effective limit one higher, reachable by any
   // direct API caller; the rule builder only ever writes the array, which is
   // why the gap is invisible through the UI.
-  const boundFolders =
-    (cfg.type === 'drive_folder' && cfg.folder_id ? 1 : 0) +
-    (cfg.drive_folders?.length ?? 0);
+  const boundFolderIds = new Set(cfg.drive_folders?.map(({ folder_id }) => folder_id) ?? []);
+  if (cfg.type === 'drive_folder' && cfg.folder_id) boundFolderIds.add(cfg.folder_id);
+  const boundFolders = boundFolderIds.size;
   if (boundFolders > DRIVE_FOLDER_BINDING_CAP) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

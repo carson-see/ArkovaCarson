@@ -31,6 +31,7 @@ vi.mock('../../../utils/logger.js', () => ({ logger: logCalls }));
 vi.mock('../../../utils/auditEvent.js', () => ({
   recordAuditEvent: (...args: unknown[]) => { auditMock(...args); return Promise.resolve(); },
 }));
+vi.mock('../../../webhooks/agentEvents.js', () => ({ hintAgentWebhookDrain: vi.fn(), emitAgentEvent: vi.fn() }));
 
 import { computeidWebhookRouter, computeidWebhookBody } from './computeid.js';
 import { computeidGate } from '../../../middleware/computeidGate.js';
@@ -95,7 +96,7 @@ const boundAgents = (rows: ReturnType<typeof agentRow>[]) => {
 beforeEach(() => {
   vi.clearAllMocks();
   dbFromMock.mockReset();
-  dbRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
+  dbRpcMock.mockReset().mockResolvedValue({ data: { applied: true }, error: null });
   authorityRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
   dlqRpcMock.mockReset().mockResolvedValue({ data: true, error: null });
   mockConfig.enableComputeidIntegration = true;
@@ -220,11 +221,12 @@ describe('POST /webhooks/computeid — passport events', () => {
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ applied: 1, skipped: 0 });
-    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('apply_computeid_agent_transition', {
+    expect(dbRpcMock).toHaveBeenCalledExactlyOnceWith('apply_computeid_agent_transition_with_outbox', {
       p_org_id: ORG_ID, p_agent_id: AGENT_ID, p_passport_id: PASSPORT,
       p_expected_status: 'active', p_expected_metadata: row.metadata,
       p_update: expect.objectContaining({ status: 'revoked', revoked_at: T2 }),
       p_key_enforcement: 'deactivate', p_event: 'passport.revoked', p_event_at: T2,
+      p_emit_event_type: 'agent.revoked',
     });
     expect(agents.update).not.toHaveBeenCalled();
     expect(dbFromMock).not.toHaveBeenCalledWith('api_keys');
@@ -234,7 +236,7 @@ describe('POST /webhooks/computeid — passport events', () => {
   it('suspension atomically deactivates keys and marks the suspension as provider-owned', async () => {
     routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({}) });
     expect((await post(evt('passport.suspended'))).status).toBe(200);
-    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.objectContaining({
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition_with_outbox', expect.objectContaining({
       p_key_enforcement: 'deactivate',
       p_update: expect.objectContaining({ status: 'suspended', metadata: expect.objectContaining({
         computeid: expect.objectContaining({ suspended_by: 'computeid' }),
@@ -248,7 +250,7 @@ describe('POST /webhooks/computeid — passport events', () => {
     routeTables({ agents: boundAgents([row]), webhook_dlq: builder({}) });
     const res = await post(evt('passport.reinstated', { timestamp: T3 }));
     expect(res.body).toMatchObject({ applied: 1 });
-    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.objectContaining({
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition_with_outbox', expect.objectContaining({
       p_expected_status: 'suspended', p_expected_metadata: row.metadata,
       p_update: expect.objectContaining({ status: 'active', suspended_at: null }), p_key_enforcement: 'reactivate',
     }));
@@ -290,8 +292,8 @@ describe('POST /webhooks/computeid — passport events', () => {
   it('a passport bound in two organizations scopes each transaction to its own organization and agent', async () => {
     routeTables({ agents: boundAgents([agentRow(), agentRow({ id: AGENT_B, org_id: ORG_B })]), webhook_dlq: builder({}) });
     expect((await post(evt('passport.revoked'))).body).toMatchObject({ applied: 2, skipped: 0 });
-    expect(dbRpcMock).toHaveBeenNthCalledWith(1, 'apply_computeid_agent_transition', expect.objectContaining({ p_org_id: ORG_ID, p_agent_id: AGENT_ID }));
-    expect(dbRpcMock).toHaveBeenNthCalledWith(2, 'apply_computeid_agent_transition', expect.objectContaining({ p_org_id: ORG_B, p_agent_id: AGENT_B }));
+    expect(dbRpcMock).toHaveBeenNthCalledWith(1, 'apply_computeid_agent_transition_with_outbox', expect.objectContaining({ p_org_id: ORG_ID, p_agent_id: AGENT_ID }));
+    expect(dbRpcMock).toHaveBeenNthCalledWith(2, 'apply_computeid_agent_transition_with_outbox', expect.objectContaining({ p_org_id: ORG_B, p_agent_id: AGENT_B }));
   });
 
   it('an unbound passport is acknowledged and recorded without executing a transition', async () => {
@@ -305,7 +307,7 @@ describe('POST /webhooks/computeid — passport events', () => {
   it('a changed locked snapshot requests redelivery without auditing a transition that did not commit', async () => {
     const dlq = builder({});
     routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: dlq });
-    dbRpcMock.mockResolvedValue({ data: false, error: null });
+    dbRpcMock.mockResolvedValue({ data: { applied: false }, error: null });
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('conflict_retry');
@@ -363,7 +365,7 @@ describe('ComputeID partial-write recovery regressions', () => {
     routeTables({ agents, webhook_dlq: builder({}) });
     // A real PostgreSQL concurrency regression separately proves that a revoke
     // winning the row lock makes the older restoration CAS return false.
-    dbRpcMock.mockResolvedValueOnce({ data: false, error: null });
+    dbRpcMock.mockResolvedValueOnce({ data: { applied: false }, error: null });
     const body = evt('passport.reinstated', { timestamp: T2 });
     expect((await post(body)).status).toBe(409);
     expect((await post(body)).body).toMatchObject({ applied: 0, skipped: 1 });
@@ -385,7 +387,7 @@ describe('global provider authority and timestamp validation', () => {
     routeTables({ agents: boundAgents([agentRow()]), webhook_dlq: builder({ data: null }) });
     expect((await post(evt('passport.revoked'))).body.applied).toBe(1);
     expect(authorityRpcMock).toHaveBeenCalledTimes(2);
-    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.any(Object));
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition_with_outbox', expect.any(Object));
   });
   it('returns retryable500 if authority persistence fails before looking up agents', async () => {
     authorityRpcMock.mockResolvedValue({ data: null, error: { message: 'database unavailable' } });
@@ -409,7 +411,7 @@ describe('global provider authority and timestamp validation', () => {
     expect(authorityRpcMock).toHaveBeenCalledWith('record_computeid_passport_revocation', {
       p_passport_id: PASSPORT, p_event_at: '2026-01-01T00:00:00.000Z',
     });
-    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition', expect.objectContaining({
+    expect(dbRpcMock).toHaveBeenCalledWith('apply_computeid_agent_transition_with_outbox', expect.objectContaining({
       p_event_at: '2026-01-01T00:00:00.000Z', p_update: expect.objectContaining({ revoked_at: '2026-01-01T00:00:00.000Z' }),
     }));
   });
@@ -488,7 +490,7 @@ describe('cross-organization PostgREST pagination', () => {
     let writes = 0;
     dbRpcMock.mockImplementation(async () => {
       if (++writes === 200) all.splice(0, 100);
-      return { data: true, error: null };
+      return { data: { applied: true }, error: null };
     });
     const res = await post(evt('passport.revoked'));
     expect(res.status).toBe(200);

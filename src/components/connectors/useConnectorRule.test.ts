@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 describe('useConnectorRule — load (D5 adopt-vs-create counting)', () => {
-  it('reports status "none" when zero enabled rules of this trigger_type exist, and never writes on mount', async () => {
+  it('reports status "none" when no enabled or recoverable tagged disabled rule exists, and never writes on mount', async () => {
     workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] }));
 
     const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
@@ -90,13 +90,55 @@ describe('useConnectorRule — load (D5 adopt-vs-create counting)', () => {
         ],
       }),
     );
+    workerFetch.mockResolvedValueOnce(jsonRes(404, {}));
 
     const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
     await waitFor(() => expect(result.current.state.status).toBe('none'));
   });
+
+  it('fails closed when a disabled candidate detail returns malformed 2xx instead of creating a duplicate', async () => {
+    workerFetch.mockResolvedValueOnce(
+      jsonRes(200, { items: [{ id: 'rule-disabled', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: false }] }),
+    );
+    workerFetch.mockResolvedValueOnce(jsonRes(200, {}));
+
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('error'));
+    expect(workerFetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('useConnectorRule — save (create path)', () => {
+  it('allows a zero-selected-folder rule with no mirror outcomes to enable normally', async () => {
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] }));
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('none'));
+    workerFetch.mockResolvedValueOnce(jsonRes(201, { id: 'empty-rule' }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { ok: true }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] }));
+    await act(async () => {
+      expect(await result.current.save({ name: 'Google Drive', triggerConfig: { drive_folders: [] }, actionType: 'AUTO_ANCHOR' })).toBe(true);
+    });
+    expect(workerFetch).toHaveBeenCalledWith('/api/rules/empty-rule', expect.objectContaining({ method: 'PATCH' }));
+  });
+  it('preserves a created disabled rule after mirror failure and retries by PATCHing that id before enabling', async () => {
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] }));
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('none'));
+    workerFetch.mockResolvedValueOnce(jsonRes(201, { id: 'created-rule', drive_folder_mirror: [{ folderId: '', driveFolderId: 'f1', outcome: 'error' }] }));
+    await act(async () => { expect(await result.current.save({ name: 'Google Drive', triggerConfig: { drive_folders: [{ folder_id: 'f1' }] }, actionType: 'INSTANT_SECURE' })).toBe(false); });
+    expect(result.current.state.status).toBe('adoptable');
+
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { ok: true, drive_folder_mirror: [{ folderId: 'arkova-f1', driveFolderId: 'f1', outcome: 'created' }] }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { ok: true }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [{ id: 'created-rule', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true }] }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { item: { id: 'created-rule', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: {}, action_type: 'INSTANT_SECURE', action_config: { tag: 'connector-google_drive' }, enabled: true } }));
+    await act(async () => { expect(await result.current.save({ name: 'Google Drive', triggerConfig: { drive_folders: [{ folder_id: 'f1' }] }, actionType: 'INSTANT_SECURE' })).toBe(true); });
+    const writes = workerFetch.mock.calls.filter((call) => ['POST', 'PATCH'].includes(call[1]?.method));
+    expect(writes.map((call) => [call[0], call[1].method])).toEqual([
+      ['/api/rules', 'POST'], ['/api/rules/created-rule', 'PATCH'], ['/api/rules/created-rule', 'PATCH'],
+    ]);
+  });
   it('creates then enables, in that order, with paired action_type/action_config (SEC-02 + D4)', async () => {
     workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] })); // load
     const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
@@ -219,6 +261,54 @@ describe('useConnectorRule — save (create path)', () => {
 });
 
 describe('useConnectorRule — save (adopt path)', () => {
+  it('returns false and exposes an error when every selected Drive folder mirror fails', async () => {
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [{ id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true }] }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { item: { id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: {}, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: true } }));
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('adoptable'));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { ok: true, drive_folder_mirror: [{ driveFolderId: 'f1', folderId: '', outcome: 'error', error: 'db unavailable' }] }));
+    let ok = true;
+    await act(async () => { ok = await result.current.save({ name: 'ignored', triggerConfig: { drive_folders: [{ type: 'drive_folder', folder_id: 'f1' }] }, actionType: 'INSTANT_SECURE' }); });
+    expect(ok).toBe(false);
+    expect(result.current.saveError).toBeTruthy();
+  });
+  it('returns false when even one selected folder mirror fails, avoiding a partial-success toast', async () => {
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [{ id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true }] }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { item: { id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: {}, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: true } }));
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('adoptable'));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { ok: true, drive_folder_mirror: [{ driveFolderId: 'f1', folderId: 'a1', outcome: 'created' }, { driveFolderId: 'f2', folderId: '', outcome: 'error' }] }));
+    await act(async () => { expect(await result.current.save({ name: 'ignored', triggerConfig: { drive_folders: [{ folder_id: 'f1' }, { folder_id: 'f2' }] }, actionType: 'INSTANT_SECURE' })).toBe(false); });
+    expect(result.current.saveError).toBeTruthy();
+  });
+
+  it('keeps a selected-folder rule disabled when the Drive connection disappears before mirroring', async () => {
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [] }));
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('none'));
+    workerFetch.mockResolvedValueOnce(jsonRes(201, {
+      id: 'created-rule',
+      drive_folder_mirror: [{ driveFolderId: 'f1', folderId: '', outcome: 'skipped_no_connection' }],
+    }));
+    await act(async () => {
+      expect(await result.current.save({ name: 'Google Drive', triggerConfig: { drive_folders: [{ folder_id: 'f1' }] }, actionType: 'AUTO_ANCHOR' })).toBe(false);
+    });
+    expect(result.current.state.status).toBe('adoptable');
+    expect(result.current.saveError).toBeTruthy();
+    expect(workerFetch.mock.calls.some((call) => call[0] === '/api/rules/created-rule' && call[1]?.method === 'PATCH')).toBe(false);
+  });
+
+  it('reload adopts only connector-tagged disabled rules and leaves unrelated disabled rules alone', async () => {
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { items: [
+      { id: 'unrelated', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: false },
+      { id: 'recoverable', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: false },
+    ] }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { item: { id: 'unrelated', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: {}, action_type: 'AUTO_ANCHOR', action_config: { tag: 'hand-built' }, enabled: false } }));
+    workerFetch.mockResolvedValueOnce(jsonRes(200, { item: { id: 'recoverable', trigger_type: 'WORKSPACE_FILE_MODIFIED', trigger_config: {}, action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: false } }));
+    const { result } = renderHook(() => useConnectorRule(ORG_ID, 'google_drive'));
+    await waitFor(() => expect(result.current.state.status).toBe('adoptable'));
+    expect(result.current.state.status === 'adoptable' && result.current.state.rule.id).toBe('recoverable');
+  });
   it('PATCHes the adopted rule with trigger_config + PAIRED action_type/action_config in one call', async () => {
     workerFetch.mockResolvedValueOnce(
       jsonRes(200, { items: [{ id: 'rule-1', trigger_type: 'WORKSPACE_FILE_MODIFIED', enabled: true }] }),

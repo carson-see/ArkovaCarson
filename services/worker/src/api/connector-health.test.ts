@@ -26,6 +26,7 @@ const driveRulesPages = vi.fn();
 const driveFetchJobFailuresList = vi.fn();
 // Round-2 fix (item 2): the gap-visibility read from audit_events.
 const driveGapEventsList = vi.fn();
+const driveMirrorStatesRpc = vi.fn();
 
 vi.mock('../config.js', () => ({ config: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -109,6 +110,9 @@ vi.mock('../utils/db.js', () => {
   };
   return {
     db: {
+      rpc: (name: string, args: unknown) => ({
+        abortSignal: (signal: AbortSignal) => driveMirrorStatesRpc(name, args, signal),
+      }),
       from: (table: string) => {
         if (table === 'profiles') return profilesChain;
         if (table === 'org_integrations') return orgIntegrationsChain;
@@ -156,6 +160,7 @@ beforeEach(() => {
     ? driveRulesList() : Promise.resolve({ data: [], error: null }));
   driveFetchJobFailuresList.mockResolvedValue({ data: [], error: null });
   driveGapEventsList.mockResolvedValue({ data: [], error: null });
+  driveMirrorStatesRpc.mockResolvedValue({ data: [], error: null });
 });
 
 describe('connector-health (SCRUM-1146)', () => {
@@ -570,7 +575,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [driveIntegrationRow({ last_token_advanced_at: FAR_PAST })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as {
@@ -599,7 +604,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('does NOT flag cursor_stale for a recently-advanced cursor', async () => {
       integrationsList.mockResolvedValueOnce({ data: [driveIntegrationRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
@@ -611,7 +616,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [driveIntegrationRow({ last_token_advanced_at: null })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
@@ -649,7 +654,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('flags changes_list_never_succeeded when the cursor has NEVER advanced, connected_at is old, AND the org has an enabled Drive rule', async () => {
       integrationsList.mockResolvedValueOnce({ data: [neverAdvancedDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as {
@@ -666,7 +671,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [neverAdvancedDriveRow({ connected_at: RECENT_CONNECT })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
@@ -687,7 +692,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [neverAdvancedDriveRow({ last_token_advanced_at: '2020-06-01T00:00:00Z' })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
@@ -699,7 +704,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [neverAdvancedDriveRow({ last_renewal_error: 'invalid_grant' })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
@@ -729,7 +734,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [driveIntegrationRow({ last_token_advanced_at: FAR_PAST, last_renewal_error: 'invalid_grant' })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
@@ -738,7 +743,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('flags fetch_job_failures when google_drive.file_changed has failed/dead job_queue rows for this org', async () => {
       integrationsList.mockResolvedValueOnce({ data: [driveIntegrationRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'dead' }, { status: 'failed' }],
         error: null,
@@ -756,7 +761,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a healthy Drive connector with zero fetch-job failures and an advancing cursor stays connected/none', async () => {
       integrationsList.mockResolvedValueOnce({ data: [driveIntegrationRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; state: string; health_reason: string | null }> };
@@ -773,7 +778,7 @@ describe('connector-health (SCRUM-1146)', () => {
         ],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({ data: [{ status: 'dead' }], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
@@ -883,7 +888,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a job whose last_error matches DriveFileAccessError\'s message reads degraded/file_access_not_granted', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'dead', last_error: 'Drive file access denied: appNotAuthorizedToFile' }],
         error: null,
@@ -901,7 +906,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a job whose last_error matches the export-size-limit message ALSO reads file_access_not_granted', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'failed', last_error: "Drive file export exceeds Google's export size limit" }],
         error: null,
@@ -914,7 +919,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('outranks the generic fetch_job_failures reason', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [
           { status: 'dead', last_error: 'Drive file access denied: forbidden' },
@@ -930,7 +935,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a failure with an UNRELATED last_error still reads the generic fetch_job_failures, not file_access_not_granted', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'failed', last_error: 'ETIMEDOUT connecting to googleapis.com' }],
         error: null,
@@ -950,7 +955,7 @@ describe('connector-health (SCRUM-1146)', () => {
     // mid-string must NOT be counted as file_access_not_granted.
     it('an UNRELATED last_error that merely contains "export size limit" mid-string does NOT read file_access_not_granted (S5850)', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'failed', last_error: 'Timeout while waiting; upstream said export size limit unknown' }],
         error: null,
@@ -965,7 +970,7 @@ describe('connector-health (SCRUM-1146)', () => {
     // survive the anchoring fix — a lowercase-at-start message still counts.
     it('a lowercase-at-start "drive file access denied" last_error still reads file_access_not_granted (case-insensitive, S5850)', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'dead', last_error: 'drive file access denied: appNotAuthorizedToFile' }],
         error: null,
@@ -1024,7 +1029,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('outranks file_access_not_granted — the legacy grant is the actual cause of that symptom', async () => {
       integrationsList.mockResolvedValueOnce({ data: [legacyGrantDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({
         data: [{ status: 'dead', last_error: 'Drive file access denied: appNotAuthorizedToFile' }],
         error: null,
@@ -1171,7 +1176,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a gap event within the lookback window reads degraded/changes_gap with both bounds in last_error', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
@@ -1187,7 +1192,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('no gap event at all reads connected/none (unaffected by this signal)', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({ data: [], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
@@ -1197,7 +1202,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a gap event OUTSIDE the lookback window is not reported', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       // The query itself is window-bounded (a gte('created_at', cutoff)
       // filter at the DB layer), so an out-of-window row is simply never
       // returned by the mock — this proves the CALLER treats an empty
@@ -1211,7 +1216,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a gap event for a DIFFERENT integration does not leak onto this one', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({ data: [gapRow({ target_id: 'some-other-integration' })], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
@@ -1221,7 +1226,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('outranks the generic fetch_job_failures reason (data loss outranks a retryable fetch error)', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
       driveFetchJobFailuresList.mockResolvedValueOnce({ data: [{ status: 'dead', last_error: 'some unrelated error' }], error: null });
       const ctx = buildRes();
@@ -1235,7 +1240,7 @@ describe('connector-health (SCRUM-1146)', () => {
         data: [healthyDriveRow({ last_token_advanced_at: '2020-01-01T00:00:00Z' })],
         error: null,
       });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({ data: [gapRow()], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
@@ -1245,7 +1250,7 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('never puts a token or raw JSON blob in last_error — only the two ISO bounds', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({
         data: [gapRow({ details: JSON.stringify({ gap_start: '2026-09-20T10:00:00.000Z', gap_end: '2026-09-20T10:05:00.000Z', reason: 'pageTokenInvalid', channel_token: 'super-secret-token-should-never-appear' }) })],
         error: null,
@@ -1260,12 +1265,124 @@ describe('connector-health (SCRUM-1146)', () => {
 
     it('a malformed details payload degrades gracefully (still flags changes_gap, does not throw)', async () => {
       integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
-      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { folder_id: 'watched' } }], error: null });
+      driveRulesList.mockResolvedValueOnce({ data: [{ id: 'rule-1', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
       driveGapEventsList.mockResolvedValueOnce({ data: [gapRow({ details: 'not valid json{{' })], error: null });
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as { connectors: Array<{ id: string; health_reason: string | null }> };
       expect(body.connectors.find((c) => c.id === 'google_drive')?.health_reason).toBe('changes_gap');
+    });
+
+    it('keeps failures isolated per enabled rule and clears only that rule on recovery', async () => {
+      integrationsList
+        .mockResolvedValueOnce({ data: [healthyDriveRow()], error: null })
+        .mockResolvedValueOnce({ data: [], error: null })
+        .mockResolvedValueOnce({ data: [healthyDriveRow()], error: null })
+        .mockResolvedValueOnce({ data: [], error: null });
+      const rules = [
+        { id: 'rule-a', trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'a' }] } },
+        { id: 'rule-b', trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'b' }] } },
+      ];
+      driveRulesList
+        .mockResolvedValueOnce({ data: rules, error: null })
+        .mockResolvedValueOnce({ data: rules, error: null });
+      driveMirrorStatesRpc.mockResolvedValueOnce({ data: [
+        { target_id: 'rule-a', event_type: 'drive_folder_mirror_recovered' },
+        { target_id: 'rule-b', event_type: 'drive_folder_mirror_failed' },
+      ], error: null });
+      const failed = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), failed.res);
+      expect(driveMirrorStatesRpc).toHaveBeenCalledTimes(1);
+      expect(driveMirrorStatesRpc).toHaveBeenCalledWith(
+        'get_latest_drive_folder_mirror_states',
+        { p_org_id: ORG_ID, p_rule_ids: ['rule-a', 'rule-b'] },
+        expect.any(AbortSignal),
+      );
+      expect((failed.body as { connectors: Array<{ id: string; health_reason: string }> }).connectors
+        .find(({ id }) => id === 'google_drive')?.health_reason).toBe('folder_mirror_failed');
+
+      driveMirrorStatesRpc.mockResolvedValueOnce({ data: [
+        { target_id: 'rule-a', event_type: 'drive_folder_mirror_recovered' },
+        { target_id: 'rule-b', event_type: 'drive_folder_mirror_recovered' },
+      ], error: null });
+      const recovered = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), recovered.res);
+      expect((recovered.body as { connectors: Array<{ id: string; health_reason: string }> }).connectors
+        .find(({ id }) => id === 'google_drive')?.health_reason).toBe('none');
+    });
+
+    it('accepts a single JSON envelope with more than the PostgREST row cap', async () => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      const rules = Array.from({ length: 1_001 }, (_, index) => ({
+        id: `rule-${index}`,
+        trigger_config: { type: 'drive_folder', folder_id: `folder-${index}` },
+      }));
+      driveRulesList.mockResolvedValueOnce({ data: rules, error: null });
+      driveMirrorStatesRpc.mockResolvedValueOnce({
+        data: rules.map(({ id }, index) => ({
+          target_id: id,
+          event_type: index === 1_000 ? 'drive_folder_mirror_failed' : 'drive_folder_mirror_recovered',
+        })),
+        error: null,
+      });
+
+      const result = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), result.res);
+
+      expect(driveMirrorStatesRpc).toHaveBeenCalledTimes(1);
+      expect(result.status).not.toHaveBeenCalledWith(503);
+      expect((result.body as { connectors: Array<{ id: string; health_reason: string }> }).connectors
+        .find(({ id }) => id === 'google_drive')?.health_reason).toBe('folder_mirror_failed');
+    });
+
+    it.each([
+      null,
+      {},
+      [{}],
+      [null],
+      [{ event_type: 'unexpected_event' }],
+      [{ target_id: 'rule-a', event_type: 'unexpected_event' }],
+      [{ target_id: 'not-requested', event_type: 'drive_folder_mirror_failed' }],
+      [
+        { target_id: 'rule-a', event_type: 'drive_folder_mirror_failed' },
+        { target_id: 'rule-a', event_type: 'drive_folder_mirror_recovered' },
+      ],
+    ])('fails closed when an exact per-rule mirror state is malformed: %j', async (data) => {
+      integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+      driveRulesList.mockResolvedValueOnce({
+        data: [{ id: 'rule-a', trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'a' }] } }],
+        error: null,
+      });
+      driveMirrorStatesRpc.mockResolvedValueOnce({ data, error: null });
+      const result = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), result.res);
+      expect(result.status).toHaveBeenCalledWith(503);
+      expect(driveMirrorStatesRpc).toHaveBeenCalledWith(
+        'get_latest_drive_folder_mirror_states',
+        { p_org_id: ORG_ID, p_rule_ids: ['rule-a'] },
+        expect.any(AbortSignal),
+      );
+    });
+
+    it('aborts the exact per-rule sweep at its total deadline and returns unknown health', async () => {
+      vi.useFakeTimers();
+      try {
+        integrationsList.mockResolvedValueOnce({ data: [healthyDriveRow()], error: null });
+        driveRulesList.mockResolvedValueOnce({
+          data: [{ id: 'rule-a', trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'a' }] } }],
+          error: null,
+        });
+        driveMirrorStatesRpc.mockImplementationOnce((_name: string, _args: unknown, signal: AbortSignal) => new Promise((resolve) => {
+          signal.addEventListener('abort', () => resolve({ data: null, error: new Error('aborted') }), { once: true });
+        }));
+        const result = buildRes();
+        const pending = handleConnectorHealth(USER_ID, buildReq(), result.res);
+        await vi.advanceTimersByTimeAsync(3_001);
+        await pending;
+        expect(result.status).toHaveBeenCalledWith(503);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
@@ -1304,7 +1421,7 @@ describe('Drive health across multiple accounts', () => {
   });
 
   it('reports a stalled active account even when the newest account has a fresh cursor', async () => {
-    driveRulesList.mockResolvedValue({ data: [{ id: 'rule', trigger_config: { folder_id: 'watched' } }], error: null });
+    driveRulesList.mockResolvedValue({ data: [{ id: 'rule', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
     const stalled = connection('00000000-0000-4000-8000-000000000003', {
       connected_at: '2026-09-13T00:00:00Z', last_token_advanced_at: '2026-01-01T00:00:00Z',
     });
@@ -1314,7 +1431,7 @@ describe('Drive health across multiple accounts', () => {
   });
 
   it('uses renewal before cursor and fetch failures across different active accounts', async () => {
-    driveRulesList.mockResolvedValue({ data: [{ id: 'rule', trigger_config: { folder_id: 'watched' } }], error: null });
+    driveRulesList.mockResolvedValue({ data: [{ id: 'rule', trigger_config: { type: 'drive_folder', folder_id: 'watched' } }], error: null });
     driveFetchJobFailuresList.mockResolvedValue({ data: [{ status: 'failed' }], error: null });
     const stalled = connection('00000000-0000-4000-8000-000000000003', {
       last_token_advanced_at: '2026-01-01T00:00:00Z',
@@ -1409,7 +1526,7 @@ describe('Drive health across multiple accounts', () => {
   it('finds a real folder binding after an empty rule on a later short page', async () => {
     driveRulesPages
       .mockResolvedValueOnce({ data: [{ trigger_config: {} }], error: null })
-      .mockResolvedValueOnce({ data: [{ trigger_config: { drive_folders: [{ folder_id: 'watched' }] } }], error: null });
+      .mockResolvedValueOnce({ data: [{ trigger_config: { drive_folders: [{ type: 'drive_folder', folder_id: 'watched' }] } }], error: null });
     const stale = connection('00000000-0000-4000-8000-000000000007', { last_token_advanced_at: '2026-01-01T00:00:00Z' });
     expect(await readDrive([stale])).toMatchObject({ state: 'degraded', health_reason: 'cursor_stale' });
     expect(driveRulesPages.mock.calls.map((call) => call[0])).toEqual([0, 1, 2]);

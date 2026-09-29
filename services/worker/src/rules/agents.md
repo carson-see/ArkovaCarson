@@ -2,6 +2,16 @@
 
 Rules engine: trigger evaluation, config validation, and input sanitization for automated document processing rules.
 
+## 2026-09-27 — Drive legacy binding discriminator is mandatory
+
+The singular legacy binding remains supported only as
+`{ type: 'drive_folder', folder_id: '<id>' }`. `folder_id` without that
+discriminator is rejected by `TriggerConfigWorkspaceFileModified`, and the
+evaluator also fails closed for malformed persisted rows so a rejected binding
+cannot degrade into an unscoped match. Release still requires a metadata count
+and repair plan for any pre-existing malformed rows; do not silently normalize
+ambiguous persisted JSON at read time.
+
 ## Files
 
 - **evaluator.ts** — Pure decision function: given an event + rule config, decides whether a rule fires and which action to schedule. No I/O. Supports triggers: `ESIGN_COMPLETED`, `WORKSPACE_FILE_MODIFIED`, `CONNECTOR_DOCUMENT_RECEIVED`, `MANUAL_UPLOAD`, `SCHEDULED_CRON`, `QUEUE_DIGEST`, `EMAIL_INTAKE`.

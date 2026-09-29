@@ -1,5 +1,14 @@
 # agents.md — services/worker/src/api/
 
+## 2026-09-28 — bulk activation preserves uncertain provider outcomes
+
+`deliverBulkActivationOnce` records `failed/provider_rejected` only for a
+definite rejection reported by the real email wrapper. Unknown outcomes retain
+the existing `sending` claim and return `recipient_activation_delivery_pending`;
+duplicate calls do not resend. Acknowledged success still records `sent`.
+This changes no schema or retry authority. Provider reconciliation remains an
+operator action; an uncertain response is not proof of non-delivery.
+
 ## 2026-09-21 — `connector-health.ts` gains `reconnect_required_scope_change` (SCRUM-5287/SCRUM-2903/SCRUM-2330 drive.readonly cutover)
 
 New `HealthReason`, added alongside the `oauth/drive.ts` cutover from `drive.file` to `drive.readonly`
@@ -455,6 +464,8 @@ checking. Per the DON'T rule in `services/worker/agents.md`: don't reintroduce
 
 Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor operations, proof packets, audit events, compliance, rules CRUD, treasury, and the v1/v2 versioned sub-APIs.
 
+Agent lifecycle writes use the versioned transactional outbox RPCs. Explicit ComputeID admission scopes inside the passport allowlist must all fit the locked caller API-key ceiling or the request returns `delegation_scope_exceeded`; omitted scopes use the non-empty eligible intersection of provider defaults and caller authority. Machine audit rows never impersonate the owning user: `actor_id` remains NULL and the API-key id/prefix live in structured audit details.
+
 | File | Purpose |
 |------|---------|
 | `_org-auth.ts` | Shared org-auth helpers for service_role handlers (single source of truth for org_id scoping). `getCallerProfile`/`getCallerOrgId`, `isCallerOrgAdmin` (org_members owner/admin OR profile ORG_ADMIN/platform-admin), and `isUserMemberOfOrg(target, org)` (SCRUM-1863 — the cross-org gate for admin-acts-on-member flows; true if an `org_members` row OR `profiles.org_id` matches; fails closed). Each lookup also has a `*Result` variant (`getCallerProfileResult` / `getCallerOrgIdResult` / `isCallerOrgAdminResult` / `isUserMemberOfOrgResult`) returning `{ value, error }`: the boolean/string forms FAIL CLOSED (DB error → falsy), while `*Result` surfaces an operational `error` so a handler can return **500** instead of masking a fault as **403** (PR #1045 review, mirrors #1029). `isCallerOrgAdmin` now explicitly captures + logs the `org_members` lookup error it previously swallowed. `getCallerProfileResult` (2026-08-23, SCRUM-3514) is the `*Result` sibling `getCallerProfile` never had — added for `middleware/requireScopeAnyAuth.ts`, which derives a JWT caller's scope grant from their role and must not read a transient lookup failure as an empty grant. Tested in `_org-auth.test.ts`. |
@@ -771,3 +782,22 @@ distinguishes a genuine DB error looking up the org's active connection from
 (retryable — the next save should try again), the latter stays
 `'skipped_no_connection'` (a legitimate terminal state; retrying changes
 nothing until the org connects). See `connectors/agents.md`'s matching entry.
+## 2026-09-27 — bounded Drive mirror-health state lookup
+
+Connector health loads the newest failed/recovered marker for all enabled
+Drive-bound rules through service-role-only
+`get_latest_drive_folder_mirror_states`. The RPC uses `DISTINCT ON` inside
+Postgres, so one noisy rule cannot hide another behind a PostgREST row cap and
+the page no longer issues one query per rule. The handler accepts only
+requested rule ids and the two canonical event names; RPC errors, duplicates,
+unknown ids, or malformed rows keep the complete health response fail-closed.
+
+## 2026-09-27 — enable-only rule patches revalidate stored configuration
+
+`handleUpdateRule` validates the merged stored rule whenever a patch enables
+it, even when the request contains only `{ enabled: true }`. This prevents a
+legacy or directly-written malformed trigger/action configuration from being
+reactivated without passing the current schemas. Valid legacy Drive rules that
+use `type: 'drive_folder'` plus `folder_id` remain accepted. The connector
+conflict guard still performs its separate just-before-write reread; stored
+configuration validation does not replace that concurrency check.

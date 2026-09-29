@@ -14,6 +14,7 @@ const historicalGuide = readRepoFile('docs/guides/API_GUIDE.md');
 const sdkReadme = readRepoFile('packages/sdk/README.md');
 const pyReadme = readRepoFile('packages/arkova-py/README.md');
 const edgeManifest = readRepoFile('services/edge/server.json');
+const mcpToolsSource = readRepoFile('services/edge/src/mcp-tools.ts');
 
 describe('API/MCP public docs denylist', () => {
   it('keeps canonical docs on public_id and away from internal database ids', () => {
@@ -25,7 +26,10 @@ describe('API/MCP public docs denylist', () => {
   });
 
   it('documents MCP as read-only by default and does not publish anchor_document in the launch manifest', () => {
-    expect(mcpTools).toContain('sixteen default launch tools plus three conditionally registered submission-lifecycle tools');
+    const conditional = new Set(['arkova_anchor_document', 'arkova_get_submission_status', 'arkova_import_rows']);
+    const launchToolNames = [...mcpToolsSource.matchAll(/\bname:\s*'([a-z_]+)'/g)]
+      .map((match) => match[1]).filter((name) => !conditional.has(name));
+    expect(mcpTools).toContain(`exposes ${launchToolNames.length} default launch tools plus three conditionally registered submission-lifecycle tools`);
     expect(mcpTools).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
     expect(apiReadme).toContain('MCP launch is read-only by default');
     expect(edgeManifest).not.toContain('"anchor_document"');

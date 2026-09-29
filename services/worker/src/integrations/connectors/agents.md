@@ -2,6 +2,17 @@
 
 _Last updated: 2026-09-26 (`drive-folder-mirror.ts` — `loadActiveDriveConnection` distinguishes a retryable DB error from a legitimate "no connection"; the caller (`rules-crud.ts`) awaits the mirror instead of firing it after the response — review P2 follow-up on PR #3086)._
 _Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
+
+## 2026-09-27 — Drive rule attribution recovery
+
+Worker-created rules persist `created_by_user_id`. An org-admin connector re-save atomically claims only a null creator and uses that authenticated admin for the awaited mirror. Scheduled reconciliation reports null creators as `needsAdminRepair` and stays non-green until that visible re-save succeeds. Legacy singular `folder_id` is accepted only with `type: drive_folder`; named `drive_folders[]` entries win de-duplication and remain capped by the schema.
+
+An audit-state write failure remains a retryable reconciliation failure. A
+successful folder upsert without its durable failed/recovered marker would
+leave the connector card stale while the shared job reported success; the
+synthetic `mirror_health_state_write_failed` outcome deliberately makes the
+hourly runner retry. This is a durable-observability postcondition, not a
+per-folder content failure to suppress.
 _Last updated: 2026-09-21 (`drive-changes-processor.ts` 410/404 cursor re-bootstrap + `drive-changes-runner.ts` per-integration single-flight lease — SCRUM-2903/3661/5094/2330 fields-mask incident follow-up)._
 _Last updated: 2026-09-13 (`drive-subscription-renewal.ts` — null-cursor bootstrap; the invariant is now "never OVERWRITE", not "never touch")._
 
@@ -686,3 +697,14 @@ superseded by `api/v1/integrations/drive-oauth.ts` + KMS/`org_integrations`.
 already handles Microsoft Graph), and `connector_artifact` is the
 provider-neutral sink both Drive and DocuSign write to. Build the OneDrive
 adapter against those, not against anything deleted here.
+# 2026-09-27 — AR20-16 selected Drive-folder recovery
+
+`drive-folder-mirror.ts` now reports a stale `connector_connection_id` refresh failure as `outcome: 'error'`; it requires exactly one affected row and applies the same check to a concurrent-insert winner. `drive-folder-reconciliation.ts` is the bounded, source-of-truth retry used by the hourly Drive maintenance runner. It re-reads every candidate by id, original org, enabled state, and trigger immediately before writes, validates persisted JSON against `TriggerConfigWorkspaceFileModified` and its three-folder cap, then calls the tenant-scoped/idempotent mirror helper. Invalid or excess config is diagnosed and fails the pass without partial mirroring. One stable-id page of 100 is considered per run, but a cooperative eight-minute total-run deadline can stop earlier; partial counters travel on `DriveFolderReconciliationError`. Page rotation is eventually complete for a stable population; do not claim unconditional fairness during sustained churn. A disable after the authoritative read remains a small non-transactional race. Rule creators may be null after migration 0462; never invent an actor.
+
+Correction (2026-09-27 review): a disconnected tenant, null rule creator, or invalid persisted selection is a visible per-rule repair state, not a transient failure of the shared hourly job. Those states remain in the returned/logged counters without forcing every organization through Scheduler retries. Scan/reread/mirror transport failures and the cooperative deadline still fail the run. Candidate paging is filtered in PostgREST to the connector-managed Google Drive action tag. `parseDriveFolderBindings` is the shared type-gated, array-first, deduplicated parser used by Drive processing, rule evaluation, health, and mirroring; keep the fault-injection vendor copy behavior aligned.
+
+The per-rule authoritative-read/validation and mirror/outcome blocks live in
+private helpers to keep the orchestration readable and below the Sonar
+complexity threshold. Their ordering and shared-summary mutation are part of
+the existing behavior; do not move deadline checks into those helpers or
+replace the awaited mirror with background work.

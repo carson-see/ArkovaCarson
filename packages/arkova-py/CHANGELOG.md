@@ -3,6 +3,14 @@
 All notable changes to the `arkova` Python SDK. This file starts at 2.2.1; for
 anything earlier, see `git log -- packages/arkova-py/`.
 
+## 2.6.0
+
+- Add matching synchronous and asynchronous generic agent lifecycle methods and ComputeID passport admission.
+- Add typed request/result models, local input validation, safe nested API errors and strict one-time-key response parsing. Lifecycle mutations are attempted once.
+- Preserve complete single-leaf proof bundles. An empty Merkle branch is
+  accepted only when `leaf_count=1`, `merkle_index=0`, and the fingerprint
+  equals the root; incoherent empty branches still fail closed to `None`.
+
 ## 2.5.0
 
 - Add synchronous and asynchronous `anchor_import()` for canonical 1–100 row spreadsheet imports. Inputs contain fingerprints and metadata only; write requests are never automatically retried.
