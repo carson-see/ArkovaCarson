@@ -92,10 +92,34 @@ const MAX_EIN_LENGTH = 32;
  * correct answer is a refusal, not a CAS that can never match.
  */
 const VERIFICATION_SUPERSEDED = 'verification_superseded';
+const FULLY_VERIFIED_DETAILS = 'Organization fully verified (EIN + domain)';
 
 /** The affected-row count of an `.update(...).select(...)`, NULL-safe. */
 function affectedRowCount(rows: unknown): number {
   return Array.isArray(rows) ? rows.length : 0;
+}
+
+/** One audit row for a verification step. Never pass the EIN or a code here. */
+async function auditOrgVerification(
+  userId: string,
+  orgId: string,
+  eventType: string,
+  details: string,
+): Promise<void> {
+  await db.from('audit_events').insert({
+    actor_id: userId,
+    org_id: orgId,
+    event_type: eventType,
+    event_category: 'ADMIN',
+    target_type: 'organization',
+    target_id: orgId,
+    details,
+  });
+}
+
+/** The 409 every compare-and-swapped grant answers when the row moved under it. */
+function respondSuperseded(res: Response, message: string): void {
+  res.status(409).json({ error: message, code: VERIFICATION_SUPERSEDED });
 }
 
 /**
@@ -179,7 +203,19 @@ async function requireAdminCaller(
  * POST /api/v1/org/verify-ein
  *
  * Submit EIN/Tax ID for organization verification.
- * Checks for duplicates. Sets verification to PENDING.
+ * Checks for duplicates. If the org's domain is not yet verified, sets
+ * verification to PENDING (unchanged path). If the domain IS already
+ * verified, this submission is what completes verification — grants
+ * VERIFIED instead of unconditionally resetting to PENDING.
+ *
+ * Fixes the "domain-first dead-end" documented in this folder's agents.md
+ * (2026-08-11 entry): before this, an org that verified its domain FIRST
+ * and submitted its EIN SECOND had no self-serve path forward — this
+ * handler always wrote PENDING regardless of domain state, and
+ * confirm-domain (the only promoter) never runs again once the domain is
+ * already verified. A second, related defect this closes: re-submitting an
+ * EIN on an ALREADY-VERIFIED org used to unconditionally demote it back to
+ * PENDING.
  */
 orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) => {
   try {
@@ -210,14 +246,53 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
       return;
     }
 
-    // Update org with EIN and set to PENDING verification
-    const { error: updateError } = await db
+    // Read domain state BEFORE writing: whether this submission grants
+    // VERIFIED (domain already proven) or stays PENDING (domain not yet
+    // proven) depends on it, and re-reading it later would reopen the same
+    // SELECT→UPDATE window the SCRUM-5285 domain CAS above closes.
+    const { data: org, error: orgError } = await db
       .from('organizations')
-      .update({
+      .select('domain, domain_verified, verification_status')
+      .eq('id', orgId)
+      .single();
+
+    if (orgError || !org) {
+      res.status(500).json({ error: 'Failed to fetch organization' });
+      return;
+    }
+
+    const isFullyVerified = !!org.domain_verified;
+
+    // Never demote. An org that is already VERIFIED without a proven domain
+    // (a KYB or operator grant) keeps that status when it adds or corrects an
+    // EIN. The status column is left OUT of the write entirely in that case,
+    // so this branch cannot grant anything: if the status changed between the
+    // read and the write, whatever is in the row stays in the row.
+    const keepsVerified = !isFullyVerified && org.verification_status === 'VERIFIED';
+
+    const updatePayload = keepsVerified
+      ? { ein_tax_id: cleanEin }
+      : {
         ein_tax_id: cleanEin,
-        verification_status: 'PENDING',
-      })
+        verification_status: isFullyVerified ? 'VERIFIED' : 'PENDING',
+      };
+
+    const baseUpdate = db
+      .from('organizations')
+      .update(updatePayload)
       .eq('id', orgId);
+
+    // Granting VERIFIED here is the same class of TOCTOU as the domain
+    // grant in confirm-domain (SCRUM-5285 above): CAS-guard on BOTH halves
+    // of what the read proved — the domain is STILL verified, and it is
+    // STILL the same domain — and ask PostgREST which rows actually
+    // changed. The otherwise-path (still PENDING) is unchanged: a single
+    // `.eq('id', orgId)` update, no row-count check, exactly as before.
+    const { data: updatedRows, error: updateError } = await (
+      isFullyVerified
+        ? baseUpdate.eq('domain_verified', true).eq('domain', org.domain).select('id')
+        : baseUpdate
+    );
 
     if (updateError) {
       logger.error({ error: updateError }, 'Failed to update org EIN');
@@ -225,20 +300,36 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
       return;
     }
 
-    // Log audit event (never log the actual EIN)
-    await db.from('audit_events').insert({
-      actor_id: userId,
-      org_id: orgId,
-      event_type: 'ORG_EIN_SUBMITTED',
-      event_category: 'ADMIN',
-      target_type: 'organization',
-      target_id: orgId,
-      details: 'EIN/Tax ID submitted for verification',
+    if (isFullyVerified && affectedRowCount(updatedRows) === 0) {
+      // The domain was un-verified (or changed) between the read above and
+      // this write. Do NOT emit the audit row and do NOT answer 200 — the
+      // caller must know the grant did not land and restart.
+      logger.warn({ orgId }, 'EIN submission superseded by a concurrent domain change');
+      respondSuperseded(
+        res,
+        'The organization domain changed before this submission could complete verification. Start domain verification again.',
+      );
+      return;
+    }
+
+    // The audit row never carries the EIN itself.
+    await auditOrgVerification(
+      userId,
+      orgId,
+      isFullyVerified ? 'ORG_VERIFIED' : 'ORG_EIN_SUBMITTED',
+      isFullyVerified ? FULLY_VERIFIED_DETAILS : 'EIN/Tax ID submitted for verification',
+    );
+
+    logger.info({ orgId, fullyVerified: isFullyVerified }, 'Organization EIN submitted for verification');
+
+    res.json({
+      status: isFullyVerified || keepsVerified ? 'VERIFIED' : 'PENDING',
+      message: isFullyVerified
+        ? 'Organization fully verified!'
+        : keepsVerified
+          ? 'EIN saved. Your organization remains verified.'
+          : 'EIN submitted. Complete domain verification to finish.',
     });
-
-    logger.info({ orgId }, 'Organization EIN submitted for verification');
-
-    res.json({ status: 'PENDING', message: 'EIN submitted. Complete domain verification to finish.' });
   } catch (error) {
     logger.error({ error }, 'Failed to verify org EIN');
     res.status(500).json({ error: 'Internal server error' });
@@ -496,24 +587,19 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
       // Nothing was granted. Do NOT emit the audit row and do NOT answer 200 —
       // the caller must know the proof no longer binds and restart.
       logger.warn({ orgId }, 'Domain verification confirm superseded by a concurrent row change');
-      res.status(409).json({
-        error: 'The organization domain or verification code changed before this confirmation landed. Start domain verification again.',
-        code: VERIFICATION_SUPERSEDED,
-      });
+      respondSuperseded(
+        res,
+        'The organization domain or verification code changed before this confirmation landed. Start domain verification again.',
+      );
       return;
     }
 
-    await db.from('audit_events').insert({
-      actor_id: userId,
-      org_id: orgId,
-      event_type: isFullyVerified ? 'ORG_VERIFIED' : 'ORG_DOMAIN_VERIFIED',
-      event_category: 'ADMIN',
-      target_type: 'organization',
-      target_id: orgId,
-      details: isFullyVerified
-        ? 'Organization fully verified (EIN + domain)'
-        : 'Organization domain verified via email',
-    });
+    await auditOrgVerification(
+      userId,
+      orgId,
+      isFullyVerified ? 'ORG_VERIFIED' : 'ORG_DOMAIN_VERIFIED',
+      isFullyVerified ? FULLY_VERIFIED_DETAILS : 'Organization domain verified via email',
+    );
 
     logger.info({ orgId, fullyVerified: isFullyVerified }, 'Domain verification confirmed');
 

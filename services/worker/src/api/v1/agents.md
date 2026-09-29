@@ -2041,3 +2041,64 @@ exhausted recovery or wrong state is `409`, and logs contain only a validated
 outbox UUID plus a bounded SQL code—never payload, secret, or stored failure
 text. The in-process webhook retry timer may claim the row after commit, so
 operators must record state promptly rather than expect it to remain pending.
+
+## 2026-09-29 — `verify-ein` completes verification when the domain is already verified (domain-first dead-end, closed)
+
+The 2026-08-11 entry above flagged this as an open follow-up ("Domain-first
+dead-end"): `confirm-domain` was the only promoter to `VERIFIED` and checked
+`ein_tax_id` at confirm time, so an org that verified its domain FIRST and
+submitted its EIN SECOND had no self-serve path forward — `verify-ein`
+unconditionally wrote `PENDING` regardless of domain state. Confirmed live:
+the production "Arkova" org (the sole `VERIFIED` row in the two-grade census
+above) had its domain verified 2026-03-27 and its EIN submitted 2026-09-10,
+and stayed `PENDING` throughout, refusing every connector OAuth
+(`requireVerifiedOrg`) with `org_unverified`.
+
+`verify-ein` now reads `domain, domain_verified` (same statement style as the
+domain-verification reads above) BEFORE writing. When `domain_verified` is
+already true, the write grants `verification_status: 'VERIFIED'` instead of
+`'PENDING'`, emits `ORG_VERIFIED` (details `'Organization fully verified (EIN
++ domain)'`, byte-identical to confirm-domain's fully-verified audit row)
+instead of `ORG_EIN_SUBMITTED`, and the response is `{ status: 'VERIFIED',
+message: 'Organization fully verified!' }`. The not-yet-verified path is
+byte-identical to before: `PENDING`, `ORG_EIN_SUBMITTED`, same message.
+
+**Second defect, same handler, closed in the same change:** re-submitting an
+EIN on an ALREADY-VERIFIED org used to unconditionally demote it back to
+`PENDING` — the 2026-08-11 entry's "Provider-status stickiness" follow-up,
+though that follow-up was scoped to provider-granted status; this closes the
+self-serve-granted case, which is the only one `verify-ein` can ever observe
+locally (a provider-granted `VERIFIED` row also reads `domain_verified` from
+however KYB stamped it, so the same branch covers both without distinguishing
+provenance — it grants on domain state, never re-derives from
+`verification_status` itself, so there is nothing here that reads or writes
+a `kyb_*` column; the KYB provenance ratchet in `orgVerification.test.ts`
+still covers this route).
+
+**Same CAS discipline as the SCRUM-5285 domain grant above, applied to the
+EIN write.** The read-then-write gap is the identical TOCTOU shape: an org
+admin's domain could be un-verified (or changed) between this handler's read
+and its write. The VERIFIED-granting branch CAS-guards the UPDATE on BOTH
+`.eq('domain_verified', true)` and `.eq('domain', <the domain just read>)`
+(in addition to `.eq('id', orgId)`), reads the affected-row list back via
+`.select('id')`, and answers 409 `verification_superseded` with NO audit
+row when zero rows changed — never a hollow 200. The not-yet-verified branch
+is deliberately NOT given this treatment: it is unconditionally correct
+regardless of what changed concurrently, so a CAS predicate there would only
+be an unreachable refusal, same reasoning as the null-domain refusal in the
+domain routes above.
+
+The EIN itself is never logged or audited on any branch, exactly as before
+(Constitution 1.4, L3 Confidential) — pinned by a dedicated test that scans
+every logger call and every audit-insert payload for the raw value.
+
+## 2026-09-29 — `verify-ein` never demotes (follow-on to the domain-first fix above)
+
+An org can be `VERIFIED` without `domain_verified` (KYB webhook, operator
+grant). `POST /verify-ein` used to write `PENDING` for every org whose domain
+was not proven, which would demote those orgs the moment they added an EIN.
+When the row is already `VERIFIED` and the domain is not proven, the handler
+now leaves `verification_status` OUT of the write and audits
+`ORG_EIN_SUBMITTED`, not `ORG_VERIFIED`: it preserves a status another
+authority set and grants nothing itself. Production instances on 2026-09-29:
+HakiChain, Planbok and CyberGlobal were operator-verified with no proven domain.
