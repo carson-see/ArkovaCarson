@@ -7,8 +7,14 @@
 import { useState, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, Loader2, RefreshCw, Mail, Copy, Check, ExternalLink } from 'lucide-react';
-import { CREDENTIAL_TYPE_LABELS, REVOKED_EXPIRED_ACTIONS, RECORDS_LIST_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, REVOKED_EXPIRED_ACTIONS, RECORDS_LIST_LABELS, VERSION_HISTORY_LABELS } from '@/lib/copy';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
+import {
+  deriveDisplayTitle,
+  deriveDisplayType,
+  deriveConnectorSourceLabel,
+  CONNECTOR_INTERNAL_METADATA_KEYS,
+} from '@/lib/recordDisplay';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -43,6 +49,10 @@ export interface Record {
   issuerName?: string | null;
   /** SCRUM-2940: folder this record is filed under; null = Unfiled. */
   folderId?: string | null;
+  /** Version number in a document's version lineage (1 = original). */
+  versionNumber?: number | null;
+  /** Parent anchor id in the lineage chain, when this is not the root. */
+  parentAnchorId?: string | null;
 }
 
 interface RecordsListProps {
@@ -287,10 +297,20 @@ function buildRecordDescription(record: Record): string | null {
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** Build a rich title from metadata like "Entity Name — Form Type (Date)" */
+/**
+ * Build a rich title from metadata like "Entity Name — Form Type (Date)".
+ *
+ * Readability pass (founder-reported, 2026-09-29, dashboard follow-up): the
+ * final fallback used to be the raw `record.filename`, which is an opaque
+ * connector-internal id (`google_drive:1IxoL...`) for a connector-sourced
+ * record with no entity-name metadata. `deriveDisplayTitle` is the SAME
+ * helper the Record Detail page uses (single source of truth — see
+ * `src/lib/recordDisplay.ts` — SonarCloud duplication budget).
+ */
 function buildRecordTitle(record: Record): string {
   const meta = record.metadata;
-  if (!meta) return record.filename;
+  const fallback = deriveDisplayTitle(record.filename, meta);
+  if (!meta) return fallback;
 
   const entityName = meta.entity_name ?? meta.issuer ?? meta.recipient_name ?? meta.recipient ?? meta.name;
   const formType = meta.form_type ?? meta.credential_type ?? meta.record_type;
@@ -305,7 +325,7 @@ function buildRecordTitle(record: Record): string {
   if (entityName) {
     return String(entityName);
   }
-  return record.filename;
+  return fallback;
 }
 
 /** Status colors matching Precision Engine design */
@@ -317,7 +337,16 @@ const STATUS_BADGE_CLASSES: { [key: string]: string } = {
   EXPIRED: 'bg-[#859398]/10 text-[#859398] border border-[#859398]/30',
 };
 
-/** Internal keys filtered from metadata display (shown elsewhere in the card) */
+/**
+ * Internal keys filtered from card metadata display (shown elsewhere on the
+ * card, or never meant for this surface at all).
+ *
+ * `CONNECTOR_INTERNAL_METADATA_KEYS` (2026-09-29 dashboard follow-up): a
+ * connector record's card used to dump all ten of these raw identifiers
+ * because this set only denied a handful of UNRELATED keys — the connector
+ * fields were never on it. They belong in the Record Detail page's collapsed
+ * "Technical details" disclosure, never on a card.
+ */
 const HIDDEN_META_KEYS = new Set([
   'pipeline_source', 'source_url', 'abstract', 'description', 'summary',
   'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id',
@@ -325,6 +354,7 @@ const HIDDEN_META_KEYS = new Set([
   // Shown in description line
   'file_description', 'form_type', 'filing_date', 'period_of_report',
   'entity_name', 'issuer', 'issued_date',
+  ...CONNECTOR_INTERNAL_METADATA_KEYS,
 ]);
 
 function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowProps>) {
@@ -332,12 +362,27 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
   const StatusIcon = status.icon;
   const title = buildRecordTitle(record);
   const description = buildRecordDescription(record);
-  const credentialLabel = record.credentialType
-    ? CREDENTIAL_TYPE_LABELS[record.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? record.credentialType
-    : null;
   const meta = record.metadata;
+  // Readability pass (2026-09-29 dashboard follow-up): a connector record's
+  // credential type is typically the AI-extraction/connector default (or
+  // absent) rather than anything a human chose — show the MIME-derived
+  // truthful type instead, plus a small "Google Drive"/"DocuSign" source
+  // label, when the record is connector-sourced.
+  const connectorSourceLabel = deriveConnectorSourceLabel(meta?.connector_source);
+  const truthfulType = connectorSourceLabel
+    ? deriveDisplayType((meta?.mime_type ?? meta?.content_type) as string | undefined, meta)
+    : null;
+  const credentialLabel = truthfulType ?? (record.credentialType
+    ? CREDENTIAL_TYPE_LABELS[record.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? record.credentialType
+    : null);
   const sourceUrl = meta?.source_url as string | undefined;
   const pipelineSource = meta?.pipeline_source as string | undefined;
+  // Version indication (2026-09-29 dashboard follow-up): every version of a
+  // document remains its own visible row (superseded records remain valid
+  // evidence — never hidden), each visually marked with its position in the
+  // lineage.
+  const showVersionChip = (record.versionNumber ?? 1) > 1;
+  const isSuperseded = record.status === 'SUPERSEDED';
 
   // Filter metadata for display
   // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* keys must never render.
@@ -364,6 +409,29 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
             {credentialLabel && (
               <Badge className="bg-[#242b32] text-[#bbc9cf] border-[#3c494e]/30 text-[10px] font-mono">
                 {credentialLabel.toLowerCase()}
+              </Badge>
+            )}
+            {connectorSourceLabel && (
+              <span className="text-[10px] text-[#859398] uppercase tracking-wider" data-testid="record-source-label">
+                {connectorSourceLabel}
+              </span>
+            )}
+            {showVersionChip && (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-mono"
+                data-testid="record-version-chip"
+              >
+                {VERSION_HISTORY_LABELS.VERSION_PREFIX} {record.versionNumber}
+              </Badge>
+            )}
+            {isSuperseded && (
+              <Badge
+                variant="outline"
+                className="text-[10px] text-[#859398] border-[#859398]/30"
+                data-testid="record-superseded-chip"
+              >
+                {VERSION_HISTORY_LABELS.REPLACED_BY_NEWER}
               </Badge>
             )}
             {pipelineSource && (

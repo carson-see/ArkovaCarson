@@ -1,3 +1,59 @@
+## 2026-09-29 (PR #3190 review) — `useAnchorVersions.ts` stale-lineage fix
+
+**Finding 3 — stale lineage across a route change without remount.** `useAnchorVersions`'s
+resolved chain used to be plain `versions` state, cleared only when a NEW effect's `run()`
+finished — a route change from record A to record B (RecordDetailPage stays mounted, only the
+`:id` param and `useAnchor` result change) left A's already-resolved lineage in state for the
+whole window until B's fetch resolved, and if A's slower in-flight request resolved AFTER B's, it
+would OVERWRITE B's correct data with A's stale one. Fixed by keying the stored result
+(`{key, versions}`) by the anchor id it was fetched FOR: the hook's publicly returned `versions`
+is `result.key === currentId ? result.versions : []`, which is a plain derived value computed on
+every render — so it clears the instant `anchor.id` changes, even before the new effect's async
+work starts, with no extra `setState` needed for the clearing itself. A `requestIdRef` generation
+counter additionally drops a response whose request has been superseded by a newer one,
+belt-and-suspenders alongside the effect's existing `cancelled` cleanup flag (which already
+handled the SAME-ordering case but not truly out-of-order resolution robustly enough to rely on
+alone). Tests: `useAnchorVersions.test.ts` gained a `describe('stale-lineage guard ...')` block (2
+cases, TDD red-first — the "clears synchronously" case was confirmed RED pre-fix; the
+"out-of-order resolution" case happened to already pass thanks to the pre-existing `cancelled`
+flag, which is why the key-based fix is a real strengthening, not a no-op).
+`src/pages/RecordDetailPage.stale-lineage.test.tsx` (new) exercises the SAME fix end-to-end
+through the real page (mocking only `@/lib/supabase`), with anchor A given a REAL 2-entry lineage
+(a self-only chain would pass even pre-fix, since `RecordDetailPage`'s existing
+`versions.length > 1 ? versions : undefined` gating already hides that trivially) — confirmed RED
+against the pre-fix hook by temporarily reverting it and re-running both suites.
+
+## PR #3190 follow-up: `usePublicAnchorParent` removed (2026-09-29)
+
+A `usePublicAnchorParent` hook was drafted in this PR. The hook and its test were deleted before merge because the endpoint it fetched has side effects (audit row plus customer webhook per call). See `src/components/verification/agents.md`.
+
+## 2026-09-29 — `useAnchorVersions.ts` (new); `useAnchors.ts`/`usePrivateAnchorList.ts` gain version-lineage columns
+
+`useAnchorVersions(anchor)` (new) walks an anchor's version lineage — up through
+`parent_anchor_id` to the root, then down through every descendant — and returns the full chain
+NEWEST-FIRST (`{ versions: AnchorVersionEntry[], loading }`). Extracted from an ad-hoc
+`useEffect` that used to live directly in `RecordDetailPage.tsx` (see `src/pages/agents.md`).
+That inline version gated the fetch on `version_number > 1 || parent_anchor_id`, which MISSED
+the root/oldest version of a chain once a newer child had already superseded it — exactly the
+founder-reported record (v1, superseded, no parent). This hook always attempts the walk for any
+anchor with an id; a solo record with no relations resolves to a single-entry array (`[self]`),
+and callers gate a visible version UI on `versions.length > 1`, not on an empty-array return.
+`id` is selected (needed for the parent-chain walk, and because this authenticated app's
+established convention is to link records via `recordDetailPath(anchor.id)` everywhere —
+`DashboardPage`/`MyRecordsPage`/`MemberDetailPage`/`useNotifications`); `publicId` is ALSO
+returned for any future public-safe consumer. Tests: `useAnchorVersions.test.ts` (4 cases,
+TDD red-first), including a case that specifically reproduces the founder-reported gap (current
+anchor is version 1, `parentAnchorId: null`, `status: 'SUPERSEDED'`, and a newer child IS found).
+
+2026-09-29 dashboard/list follow-up (coordinator scope addition, same day): `useAnchors.ts`'s
+`fetchAnchorsData`/`mapAnchorToRecord` and `usePrivateAnchorList.ts`'s `ANCHOR_COLUMNS` now both
+select `version_number, parent_anchor_id` alongside the existing card fields, so
+`src/components/records/RecordsList.tsx` / `src/pages/MyRecordsPage.tsx` /
+`src/components/organization/OrgRegistryTable.tsx` can render a version/superseded chip.
+Neither `anchors.id`/`user_id`/`org_id` gained any NEW exposure from this — `parentAnchorId` on
+the `Record` type is only ever used to detect "has a lineage," never rendered or placed in a
+URL from a list surface.
+
 ## 2026-09-25 — `useConnectorHealth.ts` surfaces the SCRUM-1146 health dashboard
 
 `services/worker/src/api/connector-health.ts` already computed a rich `HealthReason`

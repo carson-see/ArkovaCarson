@@ -7,7 +7,6 @@
  * @see P4-TS-03 — Wire AssetDetailView to /records/:id route + real Supabase query
  */
 
-import { useEffect, useState } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -15,6 +14,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchor } from '@/hooks/useAnchor';
+import { useAnchorVersions } from '@/hooks/useAnchorVersions';
 import { useHasCredentialImportEntitlement } from '@/hooks/useHasCredentialImportEntitlement';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
@@ -42,69 +42,17 @@ export function RecordDetailPage() {
   // org-wide grant semantics.
   const hasImportEntitlement = useHasCredentialImportEntitlement();
 
-  // Fetch version lineage when anchor has parent or version > 1
-  const [lineage, setLineage] = useState<{ id: string; versionNumber: number; status: string; createdAt: string; filename: string }[]>([]);
-  useEffect(() => {
-    if (!anchor) return;
-    const hasLineage = anchor.version_number > 1 || anchor.parent_anchor_id;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear lineage when anchor has no version history
-    if (!hasLineage) { setLineage([]); return; }
-
-    // Walk up to find root, then fetch all descendants
-    async function fetchLineage() {
-      // Find root: walk parent chain up
-      let rootId = anchor!.id;
-      let parentId = anchor!.parent_anchor_id;
-      const visited = new Set<string>([rootId]);
-
-      while (parentId) {
-        if (visited.has(parentId)) break;
-        visited.add(parentId);
-        const { data: parent } = await supabase
-          .from('anchors')
-          .select('id, parent_anchor_id')
-          .eq('id', parentId)
-          .is('deleted_at', null)
-          .single();
-        if (!parent) break;
-        rootId = parent.id;
-        parentId = parent.parent_anchor_id;
-      }
-
-      // Now collect all versions: root + descendants via parent_anchor_id chain
-      const versions: { id: string; versionNumber: number; status: string; createdAt: string; filename: string }[] = [];
-
-      // Fetch root
-      const { data: root } = await supabase
-        .from('anchors')
-        .select('id, version_number, status, created_at, filename')
-        .eq('id', rootId)
-        .is('deleted_at', null)
-        .single();
-      if (root) {
-        versions.push({ id: root.id, versionNumber: root.version_number, status: root.status, createdAt: root.created_at, filename: root.filename });
-      }
-
-      // Fetch children iteratively
-      let currentParent = rootId;
-      for (let i = 0; i < 50; i++) { // safety limit
-        const { data: children } = await supabase
-          .from('anchors')
-          .select('id, version_number, status, created_at, filename')
-          .eq('parent_anchor_id', currentParent)
-          .is('deleted_at', null)
-          .order('version_number', { ascending: true })
-          .limit(1);
-        if (!children || children.length === 0) break;
-        const child = children[0];
-        versions.push({ id: child.id, versionNumber: child.version_number, status: child.status, createdAt: child.created_at, filename: child.filename });
-        currentParent = child.id;
-      }
-
-      setLineage(versions);
-    }
-    fetchLineage();
-  }, [anchor]);
+  // Version lineage (readability pass, founder-reported 2026-09-29): this
+  // used to be an ad-hoc effect gated on `version_number > 1 ||
+  // parent_anchor_id`, which MISSED the oldest/root version of a chain once a
+  // newer child had already superseded it — the exact founder-reported
+  // record. `useAnchorVersions` always attempts the walk and returns the full
+  // chain newest-first; AssetDetailView only shows a version banner/list when
+  // it resolves to more than one entry. See src/hooks/useAnchorVersions.ts.
+  const { versions } = useAnchorVersions(
+    anchor ? { id: anchor.id, versionNumber: anchor.version_number, parentAnchorId: anchor.parent_anchor_id, status: anchor.status } : null,
+  );
+  const lineage = versions.length > 1 ? versions : undefined;
 
   const handleSignOut = async () => {
     await signOut();
@@ -249,7 +197,7 @@ export function RecordDetailPage() {
           })(),
           versionNumber: anchor.version_number,
           parentAnchorId: anchor.parent_anchor_id ?? undefined,
-          lineage: lineage.length > 1 ? lineage : undefined,
+          lineage,
         }}
         onBack={handleBack}
         onRenameFile={handleRenameFile}

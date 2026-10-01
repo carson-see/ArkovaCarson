@@ -54,7 +54,8 @@ export function anchorIsVisibleRealtime(row: Pick<AnchorRow, 'deleted_at' | 'met
 type AnchorPartial = Pick<AnchorRow,
   'id' | 'filename' | 'fingerprint' | 'status' | 'created_at' |
   'chain_timestamp' | 'file_size' | 'credential_type' | 'chain_tx_id' |
-  'chain_block_height' | 'public_id' | 'metadata' | 'folder_id'
+  'chain_block_height' | 'public_id' | 'metadata' | 'folder_id' |
+  'version_number' | 'parent_anchor_id'
 >;
 
 /** Map a Supabase anchor row to the UI Record interface. */
@@ -76,6 +77,12 @@ export function mapAnchorToRecord(anchor: AnchorPartial): Record {
     issuerName: meta?.issuer ?? undefined,
     // SCRUM-2940: null = Unfiled (distinct from "not fetched"/undefined).
     folderId: anchor.folder_id ?? null,
+    // 2026-09-29 dashboard follow-up: version lineage for the card's version
+    // chip. Neither `anchors.id` nor `user_id`/`org_id` is exposed by this —
+    // `parentAnchorId` is only ever used to detect "has a lineage", never
+    // rendered or placed in a URL from this list surface.
+    versionNumber: anchor.version_number ?? undefined,
+    parentAnchorId: anchor.parent_anchor_id ?? null,
   };
 }
 
@@ -91,7 +98,7 @@ async function fetchAnchorsData(
 ): Promise<Record[]> {
   let query = supabase
     .from('anchors')
-    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata, folder_id');
+    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata, folder_id, version_number, parent_anchor_id');
 
   // ORG_ADMIN: show all org records; INDIVIDUAL/platform admin: show own records
   if (orgId) {

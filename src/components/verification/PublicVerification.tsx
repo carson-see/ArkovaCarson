@@ -55,6 +55,7 @@ import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCred
 import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
 import { isIssuerAuthenticated, parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import { parseFingerprintSource } from '@/lib/fingerprintSource';
+import { deriveDisplayTitle } from '@/lib/recordDisplay';
 
 interface PublicAnchorData {
   public_id: string;
@@ -183,13 +184,18 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         if (rpcError) {
           setError(rpcError.message);
-          logVerificationEvent({ publicId, method: 'web', result: 'error' });
+          // Fire-and-forget analytics: logVerificationEvent's own try/catch
+          // (src/lib/logVerificationEvent.ts) swallows every failure and never
+          // rejects. The user-facing failure is already handled above via
+          // setError — this call only records the event for the audit trail.
+          void logVerificationEvent({ publicId, method: 'web', result: 'error' });
           return;
         }
 
         if (result.error) {
           setError(result.error);
-          logVerificationEvent({ publicId, method: 'web', result: 'not_found' });
+          // Fire-and-forget — see comment above.
+          void logVerificationEvent({ publicId, method: 'web', result: 'not_found' });
           return;
         }
 
@@ -202,21 +208,32 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         // PENDING anchors are 'verified' (record exists, just not yet secured)
         const logResult = status === 'REVOKED' ? 'revoked'
           : 'verified';
-        logVerificationEvent({
+        // Fire-and-forget — see comment above.
+        void logVerificationEvent({
           publicId,
           method: 'web',
           result: logResult,
         });
       } catch (err) {
+        // A rejected RPC call (network failure, thrown client error) must
+        // never leave the page silently loading or showing stale/"verified"
+        // data — this is the public verification surface, so a swallowed
+        // failure reading as success is the one failure mode that must never
+        // happen. setError below is what actually protects that; the log
+        // call after it is fire-and-forget analytics only.
         setError(err instanceof Error ? err.message : 'Verification failed');
-        logVerificationEvent({ publicId, method: 'web', result: 'error' });
+        void logVerificationEvent({ publicId, method: 'web', result: 'error' });
       } finally {
         setLoading(false);
       }
     }
 
     if (publicId) {
-      fetchVerification();
+      // fetchVerification's own try/catch/finally above guarantees it never
+      // rejects — every failure path (thrown error, rejected RPC) already
+      // calls setError and setLoading(false) before returning. Nothing here
+      // could act on a rejection this promise cannot produce.
+      void fetchVerification();
     }
   }, [publicId]);
 
@@ -419,6 +436,19 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <p className="text-xs text-amber-600 mt-2">
               {ANCHORING_STATUS_LABELS.PENDING_SINCE.replace('{time}', pendingSince)}
             </p>
+          )}
+          {/* A superseded record says plainly that it remains valid evidence
+              (supersede, never revoke). There is deliberately NO link to the
+              other version here: `get_public_anchor` returns neither
+              parent_public_id nor version_number, and the only public source
+              that does, GET /api/v1/verify/:publicId, writes an audit row and
+              dispatches a `credential.verified` webhook to the record owner
+              on every call. A page view must not do that. The link needs the
+              field added to the public projection, as its own reviewed change. */}
+          {isSuperseded && (
+            <div className="mt-3 max-w-sm text-xs text-muted-foreground" data-testid="public-superseded-version-note">
+              <p>{PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID}</p>
+            </div>
           )}
         </div>
       </div>
@@ -843,7 +873,11 @@ function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
   const jsonLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': isEducational ? 'EducationalOccupationalCredential' : 'CreativeWork',
-    'name': data.filename,
+    // Readability pass (founder-reported, 2026-09-29): the same connector
+    // internal-id problem as the detail page's title — a raw
+    // `google_drive:1IxoL...` filename must never become the published
+    // "name" of the credential either.
+    'name': deriveDisplayTitle(data.filename, data.metadata),
     'credentialCategory': credentialType.toLowerCase().replace(/_/g, ' '),
     'url': `https://app.arkova.ai/verify/${data.public_id}`,
     'identifier': data.public_id,

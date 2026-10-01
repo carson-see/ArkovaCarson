@@ -99,6 +99,35 @@ describe('PublicVerification', () => {
     expect(screen.queryByTestId('proof-download')).not.toBeInTheDocument();
   });
 
+  // SonarCloud typescript:S9383 (5 unhandled-promise findings, PR #3190 review):
+  // the fix marks the fire-and-forget logVerificationEvent()/fetchVerification()
+  // calls `void` rather than awaiting them — a rejected RPC call must still
+  // never leave the page silently stuck loading or reading as verified. This
+  // pins the actual safety property: a REJECTED (not merely error-shaped)
+  // get_public_anchor call renders the error state, not a stuck loading
+  // spinner or a false "verified" render.
+  it('renders the error state (never a stuck loading or false-verified state) when the RPC call rejects', async () => {
+    rpcMock.mockRejectedValue(new Error('network unreachable'));
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByText('Verification Failed')).toBeInTheDocument();
+    expect(screen.getByText('network unreachable')).toBeInTheDocument();
+    expect(screen.queryByText('Document Verified')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('credential-renderer')).not.toBeInTheDocument();
+    // Never stuck on the skeleton/loading state either.
+    expect(screen.queryByText('Submitting to network...')).not.toBeInTheDocument();
+  });
+
+  it('renders a generic failure message when the rejection is not an Error instance', async () => {
+    rpcMock.mockRejectedValue('boom');
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByText('Verification Failed')).toBeInTheDocument();
+    expect(screen.getByText('Verification failed')).toBeInTheDocument();
+  });
+
   it('renders PENDING records as processing without proof affordances', async () => {
     rpcMock.mockResolvedValue({
       data: { ...baseAnchor, status: 'PENDING' },
