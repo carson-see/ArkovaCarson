@@ -40,7 +40,10 @@ done
 # Ignore all ambient libpq selectors, including PGHOSTADDR and PGSERVICE.
 # The psql invocation below supplies its newly created socket explicitly.
 for variable in $(compgen -e); do
-  case "$variable" in PG*) unset "$variable" ;; esac
+  case "$variable" in
+    PG*) unset "$variable" ;;
+    *) : ;; # Retain unrelated environment variables.
+  esac
 done
 
 fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/ar20-93-pg.XXXXXXXX")"

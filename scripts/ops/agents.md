@@ -16,6 +16,10 @@ The operator procedure is
 `docs/runbooks/integrations/docusign-0487-rollback.md`, with AR20-93
 Confluence as the canonical decision record.
 
+The negative snapshot mutations target the single captured synthetic row ID;
+they do not issue blanket UPDATE/DELETE statements. Ambient `PG*` settings are
+cleared while unrelated environment variables are explicitly retained.
+
 ## Files
 - **`ensure-pipeline-dashboard-cache-cron.ts`** — ensures the `refresh-pipeline-dashboard-cache` pg_cron job exists with correct schedule (`*/2 * * * *`), support index, and stats function. Builds read-only evidence SQL for auditing.
 - **`ensure-pipeline-dashboard-cache-cron.test.ts`** — colocated tests for the cron management script.

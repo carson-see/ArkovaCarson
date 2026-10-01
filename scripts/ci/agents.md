@@ -1,5 +1,11 @@
 # scripts/ci/agents.md
 
+## 2026-10-01 — Python publication admission
+
+`python-publish-admission.test.ts` runs the actual Python 3.11+ admission helper against event/ref combinations and malformed manifests, and parses the workflow to ensure its existing PyPI publisher consumes the decision before publishing. Manual dispatch at a matching tag must still be validation-only. The hosted workflow uses Python 3.12.
+
+`npm-publish-admission.test.ts` includes the manual publisher's disposable-shell regression in the normal Vitest suite. Its controlled npm executable proves exact-version skip, dry-run behavior, uncertain-query refusal, and exact post-publication readback without a real registry connection.
+
 ## 2026-09-21 — env↔DB fail-open hazard removed from the real tree (PR pending)
 
 `deploy-worker.yml` now sets `ENABLE_SEMANTIC_SEARCH=false` and `ENABLE_AI_FRAUD=false`,

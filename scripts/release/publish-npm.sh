@@ -11,11 +11,10 @@
 # sdks/mcp-server/agents.md for the full history (including the superseded
 # 2026-08-01 `@carsonarkova/sdk` scoped-package attempt).
 #
-# This script is IDEMPOTENT: if a package's current package.json version is
-# already live on the registry, that package's publish step is SKIPPED
-# instead of failing on npm's "cannot publish over previously published
-# version" error. Re-running after a partial failure (e.g. sdk published,
-# mcp-server's tests then failed) only finishes what's left.
+# This script checks every published version, not just the latest dist-tag:
+# an already-live package.json version is SKIPPED. A failed or malformed
+# registry lookup stops before building or publishing. Re-running after a
+# partial failure can finish only the still-unpublished package.
 #
 # Usage:
 #   scripts/release/publish-npm.sh                # live publish, both packages
@@ -108,14 +107,31 @@ PACKAGES=(
   "mcp-server:sdks/mcp-server"
 )
 
-# Compares the local package.json version against what's already live on
-# the registry. Treats "not found on the registry at all" (first-ever
-# publish, or --dry-run against a not-yet-authenticated session) as
-# "not already published" rather than an error.
-already_published() {
-  local npm_name="$1" local_version="$2" live_version
-  live_version="$(npm view "$npm_name" version 2>/dev/null || true)"
-  [[ -n "$live_version" && "$live_version" == "$local_version" ]]
+# Both names already exist on npm. Read their complete version lists so a
+# historical version is recognized even when latest points elsewhere. An
+# E404, auth failure, network failure, or malformed response is uncertain and
+# requires an operator to resolve it before a manual release can continue.
+publication_state() {
+  local npm_name="$1" local_version="$2" versions_json state
+  if ! versions_json="$(npm view "$npm_name" versions --json 2>/dev/null)"; then
+    echo "Cannot confirm published versions for $npm_name; stopping before build/publish." >&2
+    return 1
+  fi
+  if ! state="$(printf '%s' "$versions_json" | node -e '
+    const fs = require("node:fs");
+    const requested = process.argv[1];
+    const version = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(1); }
+    const versions = Array.isArray(raw) ? raw : [raw];
+    if (!version.test(requested) || versions.length === 0
+      || versions.some(v => typeof v !== "string" || !version.test(v))) process.exit(1);
+    process.stdout.write(versions.includes(requested) ? "published" : "absent");
+  ' "$local_version")"; then
+    echo "Invalid version list for $npm_name; stopping before build/publish." >&2
+    return 1
+  fi
+  printf '%s\n' "$state"
 }
 
 publish_one() {
@@ -135,7 +151,9 @@ publish_one() {
   echo
   echo "== $short_name  ($pkg_dir -> npm: $npm_name)"
 
-  if already_published "$npm_name" "$local_version"; then
+  local state
+  state="$(publication_state "$npm_name" "$local_version")" || exit 1
+  if [[ "$state" == published ]]; then
     echo "-- $npm_name@$local_version is already live on npm — skipping (idempotent)"
     return 0
   fi
@@ -179,8 +197,29 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo
-echo "== Confirming published versions"
-npm view arkova version && npm view arkova-mcp-server version
+echo "== Confirming selected exact package versions"
+for entry in "${PACKAGES[@]}"; do
+  short_name="${entry%%:*}"
+  pkg_dir="${entry#*:}"
+  if [[ -n "$ONLY" && "$ONLY" != "$short_name" ]]; then continue; fi
+
+  npm_name="$(node -p 'require(process.argv[1]).name' "$REPO_ROOT/$pkg_dir/package.json")"
+  local_version="$(node -p 'require(process.argv[1]).version' "$REPO_ROOT/$pkg_dir/package.json")"
+  if ! published_version="$(npm view "$npm_name@$local_version" version --json 2>/dev/null)"; then
+    echo "Could not confirm $npm_name@$local_version on the registry. Check propagation before retrying; do not blindly republish." >&2
+    exit 1
+  fi
+  if ! printf '%s' "$published_version" | node -e '
+    const fs = require("node:fs");
+    let observed;
+    try { observed = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(1); }
+    if (observed !== process.argv[1]) process.exit(1);
+  ' "$local_version"; then
+    echo "Registry exact-version readback did not match $npm_name@$local_version; stop and investigate." >&2
+    exit 1
+  fi
+  echo "-- confirmed $npm_name@$local_version"
+done
 
 echo
 echo "== Done."

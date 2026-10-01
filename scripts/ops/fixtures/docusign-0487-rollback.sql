@@ -148,13 +148,15 @@ END $$;
 
 DO $$
 BEGIN
-  UPDATE pre_0487_row_ids SET fingerprint_sha256 = repeat('f', 64);
+  UPDATE pre_0487_row_ids SET fingerprint_sha256 = repeat('f', 64)
+  WHERE id = 'aaaaaaaa-0000-4000-8000-000000000001';
   BEGIN
     PERFORM pg_temp.assert_snapshot(1);
     RAISE EXCEPTION 'wrong-identity snapshot unexpectedly passed';
   EXCEPTION WHEN SQLSTATE 'P9302' THEN NULL;
   END;
-  UPDATE pre_0487_row_ids SET fingerprint_sha256 = repeat('a', 64);
+  UPDATE pre_0487_row_ids SET fingerprint_sha256 = repeat('a', 64)
+  WHERE id = 'aaaaaaaa-0000-4000-8000-000000000001';
 
   INSERT INTO pre_0487_row_ids
   SELECT id, org_id, external_ref, fingerprint_sha256
@@ -247,7 +249,8 @@ COMMIT;
 -- Missing snapshot exercises the SAME guard used by the real transaction.
 DO $$
 BEGIN
-  DELETE FROM pre_0487_row_ids;
+  DELETE FROM pre_0487_row_ids
+  WHERE id = 'aaaaaaaa-0000-4000-8000-000000000001';
   BEGIN
     PERFORM pg_temp.assert_snapshot(1);
     RAISE EXCEPTION 'missing-snapshot guard did not stop';
