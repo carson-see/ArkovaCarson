@@ -183,7 +183,15 @@ export function makeDriveInitialSyncJobDeps(
         .eq('org_id', orgId)
         .eq('folder_id', folderId)
         .maybeSingle();
-      if (error || !data) return null;
+      if (error) {
+        // A failed read is NOT "never started": returning null here would let
+        // a fresh trigger fall through the already-completed guard, reset a
+        // finished folder to in_progress and re-enumerate it. Throw so the
+        // job fails and jobQueue's backoff retries it once the DB recovers.
+        logger.error({ error, orgId, folderId }, 'drive initial sync: state read failed');
+        throw new Error('drive_initial_sync_state_read_failed');
+      }
+      if (!data) return null;
       return { status: (data as { status: 'in_progress' | 'completed' | 'failed' }).status };
     },
 

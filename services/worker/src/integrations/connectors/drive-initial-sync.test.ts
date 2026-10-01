@@ -333,6 +333,18 @@ describe('processDriveInitialSyncJob', () => {
     expect(result).toEqual({ outcome: 'disabled' });
   });
 
+  it('a state-read failure is not treated as "never started": the job fails without resetting state or enumerating', async () => {
+    const { deps, upsertSyncStateInProgress, listFolderFiles, enqueueFileChangedJob } = makeDeps({
+      loadSyncState: vi.fn(async () => {
+        throw new Error('drive_initial_sync_state_read_failed');
+      }),
+    });
+    await expect(processDriveInitialSyncJob(basePayload(), deps)).rejects.toThrow('drive_initial_sync_state_read_failed');
+    expect(upsertSyncStateInProgress).not.toHaveBeenCalled();
+    expect(listFolderFiles).not.toHaveBeenCalled();
+    expect(enqueueFileChangedJob).not.toHaveBeenCalled();
+  });
+
   describe('tenant isolation', () => {
     it('every call the processor makes is scoped to the payload\'s own org — never a different org', async () => {
       const { deps, resolveAccessToken, enqueueFileChangedJob, loadSyncState } = makeDeps({

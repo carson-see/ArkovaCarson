@@ -46,6 +46,7 @@ import { loadDriveAccessToken } from '../integrations/connectors/drive-changes-r
 import { recordAuditEvent } from '../utils/auditEvent.js';
 import { submitJob, processNextJob } from '../utils/jobQueue.js';
 import { withRunLease } from './run-lease.js';
+import { logger } from '../utils/logger.js';
 import {
   makeDriveInitialSyncJobDeps,
   runDriveInitialSyncJobs,
@@ -222,6 +223,25 @@ describe('makeDriveInitialSyncJobDeps', () => {
     const eqCalls = captured.filter((c) => c.table === 'drive_initial_sync_state' && c.method === 'eq').map((c) => c.args);
     expect(eqCalls).toContainEqual(['org_id', ORG_A]);
     expect(eqCalls).toContainEqual(['folder_id', FOLDER]);
+  });
+
+  it('loadSyncState returns null when no state row exists (never started)', async () => {
+    const { db } = makeDb({ syncStateRow: null });
+    const deps = makeDriveInitialSyncJobDeps({ db: db as never });
+    await expect(deps.loadSyncState({ orgId: ORG_A, folderId: FOLDER })).resolves.toBeNull();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('loadSyncState logs and throws on a DB error — a failed read is not "never started"', async () => {
+    const { db } = makeDb({ syncStateError: { message: 'connection reset' } });
+    const deps = makeDriveInitialSyncJobDeps({ db: db as never });
+    await expect(
+      deps.loadSyncState({ orgId: ORG_A, folderId: FOLDER }),
+    ).rejects.toThrow('drive_initial_sync_state_read_failed');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_A, folderId: FOLDER, error: { message: 'connection reset' } }),
+      expect.stringContaining('state read failed'),
+    );
   });
 
   it('upsertSyncStateInProgress upserts on (org_id, folder_id) with status in_progress', async () => {
