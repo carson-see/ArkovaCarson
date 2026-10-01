@@ -1,4 +1,6 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -7,33 +9,26 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8')) as {
   private?: boolean;
   dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
   files?: string[];
   license?: string;
   repository?: { directory?: string };
 };
 const publishing = readFileSync(resolve(packageRoot, 'PUBLISHING.md'), 'utf8');
 
-// Read live, not pinned: packages/sdk's version moves independently of this
-// package (e.g. #3034 bumps it to 3.2.0), and a hardcoded expectation here
-// goes stale the moment it does — exactly the class of drift PUBLISHING.md's
-// runbook must also not encode as an exact pin. See its "release version"
-// section: the published `arkova` dependency must be a caret range
-// (`^X.Y.Z`) against the SDK version this CLI was actually built and tested
-// against, not an exact string copied at authoring time.
-const sdkPackageJsonPath = resolve(packageRoot, '..', 'sdk', 'package.json');
-const sdkManifest = JSON.parse(readFileSync(sdkPackageJsonPath, 'utf8')) as { version: string };
-const expectedReleaseRange = `^${sdkManifest.version}`;
-
 describe('CLI source and release metadata', () => {
-  it('accepts only a complete source or release manifest state', () => {
-    const sourceState = manifest.private === true && manifest.dependencies?.arkova === 'file:../sdk';
-    const releaseState = manifest.private === undefined
-      && manifest.dependencies?.arkova === expectedReleaseRange;
-
-    expect(sourceState || releaseState).toBe(true);
+  it('keeps the sibling SDK build-only and the executable portable', () => {
+    expect(manifest.private).toBe(true);
+    expect(manifest.dependencies?.arkova).toBeUndefined();
+    expect(manifest.devDependencies?.arkova).toBe('file:../sdk');
+    expect(manifest.scripts?.build).toContain('tsup src/cli.ts');
+    const executable = readFileSync(resolve(packageRoot, 'dist', 'cli.js'), 'utf8');
+    expect(executable).toMatch(/^#!\/usr\/bin\/env node/);
+    expect(executable).not.toMatch(/(?:from|require\()\s*['"]arkova['"]/);
   });
 
-  it('ships only the executable, declarations, README, and license', () => {
+  it('ships only the executable, README, and license', () => {
     expect(manifest.files).toEqual(['dist', 'README.md', 'LICENSE']);
     expect(manifest.license).toBe('MIT');
     expect(manifest.repository?.directory).toBe('packages/api-cli');
@@ -66,20 +61,26 @@ describe('CLI source and release metadata', () => {
     expect(mapFiles).toEqual([]);
   });
 
-  it('documents the exact isolated registry rewrite without hardcoding an SDK version', () => {
-    expect(publishing).toContain('npm pkg delete private');
-    // Caret range derived from the SDK's OWN package.json at release time —
-    // never a literal version number copied into this file (that number goes
-    // stale the moment packages/sdk bumps, e.g. #3034 -> 3.2.0).
-    expect(publishing).toContain('npm pkg set "dependencies.arkova=^$sdk_version"');
-    expect(publishing).toContain("require('../sdk/package.json').version");
-    expect(publishing).toContain('no `file:` dependency');
+  it('documents isolated clean-install qualification before any publication', () => {
+    expect(publishing).toContain('remove `private`');
+    expect(publishing).toContain('no runtime `file:` dependency');
+    expect(publishing).toContain('outside this repository');
     expect(publishing).toContain('npm ci --ignore-scripts');
     expect(publishing).toContain('npm test');
+  });
 
-    // No hardcoded semver literal (e.g. "3.1.0") anywhere in the runbook —
-    // every version reference must go through $sdk_version / <sdk_version>.
-    const bareVersionRE = /\barkova["'@=\s]*\d+\.\d+\.\d+\b/;
-    expect(bareVersionRE.test(publishing)).toBe(false);
+  it('packs and runs from a clean consumer outside the checkout', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'arkova-cli-pack-'));
+    try {
+      const packed = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', scratch], { cwd: packageRoot, encoding: 'utf8', timeout: 15_000 }))[0] as { filename: string; files: Array<{ path: string }> };
+      expect(packed.files.map(f => f.path).sort()).toEqual(['LICENSE', 'README.md', 'dist/cli.js', 'package.json']);
+      execFileSync('npm', ['init', '-y'], { cwd: scratch, stdio: 'ignore', timeout: 10_000 });
+      execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(scratch, packed.filename)], { cwd: scratch, stdio: 'ignore', timeout: 15_000 });
+      const output = execFileSync(join(scratch, 'node_modules/.bin/arkova'), ['--help'], { cwd: scratch, encoding: 'utf8', timeout: 10_000 });
+      expect(JSON.parse(output).command).toBe('arkova');
+      expect(existsSync(join(scratch, 'node_modules/arkova'))).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });

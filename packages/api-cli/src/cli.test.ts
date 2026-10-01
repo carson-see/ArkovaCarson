@@ -282,6 +282,29 @@ describe('arkova API CLI', () => {
     expect(output.stdout() + output.stderr()).not.toContain('ak_stdin_secret');
   });
 
+  it('passes a bounded timeout override to the SDK and rejects invalid values', async () => {
+    const api = client();
+    vi.mocked(api.agents.list).mockResolvedValue([]);
+    const factory = vi.fn().mockReturnValue(api);
+    const output = io({ ARKOVA_API_KEY: 'ak_secret', ARKOVA_TIMEOUT_MS: '25' });
+    expect(await main(['agent', 'list'], output.value, { clientFactory: factory })).toBe(0);
+    expect(factory).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 25 }));
+    const bad = io({ ARKOVA_API_KEY: 'ak_secret', ARKOVA_TIMEOUT_MS: '0' });
+    expect(await main(['agent', 'list'], bad.value, { clientFactory: factory })).toBe(2);
+    expect(bad.stderr()).toContain('ARKOVA_TIMEOUT_MS');
+    expect(factory).toHaveBeenCalledTimes(1);
+    for (const value of [true, [25], null, '25', 0, 120_001]) {
+      const candidate = io({ ARKOVA_API_KEY: 'ak_secret' });
+      candidate.value.stdin = async () => JSON.stringify({ timeoutMs: value });
+      expect(await main(['--config', '-', 'agent', 'list'], candidate.value, { clientFactory: factory })).toBe(2);
+    }
+    for (const value of ['true', '1.5', ' 25', '']) {
+      const candidate = io({ ARKOVA_API_KEY: 'ak_secret', ARKOVA_TIMEOUT_MS: value });
+      expect(await main(['agent', 'list'], candidate.value, { clientFactory: factory })).toBe(2);
+    }
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+
   it('runs a read-only recurring probe across health, read, verify, and folders', async () => {
     const api = client();
     vi.mocked(api.request)

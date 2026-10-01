@@ -73,6 +73,70 @@ describe('agent lifecycle client parity', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([0, -1, 1.5, 120_001, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid timeoutMs %s before any request', timeoutMs => {
+    expect(() => new Arkova({ timeoutMs })).toThrow(RangeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('times out a stalled mutation before headers without retrying it', async () => {
+    fetchMock.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    }));
+    const client = new Arkova({ apiKey: 'ak_caller', timeoutMs: 20 });
+    await expect(client.agents.createKey(AGENT.id)).rejects.toMatchObject({ code: 'request_timeout', statusCode: 408 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('times out a stalled response body without misclassifying it as malformed', async () => {
+    fetchMock.mockImplementationOnce((_url, init: RequestInit) => Promise.resolve(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"key":'));
+        init.signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')), { once: true });
+      },
+    }), { status: 201 })));
+    const client = new Arkova({ apiKey: 'ak_caller', timeoutMs: 20 });
+    await expect(client.agents.createKey(AGENT.id)).rejects.toMatchObject({ code: 'request_timeout', statusCode: 408 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an external AbortSignal on generic requests', async () => {
+    fetchMock.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('caller aborted', 'AbortError')), { once: true });
+    }));
+    const controller = new AbortController();
+    const client = new Arkova({ apiKey: 'ak_caller', timeoutMs: 100 });
+    const pending = client.request('/api/v1/agents', { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a read after the caller aborts during backoff', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: 'temporary' }, { status: 503 }));
+    const controller = new AbortController();
+    const client = new Arkova({ apiKey: 'ak_caller', retry: { sleep: async () => controller.abort() } });
+    await expect(client.request('/api/v1/agents', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['folders', 'webhooks'] as const)('releases the deadline after %s delete succeeds with a body', async surface => {
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true }, { status: 200 }));
+    const client = new Arkova({ apiKey: 'ak_caller', timeoutMs: 20 });
+    await client[surface].delete(AGENT.id);
+    const signal = fetchMock.mock.calls[0]![1].signal as AbortSignal;
+    await new Promise(resolve => setTimeout(resolve, 35));
+    expect(signal.aborted).toBe(false);
+  });
+
+  it.each(['query', 'ask'] as const)('releases the deadline after %s rejects without reading the body', async surface => {
+    fetchMock.mockResolvedValueOnce(Response.json({ code: 'nessie_disabled' }, { status: 403 }));
+    const client = new Arkova({ apiKey: 'ak_caller', timeoutMs: 20 });
+    await expect(client[surface]('blocked')).rejects.toMatchObject({ statusCode: 403 });
+    const signal = fetchMock.mock.calls[0]![1].signal as AbortSignal;
+    await new Promise(resolve => setTimeout(resolve, 35));
+    expect(signal.aborted).toBe(false);
+  });
+
   it.each([
     ['register', () => new Arkova({ apiKey: 'ak', baseUrl: 'https://api.example.test' }).agents.register({ name: 'x' }), null],
     ['list', () => new Arkova({ apiKey: 'ak', baseUrl: 'https://api.example.test' }).agents.list(), null],

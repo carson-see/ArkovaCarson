@@ -152,6 +152,8 @@ export interface ArkovaConfig {
   apiKey?: string;
   /** Base URL for the Arkova API (default: https://api.arkova.ai) */
   baseUrl?: string;
+  /** Deadline for each HTTP response, including its body. Default: 10,000 ms; range: 1–120,000 ms. */
+  timeoutMs?: number;
   /**
    * Built-in retry handling for 429/5xx responses and network errors.
    *
