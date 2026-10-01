@@ -708,3 +708,26 @@ private helpers to keep the orchestration readable and below the Sonar
 complexity threshold. Their ordering and shared-summary mutation are part of
 the existing behavior; do not move deadline checks into those helpers or
 replace the awaited mirror with background work.
+
+## 2026-09-29 — AR20-92 Drive label-only renewal during token refresh
+
+`loadDriveAccessToken` can lose its first token+label CAS because watch renewal
+changed only `account_label`; that does not mean another refresh wrote usable
+tokens. The miss path now rereads the same active Google Drive row under
+`id`/`org_id`/`provider`/`revoked_at` filters. A changed ciphertext is trusted
+only when decryption yields an access token outside the five-minute refresh
+window. If ciphertext and KMS key are unchanged, exactly one token-only CAS
+persists the already-refreshed response under the original ciphertext/key and
+active tenant predicates. It does not rewrite the renewed channel label or call
+Google again. The retry omits application `updated_at`; the existing
+`org_integrations_updated_at` database trigger owns that timestamp.
+A second miss gets one final scoped read, then a valid changed-token winner or
+retryable `concurrent_refresh_race`—never an expired token marked refreshed.
+An unchanged ciphertext with a changed KMS key is not a label-only race.
+
+The original atomic path still self-heals `oauth_client_id` in `account_label`.
+The label-only retry deliberately leaves that self-heal for a later refresh so
+channel credentials cannot be clobbered. The rotating-refresh-token fixture is
+defensive; it does not assert Google routinely rotates refresh tokens. See the
+AR20-92 matrix in `drive-changes-runner.test.ts` for label-only, competing
+refresh, repeated miss, active tenant, KMS-key, timestamp and error cases.
