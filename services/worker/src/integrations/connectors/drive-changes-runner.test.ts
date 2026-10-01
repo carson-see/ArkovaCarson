@@ -763,8 +763,10 @@ describe('loadDriveAccessToken — account_label read-error handling (P1) and la
           };
           return chain;
         },
-        select: (cols: string) => ({
-          eq: (_c: string, _v: unknown) => ({
+        select: (cols: string) => {
+          const chain = {
+            eq: (_c: string, _v: unknown) => chain,
+            is: (_c: string, _v: unknown) => chain,
             maybeSingle: () => {
               if (cols === 'account_label') {
                 return Promise.resolve({ data: { account_label: rawLabel }, error: null });
@@ -775,8 +777,9 @@ describe('loadDriveAccessToken — account_label read-error handling (P1) and la
                 error: null,
               });
             },
-          }),
-        }),
+          };
+          return chain;
+        },
       }),
       rpc: vi.fn(),
     };
@@ -814,6 +817,276 @@ describe('loadDriveAccessToken — account_label read-error handling (P1) and la
     expect(predicateColumns).toContain('account_label');
     const labelPredicate = updates[0].predicates.find(([c]) => c === 'account_label');
     expect(labelPredicate?.[1]).toBe(rawLabel);
+  });
+});
+
+describe('loadDriveAccessToken — label-only renewal race (AR20-92)', () => {
+  it('persists the already-refreshed rotating token without clobbering a renewed channel label', async () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const oldLabel = JSON.stringify({ email: 'org@example.com', channel_token: 'old-channel', resource_id: 'old-resource' });
+    const renewedLabel = JSON.stringify({ email: 'org@example.com', channel_token: 'new-channel', resource_id: 'new-resource' });
+    const renewedAt = new Date(Date.now() + 60_000).toISOString();
+    const integration: DriveIntegrationRow = {
+      id: INT,
+      org_id: ORG,
+      encrypted_tokens: Buffer.from(`ct:${JSON.stringify(EXPIRED_TOKENS)}`, 'utf8'),
+      token_kms_key_id: KEY,
+      last_page_token: 'pt-1',
+    };
+    const originalCiphertext = `\\x${(integration.encrypted_tokens as Buffer).toString('hex')}`;
+    const writes: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }> = [];
+    const currentLabel = renewedLabel;
+    const db = {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (column: string, value: unknown) => { predicates.push([column, value]); return chain; },
+            is: (column: string, value: unknown) => { predicates.push([column, value]); return chain; },
+            select: (_columns: string) => ({ maybeSingle: () => {
+              writes.push({ patch, predicates: [...predicates] });
+              if (patch.account_label !== undefined) return Promise.resolve({ data: null, error: null });
+              return Promise.resolve({ data: { id: INT }, error: null });
+            } }),
+          };
+          return chain;
+        },
+        select: (columns: string) => {
+          const chain = {
+            eq: (_column: string, _value: unknown) => chain,
+            is: (_column: string, _value: unknown) => chain,
+            maybeSingle: () => columns === 'account_label'
+              ? Promise.resolve({ data: { account_label: oldLabel }, error: null })
+              : Promise.resolve({ data: {
+                encrypted_tokens: originalCiphertext,
+                token_kms_key_id: KEY,
+                account_label: currentLabel,
+                org_id: ORG,
+                provider: 'google_drive',
+                revoked_at: null,
+                updated_at: renewedAt,
+              }, error: null }),
+          };
+          return chain;
+        },
+      }),
+      rpc: vi.fn(),
+    };
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'access-refreshed', refresh_token: 'refresh-rotated', expires_in: 3599, token_type: 'Bearer' }),
+    });
+    const result = await loadDriveAccessToken(integration, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms: fakeKms(),
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+    });
+    expect(result).toEqual({ accessToken: 'access-refreshed', refreshed: true });
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(writes).toHaveLength(2);
+    expect(writes[1].patch).not.toHaveProperty('account_label');
+    expect(writes[1].patch.encrypted_tokens).toBe(writes[0].patch.encrypted_tokens);
+    expect(writes[1].patch).not.toHaveProperty('updated_at');
+    expect(writes[1].predicates).toContainEqual(['encrypted_tokens', originalCiphertext]);
+    expect(writes[0].predicates).toContainEqual(['token_kms_key_id', KEY]);
+    expect(writes[1].predicates).toContainEqual(['token_kms_key_id', KEY]);
+    expect(writes[1].predicates).toContainEqual(['org_id', ORG]);
+    expect(writes[1].predicates).toContainEqual(['provider', 'google_drive']);
+    expect(writes[1].predicates).toContainEqual(['revoked_at', null]);
+    expect(currentLabel).toBe(renewedLabel);
+    const encoded = String(writes[1].patch.encrypted_tokens);
+    expect(encoded).toMatch(/^\\x[0-9a-f]+$/);
+    const savedCiphertext = Buffer.from(encoded.slice(2), 'hex').toString('utf8');
+    expect(savedCiphertext).toContain('access-refreshed');
+    expect(savedCiphertext).toContain('refresh-rotated');
+  });
+
+  function raceFixture(options: {
+    initialTokens?: typeof EXPIRED_TOKENS;
+    latestTokens?: typeof EXPIRED_TOKENS;
+    latestKey?: string;
+    latestOrg?: string;
+    latestProvider?: string;
+    revokedAt?: string | null;
+    secondWrite?: 'success' | 'miss' | 'error';
+    readError?: boolean;
+    mutateAfterRead?: 'key' | 'revoked' | 'token';
+    now?: () => Date;
+  } = {}) {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const integration: DriveIntegrationRow = {
+      id: INT,
+      org_id: ORG,
+      encrypted_tokens: Buffer.from(`ct:${JSON.stringify(options.initialTokens ?? EXPIRED_TOKENS)}`, 'utf8'),
+      token_kms_key_id: KEY,
+      last_page_token: 'pt-1',
+    };
+    const latestCiphertext = options.latestTokens
+      ? Buffer.from(`ct:${JSON.stringify(options.latestTokens)}`, 'utf8')
+      : integration.encrypted_tokens as Buffer;
+    const row = {
+      id: INT,
+      org_id: options.latestOrg ?? ORG,
+      provider: options.latestProvider ?? 'google_drive',
+      revoked_at: options.revokedAt ?? null,
+      encrypted_tokens: latestCiphertext,
+      token_kms_key_id: options.latestKey ?? KEY,
+      updated_at: new Date().toISOString(),
+    };
+    const writes: Array<{ patch: Record<string, unknown>; predicates: Array<[string, unknown]> }> = [];
+    const reads: Array<Array<[string, unknown]>> = [];
+    const db = {
+      from: (_table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (column: string, value: unknown) => { predicates.push([column, value]); return chain; },
+            is: (column: string, value: unknown) => { predicates.push([column, value]); return chain; },
+            select: (_columns: string) => ({ maybeSingle: () => {
+              writes.push({ patch, predicates: [...predicates] });
+              if (patch.account_label !== undefined || options.secondWrite === 'miss') {
+                return Promise.resolve({ data: null, error: null });
+              }
+              const stillMatches = predicates.every(([column, value]) => {
+                const current = row[column as keyof typeof row];
+                return Buffer.isBuffer(current) ? `\\x${current.toString('hex')}` === value : current === value;
+              });
+              if (!stillMatches) return Promise.resolve({ data: null, error: null });
+              if (options.secondWrite === 'error') {
+                return Promise.resolve({ data: null, error: { message: 'db write failed' } });
+              }
+              return Promise.resolve({ data: { id: INT }, error: null });
+            } }),
+          };
+          return chain;
+        },
+        select: (columns: string) => {
+          const predicates: Array<[string, unknown]> = [];
+          const chain = {
+            eq: (column: string, value: unknown) => { predicates.push([column, value]); return chain; },
+            is: (column: string, value: unknown) => { predicates.push([column, value]); return chain; },
+            maybeSingle: () => {
+              if (columns === 'account_label') {
+                return Promise.resolve({ data: { account_label: JSON.stringify({ email: null, channel_token: 'old', resource_id: 'old' }) }, error: null });
+              }
+              reads.push([...predicates]);
+              if (options.readError) return Promise.resolve({ data: null, error: { message: 'db read failed' } });
+              const matches = predicates.every(([column, value]) => row[column as keyof typeof row] === value);
+              const current = matches ? { ...row } : null;
+              if (current && reads.length === 1) {
+                if (options.mutateAfterRead === 'key') row.token_kms_key_id = `${KEY}-rotated`;
+                if (options.mutateAfterRead === 'revoked') row.revoked_at = '2026-09-29T00:00:00Z';
+                if (options.mutateAfterRead === 'token') row.encrypted_tokens = Buffer.from(`ct:${JSON.stringify({
+                  access_token: 'access-second-winner', refresh_token: 'refresh-second-winner', expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+                })}`, 'utf8');
+              }
+              return Promise.resolve({ data: current, error: null });
+            },
+          };
+          return chain;
+        },
+      }),
+      rpc: vi.fn(),
+    };
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'access-refreshed', refresh_token: 'refresh-rotated', expires_in: 3599, token_type: 'Bearer' }),
+    });
+    const run = () => loadDriveAccessToken(integration, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms: fakeKms(),
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      now: options.now,
+    });
+    return { run, writes, reads, fakeFetch };
+  }
+
+  it('returns a different, still-usable ciphertext winner without a second token write or Google refresh', async () => {
+    const fake = raceFixture({ latestTokens: {
+      access_token: 'access-winner', refresh_token: 'refresh-winner', expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+    } });
+    await expect(fake.run()).resolves.toEqual({ accessToken: 'access-winner', refreshed: true });
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an expired ciphertext winner and never reports stale success', async () => {
+    const fake = raceFixture({ latestTokens: { ...EXPIRED_TOKENS, access_token: 'still-expired' } });
+    await expect(fake.run()).rejects.toMatchObject({ code: 'concurrent_refresh_race' });
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails explicitly after the one token-only CAS also misses without changing ciphertext', async () => {
+    const fake = raceFixture({ secondWrite: 'miss' });
+    await expect(fake.run()).rejects.toMatchObject({ code: 'concurrent_refresh_race' });
+    expect(fake.writes).toHaveLength(2);
+    expect(fake.reads).toHaveLength(2);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ latestOrg: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }, 'org_id'],
+    [{ latestProvider: 'microsoft_graph' }, 'provider'],
+    [{ revokedAt: '2026-09-29T00:00:00Z' }, 'revoked_at'],
+  ] as const)('rejects a disconnected or foreign row without a retry write (%s)', async (options, boundary) => {
+    const fake = raceFixture(options);
+    await expect(fake.run()).rejects.toMatchObject({ code: 'concurrent_refresh_race' });
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.reads[0].map(([column]) => column)).toContain(boundary);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat unchanged ciphertext under a different KMS key as a label-only race', async () => {
+    const fake = raceFixture({ latestKey: `${KEY}-rotated` });
+    await expect(fake.run()).rejects.toMatchObject({ code: 'concurrent_refresh_race' });
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['key', 'concurrent_refresh_race'],
+    ['revoked', 'concurrent_refresh_race'],
+    ['token', null],
+  ] as const)('honors %s state changing between reread and retry CAS', async (mutation, failureCode) => {
+    const fake = raceFixture({ mutateAfterRead: mutation });
+    if (failureCode) {
+      await expect(fake.run()).rejects.toMatchObject({ code: failureCode });
+    } else {
+      await expect(fake.run()).resolves.toEqual({ accessToken: 'access-second-winner', refreshed: true });
+    }
+    expect(fake.writes).toHaveLength(2);
+    expect(fake.reads).toHaveLength(2);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks a ciphertext winner against the current time after the provider response', async () => {
+    const start = new Date('2026-09-29T00:00:00Z');
+    let timeReads = 0;
+    const fake = raceFixture({
+      initialTokens: { ...EXPIRED_TOKENS, expires_at: new Date(start.getTime() - 60_000).toISOString() },
+      latestTokens: {
+        access_token: 'access-nearly-expired', refresh_token: 'refresh-winner', expires_at: new Date(start.getTime() + 5 * 60_000 + 1_000).toISOString(),
+      },
+      now: () => new Date(start.getTime() + timeReads++ * 2_000),
+    });
+    await expect(fake.run()).rejects.toMatchObject({ code: 'concurrent_refresh_race' });
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['read', { readError: true }, 'token_read_failed', 1],
+    ['write', { secondWrite: 'error' as const }, 'token_persist_failed', 2],
+  ] as const)('keeps %s errors distinct from a CAS miss', async (_stage, options, code, writeCount) => {
+    const fake = raceFixture(options);
+    await expect(fake.run()).rejects.toMatchObject({ code });
+    expect(fake.writes).toHaveLength(writeCount);
+    expect(fake.fakeFetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -921,8 +1194,10 @@ describe('loadDriveAccessToken — CAS-lost regression', () => {
           };
           return chain;
         },
-        select: (cols: string) => ({
-          eq: (_c: string, _v: unknown) => ({
+        select: (cols: string) => {
+          const chain = {
+            eq: (_c: string, _v: unknown) => chain,
+            is: (_c: string, _v: unknown) => chain,
             maybeSingle: () => {
               // SCRUM-5287 follow-up: loadDriveAccessToken now ALSO reads
               // `account_label` (client-identity resolution) BEFORE
@@ -939,8 +1214,9 @@ describe('loadDriveAccessToken — CAS-lost regression', () => {
                 error: null,
               });
             },
-          }),
-        }),
+          };
+          return chain;
+        },
       }),
       rpc: vi.fn(),
     };
