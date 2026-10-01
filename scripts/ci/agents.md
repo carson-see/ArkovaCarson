@@ -1180,3 +1180,12 @@ extraction and reset, pass the masked local admin URL, call the bounded
 full-schema driver, and appear in the aggregate outcome gate. This prevents a
 future edit from silently replacing the concurrency proof with the unrelated
 single-session outbox SQL check.
+
+## 2026-10-01 — SDK publication admission contract
+
+`sdk-publish-admission.test.ts` executes the same admission script used by
+`publish-sdk.yml`, including event/ref/version mismatch and missing Actions
+output. It also parses the workflow to keep the npm token scoped to the
+guarded publish step. A manual dispatch is build/test/pack only, even when
+dispatched at a tag; only a pushed `sdk-v<manifest version>` tag admits publish.
+The tag is a technical condition, not evidence of human release approval.

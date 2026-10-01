@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-10-01 — AR20-93 / AR20-96 local release preparation
+
+The CTO work window covers two existing Jira items: [AR20-93](https://arkova.atlassian.net/browse/AR20-93) and [AR20-96](https://arkova.atlassian.net/browse/AR20-96). The candidate adds a dedicated local PostgreSQL rollback rehearsal and an SDK publication guard: manual workflow dispatch builds/tests/packs; only a matching SDK-version tag push can reach the credential-bearing publish step. It does not authorize registry publication, hosted deployment, or a live rollback. The original full acceptance criteria remain open; this is not sprint completion.
+
+Canonical procedure and evidence belong in [AR20-93 Confluence](https://arkova.atlassian.net/wiki/spaces/AR2/pages/161480731), [AR20-96 Confluence](https://arkova.atlassian.net/wiki/spaces/AR2/pages/162136135), and the [unified Drive roadmap](https://docs.google.com/document/d/1MS7vYyeU5vm3dWpCdRAe7MxrmB_qAUcqjGj4casbfCU/edit). Read their current results rather than inferring acceptance from source. The separate failed qualification rig is untouched by this work. Named ComputeID contacts/scenario agreement and live Drive UAT are deferred by the founder, with their criteria retained. The marketing launch-copy request belongs to another session; this session's uncommitted marketing edits are paused.
+
 ### Soaks — 2026-09-28: AR20 Sprint 1–3 timed acceptance has NOT started
 
 **Owner:** this tech-lead session and three GPT-5.6 Sol specialists. The founder authorized isolated setup, start when ready, and monitoring every 30 minutes. Soak readiness is the exclusive priority. No main merge, production database change or production promotion is authorized by this run.

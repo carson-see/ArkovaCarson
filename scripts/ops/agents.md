@@ -2,6 +2,20 @@
 
 Operational scripts for database maintenance and production infrastructure.
 
+## AR20-93 — isolated DocuSign 0487 rollback contract
+
+`repro-docusign-0487-rollback.sh` accepts no database target or credential. It
+compares its fixture's exact `idx_connector_artifact_dedupe` definition with
+migration 0343, starts a private Unix-socket-only PostgreSQL 17 cluster, runs
+`fixtures/docusign-0487-rollback.sql`, then stops/removes only that cluster.
+The synthetic test proves the blanket 0487 header predicate selects new rows
+and conflicts, while a pre-0487 ID snapshot scopes a safe reversal/reapply;
+missing snapshot and mixed-writer NULL collisions are STOP cases. Its safe
+JSON receipt is local contract evidence, never live rollback authorization.
+The operator procedure is
+`docs/runbooks/integrations/docusign-0487-rollback.md`, with AR20-93
+Confluence as the canonical decision record.
+
 ## Files
 - **`ensure-pipeline-dashboard-cache-cron.ts`** — ensures the `refresh-pipeline-dashboard-cache` pg_cron job exists with correct schedule (`*/2 * * * *`), support index, and stats function. Builds read-only evidence SQL for auditing.
 - **`ensure-pipeline-dashboard-cache-cron.test.ts`** — colocated tests for the cron management script.

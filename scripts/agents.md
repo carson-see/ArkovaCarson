@@ -2,6 +2,10 @@
 
 Operational, CI, deployment, and security scripts. Run manually or from CI workflows.
 
+## 2026-10-01 — SDK publish admission helper
+
+`release/check-sdk-publish-admission.mjs` reads the checked-out SDK manifest version and GitHub event/ref. It writes `publish=false` for every manual dispatch and `publish=true` only for a matching `sdk-v<version>` tag push; malformed/mismatched events fail without an output. Keep `NODE_AUTH_TOKEN` scoped to the workflow's guarded Publish step, never the job or admission step. The helper performs no registry call or publication itself. Contract test: `ci/sdk-publish-admission.test.ts`.
+
 ## 2026-09-05 — `publish-packages.sh` is EMBED-ONLY; `arkova` has exactly one publish path
 
 `publish-packages.sh` published packages/sdk (npm name `arkova`) as well as embed, through
