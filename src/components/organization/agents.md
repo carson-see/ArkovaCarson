@@ -1,5 +1,32 @@
 # agents.md — components/organization
-_Last updated: 2026-08-30_
+_Last updated: 2026-09-29 (PR #3190 review — version chips deduplicated)_
+
+## 2026-09-29 (PR #3190 review) — `VersionStatusChips` extracted (SonarCloud duplication)
+
+The `record-version-chip`/`record-superseded-chip` Badge pair described in the entry below was
+repeated verbatim in BOTH the mobile card and desktop table row renderers — SonarCloud fails the
+quality gate above 3% duplicated lines on new code, and this was flagged in review. Extracted to
+one module-level `VersionStatusChips({ versionNumber, isSuperseded })` component (defined next to
+`getRecipientDisplay`), used by both row renderers; the two local `showVersionChip`/`isSuperseded`
+consts moved inside it. No behavior change — same two `data-testid`s, same gating logic. Existing
+`OrgRegistryTable.connector-readability.test.tsx` (2 cases) and `OrgRegistryTable.test.tsx`
+(12 cases) pass unchanged, since both query by testid/text rather than by JSX structure.
+
+## 2026-09-29 — `OrgRegistryTable.tsx` connector-record readability (coordinator scope addition, dashboard follow-up)
+
+Same reported class as `RecordsList.tsx` (see `src/components/records/agents.md`): both the
+mobile card and the desktop table row titled themselves with the raw connector-internal
+filename. Both now compute `displayTitle = deriveDisplayTitle(anchor.filename, anchor.metadata)`
+(`src/lib/recordDisplay.ts` — same shared helper as the Record Detail page, not a
+reimplementation — SonarCloud duplication budget) and render it instead of `anchor.filename`,
+including in the `aria-label` on the row checkbox. Both rows also gained
+`record-version-chip`/`record-superseded-chip` badges (`version_number > 1` /
+`status === 'SUPERSEDED'`) next to the status badge — a superseded row is NEVER hidden, it
+remains valid evidence. The paginated query's `select()` now also fetches `version_number,
+parent_anchor_id`. This table does NOT show a raw metadata dump anywhere (only
+`getRecipientName` extracts a single field), so the ten-key connector denylist from
+`RecordsList.tsx` does not apply here. Tests:
+`OrgRegistryTable.connector-readability.test.tsx` (new, 2 cases).
 
 ## What This Folder Contains
 Organization-level admin components: credential issuance, member management, review queue, and public registry.

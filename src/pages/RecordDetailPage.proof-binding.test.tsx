@@ -8,6 +8,7 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'owner-1' }, s
 vi.mock('@/hooks/useProfile', () => ({ useProfile: () => ({ profile: { role: 'INDIVIDUAL' }, loading: false }) }));
 vi.mock('@/hooks/useHasCredentialImportEntitlement', () => ({ useHasCredentialImportEntitlement: () => false }));
 vi.mock('@/hooks/useAnchor', () => ({ useAnchor: mocks.anchor }));
+vi.mock('@/hooks/useAnchorVersions', () => ({ useAnchorVersions: () => ({ versions: [], loading: false }) }));
 vi.mock('@/lib/supabase', () => ({ supabase: { from: mocks.from } }));
 vi.mock('@/components/layout', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/anchor', () => ({ AssetDetailView: ({ onDownloadProof }: { onDownloadProof: () => Promise<void> }) => {

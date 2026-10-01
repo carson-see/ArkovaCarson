@@ -1,4 +1,53 @@
 # agents.md — verification
+_Last updated: 2026-09-29 (PR #3190 review — version-link data source corrected)_
+
+## 2026-09-29 SonarCloud typescript:S9383 (PR #3190 review) — `PublicVerification.tsx` fetch effect
+
+Five unhandled-promise findings on the `get_public_anchor` fetch effect, all resolved by deciding
+each call site rather than blanket-prefixing `void`:
+- Four `logVerificationEvent(...)` calls (rpcError / result.error / success / catch branches) are
+  marked `void` — that helper's own try/catch (`src/lib/logVerificationEvent.ts`) already swallows
+  every failure and never rejects; these are genuinely fire-and-forget analytics, and the
+  user-facing failure path is already handled by the `setError(...)` call immediately before each
+  one.
+- The outer `fetchVerification()` call is marked `void` — its own try/catch/finally already
+  guarantees it never rejects: every failure path (thrown error, rejected RPC) calls `setError`
+  and `setLoading(false)` before returning, so there is no rejection for a caller to act on.
+- **Nothing here was changed to silently swallow a real failure** — a rejected RPC call must never
+  leave the public verification page stuck loading or reading as verified; that property was
+  already correct (the `catch` block sets `error`), and is now pinned by a new test asserting a
+  REJECTED (not merely error-shaped) `get_public_anchor` call renders the error state, never a
+  stuck loading spinner or a false "Document Verified." Tests: 2 new cases in
+  `PublicVerification.test.tsx`.
+
+## PR #3190 follow-up: public page has no version link (2026-09-29)
+
+A `usePublicAnchorParent` hook and a `public-previous-version-link` were drafted in this PR and removed before merge. `get_public_anchor` returns neither `parent_public_id` nor `version_number`, and the only public source that does, the worker's `GET /api/v1/verify/:publicId`, writes a `VERIFICATION_QUERIED` audit row and dispatches a `credential.verified` webhook on every call. A page view must not trigger either. `PublicVerification.tsx` keeps the `public-superseded-version-note` statement only. To add the link, add `parent_public_id` to the public projection in a reviewed migration (additive nullable field, section 1.8) and read it from the RPC the page already calls.
+
+## 2026-09-29 — `PublicVerification.tsx` version honesty + JSON-LD title (readability pass follow-up)
+
+Checked the PUBLIC verification page for the same raw-id/missing-version problems the
+authenticated Record Detail page had (founder-reported, 2026-09-29). Finding: `data.filename`
+was never rendered as a visible heading anywhere on this page (only passed to
+`CredentialRenderer`'s `compact`-mode-only fallback, which this page never uses, and into the
+JSON-LD `name` field) — so there was no visible raw-id title bug here. Two real gaps found and
+fixed, with NO change to the frozen API response shape (§1.8 — both fields below are
+additive-nullable and the verification API already returns them):
+
+- **Version honesty.** A SUPERSEDED record now shows
+  `PUBLIC_VERIFICATION_LABELS.SUPERSEDED_REMAINS_VALID`
+  (`data-testid="public-superseded-version-note"`) — supersede never revokes, so a superseded
+  public record states plainly it remains valid evidence of the document as it existed when
+  secured. There is NO link to another version on the public page; see the note above.
+- **JSON-LD `name`.** `CredentialJsonLd` now derives its `name` via
+  `deriveDisplayTitle(data.filename, data.metadata)` (`src/lib/recordDisplay.ts`) instead of
+  the raw `data.filename` — the same connector-internal-id problem as the detail page's title,
+  in a less-visible place (structured data read by search engines / AI crawlers rather than by
+  a human reader).
+
+Tests: `PublicVerification.record-readability.test.tsx` (new, 4 cases). Existing
+`PublicVerification.test.tsx` (31 cases) passes unchanged.
+
 _Last updated: 2026-08-03 (CtdlDataLink — public CTDL feed discoverability, CE demo-gap bug blitz)_
 _Last updated: 2026-07-28 (R19 fingerprint-source evidence class, advances SCRUM-2481)_
 _Last updated: 2026-07-06 (SCRUM-2501 FE-PROOF-GATE proof-availability state machine)_

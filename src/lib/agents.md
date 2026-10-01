@@ -1,5 +1,87 @@
 # agents.md — lib
 
+## 2026-09-29 CORRECTION (PR #3190 review) — `deriveDisplayTitle` precedence, and the folder-path claim below was wrong about WHY
+
+The entry immediately below states the last segment of `_drive_folder_path` "ends in the file's
+real name... per the Drive connector pipeline" — that reasoning was never verified against
+production and is corrected here. What is actually true, checked against PRODUCTION data (not
+the `services/worker/src/jobs/drive-file-changed.test.ts` fixture, `'/Legal/Contracts'`, which is
+**folder-only** and does not end in a file name — it does not represent the general case): all 12
+distinct Drive files in prod carry a `_drive_folder_path` whose LAST segment IS the real file
+name (e.g. `.../CyberGlobal x Arkova Team Folder/Copy of CyberGlobal Product
+Descriptions.docx`), while `_drive_folder_id` is the id of the PARENT folder (`"2 Financial
+Records"` for a sibling example). So deriving from the last path segment is correct for today's
+data, but the contract between "folder path" and "file name" is not formally guaranteed anywhere
+— it is an observed property of the current connector pipeline, not a documented invariant.
+
+Because that contract is ambiguous, and a sibling worker change (branch
+`fix/drive-records-filed-and-named`, not yet merged) will start writing the real file name
+directly into `anchors.filename` and a plain `filename` key in `metadata`, `deriveDisplayTitle`
+is now precedence-based rather than a single derivation, so it keeps working once that change
+lands without a second fix here:
+
+1. `anchors.filename` when it is not a connector-internal id (unchanged — the common case).
+2. `metadata.filename`, then `.file_name`, then `.name`, when a non-empty string (NEW —
+   forward-compatible with the sibling worker change).
+3. Last segment of `_drive_folder_path` (unchanged, still correct for today's data per the
+   production check above).
+4. A controlled generic fallback — `"{Source} document"` (`CONNECTOR_DOCUMENT_FALLBACK` in
+   `copy.ts`, e.g. "Google Drive document") when the connector is recognized, else
+   `UNTITLED_DOCUMENT_TITLE` ("Secured document") — NEVER the raw id. This REPLACES the bare
+   `UNTITLED_DOCUMENT_TITLE` fallback the entry below describes for a recognized connector with
+   no folder path; `UNTITLED_DOCUMENT_TITLE` is now the fallback of last resort only.
+
+`AssetDetailView.tsx`'s rename input is also now seeded with the STORED `anchors.filename` ONLY
+when `!looksLikeConnectorInternalId(...)` is true; otherwise it starts EMPTY with the derived
+title as a `placeholder`, so saving an un-edited rename can never silently persist a derived
+guess (the Save/Enter path already requires a non-empty, trimmed value). Tests:
+`recordDisplay.test.ts` gained a dedicated precedence-step describe block (one `describe` per
+letter above); `AssetDetailView.record-readability.test.tsx` gained the rename-seeding coverage.
+
+## 2026-09-29 — `recordDisplay.ts` (new): shared record-readability helpers
+
+New module, the single source of truth every record card/list/detail surface uses to avoid
+rendering a connector-internal id as a title, a raw MIME string as a type, "0 B" for an unknown
+size, or a `mtime:`-prefixed token as if it were a formatted date (founder-reported, then a
+coordinator-added dashboard/list follow-up, both 2026-09-29). Consumed by
+`src/components/anchor/AssetDetailView.tsx`, `src/components/records/RecordsList.tsx`,
+`src/components/organization/OrgRegistryTable.tsx`, `src/pages/MyRecordsPage.tsx`, and
+`src/components/verification/PublicVerification.tsx` (JSON-LD `name` field) — SonarCloud
+duplication budget is why this is ONE module rather than a title-derivation function
+reinvented per call site.
+
+- `looksLikeConnectorInternalId(filename, connectorSource?)` — true only for a
+  `provider:opaque-token` shape with no whitespace/period; when `connectorSource` is supplied
+  the prefix must match it exactly. Deliberately narrow (a real filename with a colon, e.g.
+  `"Chapter: Intro.pdf"`, must NOT trip this).
+- `deriveDisplayTitle(filename, metadata)` — non-connector filenames pass through UNCHANGED (no
+  regression on the common case). A connector-internal filename resolves to the last path
+  segment of `metadata._drive_folder_path` (which, per the Drive connector pipeline, ends in the
+  file's real name) or, if unavailable, `RECORD_DETAIL_LABELS.UNTITLED_DOCUMENT_TITLE`
+  ("Secured document") — NEVER the raw id.
+- `deriveDisplayType(fileMime, metadata?)` — maps a MIME type (or, when `fileMime` is absent,
+  `metadata.content_type`/`metadata.export_mime_type`) to `DOCUMENT_TYPE_LABELS`
+  (Spreadsheet/Document/Presentation/PDF/Image/Text file); returns `null` — never a guess — for
+  anything unrecognized so the caller can fall back to the raw string.
+- `formatDisplayFileSize(bytes)` — returns `null` (caller omits the size) for `0`/`null`/
+  `undefined`, since "0 B" states something false about a size that was simply never recorded.
+- `stripSourceModifiedTimePrefix` / `formatSourceModifiedTime(raw)` — strips a leading
+  `mtime:`/`evt:` token and, only when the remainder parses as an ISO-8601 timestamp, formats it
+  via `toLocaleString()`. A token that does NOT parse as a time is returned stripped but
+  UNFORMATTED — §1.5: never present an invented date.
+- `CONNECTOR_INTERNAL_METADATA_KEYS` — the ten raw connector identifiers (file id, mime type,
+  revision id, content type, external ref, rule event id, integration id, connector source,
+  export mime type, connector artifact id) that must never render on a record CARD/list row —
+  only inside a detail page's collapsed "Technical details" disclosure. Single shared list so a
+  new connector field cannot leak through a second, independently-maintained denylist.
+- `deriveConnectorSourceLabel(connectorSource)` — `'google_drive'` → "Google Drive",
+  `'docusign'` → "DocuSign" (via the new `CONNECTOR_SOURCE_LABELS` in `copy.ts`), else `null`.
+
+`copy.ts` also gained `DOCUMENT_TYPE_LABELS`, `CONNECTOR_SOURCE_LABELS`, and additions to
+`RECORD_DETAIL_LABELS` / `VERSION_HISTORY_LABELS` / `PUBLIC_VERIFICATION_LABELS` for the version
+banner, "what changed" panel, and dashboard version chips — see those consuming folders'
+agents.md entries. Tests: `recordDisplay.test.ts` (27 cases, TDD red-first).
+
 ## 2026-09-21 — `copy.ts`: `DRIVE_CONNECT_PROMPT` replaces the "least-privilege" claim (SCRUM-5287/SCRUM-2903/SCRUM-2330 privacy-claims accuracy pass)
 
 `CONNECTIONS_LABELS.DRIVE_CONNECT_PROMPT` replaces an inline JSX string in `DriveConnectorCard.tsx`

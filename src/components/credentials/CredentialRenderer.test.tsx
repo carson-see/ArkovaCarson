@@ -248,6 +248,62 @@ describe('CredentialRenderer', () => {
       expect(screen.queryByText('professional_certification')).not.toBeInTheDocument();
       expect(screen.queryByText('Other')).not.toBeInTheDocument();
     });
+
+    // Readability pass (founder-reported, 2026-09-29): AssetDetailView already
+    // renders every raw metadata key itself (Technical Details), so passing
+    // the same metadata here used to produce the identical key/value list a
+    // second time on the page. `showGenericMetadataFields={false}` suppresses
+    // ONLY this generic per-field loop.
+    describe('showGenericMetadataFields={false}', () => {
+      it('suppresses the generic per-field metadata list', () => {
+        render(
+          <CredentialRenderer
+            metadata={{ field_of_study: 'Computer Science', year: 2025 }}
+            status="SECURED"
+            showGenericMetadataFields={false}
+          />,
+        );
+        expect(screen.queryByText('Field Of Study')).not.toBeInTheDocument();
+        expect(screen.queryByText('Computer Science')).not.toBeInTheDocument();
+        expect(screen.queryByText('Year')).not.toBeInTheDocument();
+      });
+
+      it('still renders the prominent recipient name (a curated field, not the generic dump)', () => {
+        render(
+          <CredentialRenderer
+            credentialType="DEGREE"
+            metadata={{ recipient_name: 'Ada Lovelace', field_of_study: 'Mathematics' }}
+            status="SECURED"
+            showGenericMetadataFields={false}
+          />,
+        );
+        expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
+        expect(screen.queryByText('Field Of Study')).not.toBeInTheDocument();
+      });
+
+      it('defaults to true — every existing caller is unaffected', () => {
+        render(
+          <CredentialRenderer
+            metadata={{ field_of_study: 'Computer Science' }}
+            status="SECURED"
+          />,
+        );
+        expect(screen.getByText('Field Of Study')).toBeInTheDocument();
+      });
+
+      it('does not affect the templated-field branch (Mode 1)', () => {
+        render(
+          <CredentialRenderer
+            template={MOCK_TEMPLATE}
+            metadata={MOCK_METADATA}
+            status="SECURED"
+            showGenericMetadataFields={false}
+          />,
+        );
+        expect(screen.getByText('Institution')).toBeInTheDocument();
+        expect(screen.getByText('University of Michigan')).toBeInTheDocument();
+      });
+    });
   });
 
   // SCRUM-3529: the canonical value is the anchors.sub_type COLUMN, surfaced by
