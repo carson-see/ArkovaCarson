@@ -1,5 +1,33 @@
 # agents.md — pages
 
+## 2026-09-29 — `RecordDetailPage.tsx` version lineage moved to `useAnchorVersions`; `MyRecordsPage.tsx` connector-record readability
+
+Founder report on `/dashboard`/`/records`/Record Detail for a Google Drive record: title
+rendered the raw internal id (`google_drive:1IxoL...`), subtitle showed "0 B" and the raw
+MIME string, the same ten raw connector metadata keys rendered TWICE (once in AssetDetailView's
+own "Metadata" dump, once again via `CredentialRenderer`'s untemplated fallback), a Drive
+"Source modification time" row showed the raw `mtime:2026-09-29T20:47:10.002Z` token
+unstripped, and a SUPERSEDED record said nothing about which version it was or where the
+newer version lives. Full fix (helpers, hook, component changes) documented in this session's
+touched-folder agents.md entries — see `src/lib/agents.md` (`recordDisplay.ts`),
+`src/hooks/agents.md` (`useAnchorVersions.ts`), and `src/components/anchor/agents.md`
+(`AssetDetailView.tsx`).
+
+`RecordDetailPage.tsx`'s ad-hoc lineage-fetching `useEffect` (previously gated on
+`anchor.version_number > 1 || anchor.parent_anchor_id`) is REPLACED by `useAnchorVersions`
+(`src/hooks/useAnchorVersions.ts`). That gate MISSED the exact founder-reported record: the
+ROOT/oldest version of a chain (`version_number === 1`, `parent_anchor_id === null`) that had
+ALREADY been superseded by a newer child never fetched its own lineage, so it showed no
+version banner at all. `useAnchorVersions` always attempts the walk (up via `parent_anchor_id`,
+down via children) regardless of version_number/parent presence.
+
+`MyRecordsPage.tsx`'s `/records` table row (coordinator scope addition, same day): title now
+goes through `deriveDisplayTitle` (same shared helper as the detail page — no raw internal id
+in the row), and superseded/versioned rows now carry `record-version-chip` /
+`record-superseded-chip` badges without being hidden (supersede, never revoke). `useAnchors.ts`
+now selects `version_number`/`parent_anchor_id` so this data is available to every list surface
+built on it.
+
 ## 2026-09-25 — `ConnectorsPage.tsx` fetches connector health once and feeds the Drive card
 
 Calls `useConnectorHealth()` ONE time at the page level (not per card) and resolves each

@@ -7,7 +7,7 @@ export type PrivateTagScope = 'user' | 'organization';
 export interface PrivateAnchorListPage { records: Record[]; hasMore: boolean }
 
 const PAGE_SIZE = 25;
-const ANCHOR_COLUMNS = 'id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata, folder_id, anchor_private_tags!inner(tag, normalized_tag, scope, owner_user_id, org_id)';
+const ANCHOR_COLUMNS = 'id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata, folder_id, version_number, parent_anchor_id, anchor_private_tags!inner(tag, normalized_tag, scope, owner_user_id, org_id)';
 
 export async function fetchPrivateAnchorList(input: { userId: string; orgId: string | null; role: string | null | undefined; tag: string; scope: PrivateTagScope; page: number }): Promise<PrivateAnchorListPage> {
   const normalizedTag = input.tag.trim().toLocaleLowerCase();

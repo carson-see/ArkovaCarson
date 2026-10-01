@@ -36,6 +36,24 @@ const mockUpdateResponse = vi.hoisted(() => ({
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockUpdate = vi.hoisted(() => vi.fn());
 const mockEq = vi.hoisted(() => vi.fn());
+/**
+ * RecordDetailPage now also calls `useAnchorVersions`, which issues its own
+ * `supabase.from('anchors').select(...)` chain on mount (version-lineage
+ * walk) alongside the `.update(...)` chain these rename tests drive. This
+ * stub keeps that second chain harmless — empty/absent data, so the hook
+ * resolves to no lineage — without this file needing to know anything about
+ * version lineage.
+ */
+const versionLookupChain = vi.hoisted(() => () => ({
+  eq: () => ({
+    is: () => ({
+      single: () => Promise.resolve({ data: null, error: { code: 'PGRST116' } }),
+      order: () => ({
+        limit: () => Promise.resolve({ data: [], error: null }),
+      }),
+    }),
+  }),
+}));
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { id: 'owner-1', email: 'owner@test.dev' }, signOut: vi.fn() }),
@@ -132,7 +150,7 @@ describe('RecordDetailPage — handleRenameFile honesty', () => {
     // supabase.from('anchors').update({...}).eq('id', ...) resolves like a
     // select-less PostgREST update ({ data: null }); chaining .select('id')
     // resolves with mockUpdateResponse.current (row data or error).
-    mockFrom.mockImplementation(() => ({ update: mockUpdate }));
+    mockFrom.mockImplementation(() => ({ update: mockUpdate, select: versionLookupChain }));
     mockUpdate.mockImplementation(() => ({ eq: mockEq }));
     mockEq.mockImplementation(() => {
       const legacy = { data: null, error: mockUpdateResponse.current.error };
@@ -208,7 +226,7 @@ describe('RecordDetailPage — canRename ownership gate', () => {
     vi.clearAllMocks();
     capturedProps.current = null;
     mockUpdateResponse.current = { data: null, error: null };
-    mockFrom.mockImplementation(() => ({ update: mockUpdate }));
+    mockFrom.mockImplementation(() => ({ update: mockUpdate, select: versionLookupChain }));
     mockUpdate.mockImplementation(() => ({ eq: mockEq }));
     mockEq.mockImplementation(() => Promise.resolve({ data: null, error: null }));
   });
@@ -249,7 +267,7 @@ describe('RecordDetailPage — rename honesty under volume and concurrency', () 
     capturedProps.current = null;
     mockUpdateResponse.current = { data: null, error: null };
     mockAnchorReturn(baseAnchor);
-    mockFrom.mockImplementation(() => ({ update: mockUpdate }));
+    mockFrom.mockImplementation(() => ({ update: mockUpdate, select: versionLookupChain }));
     mockUpdate.mockImplementation(() => ({ eq: mockEq }));
     mockEq.mockImplementation(() => {
       const legacy = { data: null, error: mockUpdateResponse.current.error };
