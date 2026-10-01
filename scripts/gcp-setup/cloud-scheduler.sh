@@ -156,6 +156,17 @@ JOBS=(
   # sentinel, no hash/enqueue) until ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true.
   # Idempotent (0343 RPC dedupes on org/source/file/revision).
   "drive-file-changed|*/5 * * * *|/jobs/drive-file-changed|30s,120s,2"
+  # DRIVE-BACKFILL (founder directive 2026-09-29): Drive initial-sync producer
+  # job every 5 min. Drains the google_drive.initial_sync queue that
+  # drive-initial-sync-trigger.ts writes on a rule save / (re)connect →
+  # enumerate a watched folder's PRE-EXISTING files → feed them into the SAME
+  # google_drive.file_changed pipeline drained above. Endpoint at
+  # services/worker/src/routes/cron.ts (POST /jobs/drive-initial-sync,
+  # jobs/drive-initial-sync-runner.ts). Gated on ENABLE_DRIVE_INITIAL_SYNC
+  # (default true); the processor also no-ops per job when the flag is off, so
+  # this poll is cheap either way. Same retry policy as drive-file-changed —
+  # claim_next_job semantics make retries safe.
+  "drive-initial-sync|*/5 * * * *|/jobs/drive-initial-sync|30s,120s,2"
   # GH #1835 (SECURITY-adjacent — Drive connector was dead in prod): Google
   # Drive changes.watch push channels expire in ~7 days and NOTHING renewed
   # them — every Drive connection went silent within a week with no error,

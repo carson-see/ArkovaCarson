@@ -50,6 +50,13 @@ import {
   type DriveEligibilityDb,
 } from '../../../integrations/connectors/drive-connect-eligibility.js';
 import { parseDriveAccountLabel, stringifyDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
+import {
+  triggerDriveInitialSyncForFolders,
+  loadConnectorDriveFoldersForOrg,
+  makeDriveInitialSyncTriggerDbDeps,
+  type DriveInitialSyncTriggerDb,
+} from '../../../integrations/connectors/drive-initial-sync-trigger.js';
+import { submitJob } from '../../../utils/jobQueue.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -303,6 +310,43 @@ async function recordIntegrationEvent(db: DbClient, args: {
   });
   if (error) {
     logger.warn({ error, orgId: args.orgId, eventType: args.eventType }, 'Drive integration event insert failed');
+  }
+}
+
+/**
+ * DRIVE-BACKFILL (founder directive 2026-09-29), trigger point 2: "the Drive
+ * connection is (re)established and a rule with watched folders already
+ * exists." A callback here can be a BRAND NEW connection (nothing to
+ * backfill yet — no rule could have named a folder before any connection
+ * existed) or a RECONNECT after a revoke/disconnect (one or more
+ * connector-managed rules may already name folders from the PRIOR
+ * connection). Both cases route through the same call: a brand-new org
+ * simply has `loadConnectorDriveFoldersForOrg` return `[]` and this is a
+ * no-op.
+ *
+ * Deliberately fire-and-forget (`void` at the call site) and self-contained
+ * try/catch: an OAuth callback that already wrote the connection and is
+ * about to redirect the user back to the app must NEVER 500 because a
+ * best-effort backfill kickoff failed. Only cheap `organization_rules` +
+ * `drive_initial_sync_state` reads and `job_queue` inserts happen here —
+ * Drive itself is never called (that happens later, inside the job), so this
+ * never adds Drive-listing latency to the callback either way.
+ */
+async function triggerInitialSyncForReconnectedOrg(db: DbClient, orgId: string): Promise<void> {
+  try {
+    const ruleFolders = await loadConnectorDriveFoldersForOrg(db as unknown as DriveInitialSyncTriggerDb, orgId);
+    if (ruleFolders.length === 0) return;
+    const deps = makeDriveInitialSyncTriggerDbDeps({
+      db: db as unknown as DriveInitialSyncTriggerDb,
+      submitJob,
+      isEnabled: () => config.enableDriveInitialSync,
+      logger,
+    });
+    for (const { ruleId, folders } of ruleFolders) {
+      await triggerDriveInitialSyncForFolders(deps, { orgId, ruleId, folders });
+    }
+  } catch (error) {
+    logger.error({ error, orgId }, 'drive initial sync: reconnect trigger failed');
   }
 }
 
@@ -633,6 +677,10 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           subscription_active: Boolean(subscription),
         },
       });
+
+      // DRIVE-BACKFILL trigger point 2 — see triggerInitialSyncForReconnectedOrg's
+      // doc comment. Fire-and-forget: never gates the redirect.
+      void triggerInitialSyncForReconnectedOrg(db, callbackOrgId);
 
       res.redirect(302, appendResult(returnTo, 'drive', 'connected'));
     } catch (error) {

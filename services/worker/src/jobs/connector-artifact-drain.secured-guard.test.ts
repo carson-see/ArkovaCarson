@@ -196,6 +196,8 @@ describe('SCRUM-2486 AC-4: importer materializes PENDING only, never SECURED', (
       user_id: ACTOR,
       filename: 'contract.pdf',
       credential_type: 'CONTRACT_POSTSIGNING',
+      // BUG-2026-09-29 defect 4: file_size is a new required (nullable) field.
+      file_size: null,
       metadata: {},
       fingerprint_source: 'document_bytes',
     });

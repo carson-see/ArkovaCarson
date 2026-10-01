@@ -56,6 +56,9 @@ const sinkInput = {
   folderId: 'folder-legal',
   folderPath: '/Legal/Contracts',
   revisionKind: 'head_revision' as const,
+  // BUG-2026-09-29: the Drive file's human name. Always supplied by
+  // processDriveFileChangedJob (`?? null`), never undefined at this boundary.
+  filename: 'msa.pdf',
 };
 
 describe('drive sink — fingerprint + idempotent enqueue', () => {
@@ -100,6 +103,13 @@ describe('drive sink — §1.6A pre-mortem (b): metadata is ids-only, never byte
         '_drive_folder_id',
         '_drive_folder_path',
         '_drive_revision_kind',
+        // BUG-2026-09-29: deliberately NOT underscore-prefixed —
+        // connector-artifact-drain.ts's defaultMaterializeAnchor reads a
+        // plain top-level `filename` key off connector_artifact.metadata
+        // (same convention DocuSign's `external_filename`/`filename` already
+        // use) to name the anchor. Underscoring it would hide it from that
+        // lookup, not just from the generic metadata dump.
+        'filename',
       ].sort(),
     );
     // No value is a Buffer/typed-array, and the doc bytes appear nowhere.
@@ -239,5 +249,39 @@ describe('SCRUM-4507 Drive source link-back metadata', () => {
     }
     expect(JSON.stringify(rpcArgs)).not.toContain(docText);
     expect(JSON.stringify(insert.mock.calls[0]![0])).not.toContain(docText);
+  });
+});
+
+/**
+ * BUG-2026-09-29 — display-name fix.
+ *
+ * (Filing root cause: `resolve_connector_destination_folder` has always read
+ * the connection id out of `metadata->>'integration_id'`, never a COLUMN —
+ * the leading hypothesis that the column mattered was refuted by reading
+ * 0462 directly, and confirmed a second time against production: the actual
+ * per-anchor gap is a connection that is momentarily `revoked_at` at anchor
+ * INSERT time, fixed in `connector-artifact-drain.ts`'s retry sweep instead
+ * of here — see that file's agents.md entry. `enqueue_connector_artifact`'s
+ * `integration_id` COLUMN stays unpopulated; tracked as a hygiene-only
+ * follow-up, not part of this fix.)
+ */
+describe('BUG-2026-09-29 filing + display-name fixes', () => {
+  it('writes the Drive file name as a plain (non-underscore) `filename` metadata key', async () => {
+    const { db, rpc } = makeDb();
+    const deps = makeDriveFileChangedJobDeps({ db, enableConnectorArtifactEnqueue: true });
+    await deps.enqueueArtifact(sinkInput);
+
+    const meta = (rpc.mock.calls[0]![1] as { p_metadata: Record<string, unknown> }).p_metadata;
+    expect(meta.filename).toBe('msa.pdf');
+  });
+
+  it('writes a null filename (never undefined) when Drive gave no name', async () => {
+    const { db, rpc } = makeDb();
+    const deps = makeDriveFileChangedJobDeps({ db, enableConnectorArtifactEnqueue: true });
+    await deps.enqueueArtifact({ ...sinkInput, filename: null });
+
+    const meta = (rpc.mock.calls[0]![1] as { p_metadata: Record<string, unknown> }).p_metadata;
+    expect(meta).toHaveProperty('filename');
+    expect(meta.filename).toBeNull();
   });
 });

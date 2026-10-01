@@ -1189,6 +1189,117 @@ export async function listChildFolders(args: {
     : { folders };
 }
 
+/** Drive's own folder MIME type — excluded from `listFolderFiles` so a watched
+ *  folder's own subfolders never enumerate as "files" (subfolders are not
+ *  descended per product copy — direct children of the watched folder only). */
+export const DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+
+const FolderFileEntry = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  mimeType: z.string().optional(),
+  modifiedTime: z.string().optional(),
+  headRevisionId: z.string().optional(),
+  size: z.string().optional(),
+  parents: z.array(z.string()).optional(),
+  driveId: z.string().optional(),
+});
+
+const FolderFilesListResponse = z.object({
+  files: z.array(FolderFileEntry).default([]),
+  nextPageToken: z.string().optional(),
+});
+
+export type DriveFolderFileEntry = z.infer<typeof FolderFileEntry>;
+export type DriveFolderFilesListResult =
+  | { files: DriveFolderFileEntry[]; nextPageToken: string }
+  | { files: DriveFolderFileEntry[]; nextPageToken?: undefined };
+
+const FOLDER_FILES_LIST_FIELDS =
+  'nextPageToken,files(id,name,mimeType,modifiedTime,headRevisionId,size,parents,driveId)';
+
+/**
+ * DRIVE-BACKFILL (founder directive 2026-09-29): enumerate the DIRECT children
+ * of a Drive folder that are actual documents — the initial-sync counterpart
+ * to `listChanges` (which only ever sees changes AFTER a watch is bootstrapped).
+ * Every file this returns is fed into the SAME `google_drive.file_changed` job
+ * pipeline `listChanges`-matched changes already use (see
+ * `integrations/connectors/drive-initial-sync.ts`) — this function's only job
+ * is enumeration, never fetching bytes (§1.6/§1.6A untouched by this call).
+ *
+ * Query is deliberately narrow and non-recursive:
+ *   - `'<folderId>' in parents` — DIRECT children only. Google's `files.list`
+ *     has no "recursive" option; a nested subtree would need a second call per
+ *     subfolder, which this function does not make (subfolders are not
+ *     descended per product copy).
+ *   - `trashed = false` — a trashed file is not "in the folder" for this
+ *     product's purposes.
+ *   - `mimeType != '{@link DRIVE_FOLDER_MIME_TYPE}'` — a child FOLDER is not a
+ *     document to secure; it is Drive's own container type, excluded at the
+ *     query level (never even round-trips) rather than filtered after the
+ *     fact.
+ *
+ * `supportsAllDrives`/`includeItemsFromAllDrives` are both `true`, matching
+ * `listChanges` — the watched folder id may live on a Shared Drive, and unlike
+ * `listChildFolders` (the folder PICKER, which deliberately excludes Shared
+ * Drive results for a documented, unrelated reason — see that function's own
+ * doc comment) this call already has a SPECIFIC, already-selected folder id in
+ * hand, so there is no picker-scope question to make narrower.
+ *
+ * `pageSize` is caller-bounded (default {@link DRIVE_INITIAL_SYNC_PAGE_SIZE},
+ * clamped to Google's own [1, 1000] range) — the caller drives pagination via
+ * `nextPageToken`, exactly like `listChanges`/`listChildFolders`.
+ */
+export async function listFolderFiles(args: {
+  accessToken: string;
+  folderId: string;
+  pageToken?: string;
+  pageSize?: number;
+  deps?: DriveClientDeps;
+}): Promise<DriveFolderFilesListResult> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const pageSize = Math.min(1000, Math.max(1, Math.trunc(args.pageSize ?? 100)));
+  const q =
+    `'${escapeDriveQueryLiteral(args.folderId)}' in parents and trashed = false` +
+    ` and mimeType != '${DRIVE_FOLDER_MIME_TYPE}'`;
+  const params = new URLSearchParams({
+    q,
+    fields: FOLDER_FILES_LIST_FIELDS,
+    pageSize: String(pageSize),
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'true',
+  });
+  if (args.pageToken) params.set('pageToken', args.pageToken);
+  const url = `${DRIVE_API_BASE}/files?${params.toString()}`;
+  const res = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  const json = (await readDriveJson(res, 'Drive files.list (folder enumeration)')) as {
+    files?: unknown;
+    nextPageToken?: string;
+  } | null;
+  if (!res.ok) {
+    // Metadata-only fields mask (id/name/mimeType/modifiedTime/headRevisionId/
+    // size/parents/driveId) — no bytes, so a bounded+scrubbed detail is safe
+    // per DriveApiError's own doc comment (mirrors listChanges/listChildFolders).
+    const err = new DriveApiError('Drive files.list (folder enumeration) failed', res.status, boundedErrorDetail(json));
+    const retryAfterHeader = res.headers.get('retry-after');
+    if (retryAfterHeader) err.retryAfter = retryAfterHeader;
+    throw err;
+  }
+  const parsed = FolderFilesListResponse.safeParse(json ?? {});
+  if (!parsed.success) {
+    throw new DriveApiError(
+      'Drive files.list (folder enumeration) response shape unexpected',
+      res.status,
+      boundedErrorDetail(json),
+    );
+  }
+  return parsed.data.nextPageToken
+    ? { files: parsed.data.files, nextPageToken: parsed.data.nextPageToken }
+    : { files: parsed.data.files };
+}
+
 // SCRUM-1650 GD-03: changes.list page response. Subset of fields actually
 // consumed by the processor — kept narrow so a Drive API change in unrelated
 // keys doesn't ripple into our Zod parse failures.

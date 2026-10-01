@@ -1,6 +1,28 @@
 # agents.md — services/worker/src/integrations/oauth/
 
+_Last updated: 2026-09-29 (`drive.ts` gained `listFolderFiles()` — DRIVE-BACKFILL initial-sync enumeration, founder directive 2026-09-29)._
 _Last updated: 2026-09-21 (`drive.ts` `DRIVE_DEFAULT_SCOPES` cutover to `drive.readonly` + dual OAuth client support — SCRUM-5287/SCRUM-2903/SCRUM-2330)._
+
+## 2026-09-29 — `drive.ts` gained `listFolderFiles()` (DRIVE-BACKFILL, founder directive 2026-09-29)
+
+The initial-sync counterpart to `listChanges`: enumerates the DIRECT children
+of a Drive folder (`'<folderId>' in parents`, no recursion — subfolders are
+not descended per product copy), excluding folders (`mimeType !=
+'application/vnd.google-apps.folder'`, a new exported
+`DRIVE_FOLDER_MIME_TYPE`) and trashed files at the query level. Fields mask
+mirrors what `integrations/connectors/drive-initial-sync.ts` needs:
+`id,name,mimeType,modifiedTime,headRevisionId,size,parents,driveId`.
+`supportsAllDrives`/`includeItemsFromAllDrives` both `true` (matches
+`listChanges` — the watched folder may live on a Shared Drive; unlike
+`listChildFolders`, which deliberately excludes Shared Drive results for the
+folder PICKER's own unrelated reason, this call already has one specific,
+already-selected folder id in hand). `pageSize` caller-bounded, clamped to
+Google's `[1, 1000]`; caller drives pagination via `nextPageToken`, same
+pattern as `listChanges`/`listChildFolders`. Uses the same bounded-body-read
+(`readDriveJson`/`readJsonBounded`) and `DriveApiError`+`boundedErrorDetail`
+error shape as every other non-document Drive call in this file — metadata
+only, no bytes, so a bounded+scrubbed error detail is safe. Never fetches
+document bytes (§1.6/§1.6A untouched).
 _Last updated: 2026-09-21 (`drive.ts` `listChanges()` fields-mask incident fix — SCRUM-2903/3661/5094/2330)._
 _Last updated: 2026-09-13 (`drive.ts` gained `listChildFolders()` + `drive.metadata.readonly` scope — Connectors page folder picker, SPEC-CONNECTORS §2.1/§2.2)._
 _Last updated: 2026-08-31 (signer-backfill follow-on to PR #2474: `fetchDocusignEnvelopeRecipients` + `extractCapturedSigners`, now delegating to the shared `captureDocusignSigners` mapper)._

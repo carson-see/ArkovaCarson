@@ -2155,3 +2155,95 @@ in this file (CLAUDE.md §6). A later author claiming a higher PR number orders 
   table grant. `service_role` remains read-only and the audited SECURITY
   DEFINER recovery RPC remains the only writer. This defense-in-depth policy
   is retained across application rollback.
+
+- `0500_drive_connector_folder_filing_and_metadata_repair.sql` (BUG-2026-09-29,
+  local candidate only — never applied anywhere). **Shrunk by orchestrator
+  review (production read-only SQL, 2026-09-29T21:50Z) from an earlier draft
+  that also replaced `resolve_connector_destination_folder` and
+  dropped/recreated `enqueue_connector_artifact`** — both REMOVED here.
+  Production confirmed `resolve_connector_destination_folder` was already
+  correct (reads `metadata->>'integration_id'`, never the `integration_id`
+  COLUMN) and that filing already works in prod for every anchor created
+  today; the actual per-anchor gap (a connection momentarily `revoked_at` at
+  anchor INSERT time) is fixed in worker code
+  (`services/worker/src/jobs/connector-artifact-drain.ts`'s retry-routing
+  sweep, reusing 0462's RPC unmodified — see that file's agents.md entry),
+  not SQL. Populating `connector_artifact.integration_id` has no reader
+  anywhere and is dropped as pure hygiene, not shipped. Replacing three
+  hot-path functions in an unsoaked T3 migration to fix defects that do not
+  exist is not acceptable; this migration now touches exactly ONE function.
+  **What remains:** `materialize_connector_artifact_anchor` (same 7-arg
+  signature, body-only `CREATE OR REPLACE`) — confirmed REQUIRED (not
+  optional/worker-only) by reading the CURRENT live 0462 body directly: its
+  `INSERT` hardcodes the literal `'CONTRACT_POSTSIGNING'` (never reads the
+  payload) and its validation block RAISEs on any other `credential_type`,
+  and `file_size` is entirely absent from both the `INSERT` column list and
+  the validation's key allow-list (an unrecognized payload key is REJECTED)
+  — so neither can be changed without this migration. It now accepts
+  `credential_type` `OTHER` (an existing enum value) alongside
+  `CONTRACT_POSTSIGNING`, casting from the payload
+  (`(p_anchor_payload->>'credential_type')::credential_type`) instead of the
+  hardcoded literal, and a new required `file_size` payload field (jsonb null
+  or number, cast to `::bigint`), respecting `anchors_file_size_positive`. By
+  contrast `filename` needed NO migration — 0462 already reads
+  `p_anchor_payload->>'filename'` directly with no locked-value check beyond
+  length 1-255 — confirmed by reading the same live body.
+  **Backfill** (widened from the earlier folder_id+filename-only draft, now
+  four idempotent `UPDATE`s inside the same `service_role`-impersonated
+  `DO` block): folder_id (unchanged from the original draft — joined via
+  `connector_artifact.anchor_id`, a real uuid FK, to the matching mirrored
+  `owner_scope='ORG'` folder; **confirmed by production read-only SQL to
+  match ZERO rows today** — the 4 anchors created today are already filed,
+  the 9 older ones have no matching `folders` row because those Drive
+  folders are no longer watched — kept anyway because a plain conditional
+  `UPDATE` is a clean no-op on zero matches BY CONSTRUCTION, not by
+  assumption, so it costs nothing to retain); filename, from the last path
+  segment of `_drive_folder_path`, pre-filtered to the exact
+  `anchors_filename_length`/`anchors_filename_no_control_chars` CHECK shapes
+  (unchanged from the original draft); file_size, from
+  `connector_artifact.byte_length`, guarded to `> 0`; credential_type, to
+  `OTHER`, but ONLY for anchors with `status = 'PENDING'`. **Checked, not
+  assumed, per column:** none of `protect_anchor_status_transition`,
+  `prevent_metadata_edit_after_secured`, or `prevent_credential_type_change`
+  reference `filename`, and grepping `services/worker/src/chain/` plus the
+  proof-packet/proof-keys builders found no fingerprint/proof/chain use of it
+  either — filename (and file_size, referenced by no trigger at all) apply
+  regardless of anchor status. `prevent_credential_type_change` DOES block a
+  credential_type change once status leaves PENDING for a non-service_role
+  caller — the migration's service-role impersonation (needed anyway for the
+  filename/folder_id writes) would technically satisfy that trigger's own
+  bypass on a SECURED row too, but this migration deliberately does NOT rely
+  on that to force a retroactive category relabel on an already-secured,
+  chain-committed record; the `status = 'PENDING'` guard is added on top of
+  the technical capability, not because the trigger alone would stop it. Any
+  of the 13 anchors that are not PENDING keep `CONTRACT_POSTSIGNING` — see
+  `services/worker/src/jobs/agents.md`'s 2026-09-29 entry for the read-only
+  operator follow-up query. See that same entry and
+  `.../integrations/connectors/agents.md`'s for the TypeScript-side halves.
+  Text-assertion coverage:
+  `src/tests/migrations/0500-drive-folder-filing-and-metadata-repair.test.ts`
+  (rewritten to match the shrunk migration — asserts the removed functions
+  are NOT touched, and pins the four backfill statements in order).
+- `0501_drive_initial_sync_state.sql` (DRIVE-BACKFILL, founder directive
+  2026-09-29; **local only, not applied to any hosted database**) — new
+  `drive_initial_sync_state` table, one row per `(org_id, folder_id)`,
+  tracking whether the backfill that enumerates a watched Drive folder's
+  pre-existing files has run/is running/failed (`status`, `page_token`,
+  `files_seen_count`, `files_enqueued_count`, `last_error`). Not
+  `drive_watch_state` (0351) — that is a different, currently-uncalled
+  push-channel bootstrap/renewal system with channel-lifecycle vocabulary
+  (see `services/worker/src/integrations/connectors/agents.md`'s "two
+  parallel watch systems" note); repurposing it would conflate two systems
+  that file already warns against conflating. RLS ENABLED + FORCE, canonical
+  restrictive `mfa_verified_authenticated` deny-all policy (same identity as
+  0499), `REVOKE ALL ... FROM PUBLIC, anon, authenticated; GRANT ALL ...
+  TO service_role` — this is worker-internal observability/resumability
+  state, no browser surface reads it. `0500` is reserved by a sibling
+  change outside this PR; this file claims `0501` as the next free prefix in
+  this branch. See `services/worker/src/integrations/connectors/agents.md`'s
+  2026-09-29 entry and `services/worker/src/jobs/agents.md`'s matching entry
+  for the full feature. Tier T3 per the standard "new table + RLS" rule;
+  never applied — database types were NOT regenerated (no linked Supabase
+  session in this work), so worker code reads/writes this table through an
+  untyped `(db as any)`-shaped adapter, same precedent as 0343's
+  `connector_artifact` before its own types landed.

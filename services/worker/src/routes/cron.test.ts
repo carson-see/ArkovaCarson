@@ -407,6 +407,20 @@ vi.mock('../jobs/drive-file-changed.js', () => ({
   runDriveFileChangedJobs: (...args: unknown[]) => mockRunDriveFileChangedJobs(...args),
 }));
 
+// DRIVE-BACKFILL (founder directive 2026-09-29): Drive initial-sync job queue
+// HTTP endpoint — same shape as /drive-file-changed above.
+const mockRunDriveInitialSyncJobs = vi.fn().mockResolvedValue({
+  claimed: 1,
+  completed: 1,
+  failed: 0,
+  dead: 0,
+  updateFailed: 0,
+  jobIds: ['drive-initial-sync-job-1'],
+});
+vi.mock('../jobs/drive-initial-sync-runner.js', () => ({
+  runDriveInitialSyncJobs: (...args: unknown[]) => mockRunDriveInitialSyncJobs(...args),
+}));
+
 // GH #1835: Drive subscription (changes.watch channel) renewal cron route.
 // PR #1944 review correction: the route now calls the lease-guarded
 // runDriveSubscriptionRenewal() entry point (jobs/drive-subscription-renewal-deps.js)
@@ -1054,6 +1068,68 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/drive-file-changed');
       expect(res.status).toBe(401);
       expect(mockRunDriveFileChangedJobs).not.toHaveBeenCalled();
+    });
+  });
+
+  // DRIVE-BACKFILL (founder directive 2026-09-29): Drive initial-sync job
+  // queue HTTP endpoint — the Drive twin of /drive-file-changed above.
+  describe('POST /drive-initial-sync', () => {
+    it('runs the Drive initial-sync queue processor and forwards the optional limit', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-initial-sync?limit=5');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        claimed: 1,
+        completed: 1,
+        failed: 0,
+        dead: 0,
+        updateFailed: 0,
+        jobIds: ['drive-initial-sync-job-1'],
+      });
+      expect(mockRunDriveInitialSyncJobs).toHaveBeenCalledWith({ limit: 5 });
+    });
+
+    it('runs with no limit when the query param is omitted', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-initial-sync');
+
+      expect(res.status).toBe(200);
+      expect(mockRunDriveInitialSyncJobs).toHaveBeenCalledWith({ limit: undefined });
+    });
+
+    it('rejects invalid limit values before running the Drive initial-sync queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-initial-sync?limit=not-a-number');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDriveInitialSyncJobs).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range limit values before running the Drive initial-sync queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-initial-sync?limit=101');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDriveInitialSyncJobs).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when the job processor throws (Scheduler retries)', async () => {
+      mockRunDriveInitialSyncJobs.mockRejectedValueOnce(new Error('db unavailable'));
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-initial-sync');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-initial-sync');
+      expect(res.status).toBe(401);
+      expect(mockRunDriveInitialSyncJobs).not.toHaveBeenCalled();
     });
   });
 
