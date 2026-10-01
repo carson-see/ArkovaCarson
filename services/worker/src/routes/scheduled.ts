@@ -41,6 +41,7 @@ import { runCreditConservationReconciler } from '../jobs/credit-conservation-rec
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
+import { runDriveInitialSyncJobs } from '../jobs/drive-initial-sync-runner.js';
 import { runInstantSecureJobs } from '../jobs/instant-secure.js';
 import { runDriveSubscriptionRenewal } from '../jobs/drive-subscription-renewal-deps.js';
 import { trackOperation } from './lifecycle.js';
@@ -430,6 +431,34 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
         }
       } catch (error) {
         logger.error({ err: errMsg(error) }, 'Drive file-changed job drain cron failed');
+      }
+    });
+  }
+
+  // DRIVE-BACKFILL (founder directive 2026-09-29): Drive initial-sync job
+  // drain every 5 minutes. Drains the `google_drive.initial_sync` queue that
+  // `drive-initial-sync-trigger.ts` writes on a rule save / (re)connect:
+  // enumerate a watched folder's pre-existing files and feed them into the
+  // SAME `google_drive.file_changed` pipeline drained above. Gated on
+  // ENABLE_DRIVE_INITIAL_SYNC (default true, unlike ENABLE_CONNECTOR_ARTIFACT_
+  // ENQUEUE above) — the processor itself also no-ops per job when the flag
+  // is off, so this poll is cheap either way. Prod runs via Cloud Scheduler ->
+  // POST /jobs/drive-initial-sync; this in-process registration is the
+  // dev/test backup and also fires on every warm prod instance, same as
+  // drive-file-changed above. Safe either way — claim_next_job claims each row.
+  if (config.enableDriveInitialSync) {
+    scheduleInProcess('drive-initial-sync', '*/5 * * * *', async () => {
+      logger.debug('Running Drive initial-sync job drain');
+      try {
+        const result = await trackOperation(runDriveInitialSyncJobs());
+        if (result.completed > 0 || result.failed > 0) {
+          logger.info(
+            { completed: result.completed, failed: result.failed, dead: result.dead },
+            'Drive initial-sync job drain processed jobs',
+          );
+        }
+      } catch (error) {
+        logger.error({ err: errMsg(error) }, 'Drive initial-sync job drain cron failed');
       }
     });
   }

@@ -104,6 +104,12 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// rules-crud.ts now imports ../config.js (DRIVE-BACKFILL: config.enableDriveInitialSync),
+// which eagerly Zod-validates the full worker env at import — stub it out the
+// same way jobs/drive-file-changed.test.ts does, since no real env fixture is
+// present in this unit-test process.
+vi.mock('../config.js', () => ({ config: { enableDriveInitialSync: true } }));
+
 // Eager Drive-folder mirror wiring (founder spec — "duplicate connected
 // folders in Arkova automatically upon setup"). Only `mirrorConnectedDriveFolders`
 // (the DB-touching call) is stubbed — the pure guard/extraction helpers stay
@@ -116,6 +122,28 @@ const driveFolderMirrorMock = vi.hoisted(() => ({
 vi.mock('../integrations/connectors/drive-folder-mirror.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../integrations/connectors/drive-folder-mirror.js')>();
   return { ...actual, mirrorConnectedDriveFolders: driveFolderMirrorMock.mirrorConnectedDriveFolders };
+});
+
+// DRIVE-BACKFILL (founder directive 2026-09-29): the initial-sync trigger is
+// fire-and-forget (never awaited by the handler, unlike the mirror above), so
+// only the DB/job_queue-touching entry point is stubbed here — the same
+// discipline as the mirror mock, and for the same reason: prove rules-crud.ts
+// calls through with the REAL diff/scoping decision, not a fake one.
+const driveInitialSyncTriggerMock = vi.hoisted(() => ({
+  triggerDriveInitialSyncForFolders: vi.fn(async () => []),
+  makeDriveInitialSyncTriggerDbDeps: vi.fn(() => ({})),
+}));
+vi.mock('../integrations/connectors/drive-initial-sync-trigger.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../integrations/connectors/drive-initial-sync-trigger.js')>();
+  return {
+    ...actual,
+    triggerDriveInitialSyncForFolders: driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders,
+    makeDriveInitialSyncTriggerDbDeps: driveInitialSyncTriggerMock.makeDriveInitialSyncTriggerDbDeps,
+  };
+});
+vi.mock('../utils/jobQueue.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/jobQueue.js')>();
+  return { ...actual, submitJob: vi.fn(async () => 'job-stub') };
 });
 
 import {
@@ -1558,6 +1586,197 @@ describe('handleCreateRule / handleUpdateRule — Drive folder mirror wiring', (
 
     expect(json).toHaveBeenCalledWith({ ok: true });
     expect(driveFolderMirrorMock.mirrorConnectedDriveFolders).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleCreateRule / handleUpdateRule — Drive initial-sync trigger wiring (DRIVE-BACKFILL)', () => {
+  const CONNECTOR_CREATE_WITH_FOLDERS = {
+    ...VALID_CREATE_BODY,
+    trigger_type: 'WORKSPACE_FILE_MODIFIED' as const,
+    trigger_config: {
+      vendors: ['google_drive'],
+      drive_folders: [{ type: 'drive_folder', folder_id: 'drv-1', folder_name: 'Invoices' }],
+    },
+    action_type: 'AUTO_ANCHOR' as const,
+    action_config: { tag: 'connector-google_drive' },
+  };
+
+  it('a connector-tagged Drive create triggers initial sync for every named folder (all are "new")', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), raceCheck.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: CONNECTOR_CREATE_WITH_FOLDERS }), res);
+    await waitUntilCalled(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders);
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).toHaveBeenCalledTimes(1);
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).toHaveBeenCalledWith(
+      expect.anything(),
+      { orgId: ORG_ID, ruleId: RULE_ID, folders: [{ folderId: 'drv-1', folderName: 'Invoices' }] },
+    );
+  });
+
+  it('is fire-and-forget: the create response is sent without waiting for the initial-sync trigger to resolve', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const raceCheck = tableMock({ select: { data: null, error: null } });
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), raceCheck.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+    // The mirror resolves immediately (empty), but the initial-sync trigger
+    // never resolves in this test — if the handler awaited it, this test
+    // would hang and time out.
+    driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders.mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+
+    const { res, status } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: CONNECTOR_CREATE_WITH_FOLDERS }), res);
+    expect(status).toHaveBeenCalledWith(201);
+  });
+
+  it('a plain DocuSign create never triggers initial sync', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: VALID_CREATE_BODY }), res);
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).not.toHaveBeenCalled();
+  });
+
+  it('a rule update that adds ONE folder to an existing one triggers initial sync for the NEW folder only', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRow = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: {
+            vendors: ['google_drive'],
+            drive_folders: [{ type: 'drive_folder', folder_id: 'drv-1', folder_name: 'Invoices' }],
+          },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+          org_id: ORG_ID,
+          created_by_user_id: USER_ID,
+        },
+        error: null,
+      },
+    });
+    const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), currentRow.from(''), ruleUpdate.from('')));
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: {
+          trigger_config: {
+            vendors: ['google_drive'],
+            drive_folders: [
+              { type: 'drive_folder', folder_id: 'drv-1', folder_name: 'Invoices' },
+              { type: 'drive_folder', folder_id: 'drv-2', folder_name: 'Contracts' },
+            ],
+          },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+        },
+      }),
+      res,
+    );
+    await waitUntilCalled(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders);
+
+    expect(json).toHaveBeenCalledWith({ ok: true, drive_folder_mirror: [] });
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).toHaveBeenCalledTimes(1);
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).toHaveBeenCalledWith(
+      expect.anything(),
+      { orgId: ORG_ID, ruleId: RULE_ID, folders: [{ folderId: 'drv-2', folderName: 'Contracts' }] },
+    );
+  });
+
+  it('a rule update that re-saves the SAME folder set triggers no initial sync (nothing new)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const currentRow = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: {
+            vendors: ['google_drive'],
+            drive_folders: [{ type: 'drive_folder', folder_id: 'drv-1', folder_name: 'Invoices' }],
+          },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+          org_id: ORG_ID,
+          created_by_user_id: USER_ID,
+        },
+        error: null,
+      },
+    });
+    const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), currentRow.from(''), ruleUpdate.from('')));
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: {
+          trigger_config: {
+            vendors: ['google_drive'],
+            drive_folders: [{ type: 'drive_folder', folder_id: 'drv-1', folder_name: 'Invoices' }],
+          },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'connector-google_drive' },
+        },
+      }),
+      res,
+    );
+
+    expect(json).toHaveBeenCalledWith({ ok: true, drive_folder_mirror: [] });
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).not.toHaveBeenCalled();
+  });
+
+  it('a bare {enabled:true} PATCH (no trigger_config) never triggers initial sync', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    const enableRaceCheck = tableMock({
+      select: {
+        data: {
+          trigger_type: 'WORKSPACE_FILE_MODIFIED',
+          trigger_config: { vendors: ['google_drive'], type: 'drive_folder', folder_id: 'drv-legacy' },
+          action_type: 'AUTO_ANCHOR', action_config: { tag: 'connector-google_drive' }, enabled: false,
+          org_id: ORG_ID, created_by_user_id: USER_ID,
+        },
+        error: null,
+      },
+    });
+    const raceLookup = tableMock({ select: { data: null, error: null } });
+    const ruleUpdate = tableMock({ update: { error: null, count: 1 } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), enableRaceCheck.from(''), enableRaceCheck.from(''), raceLookup.from(''), ruleUpdate.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(USER_ID, mockReq({ params: { id: RULE_ID }, body: { enabled: true } }), res);
+
+    expect(json).toHaveBeenCalledWith({ ok: true });
+    expect(driveInitialSyncTriggerMock.triggerDriveInitialSyncForFolders).not.toHaveBeenCalled();
   });
 });
 

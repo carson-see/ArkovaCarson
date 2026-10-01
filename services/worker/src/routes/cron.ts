@@ -104,6 +104,7 @@ import { runAiCreditReconcileJobs } from '../jobs/ai-credit-reconcile.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
+import { runDriveInitialSyncJobs } from '../jobs/drive-initial-sync-runner.js';
 import { runInstantSecureJobs } from '../jobs/instant-secure.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runLockWaitMonitor } from '../jobs/lock-wait-monitor.js';
@@ -145,6 +146,7 @@ import { corsMiddleware } from './middleware.js';
 
 const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
 const DriveFileChangedLimitSchema = z.coerce.number().int().min(1).max(100);
+const DriveInitialSyncLimitSchema = z.coerce.number().int().min(1).max(100);
 const DocusignSignerBackfillPageSizeSchema = z.coerce.number().int().min(1).max(200);
 const DocusignSignerBackfillRunLimitSchema = z.coerce.number().int().min(1).max(2000);
 
@@ -1190,6 +1192,37 @@ cronRouter.post('/drive-file-changed', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Drive file-changed queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── DRIVE-BACKFILL (founder directive 2026-09-29): Google Drive initial-sync
+// job queue ───
+//
+// Drains the `google_drive.initial_sync` job_queue type
+// (integrations/connectors/drive-initial-sync.ts /
+// jobs/drive-initial-sync-runner.ts): enumerates a watched folder's
+// pre-existing files and feeds them into the SAME `google_drive.file_changed`
+// pipeline the live changes feed uses. Gated end-to-end by
+// ENABLE_DRIVE_INITIAL_SYNC (default true) — hitting this route with the flag
+// off is safe (the processor no-ops per job, same `isEnabled` guard shape as
+// runDriveFileChangedJobs's ENABLE_CONNECTOR_ARTIFACT_ENQUEUE check above).
+cronRouter.post('/drive-initial-sync', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DriveInitialSyncLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runDriveInitialSyncJobs({
+      limit: parsedLimit?.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Drive initial-sync queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

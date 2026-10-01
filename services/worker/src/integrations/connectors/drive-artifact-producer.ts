@@ -110,6 +110,15 @@ export const DriveFileChangedJobPayload = z.object({
   // Present only when a resolver was wired and the walk succeeded.
   folder_path: z.string().min(1).optional(),
   revision_kind: z.enum(DRIVE_REVISION_KINDS).optional(),
+  // BUG-2026-09-29: the Drive file's human name (`changes.list` `file.name`),
+  // already resolved by the changes processor and forwarded to
+  // `enqueueRuleEvent`'s `filename` — this job payload dropped it, so the
+  // eventual anchor's display name fell back to the synthetic
+  // `google_drive:<fileId>` label (jobs/connector-artifact-drain.ts). An
+  // opaque display label, not PII — no email/account identifier.
+  // `.optional()` for the same backward-compat reason as the four fields
+  // above: jobs enqueued before this change have no `filename` key.
+  filename: z.string().min(1).optional(),
 });
 
 export type DriveFileChangedJobPayloadT = z.infer<typeof DriveFileChangedJobPayload>;
@@ -180,6 +189,12 @@ export interface DriveArtifactProducerDeps {
     folderId: string | null;
     folderPath: string | null;
     revisionKind: DriveRevisionKind | null;
+    /**
+     * BUG-2026-09-29: the Drive file's human name. REQUIRED and `| null`,
+     * same convention as the four fields above — `processDriveFileChangedJob`
+     * is the only production caller and always supplies it (`?? null`).
+     */
+    filename: string | null;
   }) => Promise<DriveArtifactSinkResult>;
   /**
    * Whether the connector-artifact enqueue is enabled
@@ -266,6 +281,8 @@ export async function processDriveFileChangedJob(
     folderId: parsed.folder_id ?? null,
     folderPath: parsed.folder_path ?? null,
     revisionKind: parsed.revision_kind ?? null,
+    // BUG-2026-09-29: undefined -> null at this same boundary.
+    filename: parsed.filename ?? null,
   });
 }
 

@@ -141,3 +141,23 @@ disappears entirely at scale-to-zero. Two consequences for this folder:
 ## 2026-09-12 — `/jobs/computeid-passport-recheck` added to `NOT_SCHEDULED` (SCRUM-4495)
 
 Flag-coupled dormant route: `ENABLE_COMPUTEID_INTEGRATION=false` and `COMPUTEID_API_KEY` is not in Secret Manager, so the endpoint answers `200 {skipped:true}` and a binding would only burn scheduler quota. The reason string carries the schedule to use — `17 * * * *`, deliberately NOT `0 * * * *`: every `/jobs/*` route shares one per-IP burst guard, so spreading hourly jobs off `:00` keeps one job's burst from eating another's headroom. SCRUM-4475 replaced the global bucket, so `:00` is no longer actively costing other jobs 429s — this is prevention, not a live incident. Unlike most entries here, this one is a safety net rather than a feature (ComputeID has no webhook retry), so bind it in the same motion as the flag flip rather than "on rollout, sometime".
+
+## 2026-09-29 — `drive-initial-sync` added to `JOBS` (DRIVE-BACKFILL, founder directive 2026-09-29)
+
+New route `POST /jobs/drive-initial-sync` (`services/worker/src/routes/cron.ts`, backed by
+`services/worker/src/jobs/drive-initial-sync-runner.ts`) added to `cloud-scheduler.sh`'s `JOBS` array
+right after `drive-file-changed`, same `*/5 * * * *` cadence and `30s,120s,2` retry policy — the
+coverage-contract test (`cloud-scheduler.test.ts`) failed the moment the route landed, exactly the
+mechanism this file's SCRUM-3384 section above describes. This drains the `google_drive.initial_sync`
+queue that `drive-initial-sync-trigger.ts` writes when a Drive folder rule is saved or a folder is
+(re)connected — it enumerates the folder's PRE-EXISTING files and feeds them into the same
+`google_drive.file_changed` pipeline `drive-file-changed` drains, per `services/worker/src/routes/
+scheduled.ts`'s own comment ("Prod runs via Cloud Scheduler -> POST /jobs/drive-initial-sync"). Gated
+on `ENABLE_DRIVE_INITIAL_SYNC` (default true); the processor no-ops per job when the flag is off, same
+as `drive-file-changed`'s `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` gate. Added directly to `JOBS`, not
+`NOT_SCHEDULED`, because the route's own in-process-registration comment already declares the intended
+production trigger is Cloud Scheduler — unlike the `platform-health-digest` / `queue-digest` entries
+above, this is not a freeze-window placeholder awaiting a manual gcloud step. **This commit only
+changes what the script WOULD apply on its next run** — the live `gcloud scheduler jobs create/update`
+against prod `arkova1` is a separate operator step, not run by this change (same posture as this file's
+2026-09-21 `recover-broadcasts` entry above).

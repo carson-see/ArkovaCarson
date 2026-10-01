@@ -459,6 +459,19 @@ const ConfigSchema = z.object({
    */
   enableConnectorArtifactDrain: boolFlag(false),
   /**
+   * ENABLE_DRIVE_INITIAL_SYNC (DRIVE-BACKFILL, founder directive 2026-09-29):
+   * when a Drive folder is connected/watched, backfill EVERY file already in
+   * it through the existing `google_drive.file_changed` -> connector_artifact
+   * -> anchor pipeline (see `integrations/connectors/drive-initial-sync.ts`).
+   * Default true — this is the founder-mandated default-on behavior, not an
+   * opt-in beta; the kill switch exists for an operational rollback, not a
+   * launch gate. Downstream (`enableConnectorArtifactEnqueue` /
+   * `enableConnectorArtifactDrain`) still gates whether an enqueued artifact
+   * is actually fetched/anchored — this flag only gates the ENUMERATE +
+   * ENQUEUE step, so it is safe to leave on even before those flip.
+   */
+  enableDriveInitialSync: boolFlag(true),
+  /**
    * SCRUM-5139: manual/API instant securing. This spends one credit and
    * broadcasts an exact claimed anchor, so it remains dark until the
    * credit/refund and chain-path soak has passed.
@@ -1304,6 +1317,7 @@ function loadConfig(): Config {
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
     enableConnectorArtifactDrain: process.env.ENABLE_CONNECTOR_ARTIFACT_DRAIN,
+    enableDriveInitialSync: process.env.ENABLE_DRIVE_INITIAL_SYNC,
     enableInstantSecure: process.env.ENABLE_INSTANT_SECURE,
     // DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
     // Default OFF in prod — the reconciliation re-materializes via the DS-03
