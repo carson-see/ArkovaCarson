@@ -1,81 +1,51 @@
 # Publishing `arkova-api-cli`
 
-The repository manifest is intentionally not publishable:
+The source manifest keeps `private: true`. The sibling `arkova` SDK is a
+**build-time devDependency** at `file:../sdk`; the CLI executable bundles it.
+The packed CLI has no runtime `file:` dependency, so an isolated consumer can
+install the tarball without the repository checkout or an unpublished SDK.
+Bundling does not make this candidate publicly released.
 
-- `private: true` prevents an accidental registry write;
-- `arkova: file:../sdk` keeps source development pinned to the sibling SDK.
-
-**Never hardcode the SDK version in this runbook or in a script that follows
-it.** `packages/sdk`'s version moves independently of this package — e.g. a
-pending change (PR #3034) bumps it to 3.2.0 — and this CLI must always be
-published against **the version in `packages/sdk/package.json` at the
-release commit**, i.e. the exact SDK version it was actually built and
-tested with in this same release run, never a version copied from a prior
-runbook edit or from memory.
-
-Release only from a clean, isolated checkout at the approved commit. First
-read the SDK version you are releasing against:
+From a clean, approved source checkout, build and test the exact candidate:
 
 ```sh
-sdk_version=$(node -p "require('../sdk/package.json').version")
-echo "Releasing api-cli against arkova@$sdk_version"
-```
-
-Publish `arkova@$sdk_version` first (from `packages/sdk`'s own publishing
-step) and confirm that exact version is visible from npm. Then:
-
-```sh
-# The CLI prebuild hooks compile the sibling SDK, so install it first.
 cd packages/sdk
 npm ci --ignore-scripts
 npm run build
+npm test
 
-cd packages/api-cli
+cd ../api-cli
 npm ci --ignore-scripts
 npm run build
 npm run typecheck
 npm test
 npm run lint
-
-npm pkg delete private
-# Caret range against the SDK version this CLI was built and tested with in
-# THIS run — never an exact pin, and never a value from a previous release.
-npm pkg set "dependencies.arkova=^$sdk_version"
-npm install --package-lock-only --ignore-scripts
-
-# Re-resolve from the public registry and qualify the exact release state.
-rm -rf node_modules
-npm ci --ignore-scripts
-npm run build
-npm run typecheck
-npm test
-npm run lint
-
-npm pack --dry-run
-tarball=$(npm pack --silent)
-npm publish --dry-run
-
-install_dir=$(mktemp -d)
-npm install --prefix "$install_dir" "$PWD/$tarball"
-"$install_dir/node_modules/.bin/arkova" --help
+npm pack --dry-run --ignore-scripts
 ```
 
-Inspect the dry-run file list. It must contain only `LICENSE`, `README.md`,
-`dist/cli.js`, `dist/cli.d.ts`, and `package.json` — no source map (checked
-recursively under `dist/`), no `agents.md`, no test files, no eslint/vitest
-config. `tsconfig.json` disables `sourceMap` and the build script cleans
-`dist/` first for exactly this reason — a stale map from a prior local build
-must not be able to survive into a fresh pack. The packed manifest must
-contain `"arkova": "^<sdk_version>"` (the exact caret range set above), no `file:` dependency, and no `private` field.
+The package should contain only `LICENSE`, `README.md`, `dist/cli.js`, and
+`package.json`. Inspect the executable for a shebang and for the absence of
+an external `arkova` import. No source maps or private/test files should ship.
+The `private` field blocks publishing; the build-time local SDK link must not
+appear in runtime `dependencies`.
 
-The commands above install the produced tarball, including its exact
-resolved `arkova` dependency, in an empty directory. Then run an
-authenticated health check from that installed binary:
+Qualify the packed artifact from a directory outside this repository and any
+parent `node_modules`. A repository-adjacent consumer can accidentally load an
+ambient SDK and conceal a dangling `file:` link:
 
 ```sh
-ARKOVA_API_KEY="$ARKOVA_RELEASE_SMOKE_KEY" \
-  "$install_dir/node_modules/.bin/arkova" health
+tarball=$(npm pack --ignore-scripts --silent)
+install_dir=$(mktemp -d)
+cd "$install_dir"
+npm init -y
+npm install --ignore-scripts --no-audit --no-fund "$OLDPWD/$tarball"
+node_modules/.bin/arkova --help
+npm ls --omit=dev --all
 ```
 
-The health result must name the approved production git SHA. Publishing is an
-explicit operator step after these checks; this runbook does not authorize it.
+Use an approved, credential-scoped release test for API commands; the local
+controlled backend fixture only proves packaged transport and validation.
+Public publication requires a separate release decision: review the exact
+artifact, version and license, remove `private` in that release candidate,
+repeat the clean-install and security checks, and use the approved publishing
+workflow. This runbook does not authorize npm publish or production use.

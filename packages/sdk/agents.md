@@ -206,3 +206,25 @@ downgraded the version, never dropped the newer status sets or folder events) an
 The unreleased 3.3.0 source adds all four registered agent lifecycle names to `WebhookEventType`. Keep the union, exhaustive SDK test, worker canonical registry, UI, Zapier mirror, and public webhook guide aligned through the repository drift gate. Publishing remains unauthorized; the combined candidate includes the singleton proof repair and still requires qualification.
 
 The singleton candidate widens `ProofBundle.merkleProof` from a non-empty tuple to an array; consumers must check length. Bundle decoding is not a cryptographic verification verdict.
+
+## 2026-09-29 — bounded HTTP deadline for the unreleased 3.3.0 client candidate
+
+`ArkovaConfig.timeoutMs` defaults to 10,000 ms and accepts only integer values
+from 1 through 120,000. The per-attempt deadline covers response headers and body parsing;
+expiry raises a sanitized `ArkovaError` with code `request_timeout` and status
+408. A caller's `AbortSignal` on `request()` keeps its own abort semantics.
+Safe/idempotent retries and backoff can extend the total wall-clock duration.
+Agent registration, key creation, admission and other non-idempotent writes
+remain single-attempt after timeout or a dropped response. Reconcile state
+before an operator retries either one-time operation.
+
+`client.ts` retains the deadline through JSON/text consumption and releases
+timers/listeners on parse, timeout, discarded retry responses and paths that
+ignore a response body (successful folder/webhook delete, failed disabled
+query/ask). It also checks caller abort before retrying after backoff. Tests in
+`agents-client.test.ts` cover stalled headers, stalled body, invalid timeout
+options, caller abort, early-exit cleanup and no second request; `client.test.ts`
+pins malformed 202 batch response behavior. The 2026-09-29 full SDK suite was
+181/181 with typecheck passing. These are client transport checks; the
+controlled loopback responder is not evidence of worker authorization,
+ComputeID signature validation or deployed acceptance.

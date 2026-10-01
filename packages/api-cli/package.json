@@ -1,6 +1,6 @@
 {
   "name": "arkova-api-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "JSON command-line client for the Arkova verification API",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "prebuild": "npm --prefix ../sdk run build && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json && tsup src/cli.ts --format esm --platform node --target es2022 --no-splitting",
     "pretest": "npm run build",
     "test": "vitest run",
     "pretypecheck": "npm --prefix ../sdk run build",
@@ -17,13 +17,12 @@
     "lint": "eslint src test",
     "prepublishOnly": "npm run typecheck && npm test && npm run lint"
   },
-  "dependencies": {
-    "arkova": "file:../sdk"
-  },
   "devDependencies": {
     "@eslint/js": "9.24.0",
     "@types/node": "26.0.0",
+    "arkova": "file:../sdk",
     "eslint": "10.5.0",
+    "tsup": "8.5.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.62.0",
     "vitest": "4.1.9"
