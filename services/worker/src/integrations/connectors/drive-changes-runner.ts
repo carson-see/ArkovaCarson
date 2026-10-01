@@ -865,6 +865,10 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         folder_id: payload.folder_id ?? undefined,
         folder_path: payload.folder_path ?? undefined,
         revision_kind: payload.revision_kind,
+        // BUG-2026-09-29: same null -> undefined conversion as the four
+        // fields above, so the shared DriveFileChangedJobPayload schema
+        // (`.optional()`, not `.nullable()`) accepts the payload.
+        filename: payload.filename ?? undefined,
       };
       const parsed = DriveFileChangedJobPayload.safeParse(candidate);
       if (!parsed.success) {

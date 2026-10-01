@@ -35,6 +35,13 @@ import {
   type DriveFolderMirrorDb,
   type MirrorConnectedDriveFolderResult,
 } from '../integrations/connectors/drive-folder-mirror.js';
+import {
+  triggerDriveInitialSyncForFolders,
+  makeDriveInitialSyncTriggerDbDeps,
+  type DriveFolderToMirror,
+} from '../integrations/connectors/drive-initial-sync-trigger.js';
+import { submitJob } from '../utils/jobQueue.js';
+import { config } from '../config.js';
 
 /**
  * Connectors page (SPEC-CONNECTORS §1.4) marks the rule it writes with
@@ -100,6 +107,67 @@ async function mirrorDriveFoldersForRuleWrite(
       error: String(error),
     }));
   }
+}
+
+/**
+ * DRIVE-BACKFILL (founder directive 2026-09-29): "when a Google Drive folder
+ * is connected/watched, every file already in that folder is secured
+ * automatically." Scoped to the SAME Connectors-page Drive rule as the
+ * folder mirror above (`shouldMirrorDriveFoldersForRule`) — never a
+ * RulesPage/RuleBuilderPage admin rule.
+ *
+ * `previousTriggerConfig` distinguishes the two call sites:
+ *   - CREATE passes `undefined` — a brand-new rule has no "previous" folder
+ *     set, so every named folder is new and gets synced.
+ *   - PATCH passes the rule's trigger_config BEFORE this write (the same row
+ *     read `validatePatchAgainstCurrent` already did) — only folders NOT in
+ *     that previous set are synced. A folder that was already on the rule is
+ *     untouched here; re-syncing it is not this call's job (an already
+ *     completed/in-progress folder is a no-op anyway via
+ *     `triggerDriveInitialSyncForFolders`'s own idempotency guard, but
+ *     computing the diff up front means a PATCH that keeps folder A and adds
+ *     folder B enqueues a sync for B alone, not a redundant re-check of A).
+ *
+ * FIRE-AND-FORGET, deliberately NOT awaited (unlike the mirror above): this
+ * only ever does cheap `drive_initial_sync_state` reads + a `job_queue`
+ * insert per folder — never Drive itself (the founder directive's own
+ * "asynchronous, through job_queue, never block the HTTP response" instruction
+ * refers to the Drive LISTING work, which happens entirely inside the job).
+ * Never throws: `triggerDriveInitialSyncForFolders` itself is non-throwing by
+ * contract (same shape as `mirrorConnectedDriveFolders`), so there is nothing
+ * to catch here — this response's shape/behavior is completely unaffected by
+ * initial-sync outcomes, unlike the mirror result.
+ */
+function triggerInitialSyncForRuleFolders(
+  orgId: string,
+  ruleId: string,
+  triggerType: string,
+  triggerConfig: unknown,
+  actionConfig: unknown,
+  previousTriggerConfig: unknown,
+): void {
+  if (!shouldMirrorDriveFoldersForRule(triggerType, actionConfig)) return;
+  const folders = extractDriveFoldersToMirror(triggerConfig as Record<string, unknown> | null | undefined);
+  if (folders.length === 0) return;
+
+  let toSync: DriveFolderToMirror[] = folders;
+  if (previousTriggerConfig !== undefined) {
+    const previousFolderIds = new Set(
+      extractDriveFoldersToMirror(previousTriggerConfig as Record<string, unknown> | null | undefined).map(
+        (f) => f.folderId,
+      ),
+    );
+    toSync = folders.filter((f) => !previousFolderIds.has(f.folderId));
+  }
+  if (toSync.length === 0) return;
+
+  const deps = makeDriveInitialSyncTriggerDbDeps({
+    db: db as unknown as { from: (table: string) => ReturnType<typeof db.from> },
+    submitJob,
+    isEnabled: () => config.enableDriveInitialSync,
+    logger,
+  });
+  void triggerDriveInitialSyncForFolders(deps, { orgId, ruleId, folders: toSync });
 }
 
 const UuidSchema = z.string().uuid();
@@ -780,6 +848,16 @@ export async function handleCreateRule(
         parsed.data.trigger_config,
         parsed.data.action_config,
       );
+      // DRIVE-BACKFILL: a brand-new rule has no "previous" folders, so every
+      // named folder is new — `previousTriggerConfig: undefined` signals that.
+      triggerInitialSyncForRuleFolders(
+        orgId,
+        newId,
+        parsed.data.trigger_type,
+        parsed.data.trigger_config,
+        parsed.data.action_config,
+        undefined,
+      );
       // Fire-and-forget: audit must not gate response latency.
       void emitRuleAudit('ORG_RULE_CREATED', {
         actorId: userId,
@@ -803,7 +881,14 @@ export async function handleCreateRule(
 }
 
 type PatchValidationResult =
-  | { kind: 'ok'; currentActionType?: string; currentTriggerType?: string; currentActionConfig?: unknown; currentCreatedByUserId?: string | null }
+  | {
+      kind: 'ok';
+      currentActionType?: string;
+      currentTriggerType?: string;
+      currentActionConfig?: unknown;
+      currentTriggerConfig?: unknown;
+      currentCreatedByUserId?: string | null;
+    }
   | { kind: 'error'; status: number; body: Record<string, unknown> };
 
 type ParsedUpdateRuleRequest =
@@ -920,6 +1005,7 @@ async function validatePatchAgainstCurrent(
       currentActionType: current.action_type as string | undefined,
       currentTriggerType: current.trigger_type as string | undefined,
       currentActionConfig: current.action_config,
+      currentTriggerConfig: current.trigger_config,
       currentCreatedByUserId: current.created_by_user_id as string | null | undefined,
     };
   } catch (err) {
@@ -1104,6 +1190,21 @@ export async function handleUpdateRule(
       const triggerType = validation.currentTriggerType;
       if (triggerType) {
         mirrorResults = await mirrorDriveFoldersForRuleWrite(orgId, userId, parsed.ruleId, triggerType, parsed.patch.trigger_config, actionConfig);
+        // DRIVE-BACKFILL: only the folders NEWLY ADDED by this patch (a diff
+        // against the PRE-patch trigger_config the row read above already
+        // has in hand) get an initial sync — a folder that was already on
+        // the rule was already synced (or is already in flight) the first
+        // time it was added, and re-triggering it here would just be
+        // absorbed by `triggerDriveInitialSyncForFolders`'s own idempotency
+        // guard, one redundant DB round-trip per already-known folder.
+        triggerInitialSyncForRuleFolders(
+          orgId,
+          parsed.ruleId,
+          triggerType,
+          parsed.patch.trigger_config,
+          actionConfig,
+          validation.currentTriggerConfig,
+        );
       }
     }
     res.json(mirrorResults !== null ? { ok: true, drive_folder_mirror: mirrorResults } : { ok: true });

@@ -1,5 +1,78 @@
 # agents.md — services/worker/src/integrations/connectors/
 
+## 2026-09-29 — BUG-2026-09-29: multi-parent folder_id + dropped Drive file name (worker-only, no migration; see `jobs/agents.md` for the filing root cause, the momentary-revocation retry fix, and the category/size migration)
+
+Two independent bugs in `drive-changes-processor.ts`'s `classifyPage`, both
+in the same function that already existed to build each change's
+`ChangeDescriptor`:
+
+1. **`folder_id` was hardcoded to `parents[0]`, not the WATCHED parent.**
+   `parentMatches` already treats `parents` as a set — a file with multiple
+   parents matches if ANY of them is watched. But the descriptor's `folder_id`
+   (which flows through `enqueueFileChangedJob` → `connector_artifact.metadata.
+   _drive_folder_id` → `resolve_connector_destination_folder`, migration 0462)
+   was always `parents[0]`, regardless of which parent actually caused the
+   match. A change whose UNWATCHED parent happened to sort first was filed
+   under (and its record page linked back to) a folder nobody configured a
+   rule for — silently wrong, not a failure anything logs. Fixed with a new
+   `firstWatchedParent(parents, watched)` helper (mirrors `parentMatches`'
+   shape) called before building the descriptor: `folderId: watchedParent ??
+   parents[0] ?? null`. The `parents[0]` fallback is kept for a
+   NON-matching change, where the choice is cosmetic only (an
+   `unrelated_change`/`parent_mismatch` descriptor never reaches the enqueue).
+2. **The Drive file's human name (`change.file.name`) was captured on the
+   descriptor and forwarded to `enqueueRuleEvent`'s `filename` (the rules-engine
+   record event), but silently dropped before `enqueueFileChangedJob`.** It
+   therefore never reached `connector_artifact.metadata` and the eventual
+   anchor's display name fell back to the synthetic `google_drive:<fileId>`
+   label (`jobs/connector-artifact-drain.ts`'s `defaultMaterializeAnchor`).
+   Fixed by adding `filename: d.filename` to the `enqueueFileChangedJob` call
+   and threading it through the whole chain: `DriveProcessorDb.
+   enqueueFileChangedJob`'s payload type (this file) → the real adapter in
+   `drive-changes-runner.ts` (`filename: payload.filename ?? undefined`,
+   same null↔undefined convention as the existing SCRUM-4507 link-back
+   fields) → `DriveFileChangedJobPayload` (`drive-artifact-producer.ts`,
+   `.optional()` for the same backward-compat reason as those fields — jobs
+   already in `job_queue` have no `filename` key) → `DriveArtifactProducerDeps
+   .enqueueArtifact`'s input (required `| null`, `processDriveFileChangedJob`
+   always supplies it) → `jobs/drive-file-changed.ts`'s `p_metadata.filename`
+   (see that file's own agents.md entry for why this one key is deliberately
+   NOT underscore-prefixed, unlike the four `_drive_*` SCRUM-4507 fields).
+
+Regression tests: `drive-changes-processor.test.ts` (`parents:
+[UNWATCHED_FOLDER, WATCHED_FOLDER_A]` → `folder_id` is the watched one, not
+`parents[0]`; a named file's name reaches `fileChangedJobPayloads[0].filename`),
+`drive-artifact-producer.test.ts` (filename forwarded / null-safe / in the
+payload-shape ratchet), `drive-changes-runner.test.ts` (adapter passes
+`filename` through to `submitJob`) — all confirmed failing against the
+pre-fix code before the fix landed.
+_Last updated: 2026-09-29 (DRIVE-BACKFILL — `drive-initial-sync.ts` + `drive-initial-sync-trigger.ts` added; `drive-folder-mirror.ts`'s `loadActiveDriveConnection` exported for reuse; founder directive "every pre-existing file gets secured automatically on connect/watch")._
+
+## 2026-09-29 — DRIVE-BACKFILL: initial sync for pre-existing files (founder directive 2026-09-29)
+
+**The gap.** Ingestion only ever relied on `changes.list` from a cursor seeded at connect time (`api/v1/integrations/drive-oauth.ts`'s callback, `createChangesWatch` in `oauth/drive.ts`) — a file that already existed in a folder BEFORE it was connected/watched was never seen. Founder decision: when a Drive folder is connected/watched, every file already in it is secured automatically, no confirmation prompt.
+
+**Two new files, both pure orchestrators (DB/Drive/job_queue all injected):**
+
+| File | Purpose |
+|---|---|
+| `drive-initial-sync.ts` | `processDriveInitialSyncJob` — the `google_drive.initial_sync` job body. Enumerates one folder's direct children (`listFolderFiles`, new in `oauth/drive.ts`) and enqueues the SAME `google_drive.file_changed` job the live changes feed uses per file — same payload schema, same `resolveRevision` (reused verbatim from `drive-changes-processor.ts`, so the `mtime:`/`evt:` fallback tokens that are part of the 0343 dedupe key can never drift between the two producers). RULE EVALUATION IS BYPASSED on purpose: a pre-existing file did not change, so there is nothing for `enqueueRuleEvent`/the rules engine to react to — `enqueue_connector_artifact`'s dedupe key is what makes a re-run idempotent, and `connector-artifact-drain.ts`'s materialize-and-anchor step is action-agnostic (runs for every artifact regardless of which rule, if any, is watching the folder), which is exactly what makes "every file gets secured" correct without re-deriving rule dispatch. Bounded per run (`DRIVE_INITIAL_SYNC_MAX_FILES_PER_RUN = 1000`); hitting the cap schedules a continuation job carrying the Drive `nextPageToken` AND the running `files_synced_so_far`/`files_enqueued_so_far` counts (both threaded through the payload — NOT deltas — so the persisted `drive_initial_sync_state` row can never regress across a continuation). Drive 403/404 are terminal (folder marked `failed`, audited, job completes normally — no wasted retry attempts on a condition retrying can't fix); 429/5xx/network rethrow so `jobs/utils/jobQueue.ts`'s own exponential backoff retries. `folder_path` is deliberately NOT resolved for an initial-sync file (would be one extra parent-chain Drive walk per file in a potentially large backfill) — scope decision, not a bug. Per-org run lease (`driveInitialSyncRunLeaseSpec`, reuses `jobs/run-lease.ts`'s TTL-lease primitive exactly like `drive-changes-runner.ts`'s `driveChangesRunLeaseSpec`) bounds concurrency to 1 running sync per org. |
+| `drive-initial-sync-trigger.ts` | The cheap, DB-only decision layer both call sites use: `triggerDriveInitialSyncForFolders` resolves the org's active Drive connection ONCE (via the now-exported `loadActiveDriveConnection` — same resolver the folder mirror uses, so the two features can never disagree about which connection backs a rule's folders), then per folder checks `drive_initial_sync_state` and submits a fresh `google_drive.initial_sync` job unless the folder is already `completed`/`in_progress`. Non-throwing by contract, same shape as `mirrorConnectedDriveFolders`. `loadConnectorDriveFoldersForOrg` is the shared query for trigger point 2 (reconnect) — reuses `shouldMirrorDriveFoldersForRule`/`extractDriveFoldersToMirror` so "watched" means the same thing for the mirror and for initial sync. `makeDriveInitialSyncTriggerDbDeps` is the real wiring both `api/rules-crud.ts` and `api/v1/integrations/drive-oauth.ts` build. |
+
+**Runner:** `jobs/drive-initial-sync-runner.ts` — see `jobs/agents.md`'s matching entry.
+
+**Trigger points (both fire-and-forget, never awaited by the HTTP response — only cheap `drive_initial_sync_state` reads + one `job_queue` insert per folder, never Drive itself, so there is no Drive-listing latency to avoid blocking on):**
+1. `api/rules-crud.ts`, next to `mirrorDriveFoldersForRuleWrite` — CREATE syncs every named folder (a brand-new rule has no "previous" folders); a folder-adding PATCH diffs against the row's PRE-patch `trigger_config` (now returned as `currentTriggerConfig` from `validatePatchAgainstCurrent`) and syncs only the newly-added folder(s).
+2. `api/v1/integrations/drive-oauth.ts`'s OAuth callback — after a successful upsert (new connection OR reconnect), `triggerInitialSyncForReconnectedOrg` loads every already-existing connector-managed Drive rule for the org and triggers each one's folders. A brand-new connection has no prior rule naming a folder, so this is a no-op there — the exact same call handles both cases.
+
+**Scoping is identical to the folder mirror on purpose**: connector-tagged (`action_config.tag === 'connector-google_drive'`) `WORKSPACE_FILE_MODIFIED` rules only, regardless of `enabled` — a RulesPage/RuleBuilderPage admin rule and a disabled-but-saved connector rule are both untouched. This diverges from `loadWatchedFolderIds`'s `enabled=true` filter (the ONGOING changes feed's definition of "watched") — deliberately: the mirror already established "does this rule name the folder" as the product's definition of "connected/watched" for folder creation, and initial sync reuses that same definition for internal consistency rather than inventing a second one.
+
+**New table:** `drive_initial_sync_state` (migration `0501`, see `supabase/migrations/agents.md`) — per-(org_id, folder_id) observability + resumability. NOT `drive_watch_state` (0351, DRIVE-02/06) — that is a different, currently-uncalled push-channel bootstrap/renewal system with channel-lifecycle vocabulary, not sync-progress vocabulary; repurposing it would conflate two systems this file's own "two parallel watch systems" note (below) already warns against conflating.
+
+**New flag:** `ENABLE_DRIVE_INITIAL_SYNC` (`config.ts`), default **true** — founder-mandated default-on behavior, not a beta opt-in. The kill switch is for operational rollback.
+
+**Known risk, stated plainly (not fixed here — flagged for founder/product awareness):** a folder with tens of thousands of files (a shared drive migrated wholesale, say) drains across many bounded continuation jobs, each enqueueing up to 1000 `google_drive.file_changed` jobs — each of which fetches the document, computes a fingerprint, and (once `enableConnectorArtifactDrain` is on) charges 1 credit at securing. There is no confirmation step and no credit-limit gate (`memory/feedback_no_credit_limits_beta.md`) — connecting one large folder can enqueue thousands of anchors' worth of credit spend with no pause point. This is the founder directive's literal ask ("no confirmation prompt"), not an oversight, but it is the sharpest edge of this feature and worth a deliberate look before a large customer connects a big shared drive.
+
 _Last updated: 2026-09-26 (`drive-folder-mirror.ts` — `loadActiveDriveConnection` distinguishes a retryable DB error from a legitimate "no connection"; the caller (`rules-crud.ts`) awaits the mirror instead of firing it after the response — review P2 follow-up on PR #3086)._
 _Last updated: 2026-09-25 (`drive-folder-mirror.ts` — per-folder isolation in `mirrorConnectedDriveFolders`'s loop; header comment corrected to match the real `idx_folders_connector_destination_unique` shape — review follow-up on PR #3086)._
 

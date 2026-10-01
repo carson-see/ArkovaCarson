@@ -69,6 +69,13 @@ vi.mock('../jobs/drive-file-changed.js', () => ({
     claimed: 0, completed: 0, failed: 0, dead: 0, updateFailed: 0, jobIds: [],
   }),
 }));
+// DRIVE-BACKFILL (founder directive 2026-09-29): in-process backup drain,
+// same import-safety mock as drive-file-changed above.
+vi.mock('../jobs/drive-initial-sync-runner.js', () => ({
+  runDriveInitialSyncJobs: vi.fn().mockResolvedValue({
+    claimed: 0, completed: 0, failed: 0, dead: 0, updateFailed: 0, jobIds: [],
+  }),
+}));
 // GH #1835/#1836: restored in-process backup (PR #1944 review correction),
 // unconditional (not flag-gated) and NOT part of ANCHOR_TABLE_IN_PROCESS_JOBS
 // — it's a renewal-only sweep, not an anchor-table read.
