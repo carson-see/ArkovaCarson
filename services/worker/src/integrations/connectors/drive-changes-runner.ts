@@ -346,10 +346,9 @@ export async function loadDriveAccessToken(
   // Snapshot the pre-refresh ciphertext as a compare-and-swap guard.
   // CodeRabbit ASSERTIVE flagged the original write as racy: two
   // concurrent webhooks could both observe an expired access_token,
-  // both call refreshAccessToken (Google rotates the refresh_token in
-  // the response), and the loser's UPDATE would clobber the winner's
-  // new refresh_token — leaving the integration with a refresh_token
-  // Google has already invalidated. Avoid that by conditioning the
+  // both call refreshAccessToken. If a response supplies a rotated
+  // refresh_token, the loser's UPDATE could clobber the winner's new
+  // token and strand the integration. Avoid that by conditioning the
   // UPDATE on `encrypted_tokens = $prevCiphertext`.
   const prevCiphertextHex = `\\x${ciphertext.toString('hex')}`;
   const env = deps.env ?? process.env;
@@ -477,6 +476,7 @@ export async function loadDriveAccessToken(
     keyName: integration.token_kms_key_id,
     env: deps.env,
   });
+  const refreshedCiphertextHex = `\\x${reencrypted.ciphertext.toString('hex')}`;
   // SCRUM-5287 follow-up: SELF-HEAL. `refreshed.clientId` is the client that
   // just, demonstrably, successfully issued a fresh access token for this
   // row — authoritative by construction. Persist it whenever it is NEW
@@ -495,16 +495,20 @@ export async function loadDriveAccessToken(
   // refresher won" would silently return the stale pre-refresh token
   // as if the refresh succeeded, turning a persistence/read failure
   // into a silent auth bug.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scoped by id, org, provider and active state
   let casUpdate = (deps.db as any)
     .from('org_integrations')
     .update({
-      encrypted_tokens: `\\x${reencrypted.ciphertext.toString('hex')}`,
+      encrypted_tokens: refreshedCiphertextHex,
       token_kms_key_id: reencrypted.keyId,
       updated_at: now.toISOString(),
       ...accountLabelUpdate,
     })
     .eq('id', integration.id)
+    .eq('org_id', integration.org_id)
+    .eq('provider', 'google_drive')
+    .is('revoked_at', null)
+    .eq('token_kms_key_id', integration.token_kms_key_id)
     .eq('encrypted_tokens', prevCiphertextHex);
   // P2 fix (independently reviewed, same review pass as the P1 above):
   // refresh (here) and watch-renewal (`drive-subscription-renewal.ts`) both
@@ -541,37 +545,98 @@ export async function loadDriveAccessToken(
     return { accessToken: merged.access_token, refreshed: true };
   }
 
-  // CAS lost — another concurrent refresh wrote first. Re-decrypt the
-  // current row to get the winner's access token. We don't burn a
-  // second Google refresh (which would itself rotate the refresh_token
-  // again and create a chain of races); we trust the winner.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
-  const { data: latest, error: readError } = await (deps.db as any)
-    .from('org_integrations')
-    .select('encrypted_tokens, token_kms_key_id')
-    .eq('id', integration.id)
-    .maybeSingle();
-  if (readError) {
-    throw new DriveRunnerError(
-      'token_read_failed',
-      `CAS lost on integration ${integration.id} and follow-up read errored: ${(readError as { message?: string }).message ?? 'unknown'}`,
-    );
-  }
-  if (!latest?.encrypted_tokens || !latest.token_kms_key_id) {
-    throw new DriveRunnerError(
-      'concurrent_refresh_race',
-      `CAS lost on integration ${integration.id} but follow-up read returned no encrypted_tokens — race + revoke?`,
-    );
-  }
-  const latestCiphertext = bytea(latest.encrypted_tokens);
-  if (!latestCiphertext) {
-    throw new DriveRunnerError('concurrent_refresh_race', 'follow-up read returned empty buffer');
-  }
-  const winner = await decryptTokens(latestCiphertext, {
-    kms: deps.kms,
-    keyName: latest.token_kms_key_id,
+  return recoverLostDriveRefreshCas({
+    integration,
+    deps,
+    ciphertext,
+    prevCiphertextHex,
+    refreshedCiphertextHex,
+    refreshedKeyId: reencrypted.keyId,
+    accessToken: merged.access_token,
   });
-  return { accessToken: winner.access_token, refreshed: true };
+}
+
+/** Resolve a lost refresh CAS without calling the provider again. */
+async function recoverLostDriveRefreshCas(args: {
+  integration: DriveIntegrationRow;
+  deps: Pick<DriveChangesRunnerDeps, 'db' | 'kms' | 'now'>;
+  ciphertext: Buffer;
+  prevCiphertextHex: string;
+  refreshedCiphertextHex: string;
+  refreshedKeyId: string;
+  accessToken: string;
+}): Promise<{ accessToken: string; refreshed: true }> {
+  const { integration, deps, ciphertext, prevCiphertextHex, refreshedCiphertextHex, refreshedKeyId, accessToken } = args;
+  // A miss can mean either a competing token refresh OR a watch renewal
+  // changing only account_label. In the latter case the current ciphertext
+  // is still expired, and Google may have rotated the refresh token we just
+  // received. Persist that already-encrypted response with one token-only
+  // CAS, leaving the renewal's entire label untouched. This recovery path
+  // adds no provider call and never reports old ciphertext as refreshed.
+  for (let readAttempt = 0; readAttempt < 2; readAttempt++) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scoped by id, org, provider and active state
+    const { data: latest, error: readError } = await (deps.db as any)
+      .from('org_integrations')
+      .select('encrypted_tokens, token_kms_key_id')
+      .eq('id', integration.id)
+      .eq('org_id', integration.org_id)
+      .eq('provider', 'google_drive')
+      .is('revoked_at', null)
+      .maybeSingle();
+    if (readError) {
+      throw new DriveRunnerError(
+        'token_read_failed',
+        `CAS lost on integration ${integration.id} and follow-up token read failed`,
+      );
+    }
+    if (!latest?.encrypted_tokens || !latest.token_kms_key_id) {
+      throw new DriveRunnerError('concurrent_refresh_race', `CAS lost on integration ${integration.id} but no active Drive token row remained`);
+    }
+    const latestCiphertext = bytea(latest.encrypted_tokens);
+    if (!latestCiphertext) {
+      throw new DriveRunnerError('concurrent_refresh_race', 'follow-up read returned empty buffer');
+    }
+    if (!latestCiphertext.equals(ciphertext)) {
+      const winner = await decryptTokens(latestCiphertext, {
+        kms: deps.kms,
+        keyName: latest.token_kms_key_id,
+      });
+      if (!winner.access_token || isExpired(winner, deps.now?.() ?? new Date())) {
+        throw new DriveRunnerError('concurrent_refresh_race', `CAS winner for integration ${integration.id} has no usable access token`);
+      }
+      return { accessToken: winner.access_token, refreshed: true };
+    }
+    if (latest.token_kms_key_id !== integration.token_kms_key_id || readAttempt > 0) {
+      throw new DriveRunnerError('concurrent_refresh_race', `CAS lost on integration ${integration.id} without a usable new token`);
+    }
+    // Leave updated_at to org_integrations_updated_at's DB trigger so an
+    // application timestamp captured before watch renewal cannot regress it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- token-only CAS scoped by id, org, provider and active state
+    const { data: retryRow, error: retryError } = await (deps.db as any)
+      .from('org_integrations')
+      .update({
+        encrypted_tokens: refreshedCiphertextHex,
+        token_kms_key_id: refreshedKeyId,
+      })
+      .eq('id', integration.id)
+      .eq('org_id', integration.org_id)
+      .eq('provider', 'google_drive')
+      .is('revoked_at', null)
+      .eq('token_kms_key_id', integration.token_kms_key_id)
+      .eq('encrypted_tokens', prevCiphertextHex)
+      .select('id')
+      .maybeSingle();
+    if (retryError) {
+      throw new DriveRunnerError(
+        'token_persist_failed',
+        `failed to persist refreshed Drive tokens for integration ${integration.id} after label-only race`,
+      );
+    }
+    if (retryRow) {
+      return { accessToken, refreshed: true };
+    }
+  }
+  throw new DriveRunnerError('concurrent_refresh_race', `CAS lost twice on integration ${integration.id}`);
 }
 
 /**
