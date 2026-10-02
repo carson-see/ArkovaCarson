@@ -137,7 +137,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@64d939a56362f519781c53ea09b27f8d1dc0140a # v3.97.6
+        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
         with:
           extra_args: --only-verified
 
@@ -1008,7 +1008,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           version: 1.123.0
 
@@ -1073,7 +1073,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           # UAT-04 exercises the custom access token hook. CLI 1.123.0 ignores
           # both [auth.mfa] and [auth.hook.custom_access_token], so its GoTrue
@@ -1881,7 +1881,7 @@ jobs:
 
       - name: Setup Supabase CLI
         if: steps.e2e-changed.outputs.changed == 'true'
-        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
         with:
           # 2.x is required for the MFA E2E specs (SCRUM-3167): CLI 1.123.0 bundles
           # gotrue v2.125.1, has no [auth.mfa] config fields (it only warns
