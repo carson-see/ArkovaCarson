@@ -2,6 +2,14 @@
 
 Operational, CI, deployment, and security scripts. Run manually or from CI workflows.
 
+## 2026-10-01 — SDK publish admission helper
+
+`release/check-sdk-publish-admission.mjs` reads the checked-out SDK manifest version and GitHub event/ref. It writes `publish=false` for every manual dispatch and `publish=true` only for a matching `sdk-v<version>` tag push; malformed/mismatched events fail without an output. Keep `NODE_AUTH_TOKEN` scoped to the workflow's guarded Publish step, never the job or admission step. The helper performs no registry call or publication itself. Contract test: `ci/sdk-publish-admission.test.ts`.
+
+`release/check-python-publish-admission.py` applies the same event/version rule to `arkova-py-v<version>` using Python's `tomllib` and the checked-out `pyproject.toml`. Missing output/version and malformed manifests fail closed. Manual dispatch never admits PyPI publication, including dispatch at a tag. Contract test: `ci/python-publish-admission.test.ts`.
+
+The intentional manual npm route checks the complete published-version list for each existing package, so an older published version is skipped even when it is not `latest`. Failed or malformed registry lookups stop before build/publish, including E404 for these already-established package names. `bash scripts/release/publish-npm.test.sh` exercises the real script against disposable package manifests and a controlled npm executable; it never connects to the registry.
+
 ## 2026-09-05 — `publish-packages.sh` is EMBED-ONLY; `arkova` has exactly one publish path
 
 `publish-packages.sh` published packages/sdk (npm name `arkova`) as well as embed, through

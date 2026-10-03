@@ -23,6 +23,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Determine publication admission
+        id: admission
+        run: python ../../scripts/release/check-python-publish-admission.py
+
       - name: Setup locked Python package manager
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -52,7 +56,7 @@ jobs:
         run: uv run --locked --no-sync --no-build ruff check src tests
 
       - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/arkova-py-v')
+        if: steps.admission.outputs.publish == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: packages/arkova-py/dist

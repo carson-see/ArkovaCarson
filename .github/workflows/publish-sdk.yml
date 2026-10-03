@@ -25,6 +25,10 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - name: Determine publication admission
+        id: admission
+        run: node ../../scripts/release/check-sdk-publish-admission.mjs
+
       - name: Install SDK dependencies
         run: npm ci --ignore-scripts
 
@@ -37,7 +41,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Inspect package contents
+        run: npm pack --dry-run --ignore-scripts
+
       - name: Publish
+        if: steps.admission.outputs.publish == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

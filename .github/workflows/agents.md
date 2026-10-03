@@ -1,5 +1,11 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-10-01 — SDK publication admission
+
+`publish-sdk.yml` manual dispatch is a build, test, and `npm pack --dry-run` rehearsal only. The npm token is attached solely to the Publish step, which is admitted only after `scripts/release/check-sdk-publish-admission.mjs` observes a `push` of `refs/tags/sdk-v<packages/sdk/package.json version>`. A dispatch at a tag still does not publish. The tag/version check does not establish human review, package ownership, or release authorization; those remain operator gates. `scripts/ci/sdk-publish-admission.test.ts` exercises the actual admission script across event/ref combinations and checks credential scoping in the parsed workflow. The separate MCP publisher and CLI public identity remain unresolved.
+
+`publish-python-sdk.yml` now uses `scripts/release/check-python-publish-admission.py` after Python setup and before installation. It permits the existing PyPI OIDC publisher only for a push of the exact `arkova-py-v<pyproject version>` tag. Every manual dispatch is validation-only, even at a matching tag. `scripts/ci/python-publish-admission.test.ts` checks the actual helper and parsed workflow; old workflow revisions remain outside this source fix.
+
 ## 2026-09-21 — Actions-budget hygiene sweep (T1, see PR body for the run census)
 
 The 2026-09-21 budget exhaustion (Staging Soak Evidence Gate 55 runs / CI 40 /
